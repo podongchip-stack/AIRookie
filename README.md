@@ -6,10 +6,12 @@
 
 ## 구성
 
+이 저장소는 [`goldenLink/`](./goldenLink) 프로젝트 하나로 구성된다.
+
 | 폴더 | 설명 |
 |---|---|
 | [`goldenLink/`](./goldenLink) | 병원 매칭 대시보드 시스템 기획 — 전체 흐름, 바이탈 전송 범위, 대시보드 구성 |
-| [`voiceSummation/`](./voiceSummation) | 통화 음성 → 텍스트 변환 → 요약 파이프라인 (faster-whisper + 로컬 LLM) |
+| [`goldenLink/voiceSummation/`](./goldenLink/voiceSummation) | 통화 음성 → 텍스트 변환 → 요약 파이프라인 (faster-whisper + 로컬 LLM) |
 
 각 폴더의 README에서 세부 내용을 확인할 수 있다.
 
