@@ -10,6 +10,18 @@
 
 > 통화 음성 → 텍스트 요약 파이프라인은 [`voiceSummation`](./voiceSummation)에서 담당한다.
 
+## 폴더 구조
+
+```
+goldenLink/
+├── README.md                  # 이 문서 — 병원 매칭 시스템 기획
+└── voiceSummation/            # 통화 음성 → 텍스트 변환 → 요약 파이프라인
+    ├── README.md               # 설치/사용법
+    ├── requirements.txt
+    ├── transcribe.py           # 음성 → 텍스트 변환 + 로컬 LLM 요약 (CLI)
+    └── youtube_downloader.py   # 유튜브 오디오 다운로더 (GUI, 테스트용 음성 수집)
+```
+
 ## 2. 전체 흐름
 
 1. **정보 전달** — 구급차가 이송을 시작하면, 첫 병원과의 통화 음성을 텍스트로 요약해 존(Zone) 내 모든 병원에 일괄 전달한다. 구급차 대시보드에는 GPS 기준 가까운 순서로 병원 리스트가 시각화된다.

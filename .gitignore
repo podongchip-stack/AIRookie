@@ -4,9 +4,3 @@ __pycache__/
 *.pyc
 .DS_Store
 data/
-
-# 팀 저장소 정리 전 개인 실험/스크래치 파일 (voiceSummation으로 정리 완료)
-mp.py
-onlyOne/
-onlyTwo/
-run.txt
