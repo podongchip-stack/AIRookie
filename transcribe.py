@@ -1,18 +1,18 @@
 import argparse
 import sys
 import time
-import urllib.error
-import urllib.request
-import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from faster_whisper import WhisperModel
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-SUMMARIZE_PROMPT = (
-    "다음은 음성 파일을 텍스트로 변환한 내용이다. 핵심 내용을 한국어로 간결하게 요약해줘.\n\n"
-    "---\n{text}\n---"
-)
+from filtering import MedicalRelevanceFilter
+from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
+from summarizer import OllamaUnavailableError, StructuringError, structure_call_summary
+
+# 화자 분리(diarization)는 아직 구현되어 있지 않다. 실제 화자 분리가 붙기 전까지는
+# 모든 발화 턴에 동일한 placeholder를 채운다 (README "알려진 제약사항" 참고).
+UNDIARIZED_SPEAKER_LABEL = "미분리"
 
 
 def format_timestamp(seconds: float) -> str:
@@ -20,30 +20,6 @@ def format_timestamp(seconds: float) -> str:
     minutes = int((seconds % 3600) // 60)
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
-
-
-def is_ollama_running() -> bool:
-    try:
-        urllib.request.urlopen("http://localhost:11434", timeout=2)
-        return True
-    except urllib.error.URLError:
-        return False
-
-
-def summarize(text: str, llm_model: str) -> str:
-    payload = json.dumps(
-        {
-            "model": llm_model,
-            "prompt": SUMMARIZE_PROMPT.format(text=text),
-            "stream": False,
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(request, timeout=300) as response:
-        result = json.loads(response.read().decode("utf-8"))
-    return result["response"].strip()
 
 
 def transcribe(
@@ -65,14 +41,17 @@ def transcribe(
     transcribe_start = time.perf_counter()
     segments, info = model.transcribe(str(audio_path), language=language, vad_filter=True)
 
-    lines = []
+    turn_texts: list[str] = []
+    turn_offsets: list[float] = []
     for segment in segments:
         ts = f"[{format_timestamp(segment.start)} -> {format_timestamp(segment.end)}]"
-        print(f"{ts} {segment.text.strip()}")
-        lines.append(segment.text.strip())
+        text = segment.text.strip()
+        print(f"{ts} {text}")
+        turn_texts.append(text)
+        turn_offsets.append(segment.start)
     transcribe_elapsed = time.perf_counter() - transcribe_start
 
-    full_text = " ".join(lines)
+    full_text = " ".join(turn_texts)
     out_path = audio_path.with_suffix(".txt")
     out_path.write_text(full_text, encoding="utf-8")
     print(f"\n텍스트 파일 저장: {out_path}")
@@ -81,27 +60,98 @@ def transcribe(
     if not do_summarize:
         return
 
-    if not is_ollama_running():
+    build_and_emit_call_summary(
+        full_text=full_text,
+        turn_texts=turn_texts,
+        turn_offsets=turn_offsets,
+        duration_sec=info.duration,
+        language=info.language or language,
+        model_size=model_size,
+        llm_model=llm_model,
+        audio_path=audio_path,
+    )
+
+
+def build_and_emit_call_summary(
+    full_text: str,
+    turn_texts: list[str],
+    turn_offsets: list[float],
+    duration_sec: float,
+    language: str,
+    model_size: str,
+    llm_model: str,
+    audio_path: Path,
+) -> None:
+    """실시간 음성 필터링(의료 관련 문장 분류) -> SBAR 구조화 -> JSON 조립까지 수행한다.
+
+    실제 통화 시작 시각 메타데이터가 없으므로(사전 녹음 파일 처리), 처리 시작
+    시점에서 오디오 길이만큼 거슬러 올라간 시각을 통화 시작 시각으로 근사한다.
+    실시간 스트림 연동 시에는 실제 통화 시작 시각으로 교체하면 된다.
+    """
+    call_start = datetime.now(timezone.utc) - timedelta(seconds=duration_sec)
+
+    print("\n실시간 음성 필터링: 의료 관련 문장 분류 중...")
+    filter_start = time.perf_counter()
+    relevance_filter = MedicalRelevanceFilter()
+    classified = relevance_filter.classify_turns(turn_texts)
+    filter_elapsed = time.perf_counter() - filter_start
+    print(f"분류 완료 ({filter_elapsed:.2f}초, threshold={relevance_filter.threshold})")
+
+    turns: list[TranscriptTurn] = []
+    filtered_parts: list[str] = []
+    for text, offset, result in zip(turn_texts, turn_offsets, classified):
+        turn_time = (call_start + timedelta(seconds=offset)).strftime("%H:%M:%S")
+        print(f"  [{result.score:.3f}] {'유지' if result.is_relevant else '제외'}  {text}")
+        turns.append(
+            TranscriptTurn(
+                speaker=UNDIARIZED_SPEAKER_LABEL,
+                timestamp=turn_time,
+                text=text,
+                excludedFromSummary=None if result.is_relevant else True,
+            )
+        )
+        if result.is_relevant:
+            filtered_parts.append(text)
+
+    filtered_text = " ".join(filtered_parts)
+
+    if not filtered_text.strip():
         print(
-            "\nOllama 서버가 실행 중이 아닙니다. 'ollama serve'를 먼저 실행한 뒤 다시 시도하세요.",
+            "\n경고: 의료 관련으로 분류된 문장이 없습니다. 전체 텍스트를 대상으로 구조화를 시도합니다.",
             file=sys.stderr,
         )
-        return
+        filtered_text = full_text
 
-    print(f"\n요약 생성 중... ({llm_model})")
-    summarize_start = time.perf_counter()
+    print(f"\nSBAR 구조화 중... ({llm_model})")
     try:
-        summary = summarize(full_text, llm_model)
-    except (urllib.error.URLError, KeyError) as e:
-        print(f"요약 생성 실패: {e}", file=sys.stderr)
+        structured = structure_call_summary(filtered_text, llm_model)
+    except (OllamaUnavailableError, StructuringError) as e:
+        print(f"\n구조화 실패: {e}", file=sys.stderr)
         return
-    summarize_elapsed = time.perf_counter() - summarize_start
 
-    summary_path = audio_path.with_name(audio_path.stem + "_summary.txt")
-    summary_path.write_text(summary, encoding="utf-8")
-    print(summary)
-    print(f"\n요약 파일 저장: {summary_path}")
-    print(f"요약 소요 시간: {summarize_elapsed:.2f}초")
+    message = CallSummaryMessage(
+        transcript=Transcript(
+            raw_text=full_text,
+            filtered_text=filtered_text,
+            language=language,
+            timestamp=call_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            duration_sec=round(duration_sec, 1),
+            turns=turns,
+        ),
+        summary=Summary(**structured),
+        model_used=ModelUsed(stt=f"faster-whisper-{model_size}", llm=llm_model),
+    )
+
+    output_json = message.model_dump_json(exclude_none=True, indent=2)
+
+    summary_path = audio_path.with_name(audio_path.stem + "_call_summary.json")
+    summary_path.write_text(output_json, encoding="utf-8")
+
+    # dashboard로의 실시간 전송(WebSocket)은 아직 미연동 상태다. 연동 전까지는
+    # 최종 페이로드를 터미널에 그대로 출력해, 통신 계층만 나중에 갈아 끼울 수 있게 한다.
+    print("\n=== feature/dashboard로 전송될 JSON (현재는 터미널 출력만, 통신 미연동) ===")
+    print(output_json)
+    print(f"\nJSON 파일 저장: {summary_path}")
 
 
 def main() -> None:
@@ -120,8 +170,12 @@ def main() -> None:
         default="auto",
         help="연산 정밀도 (기본: auto - 장치에 맞는 값을 자동 선택. 예: float16, int8, float32)",
     )
-    parser.add_argument("--summarize", action="store_true", help="변환된 텍스트를 로컬 LLM(Ollama)으로 요약")
-    parser.add_argument("--llm-model", default="qwen3:14b", help="요약에 사용할 Ollama 모델 (기본: qwen3:14b)")
+    parser.add_argument(
+        "--summarize",
+        action="store_true",
+        help="실시간 음성 필터링 + SBAR 구조화를 수행해 feature/dashboard 전달용 JSON을 생성",
+    )
+    parser.add_argument("--llm-model", default="qwen3:14b", help="구조화에 사용할 Ollama 모델 (기본: qwen3:14b)")
     args = parser.parse_args()
 
     if not args.audio.exists():
