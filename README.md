@@ -16,6 +16,7 @@
 - **`transcribe.py`** — 로컬 오디오 파일을 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)로 텍스트 변환하고, `--summarize` 옵션을 주면 실시간 음성 필터링 + SBAR 구조화까지 수행해 JSON을 출력하는 CLI 도구
 - **`filtering.py`** — 발화 턴 단위로 의료 관련 여부를 분류하는 경량 분류기 (아래 "실시간 음성 필터링" 참고)
 - **`summarizer.py`** — 필터링된 텍스트를 [Ollama](https://ollama.com)에 붙어 있는 로컬 LLM으로 SBAR 형태 JSON으로 구조화
+- **`ollama_bootstrap.py`** — 오디오 파일만 있으면 되도록 Ollama 설치·서버 실행·모델 pull까지 자동 처리
 - **`schema.py`** — feature/dashboard의 `CallSummaryMessage`와 1:1로 대응하는 pydantic 출력 스키마
 
 > `transcribe.py`는 여전히 로컬 파일 기반 프로토타입이다 (실시간 스트림 입력은 추후 전환 예정). 다만 출력 포맷은 아래 "입출력 데이터 포맷"에 정의된 확정 JSON 스키마를 그대로 따른다.
@@ -63,8 +64,21 @@ CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM + KM-BERT)" 항목을
 **구조화** (`summarizer.py`)
 - 필터링된 텍스트를 Ollama(`/api/generate`, `format: "json"`)에 전달해 `patient` / `mechanism`
   / `symptoms` / `treatment` / `severity_tag` / `required_department` 필드를 가진 JSON으로
-  구조화한다. LLM 응답이 JSON 파싱에 실패하거나 Ollama가 꺼져 있으면 예외를 던지고 파이프라인은
-  중단된다 (원본 텍스트 파일은 이미 저장된 상태라 데이터 손실은 없음).
+  구조화한다. LLM 응답이 JSON 파싱에 실패하면 예외를 던지고 파이프라인은 중단된다 (원본 텍스트
+  파일은 이미 저장된 상태라 데이터 손실은 없음).
+
+**오디오 파일만 있으면 끝까지 자동 실행** (`ollama_bootstrap.py`)
+- 사용자가 Ollama를 미리 설치·실행·pull해둘 필요가 없다. `summarizer.py`가 LLM을 호출하기
+  직전에 `ensure_ollama_ready()`를 불러서: (1) `ollama` 바이너리가 없으면 Homebrew로 설치,
+  (2) 서버가 안 떠 있으면 `ollama serve`를 백그라운드로 실행, (3) 지정한 모델이 없으면
+  `ollama pull`까지 전부 자동으로 처리한다.
+- macOS + Homebrew 환경만 자동 설치를 지원한다 (임의의 설치 스크립트를 내려받아 실행하는 건
+  위험해서 배제). Homebrew가 없는 환경에서는 안내 메시지만 띄우고 수동 설치를 요구한다.
+- 이 저장소 개발 환경에서 실제로 검증함: Ollama 미설치 상태에서 `brew install ollama` →
+  서버 자동 기동 → `qwen2.5:0.5b`(스모크 테스트용 소형 모델) 자동 pull → 실제 LLM 호출로
+  SBAR JSON 생성까지 전 과정이 라이브로 성공했다. (`qwen2.5:0.5b`는 크기가 작아 추출 품질은
+  낮음 — 파이프라인 동작 검증용이고, 실제 사용 시엔 `--llm-model`로 `qwen3:14b` 등 정식
+  모델을 지정할 것.)
 
 **알려진 한계**
 - 화자 분리(diarization)가 아직 없어 모든 턴의 `speaker`는 `"미분리"`로 고정되어 있다.
@@ -73,8 +87,8 @@ CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM + KM-BERT)" 항목을
 - 통신(WebSocket으로 dashboard에 실시간 전송)은 아직 미구현이다. 지금은 최종 JSON을 터미널에
   출력하고 `*_call_summary.json` 파일로도 저장해두는 것까지만 한다 — 통신 계층을 붙일 때
   이 JSON을 그대로 보내면 된다.
-- Ollama가 설치되지 않은 환경(이 저장소를 만든 개발 환경 포함)에서는 `summarizer.py`의 실제
-  LLM 호출을 라이브로 검증하지 못했다. 필터링~JSON 조립까지는 mock으로 dry-run 검증 완료.
+- macOS + Homebrew가 아닌 환경(Windows, Linux, Homebrew 미설치)에서는 Ollama 자동 설치가
+  동작하지 않는다. 이 경우 [ollama.com](https://ollama.com)에서 직접 설치해야 한다.
 
 ## 입출력 데이터 포맷
 
@@ -170,12 +184,11 @@ python transcribe.py data/파일명.wav --summarize
 | `--summarize` | (off) | 실시간 음성 필터링 + SBAR 구조화를 수행해 JSON 생성 |
 | `--llm-model` | `qwen3:14b` | 구조화에 사용할 Ollama 모델 이름 |
 
-`--summarize`를 쓰려면 먼저 Ollama 서버가 떠 있어야 합니다 (필터링 단계 자체는 Ollama 없이도
-동작하지만, 이어지는 SBAR 구조화 단계에서 필요).
-```bash
-ollama serve
-ollama pull qwen3:14b   # 처음 한 번만
-```
+`--summarize`를 쓸 때 Ollama를 미리 설치·실행·pull해둘 필요는 없다 (macOS + Homebrew 기준).
+`ollama_bootstrap.py`가 필요한 걸 자동으로 준비한다 — 최초 1회는 Ollama 설치(brew) +
+`--llm-model`로 지정한 모델 다운로드 때문에 시간이 걸릴 수 있다. 자동 설치를 원치 않으면
+미리 `ollama serve` / `ollama pull <모델명>`을 직접 실행해두면 그대로 재사용한다.
+
 분류기(`filtering.py`)가 처음 실행될 때는 `paraphrase-multilingual-MiniLM-L12-v2` 모델을
 Hugging Face에서 자동 다운로드한다 (약 470MB, 최초 1회).
 
@@ -186,6 +199,7 @@ voice/
 ├── README.md
 ├── requirements.txt
 ├── filtering.py
+├── ollama_bootstrap.py
 ├── schema.py
 ├── summarizer.py
 ├── transcribe.py

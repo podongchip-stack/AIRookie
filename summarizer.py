@@ -10,6 +10,8 @@ import json
 import urllib.error
 import urllib.request
 
+from ollama_bootstrap import OllamaBootstrapError, ensure_ollama_ready
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 STRUCTURE_SYSTEM_PROMPT = """\
@@ -28,28 +30,20 @@ STRUCTURE_SYSTEM_PROMPT = """\
 """
 
 
-class OllamaUnavailableError(RuntimeError):
-    pass
-
-
 class StructuringError(RuntimeError):
     pass
 
 
-def is_ollama_running(base_url: str = "http://localhost:11434") -> bool:
-    try:
-        urllib.request.urlopen(base_url, timeout=2)
-        return True
-    except urllib.error.URLError:
-        return False
-
-
 def structure_call_summary(filtered_text: str, llm_model: str, timeout: int = 300) -> dict:
-    """filtered_text -> {patient, mechanism, symptoms, treatment, severity_tag, required_department}"""
-    if not is_ollama_running():
-        raise OllamaUnavailableError(
-            "Ollama 서버가 실행 중이 아닙니다. 'ollama serve'를 먼저 실행한 뒤 다시 시도하세요."
-        )
+    """filtered_text -> {patient, mechanism, symptoms, treatment, severity_tag, required_department}
+
+    오디오 파일만 있으면 이 함수 호출만으로 끝까지 처리되도록, Ollama 설치/서버
+    실행/모델 pull이 안 되어 있으면 ensure_ollama_ready()가 전부 자동으로 준비한다.
+    """
+    try:
+        ensure_ollama_ready(llm_model)
+    except OllamaBootstrapError as e:
+        raise StructuringError(str(e)) from e
 
     payload = json.dumps(
         {

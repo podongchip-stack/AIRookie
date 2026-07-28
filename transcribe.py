@@ -8,7 +8,7 @@ from faster_whisper import WhisperModel
 
 from filtering import MedicalRelevanceFilter
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
-from summarizer import OllamaUnavailableError, StructuringError, structure_call_summary
+from summarizer import StructuringError, structure_call_summary
 
 # 화자 분리(diarization)는 아직 구현되어 있지 않다. 실제 화자 분리가 붙기 전까지는
 # 모든 발화 턴에 동일한 placeholder를 채운다 (README "알려진 제약사항" 참고).
@@ -125,7 +125,7 @@ def build_and_emit_call_summary(
     print(f"\nSBAR 구조화 중... ({llm_model})")
     try:
         structured = structure_call_summary(filtered_text, llm_model)
-    except (OllamaUnavailableError, StructuringError) as e:
+    except StructuringError as e:
         print(f"\n구조화 실패: {e}", file=sys.stderr)
         return
 
