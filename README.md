@@ -1,26 +1,46 @@
-# voiceSummation
+**출력**
+```json
+{
+  "transcript": {
+    "raw_text": "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다... A병원: 네 잠시만요...",
+    "filtered_text": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란.",
+    "language": "ko",
+    "timestamp": "2026-07-28T14:32:31Z",
+    "duration_sec": 42.3
+  },
+  "summary": {
+    "patient": "50대 남성",
+    "mechanism": "교통사고 · 흉부 충격",
+    "symptoms": ["의식 저하", "호흡 곤란"],
+    "treatment": ["산소 공급", "지혈 완료"],
+    "severity_tag": "high"
+  },
+  "source": "ai",
+  "model_used": {
+    "stt": "faster-whisper-large-v3",
+    "llm": "qwen3:14b"
+  }
+}
+```
 
-유튜브 오디오 다운로드 → 음성 파일을 텍스트로 변환 → 로컬 LLM으로 요약까지 이어지는 파이프라인입니다.
-
-- **`youtube_downloader.py`** — 유튜브 URL을 입력하면 오디오만 추출해 `data/` 폴더에 저장하는 간단한 GUI 도구 (tkinter)
-- **`transcribe.py`** — 로컬 오디오 파일을 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)로 텍스트 변환하고, 옵션으로 [Ollama](https://ollama.com)에 붙어 있는 로컬 LLM으로 요약까지 수행하는 CLI 도구
-
-## 사용 모델
-
-| 용도 | 모델 | Hugging Face |
+| 필드 | 타입 | 설명 |
 |---|---|---|
-| 음성 → 텍스트 변환 (STT) | Whisper large-v3 (CTranslate2 변환판, faster-whisper 기본값) | [Systran/faster-whisper-large-v3](https://huggingface.co/Systran/faster-whisper-large-v3) |
-| 텍스트 요약 (LLM, Ollama `qwen3:14b`) | Qwen3-14B | [Qwen/Qwen3-14B](https://huggingface.co/Qwen/Qwen3-14B) |
+| `transcript.raw_text` | string | STT 원본 전문. 필터링 전 전체 발화, 삭제하지 않고 보존 |
+| `transcript.filtered_text` | string | 실시간 음성 필터링 처리 후 남은 텍스트. 요약의 실제 입력값 |
+| `transcript.language` | string | 언어 코드 |
+| `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 |
+| `transcript.duration_sec` | number | 통화 길이(초) |
+| `summary.patient` | string | 환자 인적사항 요약 |
+| `summary.mechanism` | string | 사고 기전 |
+| `summary.symptoms` | string[] | 증상 목록 |
+| `summary.treatment` | string[] | 처치 목록 |
+| `summary.severity_tag` | `"high"` \| `"medium"` \| `"low"` | 중증도 단계 |
+| `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
+| `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명 |
 
-`--model`, `--llm-model` 옵션으로 다른 크기/모델로 바꿀 수 있습니다.
+바이탈 필드는 포함하지 않는다 (feature/vital 브랜치에서 별도 정의, 아직 미정).
 
-## 요구사항
-
-- Python 3.10 이상
-- (요약 기능을 쓰려면) [Ollama](https://ollama.com) 설치 및 원하는 모델 pull
-- (선택) NVIDIA GPU + CUDA 12.x — 없으면 자동으로 CPU로 동작합니다
-
-## 설치
+## 실행 방법
 
 ```bash
 python -m venv .venv
@@ -28,26 +48,19 @@ python -m venv .venv
 .venv\Scripts\activate
 # macOS / Linux
 source .venv/bin/activate
-
 pip install -r requirements.txt
 ```
 
-## 사용법
-
-### 1. 유튜브 오디오 다운로드 (선택)
-
+**1. 유튜브 오디오 다운로드 (선택)**
 ```bash
 python youtube_downloader.py
 ```
-
 GUI 창에서 URL을 입력하고 다운로드하면 `data/` 폴더에 오디오 파일이 저장됩니다.
 
-### 2. 음성 → 텍스트 변환 + 요약
-
+**2. 음성 → 텍스트 변환 + 요약**
 ```bash
 python transcribe.py data/파일명.wav --summarize
 ```
-
 요약 없이 텍스트 변환만 하려면 `--summarize` 옵션을 빼면 됩니다.
 
 | 옵션 | 기본값 | 설명 |
@@ -60,21 +73,26 @@ python transcribe.py data/파일명.wav --summarize
 | `--llm-model` | `qwen3:14b` | 요약에 사용할 Ollama 모델 이름 |
 
 요약 기능을 쓰려면 먼저 Ollama 서버가 떠 있어야 합니다.
-
 ```bash
 ollama serve
 ollama pull qwen3:14b   # 처음 한 번만
 ```
 
-실행 결과로 원본 오디오와 같은 위치에 `파일명.txt`(변환된 텍스트)와 `파일명_summary.txt`(요약, `--summarize` 사용 시)가 생성됩니다.
+## 폴더 구조
+```
+voice/
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── transcribe.py
+└── youtube_downloader.py
+```
 
-## GPU / CPU / Mac 참고사항
+## 알려진 제약사항 / TODO
 
-- `--device auto`(기본값)는 CUDA GPU가 있으면 자동으로 사용하고, 없으면 CPU로 동작합니다.
-- macOS(Apple Silicon 포함)에서는 faster-whisper의 백엔드인 CTranslate2가 Metal/MPS GPU 가속을 지원하지 않아 항상 CPU로 동작합니다. `large-v3`는 느릴 수 있으니 `base`나 `small` 같은 작은 모델을 권장합니다.
-- GPU를 사용하려면 NVIDIA CUDA 12.x 및 cuDNN 9가 설치되어 있어야 합니다.
+- macOS(Apple Silicon 포함)에서는 CTranslate2가 Metal/MPS GPU 가속을 지원하지 않아 항상 CPU로 동작. `large-v3`는 느릴 수 있으니 `base`나 `small` 권장
+- GPU 사용 시 NVIDIA CUDA 12.x 및 cuDNN 9 필요
+- `data/` 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음
+- 유튜브 콘텐츠 다운로드 시 저작권 및 유튜브 서비스 약관 준수 책임은 사용자에게 있음. 본인 소유이거나 다운로드가 허용된 콘텐츠에만 사용
 
-## 주의사항
-
-- `data/` 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않습니다.
-- 유튜브 콘텐츠 다운로드 시 저작권 및 유튜브 서비스 약관을 준수할 책임은 사용자에게 있습니다. 본인 소유이거나 다운로드가 허용된 콘텐츠에만 사용하세요.
+## 추가사항
