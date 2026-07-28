@@ -1,3 +1,41 @@
+# feature/voice — 유튜브/음성 파일 STT 변환 및 로컬 LLM 요약 파이프라인
+
+## 담당자
+
+- 이름:
+- 역할: (리드 / 서브)
+
+## 이 브랜치가 하는 일
+
+유튜브 오디오 다운로드 → 음성 파일을 텍스트로 변환 → 로컬 LLM으로 요약까지 이어지는 파이프라인입니다.
+
+- **`youtube_downloader.py`** — 유튜브 URL을 입력하면 오디오만 추출해 `data/` 폴더에 저장하는 간단한 GUI 도구 (tkinter)
+- **`transcribe.py`** — 로컬 오디오 파일을 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)로 텍스트 변환하고, 옵션으로 [Ollama](https://ollama.com)에 붙어 있는 로컬 LLM으로 요약까지 수행하는 CLI 도구
+
+> 현재 `transcribe.py`는 STT 처리 속도 검증을 위한 프로토타입이며, 아래 확정된 JSON 출력 포맷에 맞춘 구현은 추가 작업 예정이다.
+
+## 사용한 AI / 모델
+
+| 구분 | 모델명 | 용도 | 비고 |
+|---|---|---|---|
+| STT | Whisper large-v3 (CTranslate2 변환판, faster-whisper 기본값) — [Systran/faster-whisper-large-v3](https://huggingface.co/Systran/faster-whisper-large-v3) | 음성 → 텍스트 변환 | `--model` 옵션으로 크기 변경 가능 |
+| 정보 구조화 | Qwen3-14B (Ollama `qwen3:14b`) — [Qwen/Qwen3-14B](https://huggingface.co/Qwen/Qwen3-14B) | 텍스트 요약 | `--llm-model` 옵션으로 변경 가능 |
+
+> CLAUDE.md의 "핵심 AI 활용 원칙" 표 기준으로, 이 기능이 AI 처리 영역인지 규칙 기반 영역인지 명시:
+> - [x] AI 처리
+> - [ ] 규칙 기반
+
+## 개발 환경 / 언어
+
+- 언어: Python 3.10 이상
+- 주요 라이브러리·프레임워크: faster-whisper, Ollama, tkinter
+- 실행 환경: 로컬 (GPU 있으면 CUDA 12.x 가속, 없으면 CPU. macOS는 CTranslate2가 Metal/MPS 미지원으로 항상 CPU 동작)
+
+## 입출력 데이터 포맷
+
+**입력**
+오디오 파일 (.wav 등) — 추후 실시간 스트림 입력으로 전환 예정
+
 **출력**
 ```json
 {
