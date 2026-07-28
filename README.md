@@ -30,7 +30,7 @@
 
 ## 개발 환경 / 언어
 
-- 언어: Python 3.11 (`.python-version` 참고)
+- 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
 - 주요 라이브러리·프레임워크: faster-whisper, Ollama, tkinter, torch/transformers(문장 분류·SBAR 구조화용), pydantic
 - 실행 환경: 로컬 (GPU 있으면 CUDA 12.x 가속, 없으면 CPU. macOS는 CTranslate2가 Metal/MPS 미지원으로 항상 CPU 동작)
 
@@ -127,7 +127,6 @@ ollama pull qwen3:14b   # 처음 한 번만
 ```
 voice/
 ├── .gitignore
-├── .python-version
 ├── README.md
 ├── requirements.txt
 ├── requirements-lock.txt
