@@ -32,6 +32,11 @@ venv/
 node_modules/
 dist/
 build/
+.next/
+.turbo/
+styled-system/
+next-env.d.ts
+*.tsbuildinfo
 
 # Misc
 *.tmp
