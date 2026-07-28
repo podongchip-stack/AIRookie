@@ -1,2 +1,16 @@
+# STT: 음성 → 텍스트 변환 (AI 처리)
 faster-whisper==1.2.1
-yt-dlp==2026.7.4
+
+# 유튜브 오디오 다운로드 (개발/테스트용 데이터 수집 도구)
+yt-dlp==2025.10.14
+
+# 실시간 음성 필터링: 의료 관련 문장 분류(경량 분류기 / KM-BERT) + sLLM SBAR 구조화용 (AI 처리)
+torch==2.8.0
+transformers==4.57.6
+sentencepiece==0.2.2
+
+# 통화 요약 출력 JSON 스키마 검증 (feature/dashboard 전달 포맷 고정)
+pydantic==2.13.4
+
+# Ollama 주소, 모델명 등 환경 변수 관리
+python-dotenv==1.2.1
