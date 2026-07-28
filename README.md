@@ -89,12 +89,8 @@ conda activate rookie
 pip install -r requirements.txt
 ```
 
-`requirements.txt`는 용도별 설명이 달린 직접 의존성 목록이다. 정확히 같은 버전 조합으로
-재현하려면 하위 의존성까지 고정된 `requirements-lock.txt`를 대신 설치한다.
-
-```bash
-pip install -r requirements-lock.txt
-```
+`requirements.txt`는 직접 설치 대상(용도별 설명 포함)과 하위 의존성까지 모두 버전이
+고정되어 있어, 위 명령 한 번으로 다른 팀원도 동일한 버전 조합을 그대로 재현할 수 있다.
 
 **1. 유튜브 오디오 다운로드 (선택)**
 ```bash
@@ -129,7 +125,6 @@ voice/
 ├── .gitignore
 ├── README.md
 ├── requirements.txt
-├── requirements-lock.txt
 ├── transcribe.py
 └── youtube_downloader.py
 ```
