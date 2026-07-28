@@ -33,6 +33,10 @@ node_modules/
 dist/
 build/
 
+# Data
+data/
+
+
 # Misc
 *.tmp
 .cache/
