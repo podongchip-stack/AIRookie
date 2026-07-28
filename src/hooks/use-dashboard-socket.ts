@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   mockCallSummary,
+  mockHospitalCapacity,
   mockHospitalMatch,
   mockVitals,
 } from "@/lib/mock-data";
@@ -16,6 +17,7 @@ const INITIAL_STATE: DashboardState = {
   callSummary: null,
   vitals: null,
   hospitalMatch: null,
+  hospitalCapacity: null,
 };
 
 // voice/vital 브랜치는 아직 WS 서버가 없다. NEXT_PUBLIC_DASHBOARD_WS_URL이
@@ -32,6 +34,9 @@ function applyInboundMessage(
   }
   if ("hospitals" in message) {
     return { ...state, hospitalMatch: message };
+  }
+  if ("specialist_on_call" in message) {
+    return { ...state, hospitalCapacity: message };
   }
   return state;
 }
@@ -62,6 +67,13 @@ export function useDashboardSocket() {
           () =>
             setState((prev) => applyInboundMessage(prev, mockHospitalMatch)),
           2200,
+        ),
+        setTimeout(
+          () =>
+            setState((prev) =>
+              applyInboundMessage(prev, mockHospitalCapacity),
+            ),
+          2800,
         ),
       ];
       return () => timers.forEach(clearTimeout);

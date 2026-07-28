@@ -1,4 +1,39 @@
-import { defineConfig, defineRecipe } from "@pandacss/dev";
+import { defineConfig, defineKeyframes, defineRecipe } from "@pandacss/dev";
+
+// 병원 대시보드 시안(HTML 목업) 팔레트를 그대로 raw 토큰으로 옮긴다.
+const brandColors = {
+  bg: { value: "#F4F7FA" },
+  surface: { value: "#FFFFFF" },
+  surfaceSub: { value: "#F8FAFC" },
+  line: { value: "#E2E8EF" },
+  lineStrong: { value: "#CBD5E1" },
+  ink: { value: "#16222E" },
+  ink2: { value: "#55697C" },
+  ink3: { value: "#66778A" },
+  navy: { value: "#1E5FA8" },
+  navySoft: { value: "#EAF2FB" },
+  mint: { value: "#0E9F6E" },
+  mintSoft: { value: "#E6F6F0" },
+  coral: { value: "#D93F35" },
+  coralSoft: { value: "#FDECEA" },
+  amberBrand: { value: "#B87514" },
+  amberSoft: { value: "#FCF3E3" },
+} as const;
+
+const keyframes = defineKeyframes({
+  beat: {
+    "0%, 100%": { opacity: 1, transform: "scale(1)" },
+    "50%": { opacity: 0.35, transform: "scale(.8)" },
+  },
+  sweep: {
+    from: { strokeDashoffset: 620 },
+    to: { strokeDashoffset: 0 },
+  },
+  nudge: {
+    "0%, 100%": { transform: "translateX(0)" },
+    "50%": { transform: "translateX(7px)" },
+  },
+});
 
 // 배지류는 variant 값이 런타임 prop으로 들어오므로, 동적 토큰 문자열 대신
 // recipe로 정의해 모든 조합의 CSS가 빌드 타임에 정적으로 생성되도록 한다.
@@ -6,19 +41,34 @@ const badgeBase = {
   display: "inline-flex",
   alignItems: "center",
   borderRadius: "full",
-  paddingX: "2.5",
-  paddingY: "0.5",
+  paddingX: "3",
+  paddingY: "1",
   fontSize: "xs",
   fontWeight: "medium",
 } as const;
 
 const sourceBadgeRecipe = defineRecipe({
   className: "sourceBadge",
-  base: badgeBase,
+  base: {
+    ...badgeBase,
+    gap: "1.5",
+    _before: {
+      content: '""',
+      width: "1.5",
+      height: "1.5",
+      borderRadius: "sm",
+      backgroundColor: "currentcolor",
+    },
+  },
   variants: {
     source: {
       ai: { color: "source.ai", backgroundColor: "source.ai.subtle" },
-      rule: { color: "source.rule", backgroundColor: "source.rule.subtle" },
+      rule: {
+        color: "source.rule",
+        backgroundColor: "source.rule.subtle",
+        borderWidth: "1px",
+        borderColor: "line",
+      },
     },
   },
 });
@@ -76,6 +126,15 @@ export default defineConfig({
   // Useful for theme customization
   theme: {
     extend: {
+      keyframes,
+      tokens: {
+        colors: brandColors,
+        radii: {
+          chip: { value: "6px" },
+          field: { value: "10px" },
+          panel: { value: "14px" },
+        },
+      },
       recipes: {
         sourceBadge: sourceBadgeRecipe,
         severityBadge: severityBadgeRecipe,
@@ -83,37 +142,37 @@ export default defineConfig({
       },
       semanticTokens: {
         colors: {
-          // 브랜드 (골든링크 강조색 — 이송 승인 등 핵심 액션)
+          // 브랜드 (골든링크 강조색 — 이송 승인, 의료진 판단 영역 등 핵심 액션)
           brand: {
-            DEFAULT: { value: "{colors.amber.500}" },
-            emphasis: { value: "{colors.amber.600}" },
+            DEFAULT: { value: "{colors.amberBrand}" },
+            emphasis: { value: "#9C6110" },
           },
           // 정보 출처 구분: AI 처리 vs 규칙 기반 (CLAUDE.md 필수 요구사항)
           source: {
-            ai: { value: "{colors.violet.600}" },
-            "ai.subtle": { value: "{colors.violet.100}" },
-            rule: { value: "{colors.blue.600}" },
-            "rule.subtle": { value: "{colors.blue.100}" },
+            ai: { value: "{colors.navy}" },
+            "ai.subtle": { value: "{colors.navySoft}" },
+            rule: { value: "{colors.ink2}" },
+            "rule.subtle": { value: "{colors.surfaceSub}" },
           },
           // 중증도 (severity_tag: high | medium | low)
           severity: {
-            high: { value: "{colors.red.600}" },
-            "high.subtle": { value: "{colors.red.100}" },
-            medium: { value: "{colors.orange.600}" },
-            "medium.subtle": { value: "{colors.orange.100}" },
-            low: { value: "{colors.green.600}" },
-            "low.subtle": { value: "{colors.green.100}" },
+            high: { value: "{colors.coral}" },
+            "high.subtle": { value: "{colors.coralSoft}" },
+            medium: { value: "{colors.amberBrand}" },
+            "medium.subtle": { value: "{colors.amberSoft}" },
+            low: { value: "{colors.mint}" },
+            "low.subtle": { value: "{colors.mintSoft}" },
           },
           // 병원 응답 상태 (pending | approved | rejected | confirmed)
           hospitalStatus: {
-            pending: { value: "{colors.gray.500}" },
-            "pending.subtle": { value: "{colors.gray.100}" },
-            approved: { value: "{colors.blue.600}" },
-            "approved.subtle": { value: "{colors.blue.100}" },
-            rejected: { value: "{colors.red.600}" },
-            "rejected.subtle": { value: "{colors.red.100}" },
-            confirmed: { value: "{colors.green.600}" },
-            "confirmed.subtle": { value: "{colors.green.100}" },
+            pending: { value: "{colors.ink3}" },
+            "pending.subtle": { value: "{colors.surfaceSub}" },
+            approved: { value: "{colors.navy}" },
+            "approved.subtle": { value: "{colors.navySoft}" },
+            rejected: { value: "{colors.coral}" },
+            "rejected.subtle": { value: "{colors.coralSoft}" },
+            confirmed: { value: "{colors.mint}" },
+            "confirmed.subtle": { value: "{colors.mintSoft}" },
           },
         },
       },

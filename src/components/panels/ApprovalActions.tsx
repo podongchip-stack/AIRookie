@@ -1,7 +1,11 @@
 "use client";
 
 import { css } from "styled-system/css";
-import { primaryButtonStyle, secondaryButtonStyle } from "@/components/ui/button-styles";
+import {
+  dangerButtonStyle,
+  mintButtonStyle,
+  primaryButtonStyle,
+} from "@/components/ui/button-styles";
 import type { ApprovalAction, DashboardRole } from "@/types/dashboard";
 
 interface ApprovalActionsProps {
@@ -26,19 +30,19 @@ export function ApprovalActions({ role, hospitalId, onAction }: ApprovalActionsP
 
   if (role === "hospital") {
     return (
-      <div className={css({ display: "flex", gap: "2", justifyContent: "flex-end" })}>
+      <div className={css({ display: "flex", gap: "3", justifyContent: "flex-end" })}>
         <button
           type="button"
           disabled={disabled}
-          className={secondaryButtonStyle}
+          className={dangerButtonStyle}
           onClick={() => dispatch("hospital_reject", "hospital")}
         >
-          병원 불가
+          불가
         </button>
         <button
           type="button"
           disabled={disabled}
-          className={primaryButtonStyle}
+          className={mintButtonStyle}
           onClick={() => dispatch("hospital_approve", "hospital")}
         >
           병원 승인

@@ -17,7 +17,7 @@ export function DashboardShell({
   children: ReactNode;
 }) {
   return (
-    <div className={css({ minHeight: "100vh", backgroundColor: "gray.50" })}>
+    <div className={css({ minHeight: "100vh", backgroundColor: "bg" })}>
       <header
         className={css({
           display: "flex",
@@ -25,8 +25,8 @@ export function DashboardShell({
           justifyContent: "space-between",
           padding: "4",
           borderBottomWidth: "1px",
-          borderColor: "gray.200",
-          backgroundColor: "white",
+          borderColor: "line",
+          backgroundColor: "surface",
         })}
       >
         <h1 className={css({ fontSize: "lg", fontWeight: "bold" })}>
@@ -36,7 +36,7 @@ export function DashboardShell({
           className={css({
             fontSize: "xs",
             fontWeight: "medium",
-            color: connectionMode === "live" ? "hospitalStatus.confirmed" : "gray.400",
+            color: connectionMode === "live" ? "hospitalStatus.confirmed" : "ink3",
           })}
         >
           {connectionMode === "live" ? "● 실시간 연동" : "○ 목데이터 모드"}
