@@ -33,6 +33,18 @@ node_modules/
 dist/
 build/
 
+# Next.js
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Panda CSS
+styled-system/
+
+# Docs (새로 추가되는 md는 기본적으로 push 대상에서 제외. 이미 추적 중인 기존 md는 영향 없음)
+*.md
+
 # Misc
 *.tmp
 .cache/
