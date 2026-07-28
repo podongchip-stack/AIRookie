@@ -28,7 +28,7 @@
 
 ## 개발 환경 / 언어
 
-- 언어: Python 3.11 (`.python-version` 참고)
+- 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
 - 주요 라이브러리·프레임워크: Flask, Flask-SocketIO(WebSocket), requests(hv1/hvec/hv2 API 호출)
 - 실행 환경: 로컬
 
@@ -127,22 +127,16 @@ conda activate <가상환경명>
 pip install -r requirements.txt
 ```
 
-`requirements.txt`는 용도별 설명이 달린 직접 의존성 목록이다. 정확히 같은 버전 조합으로
-재현하려면 하위 의존성까지 고정된 `requirements-lock.txt`를 대신 설치한다.
-
-```bash
-pip install -r requirements-lock.txt
-```
+`requirements.txt`는 직접 설치 대상(용도별 설명 포함)과 하위 의존성까지 모두 버전이
+고정되어 있어, 위 명령 한 번으로 다른 팀원도 동일한 버전 조합을 그대로 재현할 수 있다.
 
 ## 폴더 구조
 
 ```
 vital/
 ├── .gitignore
-├── .python-version
 ├── README.md
-├── requirements.txt
-└── requirements-lock.txt
+└── requirements.txt
 ```
 
 ## 알려진 제약사항 / TODO
