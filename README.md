@@ -30,8 +30,8 @@
 
 ## 개발 환경 / 언어
 
-- 언어: Python 3.10 이상
-- 주요 라이브러리·프레임워크: faster-whisper, Ollama, tkinter
+- 언어: Python 3.11 (`.python-version` 참고)
+- 주요 라이브러리·프레임워크: faster-whisper, Ollama, tkinter, torch/transformers(문장 분류·SBAR 구조화용), pydantic
 - 실행 환경: 로컬 (GPU 있으면 CUDA 12.x 가속, 없으면 CPU. macOS는 CTranslate2가 Metal/MPS 미지원으로 항상 CPU 동작)
 
 ## 입출력 데이터 포맷
@@ -84,12 +84,16 @@
 ## 실행 방법
 
 ```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
+conda create -n rookie python=3.11
+conda activate rookie
 pip install -r requirements.txt
+```
+
+`requirements.txt`는 용도별 설명이 달린 직접 의존성 목록이다. 정확히 같은 버전 조합으로
+재현하려면 하위 의존성까지 고정된 `requirements-lock.txt`를 대신 설치한다.
+
+```bash
+pip install -r requirements-lock.txt
 ```
 
 **1. 유튜브 오디오 다운로드 (선택)**
@@ -123,8 +127,10 @@ ollama pull qwen3:14b   # 처음 한 번만
 ```
 voice/
 ├── .gitignore
+├── .python-version
 ├── README.md
 ├── requirements.txt
+├── requirements-lock.txt
 ├── transcribe.py
 └── youtube_downloader.py
 ```
