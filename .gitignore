@@ -41,6 +41,9 @@ next-env.d.ts
 # Data
 data/
 
+# 실제로 쓰지 않는 로컬 전용 도구 (로컬에는 남겨두되 저장소에는 올리지 않음)
+youtube_downloader.py
+
 
 # Misc
 *.tmp

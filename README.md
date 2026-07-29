@@ -10,9 +10,8 @@
 
 ## 이 브랜치가 하는 일
 
-유튜브 오디오 다운로드 → 음성 파일을 텍스트로 변환 → 실시간 음성 필터링(의료 관련 문장 분류) → SBAR 구조화 → feature/dashboard 전달용 JSON 생성까지 이어지는 파이프라인입니다.
+음성 파일을 텍스트로 변환 → 실시간 음성 필터링(의료 관련 문장 분류) → SBAR 구조화 → feature/dashboard 전달용 JSON 생성까지 이어지는 파이프라인입니다.
 
-- **`youtube_downloader.py`** — 유튜브 URL을 입력하면 오디오만 추출해 `data/origin_data/` 폴더에 저장하는 간단한 GUI 도구 (tkinter)
 - **`add_noise.py`** — 오디오에 화이트 노이즈를 섞어 강건성 테스트용 파일을 만드는 도구
 - **`transcribe.py`** — 로컬 오디오 파일을 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)로 텍스트 변환하고, `--summarize` 옵션을 주면 실시간 음성 필터링 + SBAR 구조화까지 수행해 JSON을 출력하는 CLI 도구
 - **`filtering.py`** — 발화 턴 단위로 의료 관련 여부를 분류하는 경량 분류기 (아래 "실시간 음성 필터링" 참고)
@@ -168,11 +167,8 @@ pip install -r requirements.txt
 `requirements.txt`는 직접 설치 대상(용도별 설명 포함)과 하위 의존성까지 모두 버전이
 고정되어 있어, 위 명령 한 번으로 다른 팀원도 동일한 버전 조합을 그대로 재현할 수 있다.
 
-**1. 유튜브 오디오 다운로드 (선택)**
-```bash
-python youtube_downloader.py
-```
-GUI 창에서 URL을 입력하고 다운로드하면 `data/origin_data/` 폴더에 오디오 파일이 저장됩니다.
+**1. 테스트용 오디오 준비**
+`data/origin_data/`에 처리할 오디오 파일(.wav, .mp3 등)을 직접 넣으면 된다.
 
 **1-1. 소음 합성 테스트 데이터 만들기 (선택)**
 ```bash
@@ -222,12 +218,13 @@ voice/
 ├── schema.py
 ├── summarizer.py
 ├── transcribe.py
-├── youtube_downloader.py
 └── data/                  (.gitignore로 저장소에는 안 올라감)
-    ├── origin_data/       원본 음성 파일 (유튜브 다운로드·직접 추가·노이즈 합성본)
+    ├── origin_data/       원본 음성 파일 (직접 추가·노이즈 합성본)
     ├── origin_text/       STT 원문 텍스트 (.txt)
     └── summary_text/      SBAR 구조화 JSON (*_call_summary.json)
 ```
+
+`youtube_downloader.py`는 실제로 쓰이지 않아 저장소에서 뺐다 (`.gitignore` 참고, 로컬에는 남아있음).
 
 ## 알려진 제약사항 / TODO
 
