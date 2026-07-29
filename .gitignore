@@ -38,6 +38,9 @@ styled-system/
 next-env.d.ts
 *.tsbuildinfo
 
+# Data
+data/
+
 # Misc
 *.tmp
 .cache/
