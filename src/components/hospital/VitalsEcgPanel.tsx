@@ -23,7 +23,7 @@ function VitalRow({
         alignItems: "baseline",
         justifyContent: "space-between",
         gap: "2.5",
-        paddingY: "3",
+        paddingY: "2.5",
         borderBottomWidth: "1px",
         borderColor: "line",
         _last: { borderBottomWidth: 0 },

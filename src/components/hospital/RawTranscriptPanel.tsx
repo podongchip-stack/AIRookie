@@ -7,7 +7,7 @@ function TurnItem({ turn }: { turn: TranscriptTurn }) {
   return (
     <div
       className={css({
-        paddingY: "2.5",
+        paddingY: "2",
         borderBottomWidth: "1px",
         borderStyle: "dashed",
         borderColor: "line",

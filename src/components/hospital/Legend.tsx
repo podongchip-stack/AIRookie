@@ -11,17 +11,12 @@ export function Legend() {
       className={css({
         display: "flex",
         alignItems: "center",
-        gap: "4",
+        gap: "3.5",
         flexWrap: "wrap",
         fontSize: "xs",
         color: "ink",
-        backgroundColor: "surface",
-        borderWidth: "1px",
-        borderColor: "line",
-        borderRadius: "panel",
-        paddingX: "5",
-        paddingY: "3",
-        marginBottom: "3.5",
+        paddingX: "1",
+        paddingBottom: "3",
       })}
     >
       <span className={itemStyle}>

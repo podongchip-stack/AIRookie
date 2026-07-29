@@ -17,13 +17,12 @@ export function Panel({
       className={css({
         display: "flex",
         flexDirection: "column",
-        gap: "4",
         height: "100%",
         borderWidth: "1px",
         borderColor: "line",
         borderRadius: "panel",
         backgroundColor: "surface",
-        padding: "6",
+        padding: "4",
         minWidth: "0",
       })}
     >
@@ -34,11 +33,12 @@ export function Panel({
           justifyContent: "space-between",
           gap: "2.5",
           paddingBottom: "3",
+          marginBottom: "3",
           borderBottomWidth: "1px",
           borderColor: "line",
         })}
       >
-        <h2 className={css({ fontSize: "sm", fontWeight: "semibold", letterSpacing: "-0.01em" })}>
+        <h2 className={css({ fontSize: "sm", fontWeight: "semibold", letterSpacing: "-0.01em", color: "ink" })}>
           {title}
           {subtitle && (
             <span

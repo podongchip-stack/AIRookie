@@ -32,8 +32,8 @@ export function HospitalTopBar({
         borderWidth: "1px",
         borderColor: "line",
         borderRadius: "panel",
-        paddingX: "6",
-        paddingY: "4",
+        paddingX: "4.5",
+        paddingY: "3",
         marginBottom: "3.5",
       })}
     >

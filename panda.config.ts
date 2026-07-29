@@ -41,7 +41,7 @@ const badgeBase = {
   display: "inline-flex",
   alignItems: "center",
   borderRadius: "full",
-  paddingX: "3",
+  paddingX: "2",
   paddingY: "1",
   fontSize: "xs",
   fontWeight: "medium",

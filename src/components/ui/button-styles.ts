@@ -1,9 +1,9 @@
 import { css } from "styled-system/css";
 
 export const primaryButtonStyle = css({
-  paddingX: "5",
-  paddingY: "2.5",
-  borderRadius: "md",
+  paddingX: "3.5",
+  paddingY: "1.5",
+  borderRadius: "full",
   fontSize: "sm",
   fontWeight: "semibold",
   color: "white",
@@ -29,9 +29,9 @@ export const secondaryButtonStyle = css({
 // 병원의 "승인"은 후보 등록일 뿐 최종 확정이 아니다 (CLAUDE.md). 구급대원의
 // "이송 승인"(brand/amber)과 시각적 무게를 다르게 두기 위해 별도 색을 쓴다.
 export const mintButtonStyle = css({
-  paddingX: "5",
-  paddingY: "2.5",
-  borderRadius: "md",
+  paddingX: "3.5",
+  paddingY: "1.5",
+  borderRadius: "full",
   fontSize: "sm",
   fontWeight: "semibold",
   color: "white",
@@ -42,9 +42,9 @@ export const mintButtonStyle = css({
 });
 
 export const dangerButtonStyle = css({
-  paddingX: "5",
-  paddingY: "2.5",
-  borderRadius: "md",
+  paddingX: "3.5",
+  paddingY: "1.5",
+  borderRadius: "full",
   fontSize: "sm",
   fontWeight: "semibold",
   color: "coral",

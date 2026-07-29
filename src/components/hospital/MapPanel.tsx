@@ -29,7 +29,7 @@ const sideBoxStyle = css({
   borderWidth: "1px",
   borderColor: "line",
   borderRadius: "field",
-  paddingX: "4",
+  paddingX: "3.5",
   paddingY: "3",
 });
 
@@ -107,7 +107,7 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
               borderColor: confirmed ? "#B9E4D3" : "line",
               backgroundColor: confirmed ? "mintSoft" : "surface",
               borderRadius: "field",
-              paddingX: "4",
+              paddingX: "3.5",
               paddingY: "3",
             })}
           >

@@ -30,7 +30,7 @@ export function ApprovalActions({ role, hospitalId, onAction }: ApprovalActionsP
 
   if (role === "hospital") {
     return (
-      <div className={css({ display: "flex", gap: "3", justifyContent: "flex-end" })}>
+      <div className={css({ display: "flex", gap: "2", justifyContent: "flex-end" })}>
         <button
           type="button"
           disabled={disabled}

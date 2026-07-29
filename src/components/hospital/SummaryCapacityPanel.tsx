@@ -30,7 +30,8 @@ const deptChipStyle = css({
 });
 
 const kvDt = css({ color: "ink", fontSize: "xs" });
-const kvDd = css({ fontWeight: "medium", fontSize: "sm" });
+const kvDd = css({ fontWeight: "medium", fontSize: "sm", color: "ink" });
+const kvho = css({ fontSize: "m", letterSpacing: "-0.01em", lineHeight: "1.2", color: "ink" });
 
 export function SummaryCapacityPanel({
   data,
@@ -65,7 +66,7 @@ export function SummaryCapacityPanel({
         className={css({
           display: "grid",
           gridTemplateColumns: "74px 1fr",
-          gap: "2.5 3",
+          gap: "1.5 2.5",
         })}
       >
         <dt className={kvDt}>환자</dt>
@@ -103,13 +104,13 @@ export function SummaryCapacityPanel({
           borderRadius: "field",
         })}
       >
-        <div className={css({ fontSize: "xs", color: "ink", marginBottom: "1.5" })}>
+        <div className={css({ fontSize: "sm", color: "ink", marginBottom: "1.5", fontWeight: "semibold" })}>
           본원 수용 조건 자동 대조
         </div>
         {capacity ? (
           <div className={css({ display: "flex", flexDirection: "column", gap: "0.5" })}>
             <div className={css({ display: "flex", justifyContent: "space-between", fontSize: "sm", paddingY: "0.5" })}>
-              <span>필요 진료과 당직</span>
+              <span className={kvho}>필요 진료과 당직</span>
               <span
                 className={css({
                   fontWeight: "semibold",
@@ -120,13 +121,13 @@ export function SummaryCapacityPanel({
               </span>
             </div>
             <div className={css({ display: "flex", justifyContent: "space-between", fontSize: "sm", paddingY: "0.5" })}>
-              <span>응급 병상</span>
+              <span className={kvho}>응급 병상</span>
               <span className={css({ fontWeight: "semibold", color: "mint" })}>
                 {capacity.beds_available}석 가용
               </span>
             </div>
             <div className={css({ display: "flex", justifyContent: "space-between", fontSize: "sm", paddingY: "0.5" })}>
-              <span>수술실</span>
+              <span className={kvho}>수술실</span>
               <span
                 className={css({
                   fontWeight: "semibold",
