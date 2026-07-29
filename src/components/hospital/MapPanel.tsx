@@ -23,6 +23,7 @@ const mapLabelStyle = css({
   borderColor: "line",
   paddingX: "1.5",
   borderRadius: "chip",
+  color: "ink",
 });
 
 const sideBoxStyle = css({

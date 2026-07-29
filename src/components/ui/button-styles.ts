@@ -64,5 +64,6 @@ export const inputStyle = css({
   paddingX: "2.5",
   paddingY: "1.5",
   fontSize: "sm",
+  color: "ink",
   _focus: { borderColor: "brand", outline: "none" },
 });
