@@ -62,10 +62,16 @@ CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM + KM-BERT)" 항목을
   발화가 반영된다.
 
 **구조화** (`summarizer.py`)
-- 필터링된 텍스트를 Ollama(`/api/generate`, `format: "json"`)에 전달해 `patient` / `mechanism`
-  / `symptoms` / `treatment` / `severity_tag` / `required_department` 필드를 가진 JSON으로
-  구조화한다. LLM 응답이 JSON 파싱에 실패하면 예외를 던지고 파이프라인은 중단된다 (원본 텍스트
-  파일은 이미 저장된 상태라 데이터 손실은 없음).
+- 필터링된 텍스트를 Ollama(`/api/generate`)에 전달해 `patient` / `mechanism` / `symptoms`
+  / `treatment` / `severity_tag` / `required_department` 필드를 가진 JSON으로 구조화한다.
+  응답에서 `<think>...</think>` 추론 태그를 제거하고 JSON 객체만 관대하게 추출해서 파싱한다.
+  파싱에 실패하면 예외를 던지고 파이프라인은 중단된다 (원본 텍스트 파일은 이미 저장된 상태라
+  데이터 손실은 없음).
+- **`format: "json"` 옵션은 의도적으로 안 쓴다.** `qwen3:14b`처럼 답하기 전에 내부적으로
+  "생각(thinking)"부터 하도록 학습된 추론형 모델에 Ollama의 JSON 문법 강제 디코딩을 같이
+  쓰면, 생각 과정과 문법 제약이 충돌해서 모델이 토큰 2개(`{}`)만 뱉고 즉시 포기해버리는 문제를
+  실제로 겪었다 (`summary`의 모든 필드가 빈 값으로 나옴). 프롬프트로만 JSON을 요청하고
+  응답 텍스트에서 파싱하는 지금 방식이 실제로 안정적으로 동작함을 확인함.
 
 **오디오 파일만 있으면 끝까지 자동 실행** (`ollama_bootstrap.py`)
 - 사용자가 Ollama를 미리 설치·실행·pull해둘 필요가 없다. `summarizer.py`가 LLM을 호출하기
