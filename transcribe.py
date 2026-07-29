@@ -14,10 +14,13 @@ from summarizer import StructuringError, structure_call_summary
 # 모든 발화 턴에 동일한 placeholder를 채운다 (README "알려진 제약사항" 참고).
 UNDIARIZED_SPEAKER_LABEL = "미분리"
 
-# 원본 음성/STT 원문/구조화 결과를 용도별 폴더로 분리한다. 셋 다 .gitignore의
-# data/ 규칙에 걸려 저장소에는 올라가지 않는다 (README "폴더 구조" 참고).
+# 원본 음성/노이즈 합성 음성/STT 원문/구조화 결과를 용도별 폴더로 분리한다. 전부
+# .gitignore의 data/ 규칙에 걸려 저장소에는 올라가지 않는다 (README "폴더 구조" 참고).
+# origin_data·origin_noise_data 둘 다 입력 소스일 뿐이라, 어느 쪽 파일을 넣어도
+# 결과는 항상 origin_text/summary_text로 모인다 (아래 --audio 인자는 경로만 받음).
 BASE_DIR = Path(__file__).resolve().parent
 ORIGIN_DATA_DIR = BASE_DIR / "data" / "origin_data"
+ORIGIN_NOISE_DATA_DIR = BASE_DIR / "data" / "origin_noise_data"
 ORIGIN_TEXT_DIR = BASE_DIR / "data" / "origin_text"
 SUMMARY_TEXT_DIR = BASE_DIR / "data" / "summary_text"
 

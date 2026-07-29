@@ -172,17 +172,21 @@ pip install -r requirements.txt
 
 **1-1. 소음 합성 테스트 데이터 만들기 (선택)**
 ```bash
-python add_noise.py data/origin_data/원본.mp3 data/origin_data/원본_noisy10db.wav 10
+python add_noise.py data/origin_data/원본.mp3 10
 ```
-STT/필터링이 소음 환경에서도 잘 동작하는지 확인하고 싶을 때, 마지막 인자(SNR dB)를 낮출수록
-더 심한 소음이 섞인다 (예: 10=중간, 0=심함).
+STT/필터링이 소음 환경에서도 잘 동작하는지 확인하고 싶을 때 쓴다. 두 번째 인자(SNR dB)를
+낮출수록 더 심한 소음이 섞인다 (예: 10=중간, 0=심함). 결과는 `data/origin_noise_data/`에
+`원본_noisy10db.wav` 형태로 자동 저장된다 (`--output`으로 경로를 직접 지정할 수도 있음).
 
 **2. 음성 → 텍스트 변환 + 실시간 음성 필터링 + SBAR 구조화(JSON)**
 ```bash
 python transcribe.py data/origin_data/파일명.wav --summarize
+# 노이즈 합성본을 돌릴 때는 origin_noise_data/ 안의 파일을 그대로 넣으면 된다
+python transcribe.py data/origin_noise_data/파일명_noisy10db.wav --summarize
 ```
-입력 오디오는 `data/origin_data/`에서 읽고, 결과물은 용도별로 나뉜 폴더에 저장된다.
-`--summarize`를 빼면 STT(텍스트 변환)까지만 하고 끝난다.
+입력 오디오는 `origin_data/`든 `origin_noise_data/`든 상관없이 그대로 처리되고, 결과물은
+파일명 기준으로 항상 같은 폴더에 모인다. `--summarize`를 빼면 STT(텍스트 변환)까지만 하고
+끝난다.
 
 | 산출물 | 저장 위치 |
 |---|---|
@@ -219,9 +223,10 @@ voice/
 ├── summarizer.py
 ├── transcribe.py
 └── data/                  (.gitignore로 저장소에는 안 올라감)
-    ├── origin_data/       원본 음성 파일 (직접 추가·노이즈 합성본)
-    ├── origin_text/       STT 원문 텍스트 (.txt)
-    └── summary_text/      SBAR 구조화 JSON (*_call_summary.json)
+    ├── origin_data/       원본 음성 파일 (직접 추가)
+    ├── origin_noise_data/ add_noise.py로 노이즈 합성한 음성 파일
+    ├── origin_text/       STT 원문 텍스트 (.txt) — origin_data/origin_noise_data 공통
+    └── summary_text/      SBAR 구조화 JSON (*_call_summary.json) — 위와 동일
 ```
 
 `youtube_downloader.py`는 실제로 쓰이지 않아 저장소에서 뺐다 (`.gitignore` 참고, 로컬에는 남아있음).
@@ -230,7 +235,7 @@ voice/
 
 - macOS(Apple Silicon 포함)에서는 CTranslate2가 Metal/MPS GPU 가속을 지원하지 않아 항상 CPU로 동작. `large-v3`는 느릴 수 있으니 `base`나 `small` 권장
 - GPU 사용 시 NVIDIA CUDA 12.x 및 cuDNN 9 필요
-- `data/` 폴더(그 하위 `origin_data/`·`origin_text/`·`summary_text/` 전부 포함)는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음
+- `data/` 폴더(그 하위 `origin_data/`·`origin_noise_data/`·`origin_text/`·`summary_text/` 전부 포함)는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음
 - 유튜브 콘텐츠 다운로드 시 저작권 및 유튜브 서비스 약관 준수 책임은 사용자에게 있음. 본인 소유이거나 다운로드가 허용된 콘텐츠에만 사용
 - 실시간 음성 필터링/구조화 관련 제약사항은 위 "실시간 음성 필터링" 섹션의 "알려진 한계" 참고
 
