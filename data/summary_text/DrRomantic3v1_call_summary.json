@@ -1,0 +1,57 @@
+{
+  "transcript": {
+    "raw_text": "환자 IV로 셀라인 달고 갈게요. 오프는 아니라지만 이 정도 골절이면 출혈이 심할 거라 쇼크올 수 있으니까 우선 이송 잡아주세요. 알겠습니다. 이송팀!",
+    "filtered_text": "환자 IV로 셀라인 달고 갈게요. 오프는 아니라지만 이 정도 골절이면 출혈이 심할 거라 쇼크올 수 있으니까 우선 이송 잡아주세요.",
+    "language": "ko",
+    "timestamp": "2026-07-29T04:38:47Z",
+    "duration_sec": 13.3,
+    "turns": [
+      {
+        "speaker": "미분리",
+        "timestamp": "04:38:50",
+        "text": "환자 IV로 셀라인 달고 갈게요."
+      },
+      {
+        "speaker": "미분리",
+        "timestamp": "04:38:52",
+        "text": "오프는 아니라지만 이 정도 골절이면 출혈이 심할 거라"
+      },
+      {
+        "speaker": "미분리",
+        "timestamp": "04:38:55",
+        "text": "쇼크올 수 있으니까 우선 이송 잡아주세요."
+      },
+      {
+        "speaker": "미분리",
+        "timestamp": "04:38:57",
+        "text": "알겠습니다.",
+        "excludedFromSummary": true
+      },
+      {
+        "speaker": "미분리",
+        "timestamp": "04:38:58",
+        "text": "이송팀!",
+        "excludedFromSummary": true
+      }
+    ]
+  },
+  "summary": {
+    "patient": "",
+    "mechanism": "",
+    "symptoms": [
+      "골절",
+      "출혈",
+      "쇼크 위험"
+    ],
+    "treatment": [
+      "IV 셀라인 설치"
+    ],
+    "severity_tag": "high",
+    "required_department": "정형외과"
+  },
+  "source": "ai",
+  "model_used": {
+    "stt": "faster-whisper-small",
+    "llm": "qwen3:14b"
+  }
+}
