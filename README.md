@@ -12,7 +12,8 @@
 
 유튜브 오디오 다운로드 → 음성 파일을 텍스트로 변환 → 실시간 음성 필터링(의료 관련 문장 분류) → SBAR 구조화 → feature/dashboard 전달용 JSON 생성까지 이어지는 파이프라인입니다.
 
-- **`youtube_downloader.py`** — 유튜브 URL을 입력하면 오디오만 추출해 `data/` 폴더에 저장하는 간단한 GUI 도구 (tkinter)
+- **`youtube_downloader.py`** — 유튜브 URL을 입력하면 오디오만 추출해 `data/origin_data/` 폴더에 저장하는 간단한 GUI 도구 (tkinter)
+- **`add_noise.py`** — 오디오에 화이트 노이즈를 섞어 강건성 테스트용 파일을 만드는 도구
 - **`transcribe.py`** — 로컬 오디오 파일을 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)로 텍스트 변환하고, `--summarize` 옵션을 주면 실시간 음성 필터링 + SBAR 구조화까지 수행해 JSON을 출력하는 CLI 도구
 - **`filtering.py`** — 발화 턴 단위로 의료 관련 여부를 분류하는 경량 분류기 (아래 "실시간 음성 필터링" 참고)
 - **`summarizer.py`** — 필터링된 텍스트를 [Ollama](https://ollama.com)에 붙어 있는 로컬 LLM으로 SBAR 형태 JSON으로 구조화
@@ -91,7 +92,7 @@ CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM + KM-BERT)" 항목을
 - threshold 기반 분류기라 애매한 경계 문장은 오분류할 수 있다. 실제 통화 녹음으로 threshold를
   재조정하거나 KM-BERT로 교체하는 게 다음 단계.
 - 통신(WebSocket으로 dashboard에 실시간 전송)은 아직 미구현이다. 지금은 최종 JSON을 터미널에
-  출력하고 `*_call_summary.json` 파일로도 저장해두는 것까지만 한다 — 통신 계층을 붙일 때
+  출력하고 `data/summary_text/*_call_summary.json` 파일로도 저장해두는 것까지만 한다 — 통신 계층을 붙일 때
   이 JSON을 그대로 보내면 된다.
 - macOS + Homebrew가 아닌 환경(Windows, Linux, Homebrew 미설치)에서는 Ollama 자동 설치가
   동작하지 않는다. 이 경우 [ollama.com](https://ollama.com)에서 직접 설치해야 한다.
@@ -101,7 +102,7 @@ CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM + KM-BERT)" 항목을
 **입력**
 오디오 파일 (.wav 등) — 추후 실시간 스트림 입력으로 전환 예정
 
-**출력** (`transcribe.py --summarize` 실행 시 터미널에 출력 + `*_call_summary.json` 저장.
+**출력** (`transcribe.py --summarize` 실행 시 터미널에 출력 + `data/summary_text/*_call_summary.json` 저장.
 feature/dashboard의 `CallSummaryMessage` 타입과 1:1로 대응하며, `turns`/`required_department`는
 dashboard 쪽에서 원본 로그 화면 표시용으로 확장한 필드다 — `src/types/dashboard.ts` 참고)
 ```json
@@ -153,7 +154,7 @@ dashboard 쪽에서 원본 로그 화면 표시용으로 확장한 필드다 —
 바이탈 필드는 포함하지 않는다 (feature/vital 브랜치에서 별도 정의, 아직 미정).
 
 **통신(전송) 상태**: feature/dashboard로의 WebSocket 실시간 전송은 아직 연동 전이다. 지금은 위
-JSON을 터미널 표준 출력과 `*_call_summary.json` 파일로만 내보낸다 — 통신 계층은 이 JSON을
+JSON을 터미널 표준 출력과 `data/summary_text/*_call_summary.json` 파일로만 내보낸다 — 통신 계층은 이 JSON을
 그대로 보내기만 하면 되도록 분리해뒀다.
 
 ## 실행 방법
@@ -171,15 +172,26 @@ pip install -r requirements.txt
 ```bash
 python youtube_downloader.py
 ```
-GUI 창에서 URL을 입력하고 다운로드하면 `data/` 폴더에 오디오 파일이 저장됩니다.
+GUI 창에서 URL을 입력하고 다운로드하면 `data/origin_data/` 폴더에 오디오 파일이 저장됩니다.
+
+**1-1. 소음 합성 테스트 데이터 만들기 (선택)**
+```bash
+python add_noise.py data/origin_data/원본.mp3 data/origin_data/원본_noisy10db.wav 10
+```
+STT/필터링이 소음 환경에서도 잘 동작하는지 확인하고 싶을 때, 마지막 인자(SNR dB)를 낮출수록
+더 심한 소음이 섞인다 (예: 10=중간, 0=심함).
 
 **2. 음성 → 텍스트 변환 + 실시간 음성 필터링 + SBAR 구조화(JSON)**
 ```bash
-python transcribe.py data/파일명.wav --summarize
+python transcribe.py data/origin_data/파일명.wav --summarize
 ```
-`--summarize`를 빼면 STT(텍스트 변환)까지만 하고 끝납니다. `--summarize`를 주면 발화 턴 분류 →
-필터링 → LLM 구조화를 거쳐 최종 JSON을 터미널에 출력하고 `data/파일명_call_summary.json`으로도
-저장합니다.
+입력 오디오는 `data/origin_data/`에서 읽고, 결과물은 용도별로 나뉜 폴더에 저장된다.
+`--summarize`를 빼면 STT(텍스트 변환)까지만 하고 끝난다.
+
+| 산출물 | 저장 위치 |
+|---|---|
+| STT 원문 텍스트 (`.txt`) | `data/origin_text/파일명.txt` |
+| SBAR 구조화 JSON (`--summarize` 시) | `data/summary_text/파일명_call_summary.json` |
 
 | 옵션 | 기본값 | 설명 |
 |---|---|---|
@@ -204,19 +216,24 @@ voice/
 ├── .gitignore
 ├── README.md
 ├── requirements.txt
+├── add_noise.py
 ├── filtering.py
 ├── ollama_bootstrap.py
 ├── schema.py
 ├── summarizer.py
 ├── transcribe.py
-└── youtube_downloader.py
+├── youtube_downloader.py
+└── data/                  (.gitignore로 저장소에는 안 올라감)
+    ├── origin_data/       원본 음성 파일 (유튜브 다운로드·직접 추가·노이즈 합성본)
+    ├── origin_text/       STT 원문 텍스트 (.txt)
+    └── summary_text/      SBAR 구조화 JSON (*_call_summary.json)
 ```
 
 ## 알려진 제약사항 / TODO
 
 - macOS(Apple Silicon 포함)에서는 CTranslate2가 Metal/MPS GPU 가속을 지원하지 않아 항상 CPU로 동작. `large-v3`는 느릴 수 있으니 `base`나 `small` 권장
 - GPU 사용 시 NVIDIA CUDA 12.x 및 cuDNN 9 필요
-- `data/` 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음
+- `data/` 폴더(그 하위 `origin_data/`·`origin_text/`·`summary_text/` 전부 포함)는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음
 - 유튜브 콘텐츠 다운로드 시 저작권 및 유튜브 서비스 약관 준수 책임은 사용자에게 있음. 본인 소유이거나 다운로드가 허용된 콘텐츠에만 사용
 - 실시간 음성 필터링/구조화 관련 제약사항은 위 "실시간 음성 필터링" 섹션의 "알려진 한계" 참고
 

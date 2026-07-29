@@ -14,6 +14,13 @@ from summarizer import StructuringError, structure_call_summary
 # 모든 발화 턴에 동일한 placeholder를 채운다 (README "알려진 제약사항" 참고).
 UNDIARIZED_SPEAKER_LABEL = "미분리"
 
+# 원본 음성/STT 원문/구조화 결과를 용도별 폴더로 분리한다. 셋 다 .gitignore의
+# data/ 규칙에 걸려 저장소에는 올라가지 않는다 (README "폴더 구조" 참고).
+BASE_DIR = Path(__file__).resolve().parent
+ORIGIN_DATA_DIR = BASE_DIR / "data" / "origin_data"
+ORIGIN_TEXT_DIR = BASE_DIR / "data" / "origin_text"
+SUMMARY_TEXT_DIR = BASE_DIR / "data" / "summary_text"
+
 
 def format_timestamp(seconds: float) -> str:
     hours = int(seconds // 3600)
@@ -52,7 +59,8 @@ def transcribe(
     transcribe_elapsed = time.perf_counter() - transcribe_start
 
     full_text = " ".join(turn_texts)
-    out_path = audio_path.with_suffix(".txt")
+    ORIGIN_TEXT_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = ORIGIN_TEXT_DIR / (audio_path.stem + ".txt")
     out_path.write_text(full_text, encoding="utf-8")
     print(f"\n텍스트 파일 저장: {out_path}")
     print(f"변환 소요 시간: {transcribe_elapsed:.2f}초 (모델 로딩 제외)")
@@ -144,7 +152,8 @@ def build_and_emit_call_summary(
 
     output_json = message.model_dump_json(exclude_none=True, indent=2)
 
-    summary_path = audio_path.with_name(audio_path.stem + "_call_summary.json")
+    SUMMARY_TEXT_DIR.mkdir(parents=True, exist_ok=True)
+    summary_path = SUMMARY_TEXT_DIR / (audio_path.stem + "_call_summary.json")
     summary_path.write_text(output_json, encoding="utf-8")
 
     # dashboard로의 실시간 전송(WebSocket)은 아직 미연동 상태다. 연동 전까지는

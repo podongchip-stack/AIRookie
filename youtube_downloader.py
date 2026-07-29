@@ -6,7 +6,7 @@ from tkinter import filedialog, ttk
 
 import yt_dlp
 
-DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "origin_data")
 
 
 class AudioDownloaderApp:
