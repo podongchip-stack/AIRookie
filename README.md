@@ -3,8 +3,9 @@
 <!-- 예: feature/voice — 실시간 음성 필터링 및 환자 정보 구조화 -->
 
 > **신설 브랜치 안내**: `feature/hub`는 develop 기준으로 새로 만들어진 브랜치입니다.
-> 아래 "입출력 데이터 포맷"에 정리된 세 가지 스키마(feature/voice 입력, feature/info
-> 입력, feature/dashboard 출력)는 모두 **가안이며 팀 리뷰 후 확정 예정**입니다.
+> 아래 "입출력 데이터 포맷"에 정리된 스키마(feature/voice 입력, feature/info 입력,
+> feature/dashboard 입력·출력, feature/info 출력)는 모두 **가안이며 팀 리뷰 후 확정
+> 예정**입니다.
 
 ## 담당자
 
@@ -24,9 +25,11 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 리스트를 재처리한다. 최종적으로 의료 정보·예상 병명·병원 정보·병원 리스트를 모두
 합쳐 feature/dashboard로 전달한다.
 
-> dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/final_approval)을
-> 이 브랜치와 feature/info 중 어느 쪽이 수신할지는 아직 논의 중이라 **잠정
-> 보류** 상태입니다. 확정되면 매칭 상태(`hospitals[].status`) 반영 처리를 구현합니다.
+> dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/final_approval)의
+> 수신 주체는 **이 브랜치(feature/hub)로 확정**되었습니다 (dashboard가 feature/hub와만
+> 직접 통신하기 때문). 매칭 상태(`hospitals[].status`) 반영과, `final_approval` 시
+> feature/info로 병상 갱신을 알리는 처리("입출력 데이터 포맷"의 입력 스키마 3 /
+> 출력 스키마 5 참고)는 문서만 정리된 상태이며 코드 구현은 아직입니다.
 
 ## 사용한 AI / 모델
 
@@ -63,7 +66,7 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 
 ## 입출력 데이터 포맷
 
-> 아래 세 스키마 모두 가안이며 팀 리뷰 후 확정 예정.
+> 아래 스키마 모두 가안이며 팀 리뷰 후 확정 예정.
 
 ### 입력 스키마 1: feature/voice로부터 (환자 정보)
 
@@ -107,7 +110,32 @@ feature/hub는 이 중 `summary` 필드(부상 상태, 예상 병명, 중증도)
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `updatedAt` | string (ISO 8601) | 이 정보가 마지막으로 갱신된 시각 |
 
-### 출력 스키마 3: feature/hub → feature/dashboard (통합 매칭 결과)
+### 입력 스키마 3: feature/dashboard로부터 (승인 액션)
+
+dashboard는 feature/hub와만 직접 통신하므로, 승인 액션(hospital_approve/
+hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한다. 스키마는
+CLAUDE.md "데이터 포맷 및 흐름"에 정의된 것을 그대로 참조한다.
+
+```json
+{
+  "action": "final_approval",
+  "hospital_id": "H001",
+  "actor": "paramedic",
+  "timestamp": "2026-07-30T14:20:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `action` | `"hospital_approve"` \| `"hospital_reject"` \| `"final_approval"` | 어떤 승인 행위인지 |
+| `hospital_id` | string | 대상 병원 식별자 |
+| `actor` | `"hospital"` \| `"paramedic"` | 누가 누른 행위인지 |
+| `timestamp` | string (ISO 8601) | 행위 발생 시각 |
+
+이 액션을 받으면 해당 병원의 `hospitals[].status`를 갱신하고, `final_approval`인
+경우 아래 "출력 스키마 5"로 feature/info에도 병상 갱신을 알린다.
+
+### 출력 스키마 4: feature/hub → feature/dashboard (통합 매칭 결과)
 
 ```json
 {
@@ -150,6 +178,31 @@ feature/hub는 이 중 `summary` 필드(부상 상태, 예상 병명, 중증도)
 | `hospitals[].availableBedCount` | number | 실시간 가용 병상 수 |
 | `hospitals[].status` | `"pending"` \| `"approved"` \| `"rejected"` \| `"confirmed"` | 병원 응답 상태 |
 | `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
+| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+
+### 출력 스키마 5: feature/hub → feature/info (병상 갱신 알림, 신규)
+
+동시에 여러 구급차가 매칭 중일 때, `final_approval`이 확정된 병원의 병상 수가
+feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 병상에 다른 구급차가
+중복 매칭될 수 있다. 이걸 막기 위해 hub가 확정 즉시 info에 갱신된 병상 수를
+내려준다.
+
+```json
+{
+  "hospitalId": "H001",
+  "availableBedCount": 11,
+  "status": "confirmed",
+  "updatedAt": "2026-07-30T14:20:00Z",
+  "source": "rule"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `hospitalId` | string | 대상 병원 식별자 |
+| `availableBedCount` | number | hub가 확정 처리 후 계산한 최신 가용 병상 수 (info가 그대로 덮어쓰면 됨) |
+| `status` | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유 (확정으로 병상이 줄었는지, 거절이라 변동 없는지) |
+| `updatedAt` | string (ISO 8601) | 이 갱신이 발생한 시각 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 
 ## 결과 저장 및 전송 방식 (`delivery.py`)
@@ -257,8 +310,9 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
   `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- 승인 액션 수신(hospital_approve/hospital_reject/final_approval)은 아직 미연동이라,
-  `hospitals[].status`는 현재 항상 `"pending"`으로만 채워진다 (수신 주체 확정 후 반영)
+- 승인 액션 수신 주체는 이 브랜치로 문서상 확정됐지만, 코드(`hub_engine.py`)는 아직
+  실제로 받아 처리하지 않는다 — `hospitals[].status`는 현재 항상 `"pending"`으로만
+  채워진다. feature/info로의 병상 갱신 알림(출력 스키마 5)도 마찬가지로 미구현
 - feature/voice·feature/info로부터의 실시간 통신, feature/dashboard로의 실시간 전송(Flask
   예정)은 아직 미구현. 지금은 로컬 JSON 파일을 읽고 쓰는 형태로만 검증했고,
   `delivery.py`의 `send_to_dashboard()`에 통신 붙일 자리만 미리 마련해뒀다
