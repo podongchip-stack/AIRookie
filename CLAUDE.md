@@ -58,8 +58,8 @@
 | `main` | 배포 기준 브랜치 |
 | `develop` | 통합 개발 브랜치 |
 | `feature/voice` | 음성 수집, STT, 실시간 음성 필터링, 정보 구조화 |
-| `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화 (역할 범위 확정 중) |
-| `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직, 승인 상태 관리 |
+| `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화, 바이탈 수집·전송 (병원 매칭/존 로직은 feature/hub로 이관 확정. 승인 액션 수신 주체는 논의 중 — 잠정 보류) |
+| `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직 (승인 액션 수신 주체는 논의 중 — 잠정 보류) |
 | `feature/dashboard` | 구급차·병원 대시보드 프론트엔드 |
 
 브랜치 전략: `feature/* → develop → main`
@@ -85,17 +85,22 @@
 
 ## 데이터 포맷 및 흐름
 
-세 브랜치 간 데이터는 아래 흐름으로 오간다. voice와 vital이 각자 결과를 만들어 dashboard로 보내고, dashboard에서 발생한 승인 행위는 다시 vital로 돌아간다.
+voice·info·hub·dashboard 간 데이터는 아래 흐름으로 오간다. voice는 통화 요약을, info는 바이탈을
+각각 dashboard로 보낸다. 병원 매칭은 feature/hub가 담당하며, voice의 환자 정보와 info의 병원
+정보를 결합해 만든 매칭 결과를 dashboard로 보낸다. dashboard에서 발생하는 승인 행위
+(hospital_approve/hospital_reject/final_approval)를 feature/info와 feature/hub 중 누가
+수신할지는 아직 팀 내부에서 논의 중이라 **잠정 보류** 상태다 (아래 3번 포맷 참고).
 
 ```
 feature/voice ──(통화 요약 JSON)──────────→ feature/dashboard
-feature/vital ──(바이탈 JSON)──────────────→ feature/dashboard
-feature/vital ──(병원 매칭 결과 JSON)──────→ feature/dashboard
-feature/dashboard ──(승인 액션 JSON)───────→ feature/vital
+feature/info ──(바이탈 JSON)───────────────→ feature/dashboard
 feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규칙 기반 매칭) → feature/dashboard(통합 결과)
+feature/dashboard ──(승인 액션 JSON)───────→ (수신 주체 논의 중 — feature/info 또는 feature/hub)
 ```
 
-아래 포맷은 voice를 제외하고는 아직 약식이다. vital은 실제 구급차 바이탈 기기 스펙이 확정되지 않아 우선 가정한 형태이며, 확정되는 대로 갱신한다.
+아래 포맷은 voice를 제외하고는 아직 약식이다. info는 실제 구급차 바이탈 기기 스펙이 확정되지
+않아 우선 가정한 형태이며, 확정되는 대로 갱신한다. 병원 매칭 결과 스키마는 feature/hub
+README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에는 구 스키마를 남기지 않는다.
 
 ### 1. feature/voice → feature/dashboard : 통화 요약
 
@@ -138,9 +143,9 @@ feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규�
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
 | `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명 |
 
-바이탈 필드는 포함하지 않는다. 바이탈은 feature/vital이 별도 스키마로 관리한다.
+바이탈 필드는 포함하지 않는다. 바이탈은 feature/info가 별도 스키마로 관리한다.
 
-### 2. feature/vital → feature/dashboard : 바이탈 (약식)
+### 2. feature/info → feature/dashboard : 바이탈 (약식)
 
 ```json
 {
@@ -169,41 +174,13 @@ feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규�
 | `timestamp` | string (ISO 8601) | 측정 시각 |
 | `source` | `"rule"` | 센서 직결, AI 미사용을 나타내는 고정값 |
 
-### 3. feature/vital → feature/dashboard : 존 기반 병원 매칭 결과 (약식)
+> 존 기반 병원 매칭 결과 스키마는 feature/hub 신설로 대체되었다. 최신 스키마는
+> feature/hub README.md의 "입출력 데이터 포맷 > 출력 스키마 3"을 참고할 것.
 
-```json
-{
-  "zone_active": [1, 2],
-  "hospitals": [
-    {
-      "hospital_id": "C",
-      "name": "C병원",
-      "distance_km": 2.1,
-      "status": "confirmed",
-      "eta_min": 6
-    },
-    {
-      "hospital_id": "D",
-      "name": "D병원",
-      "distance_km": 2.6,
-      "status": "rejected"
-    }
-  ],
-  "source": "rule"
-}
-```
+### 3. feature/dashboard → (수신 주체 논의 중) : 승인 액션 (약식)
 
-| 필드 | 타입 | 설명 |
-|---|---|---|
-| `zone_active` | number[] | 현재 활성화된 존 번호 목록 |
-| `hospitals[].hospital_id` | string | 병원 식별자 |
-| `hospitals[].name` | string | 병원명 |
-| `hospitals[].distance_km` | number | GPS 기준 거리 |
-| `hospitals[].status` | `"pending"` \| `"approved"` \| `"rejected"` \| `"confirmed"` | 병원 응답 상태 |
-| `hospitals[].eta_min` | number | 도착 예상 시간(분), 확정 병원만 필요 |
-| `source` | `"rule"` | 규칙 기반 매칭 결과임을 나타내는 고정값 |
-
-### 4. feature/dashboard → feature/vital : 승인 액션 (약식)
+> feature/info와 feature/hub 중 어느 쪽이 이 액션을 수신할지 아직 확정되지 않았다
+> (잠정 보류). 확정 전까지는 아래 스키마 자체만 유효하고, 화살표 대상은 비워둔다.
 
 ```json
 {
@@ -235,16 +212,16 @@ feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규�
 ## feature/info 담당자 참고사항
 
 > **브랜치 이름 변경 안내**: 이 브랜치는 기존 `feature/vital`에서 이름이
-> 변경되었습니다. 바이탈 수집과 병원 매칭 로직 중 어디까지를 이 브랜치가
-> 계속 담당할지, 아니면 신설된 `feature/hub`로 옮길지는 아직 팀 내부에서
-> **역할 분담 확정 필요** 상태입니다.
+> 변경되었습니다. **병원 매칭·존(Zone) 로직은 `feature/hub`로 이관하는 것으로
+> 확정**되었습니다. 다만 dashboard가 보내는 승인 액션
+> (hospital_approve/hospital_reject/final_approval)을 이 브랜치와 `feature/hub`
+> 중 어느 쪽이 수신할지는 아직 논의 중이라 **잠정 보류** 상태입니다.
 
 - 바이탈 데이터는 AI 처리 없이 센서값을 그대로 전달 (규칙 기반)
-- 병원 매칭은 AI가 아닌 규칙 기반 적합도 엔진으로 구현: hv1(전문의 보유)/hvec(병상 현황)/hv2(중증 질환별 수용 가능 여부) API를 대조해 점수 산출
-- 존(Zone) 로직: 구급차 GPS 기준 반경으로 존을 나누고, 존 내 병원 중 명시적 거절 비율이 일정 기준을 넘으면 다음 존까지 자동 확장 (시간 기반 타임아웃이 아닌 거절 비율 기반)
+- 병원 매칭·존(Zone) 로직은 더 이상 이 브랜치가 담당하지 않는다 (`feature/hub` 담당자 참고사항 참고)
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
-- 바이탈 실시간 전송은 이송 승인이 확정된 병원 한 곳에만 이루어져야 하며, 병원 전환 시 기존 전송은 즉시 중단한다
-- 출력 포맷은 위 "데이터 포맷 및 흐름 > 2, 3" 참고. dashboard로부터 승인 액션(4번 포맷)을 수신하는 처리도 구현해야 한다
+- 바이탈 실시간 전송은 이송 승인이 확정된 병원 한 곳에만 이루어져야 하며, 병원 전환 시 기존 전송은 즉시 중단한다 (승인 액션을 이 브랜치가 직접 수신할지는 위 보류 사항에 달려 있다)
+- 출력 포맷은 위 "데이터 포맷 및 흐름 > 2. 바이탈" 참고. 승인 액션(3번 포맷) 수신 처리는 feature/hub와 역할 분담이 확정되면 구현한다 (현재는 대기)
 
 ## feature/hub 담당자 참고사항
 
@@ -254,7 +231,7 @@ feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규�
   - 2차: voice의 예상 병명·중증도와 info의 병원 전문성(specialties)을 결합한 가중합 스코어링으로 재정렬
 - 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준
 - 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON (feature/hub README.md의 "입출력 데이터 포맷" 참고)
-- dashboard가 보내는 hospital_approve / hospital_reject / final_approval 액션을 수신해 상태를 관리하고, 실시간 바이탈 스트리밍이 final_approval이 확정된 병원 한 곳에만 가도록 전환 처리
+- dashboard가 보내는 hospital_approve / hospital_reject / final_approval 액션을 이 브랜치가 수신할지, feature/info가 수신할지는 아직 논의 중 — **잠정 보류**. 확정되면 매칭 상태(`hospitals[].status`)에 반영하는 처리를 구현한다
 
 ## feature/dashboard 담당자 참고사항
 
@@ -262,7 +239,7 @@ feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규�
 - 각 정보 패널에는 출처 표시가 필요하다: AI 처리된 정보(통화 요약 등)와 규칙 기반/센서 직결 정보(바이탈, 병원 리스트, 지도)를 시각적으로 구분해서 보여준다
 - Override 구조를 UI로 드러낼 것: AI가 생성한 요약은 전송 전 구급대원이 확인·수정할 수 있어야 한다
 - 실시간 갱신: WebSocket 기반, 완료된 정보부터 순차적으로 갱신 (전체 처리 완료까지 기다리지 않음)
-- voice·vital로부터 수신하는 데이터와 vital로 송신하는 승인 액션은 위 "데이터 포맷 및 흐름" 참고
+- voice·info로부터 수신하는 데이터, feature/hub로부터 수신하는 매칭 결과, 승인 액션 송신(수신처는 feature/info·feature/hub 간 논의 중)은 위 "데이터 포맷 및 흐름" 참고
 
 ---
 
