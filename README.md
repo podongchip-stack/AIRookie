@@ -15,8 +15,14 @@
 
 feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도)와 feature/info가
 보내는 병원 정보(위치, 병상, 전문성)를 결합해 규칙 기반 스코어링으로 병원 후보를
-매칭하고, 존(Zone) 로직을 수행하는 브랜치입니다. 매칭 결과는 feature/dashboard로
-전달됩니다.
+매칭하고, 존(Zone) 로직을 수행하는 브랜치입니다. **feature/dashboard와 직접
+통신하는 유일한 브랜치**로, feature/voice·feature/info는 dashboard로 직접 보내지
+않고 이 브랜치를 거칩니다.
+
+처리는 2단계다: (1) GPS와 feature/info의 병원 정보로 먼저 존 기반 병원 후보
+리스트를 만들어 보관하고, (2) feature/voice의 의료 정보가 도착하면 이를 반영해
+리스트를 재처리한다. 최종적으로 의료 정보·예상 병명·병원 정보·병원 리스트를 모두
+합쳐 feature/dashboard로 전달한다.
 
 > dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/final_approval)을
 > 이 브랜치와 feature/info 중 어느 쪽이 수신할지는 아직 논의 중이라 **잠정
