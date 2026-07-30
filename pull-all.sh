@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 로컬에 있는 5개 브랜치(main, develop, feature/voice, feature/vital,
+# 로컬에 있는 6개 브랜치(main, develop, feature/voice, feature/info, feature/hub,
 # feature/dashboard)를 한 번에 최신 상태로 맞춘다.
 #
 # 현재 체크아웃된 브랜치만 실제로 작업 디렉터리를 건드리는 `git pull`을 쓰고,
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-BRANCHES=(main develop feature/voice feature/vital feature/dashboard)
+BRANCHES=(main develop feature/voice feature/info feature/hub feature/dashboard)
 CURRENT=$(git branch --show-current)
 
 echo "=== fetch ==="
