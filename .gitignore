@@ -21,25 +21,8 @@ ehthumbs.db
 *.log
 logs/
 
-# Python
-__pycache__/
-*.pyc
-venv/
-.venv/
-*.egg-info/
-
-# Node / JS
-node_modules/
-dist/
-build/
-.next/
-.turbo/
-styled-system/
-next-env.d.ts
-*.tsbuildinfo
-
-# Data
-data/
+# 언어/프레임워크가 아직 미정이라 언어별 규칙(Python venv, node_modules 등)은
+# 확정 후 추가 예정
 
 # Misc
 *.tmp

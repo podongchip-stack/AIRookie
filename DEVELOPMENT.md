@@ -1,17 +1,20 @@
-# 개발 브랜치 가이드
+# feature/hub 개발 환경 가이드
 
-## 브랜치 구조
+> 아직 언어/프레임워크가 확정되지 않아 빈 틀 상태입니다. 결정되는 대로 아래
+> 항목을 채워주세요.
 
-```
-main
- └── develop
-       ├── feature/voice
-       ├── feature/vital
-       └── feature/dashboard
-```
+## 가상환경 설정
 
-## 작업 규칙
+<!-- 예: conda create -n <이름> python=<버전> -->
 
-- 기능 개발은 각 feature 브랜치에서 진행
-- feature → develop PR로 통합
-- develop → main PR로 배포
+## 의존성 설치
+
+<!-- 예: pip install -r requirements.txt / npm install -->
+
+## 실행 방법
+
+<!-- 로컬에서 매칭 엔진을 어떻게 띄우는지 -->
+
+## 참고
+
+- 브랜치 전체 협업 규칙(브랜치 구조, PR 절차)은 저장소 공통 안내를 따른다.
