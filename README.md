@@ -10,14 +10,14 @@
 
 ## 이 브랜치가 하는 일
 
-음성 파일을 텍스트로 변환 → 실시간 음성 필터링(의료 관련 문장 분류) → SBAR 구조화 → feature/dashboard 전달용 JSON 생성까지 이어지는 파이프라인입니다.
+음성 파일을 텍스트로 변환 → 실시간 음성 필터링(의료 관련 문장 분류) → SBAR 구조화 → feature/hub 전달용 JSON 생성까지 이어지는 파이프라인입니다. dashboard로는 직접 보내지 않고 feature/hub를 거쳐 전달된다.
 
 - **`add_noise.py`** — 오디오에 화이트 노이즈를 섞어 강건성 테스트용 파일을 만드는 도구
 - **`transcribe.py`** — 로컬 오디오 파일을 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)로 텍스트 변환하고, `--summarize` 옵션을 주면 실시간 음성 필터링 + SBAR 구조화까지 수행해 JSON을 출력하는 CLI 도구
 - **`filtering.py`** — 발화 턴 단위로 의료 관련 여부를 분류하는 경량 분류기 (아래 "실시간 음성 필터링" 참고)
 - **`summarizer.py`** — 필터링된 텍스트를 [Ollama](https://ollama.com)에 붙어 있는 로컬 LLM으로 SBAR 형태 JSON으로 구조화
 - **`ollama_bootstrap.py`** — 오디오 파일만 있으면 되도록 Ollama 설치·서버 실행·모델 pull까지 자동 처리
-- **`schema.py`** — feature/dashboard의 `CallSummaryMessage`와 1:1로 대응하는 pydantic 출력 스키마
+- **`schema.py`** — feature/dashboard의 `CallSummaryMessage`와 동일한 형태로 `feature/hub`에 전달하는 pydantic 출력 스키마
 
 > `transcribe.py`는 여전히 로컬 파일 기반 프로토타입이다 (실시간 스트림 입력은 추후 전환 예정). 다만 출력 포맷은 아래 "입출력 데이터 포맷"에 정의된 확정 JSON 스키마를 그대로 따른다.
 
@@ -90,7 +90,7 @@ CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM + KM-BERT)" 항목을
 - 화자 분리(diarization)가 아직 없어 모든 턴의 `speaker`는 `"미분리"`로 고정되어 있다.
 - threshold 기반 분류기라 애매한 경계 문장은 오분류할 수 있다. 실제 통화 녹음으로 threshold를
   재조정하거나 KM-BERT로 교체하는 게 다음 단계.
-- 통신(WebSocket으로 dashboard에 실시간 전송)은 아직 미구현이다. 지금은 최종 JSON을 터미널에
+- 통신(WebSocket으로 feature/hub에 실시간 전송)은 아직 미구현이다. 지금은 최종 JSON을 터미널에
   출력하고 `data/summary_text/*_call_summary.json` 파일로도 저장해두는 것까지만 한다 — 통신 계층을 붙일 때
   이 JSON을 그대로 보내면 된다.
 - macOS + Homebrew가 아닌 환경(Windows, Linux, Homebrew 미설치)에서는 Ollama 자동 설치가
@@ -102,8 +102,10 @@ CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM + KM-BERT)" 항목을
 오디오 파일 (.wav 등) — 추후 실시간 스트림 입력으로 전환 예정
 
 **출력** (`transcribe.py --summarize` 실행 시 터미널에 출력 + `data/summary_text/*_call_summary.json` 저장.
-feature/dashboard의 `CallSummaryMessage` 타입과 1:1로 대응하며, `turns`/`required_department`는
-dashboard 쪽에서 원본 로그 화면 표시용으로 확장한 필드다 — `src/types/dashboard.ts` 참고)
+`feature/hub`로 전달되는 JSON이며, dashboard로는 직접 보내지 않는다. `feature/dashboard`의
+`CallSummaryMessage` 타입과 1:1로 대응하는 형태를 유지하되(`turns`/`required_department`는
+원본 로그 표시용으로 확장한 필드), 실제 수신처는 `feature/hub`다 — CLAUDE.md "데이터 포맷 및
+흐름" 참고)
 ```json
 {
   "transcript": {
@@ -150,9 +152,9 @@ dashboard 쪽에서 원본 로그 화면 표시용으로 확장한 필드다 —
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
 | `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명 |
 
-바이탈 필드는 포함하지 않는다 (feature/vital 브랜치에서 별도 정의, 아직 미정).
+바이탈 필드는 포함하지 않는다 (환자 바이탈 정보는 더 이상 사용하지 않기로 결정됨).
 
-**통신(전송) 상태**: feature/dashboard로의 WebSocket 실시간 전송은 아직 연동 전이다. 지금은 위
+**통신(전송) 상태**: feature/hub로의 실시간 전송은 아직 연동 전이다. 지금은 위
 JSON을 터미널 표준 출력과 `data/summary_text/*_call_summary.json` 파일로만 내보낸다 — 통신 계층은 이 JSON을
 그대로 보내기만 하면 되도록 분리해뒀다.
 
