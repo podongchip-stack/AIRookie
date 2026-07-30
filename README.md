@@ -23,14 +23,14 @@
 
 | 화면 | 설명 | 관련 브랜치 데이터 |
 |---|---|---|
-| 구급차 대시보드 | | feature/voice, feature/vital |
-| 병원 대시보드 | | feature/voice, feature/vital |
-
-## 연동하는 데이터
+| 구급차 대시보드 | | feature/voice, feature/hub |
+| 병원 대시보드 | | feature/voice, feature/hub |
 
 ## 연동하는 데이터 (약식)
 
-> vital 브랜치의 실제 기기 스펙 확정 전까지는 아래 약식 포맷 기준으로 화면을 구성한다.
+> 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련 스키마를 제거했다.
+> 병원 매칭 결과는 `feature/hub` 신설에 따라 구 `feature/vital` 스키마를 대체했다.
+> 아래 스키마는 모두 가안이며 팀 리뷰 후 확정 예정.
 
 **voice로부터 수신** — 통화 요약 (자세한 필드 설명은 feature/voice README 참고)
 ```json
@@ -42,25 +42,33 @@
 }
 ```
 
-**vital로부터 수신** — 바이탈 (자세한 필드 설명은 feature/vital README 참고)
+**hub로부터 수신** — 통합 매칭 결과 (자세한 필드 설명은 feature/hub README 참고)
 ```json
 {
-  "vitals": { "bp_systolic": 0, "bp_diastolic": 0, "pulse": 0, "spo2": 0, "gcs": 0, "temperature": 0, "resp_rate": 0 },
-  "timestamp": "...",
+  "patientInfo": {
+    "injuryStatus": [],
+    "expectedDiagnosis": "...",
+    "severityTag": "high"
+  },
+  "zoneActive": [],
+  "hospitals": [
+    {
+      "hospitalId": "",
+      "name": "",
+      "gps": { "lat": 0, "lng": 0 },
+      "distanceKm": 0,
+      "specialtyMatch": { "department": "", "score": 0 },
+      "availableBedCount": 0,
+      "status": "pending",
+      "etaMin": 0
+    }
+  ],
   "source": "rule"
 }
 ```
 
-**vital로부터 수신** — 병원 매칭 결과 (자세한 필드 설명은 feature/vital README 참고)
-```json
-{
-  "zone_active": [],
-  "hospitals": [{ "hospital_id": "", "name": "", "distance_km": 0, "status": "pending", "eta_min": 0 }],
-  "source": "rule"
-}
-```
-
-**vital로 송신** — 승인 액션 (구급대원/병원이 대시보드에서 버튼을 눌렀을 때)
+**송신** — 승인 액션 (구급대원/병원이 대시보드에서 버튼을 눌렀을 때. 수신처는
+`feature/info`·`feature/hub` 간 논의 중 — 잠정 보류)
 ```json
 {
   "action": "final_approval",
