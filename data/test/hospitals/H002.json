@@ -1,0 +1,10 @@
+{
+  "hospitalId": "H002",
+  "name": "중앙병원",
+  "gps": { "lat": 35.1600, "lng": 128.1400 },
+  "availableBedCount": 0,
+  "nightDutyAvailable": false,
+  "specialties": [],
+  "source": "rule",
+  "updatedAt": "2026-07-30T09:50:00Z"
+}

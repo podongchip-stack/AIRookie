@@ -1,0 +1,21 @@
+{
+  "transcript": {
+    "raw_text": "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다... A병원: 네 잠시만요...",
+    "filtered_text": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란.",
+    "language": "ko",
+    "timestamp": "2026-07-30T10:00:00Z",
+    "duration_sec": 30.0
+  },
+  "summary": {
+    "patient": "50대 남성",
+    "mechanism": "교통사고로 인한 흉부 손상",
+    "symptoms": ["의식 저하", "호흡 곤란"],
+    "treatment": ["산소 공급"],
+    "severity_tag": "high"
+  },
+  "source": "ai",
+  "model_used": {
+    "stt": "faster-whisper-large-v3",
+    "llm": "qwen3:14b"
+  }
+}
