@@ -50,39 +50,33 @@
 > 제거했습니다. 최신 스키마는 `feature/hub` README.md의 "입출력 데이터 포맷 >
 > 출력 스키마 4"를 참고하세요.
 
-### 1. 병상 갱신 알림 ← feature/hub (입력, 역방향, 신규)
+### 통합 데이터 모델: HospitalInfo
 
-> dashboard의 승인 액션은 feature/hub가 직접 받는다 (feature/info는 받지 않음).
-> 대신 `final_approval`로 이송이 확정되면, 같은 병상에 다른 구급차가 중복
-> 매칭되는 걸 막기 위해 hub가 이 브랜치에 갱신된 병상 수를 알려준다. 동시에
-> 여러 구급차가 매칭 중일 수 있어서 필요한 흐름이다 — hv1/hvec 같은 외부
-> API의 갱신 주기만으로는 확정 시점에 바로 반영이 안 될 수 있기 때문.
+`feature/info`와 `feature/hub` 사이를 오가는 두 메시지(아래 1·2번)는 서로 다른
+스키마가 아니라, **같은 병원 레코드(HospitalInfo)를 서로 다른 크기로 주고받는
+것**이다. info가 hub로는 전체 레코드를 보내고, hub가 info로는 병상 수만 담은
+부분 갱신(patch)을 돌려준다 — 필드 집합은 아래 표 하나를 기준으로 통일한다.
 
-**입력**
-```json
-{
-  "hospitalId": "H001",
-  "availableBedCount": 11,
-  "status": "confirmed",
-  "updatedAt": "2026-07-30T14:20:00Z",
-  "source": "rule"
-}
-```
+| 필드 | 타입 | 설명 | 1번(info→hub 전체 전송) | 2번(hub→info 부분 갱신) |
+|---|---|---|---|---|
+| `hospitalId` | string | 병원 고유 식별자 | 포함 | 포함 (대상 식별용) |
+| `name` | string | 병원명 | 포함 | 미포함 (안 바뀌는 값) |
+| `gps.lat` / `gps.lng` | number | 병원 위치 좌표 (Hub의 거리 계산에 사용) | 포함 | 미포함 |
+| `availableBedCount` | number | 실시간 가용 응급실 병상 수 | 포함 (현재값) | 포함 (hub가 확정 처리 후 계산한 최신값 — 이 값으로 덮어씀) |
+| `nightDutyAvailable` | boolean | 야간 당직 전문의 존재 여부 | 포함 | 미포함 |
+| `specialties[].department` | string | 진료과명 | 포함 | 미포함 |
+| `specialties[].doctorCount` | number | 해당 진료과 수술 가능 의사 수 | 포함 | 미포함 |
+| `specialties[].recentProcedureTags` | string[] | 최근 수술 이력 기반 전문 분야 태그 (개인정보 블라인드 처리, 가안 DB 기반) | 포함 | 미포함 |
+| `status` | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유 | 미포함 (해당 없음) | 포함 |
+| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 | 포함 | 포함 |
+| `updatedAt` | string (ISO 8601) | 이 레코드/갱신이 마지막으로 발생한 시각 | 포함 | 포함 |
 
-| 필드 | 타입 | 설명 |
-|---|---|---|
-| `hospitalId` | string | 대상 병원 식별자 |
-| `availableBedCount` | number | hub가 확정 처리 후 계산한 최신 가용 병상 수. 이 값으로 덮어쓰면 됨 |
-| `status` | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유 |
-| `updatedAt` | string (ISO 8601) | 이 갱신이 발생한 시각 |
-| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
-
-### 2. 병원 정보 → feature/hub (신규, 가안)
+### 1. feature/info → feature/hub (HospitalInfo 전체 전송)
 
 > `feature/hub` 신설에 따라 추가된 스키마. `feature/hub`가 실제로 받는
 > 입력 형태와 동일하다. 가안이며 팀 리뷰 후 확정 예정.
 
-**출력**
+**출력** (위 HospitalInfo 표의 "1번" 열에 해당하는 필드 전부)
 ```json
 {
   "hospitalId": "H001",
@@ -102,18 +96,27 @@
 }
 ```
 
-| 필드 | 타입 | 설명 |
-|---|---|---|
-| `hospitalId` | string | 병원 고유 식별자 |
-| `name` | string | 병원명 |
-| `gps.lat` / `gps.lng` | number | 병원 위치 좌표 (Hub의 거리 계산에 사용) |
-| `availableBedCount` | number | 현재 실시간 가용 응급실 병상 수 |
-| `nightDutyAvailable` | boolean | 야간 당직 전문의 존재 여부 |
-| `specialties[].department` | string | 진료과명 |
-| `specialties[].doctorCount` | number | 해당 진료과 수술 가능 의사 수 |
-| `specialties[].recentProcedureTags` | string[] | 최근 수술 이력 기반 전문 분야 태그 (개인정보 블라인드 처리, 가안 DB 기반이며 향후 실제 데이터로 교체 예정) |
-| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
-| `updatedAt` | string (ISO 8601) | 이 정보가 마지막으로 갱신된 시각 |
+### 2. feature/hub → feature/info (HospitalInfo 부분 갱신 — 병상 수만, 신규)
+
+> dashboard의 승인 액션은 feature/hub가 직접 받는다 (feature/info는 받지 않음).
+> 대신 `final_approval`로 이송이 확정되면, 같은 병상에 다른 구급차가 중복
+> 매칭되는 걸 막기 위해 hub가 이 브랜치에 갱신된 병상 수를 알려준다. 동시에
+> 여러 구급차가 매칭 중일 수 있어서 필요한 흐름이다 — hv1/hvec 같은 외부
+> API의 갱신 주기만으로는 확정 시점에 바로 반영이 안 될 수 있기 때문. 위
+> HospitalInfo의 다른 필드(name/gps/nightDutyAvailable/specialties)는 hub가
+> 바꿀 이유가 없어서 이 메시지엔 담지 않는다 — 받은 쪽(info)은 `hospitalId`로
+> 기존 레코드를 찾아 `availableBedCount`만 덮어쓰면 된다.
+
+**입력** (위 HospitalInfo 표의 "2번" 열에 해당하는 필드만)
+```json
+{
+  "hospitalId": "H001",
+  "availableBedCount": 11,
+  "status": "confirmed",
+  "updatedAt": "2026-07-30T14:20:00Z",
+  "source": "rule"
+}
+```
 
 ## 실행 방법
 
