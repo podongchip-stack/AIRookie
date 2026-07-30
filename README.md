@@ -15,8 +15,12 @@
 
 feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도)와 feature/info가
 보내는 병원 정보(위치, 병상, 전문성)를 결합해 규칙 기반 스코어링으로 병원 후보를
-매칭하고, 존(Zone) 로직과 병원/구급대원 승인 상태 관리까지 수행하는 브랜치입니다.
-매칭 결과는 feature/dashboard로 전달됩니다.
+매칭하고, 존(Zone) 로직을 수행하는 브랜치입니다. 매칭 결과는 feature/dashboard로
+전달됩니다.
+
+> dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/final_approval)을
+> 이 브랜치와 feature/info 중 어느 쪽이 수신할지는 아직 논의 중이라 **잠정
+> 보류** 상태입니다. 확정되면 매칭 상태(`hospitals[].status`) 반영 처리를 구현합니다.
 
 ## 사용한 AI / 모델
 
