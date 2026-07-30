@@ -9,7 +9,7 @@
 
 **골든링크 (GoldenLink) v2.0** — 2026 AI ROOKIE 대회 출품작
 
-응급이송 과정에서 발생하는 음성, 바이탈, 병원 응답 로그를 자동 수집·구조화하여
+응급이송 과정에서 발생하는 음성, 병원 응답 로그를 자동 수집·구조화하여
 병원 수용 판단을 지원하고, 모든 의사결정 과정을 자동 기록하는
 **Zero Data Entry 기반 응급이송 지원 플랫폼**이다.
 
@@ -29,7 +29,7 @@
 ```
 사고 발생 → 구급대 도착
     ↓
-음성·바이탈 수집 → 전처리 (FFmpeg 노이즈 제거)
+음성 수집 → 전처리 (FFmpeg 노이즈 제거)
     ↓
 현장 정보 구조화 AI
     - Whisper / Qwen3-ASR (STT)
@@ -58,7 +58,7 @@
 | `main` | 배포 기준 브랜치 |
 | `develop` | 통합 개발 브랜치 |
 | `feature/voice` | 음성 수집, STT, 실시간 음성 필터링, 정보 구조화 |
-| `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화, 바이탈 수집·전송 (병원 매칭/존 로직은 feature/hub로 이관 확정. 승인 액션 수신 주체는 논의 중 — 잠정 보류) |
+| `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화 (병원 매칭/존 로직은 feature/hub로 이관 확정, 바이탈 수집은 더 이상 사용하지 않음. 승인 액션 수신 주체는 논의 중 — 잠정 보류) |
 | `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직 (승인 액션 수신 주체는 논의 중 — 잠정 보류) |
 | `feature/dashboard` | 구급차·병원 대시보드 프론트엔드 |
 
@@ -74,7 +74,6 @@
 |---|---|---|
 | 음성 → 텍스트 변환 | AI (Whisper / Qwen3-ASR) | 화자 분리 포함 |
 | 통화 내용 필터링·구조화 | AI (sLLM + KM-BERT) | 실시간 음성 필터링 처리 — 잡담·불필요 발화 제거 후 의료 관련 문장만 추출 |
-| 바이탈 수집 | 규칙 기반 (센서 직결) | AI 미사용 |
 | 병원 리스트 정렬 | 규칙 기반 (GPS 거리 · 존 그룹) | AI 미사용 |
 | 병원 적합도 매칭 | 규칙 기반 (hv1/hvec/hv2 API 대조) | AI 미사용, 설명 가능한 구조 유지 |
 | 의사결정 기록 · 보고서 생성 | AI (On-Premise sLLM) | Fact Checking Engine으로 원본 로그와 대조 검증 |
@@ -85,24 +84,27 @@
 
 ## 데이터 포맷 및 흐름
 
-voice·info·hub·dashboard 간 데이터는 아래 흐름으로 오간다. voice는 통화 요약을, info는 바이탈을
-각각 dashboard로 보낸다. 병원 매칭은 feature/hub가 담당하며, voice의 환자 정보와 info의 병원
-정보를 결합해 만든 매칭 결과를 dashboard로 보낸다. dashboard에서 발생하는 승인 행위
+voice·info·hub·dashboard 간 데이터는 아래 흐름으로 오간다. **dashboard는 feature/hub와만
+직접 통신한다** — feature/voice와 feature/info는 dashboard로 직접 보내지 않고 전부
+feature/hub를 거친다. feature/hub는 GPS와 feature/info의 병원 정보로 먼저 존 기반 병원
+후보 리스트를 만들어 두고, feature/voice의 의료 정보(부상 상태·예상 병명·중증도)가
+도착하면 이를 반영해 리스트를 재처리한 뒤, 의료 정보·예상 병명·병원 정보·병원 리스트를
+합쳐 dashboard로 전달한다. 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련
+스키마를 제거했다. dashboard에서 발생하는 승인 행위
 (hospital_approve/hospital_reject/final_approval)를 feature/info와 feature/hub 중 누가
-수신할지는 아직 팀 내부에서 논의 중이라 **잠정 보류** 상태다 (아래 3번 포맷 참고).
+수신할지는 아직 팀 내부에서 논의 중이라 **잠정 보류** 상태다 (아래 2번 포맷 참고).
 
 ```
-feature/voice ──(통화 요약 JSON)──────────→ feature/dashboard
-feature/info ──(바이탈 JSON)───────────────→ feature/dashboard
-feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규칙 기반 매칭) → feature/dashboard(통합 결과)
-feature/dashboard ──(승인 액션 JSON)───────→ (수신 주체 논의 중 — feature/info 또는 feature/hub)
+feature/voice ──(의료 정보·예상 병명 JSON)──→ feature/hub
+feature/info ──(병원 정보 JSON)──────────────→ feature/hub
+feature/hub ──(통합 매칭 결과 JSON: 의료 정보+예상 병명+병원 정보+병원 리스트)──→ feature/dashboard
+feature/dashboard ──(승인 액션 JSON)─────────→ (수신 주체 논의 중 — feature/info 또는 feature/hub)
 ```
 
-아래 포맷은 voice를 제외하고는 아직 약식이다. info는 실제 구급차 바이탈 기기 스펙이 확정되지
-않아 우선 가정한 형태이며, 확정되는 대로 갱신한다. 병원 매칭 결과 스키마는 feature/hub
+아래 포맷은 voice를 제외하고는 아직 약식이다. 병원 매칭 결과 스키마는 feature/hub
 README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에는 구 스키마를 남기지 않는다.
 
-### 1. feature/voice → feature/dashboard : 통화 요약
+### 1. feature/voice → feature/hub : 의료 정보(환자 정보)
 
 ```json
 {
@@ -143,41 +145,15 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
 | `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명 |
 
-바이탈 필드는 포함하지 않는다. 바이탈은 feature/info가 별도 스키마로 관리한다.
+이 JSON은 feature/hub로 전달되며, feature/hub는 이 중 `summary`(부상 상태·예상 병명·
+중증도)만 매칭 스코어링에 사용한다. dashboard는 이 JSON을 직접 받지 않고, feature/hub가
+재가공한 통합 결과(아래 feature/hub README.md 참고)를 통해서만 받는다.
 
-### 2. feature/info → feature/dashboard : 바이탈 (약식)
+> 병원 정보 스키마(feature/info → feature/hub)와 통합 매칭 결과 스키마(feature/hub →
+> feature/dashboard)는 feature/hub README.md의 "입출력 데이터 포맷"이 최신 버전이므로,
+> 여기서는 중복 정의하지 않는다.
 
-```json
-{
-  "vitals": {
-    "bp_systolic": 90,
-    "bp_diastolic": 60,
-    "pulse": 102,
-    "spo2": 92,
-    "gcs": 13,
-    "temperature": 36.4,
-    "resp_rate": 24
-  },
-  "timestamp": "2026-07-28T14:33:10Z",
-  "source": "rule"
-}
-```
-
-| 필드 | 타입 | 설명 |
-|---|---|---|
-| `vitals.bp_systolic` / `bp_diastolic` | number | 수축기/이완기 혈압 (mmHg) |
-| `vitals.pulse` | number | 맥박 (bpm) |
-| `vitals.spo2` | number | 산소포화도 (%) |
-| `vitals.gcs` | number | 의식 수준 (GCS, 3~15) |
-| `vitals.temperature` | number | 체온 (℃) |
-| `vitals.resp_rate` | number | 호흡수 (회/분) |
-| `timestamp` | string (ISO 8601) | 측정 시각 |
-| `source` | `"rule"` | 센서 직결, AI 미사용을 나타내는 고정값 |
-
-> 존 기반 병원 매칭 결과 스키마는 feature/hub 신설로 대체되었다. 최신 스키마는
-> feature/hub README.md의 "입출력 데이터 포맷 > 출력 스키마 3"을 참고할 것.
-
-### 3. feature/dashboard → (수신 주체 논의 중) : 승인 액션 (약식)
+### 2. feature/dashboard → (수신 주체 논의 중) : 승인 액션 (약식)
 
 > feature/info와 feature/hub 중 어느 쪽이 이 액션을 수신할지 아직 확정되지 않았다
 > (잠정 보류). 확정 전까지는 아래 스키마 자체만 유효하고, 화살표 대상은 비워둔다.
@@ -202,11 +178,11 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 
 ## feature/voice 담당자 참고사항
 
-- 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술, 바이탈 데이터. 영상은 다루지 않는다
+- 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
 - STT 모델: Whisper 또는 Qwen3-ASR (스트리밍 지원)
 - 실시간 음성 필터링 처리: STT 결과를 문장/발화 턴 단위로 분리 → 의료 관련 여부 분류(경량 분류기 또는 KM-BERT) → 관련 문장만 sLLM(Llama3 Korean 8B)에 전달해 SBAR 형태로 구조화
 - 잡담·인사말·통화 연결 관련 발화는 필터링 대상이며, 필터링된 문장도 원본 로그에는 남겨두고 "요약 제외" 표시만 한다 (완전 삭제 금지 — 사후 검증 및 audit trail 때문)
-- 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/dashboard" 참고
+- 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
 
 ## feature/info 담당자 참고사항
@@ -217,29 +193,29 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 > (hospital_approve/hospital_reject/final_approval)을 이 브랜치와 `feature/hub`
 > 중 어느 쪽이 수신할지는 아직 논의 중이라 **잠정 보류** 상태입니다.
 
-- 바이탈 데이터는 AI 처리 없이 센서값을 그대로 전달 (규칙 기반)
+- 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어, 바이탈 수집·전송 관련 서술은 모두 제거했다
 - 병원 매칭·존(Zone) 로직은 더 이상 이 브랜치가 담당하지 않는다 (`feature/hub` 담당자 참고사항 참고)
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
-- 바이탈 실시간 전송은 이송 승인이 확정된 병원 한 곳에만 이루어져야 하며, 병원 전환 시 기존 전송은 즉시 중단한다 (승인 액션을 이 브랜치가 직접 수신할지는 위 보류 사항에 달려 있다)
-- 출력 포맷은 위 "데이터 포맷 및 흐름 > 2. 바이탈" 참고. 승인 액션(3번 포맷) 수신 처리는 feature/hub와 역할 분담이 확정되면 구현한다 (현재는 대기)
+- 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷) 수신 처리는 feature/hub와 역할 분담이 확정되면 구현한다 (현재는 대기)
 
 ## feature/hub 담당자 참고사항
 
 - 입력은 두 가지: feature/voice가 보내는 환자 정보 JSON(부상 상태, 예상 병명, 중증도)과 feature/info가 보내는 병원 정보 JSON(위치, 병상, 전문성)
-- 처리는 규칙 기반 스코어링만 사용 (AI 미사용, source: "rule")
-  - 1차: GPS 기준 거리·존(Zone) 분류
-  - 2차: voice의 예상 병명·중증도와 info의 병원 전문성(specialties)을 결합한 가중합 스코어링으로 재정렬
+- **dashboard와 직접 통신하는 유일한 브랜치다.** feature/voice·feature/info는 dashboard로 보내지 않고 이 브랜치를 거친다
+- 처리는 2단계로 진행한다 (규칙 기반 스코어링만 사용, AI 미사용, source: "rule")
+  1. GPS와 feature/info의 병원 정보로 먼저 존(Zone) 기반 병원 후보 리스트를 만들어 보관한다
+  2. feature/voice의 의료 정보(예상 병명·중증도)가 도착하면, 보관해둔 리스트를 voice 정보와 info의 병원 전문성(specialties)을 결합한 가중합 스코어링으로 재처리한다
 - 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준
-- 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON (feature/hub README.md의 "입출력 데이터 포맷" 참고)
+- 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON — 의료 정보·예상 병명·병원 정보·병원 리스트를 모두 포함한다 (feature/hub README.md의 "입출력 데이터 포맷" 참고)
 - dashboard가 보내는 hospital_approve / hospital_reject / final_approval 액션을 이 브랜치가 수신할지, feature/info가 수신할지는 아직 논의 중 — **잠정 보류**. 확정되면 매칭 상태(`hospitals[].status`)에 반영하는 처리를 구현한다
 
 ## feature/dashboard 담당자 참고사항
 
 - 구급차 대시보드와 병원 대시보드는 유사한 레이아웃을 공유하되, 승인 버튼 종류만 다르다 (병원: 병원 승인/불가, 구급차: 이송 승인)
-- 각 정보 패널에는 출처 표시가 필요하다: AI 처리된 정보(통화 요약 등)와 규칙 기반/센서 직결 정보(바이탈, 병원 리스트, 지도)를 시각적으로 구분해서 보여준다
+- 각 정보 패널에는 출처 표시가 필요하다: AI 처리된 정보(통화 요약 등)와 규칙 기반 정보(병원 리스트, 지도)를 시각적으로 구분해서 보여준다
 - Override 구조를 UI로 드러낼 것: AI가 생성한 요약은 전송 전 구급대원이 확인·수정할 수 있어야 한다
 - 실시간 갱신: WebSocket 기반, 완료된 정보부터 순차적으로 갱신 (전체 처리 완료까지 기다리지 않음)
-- voice·info로부터 수신하는 데이터, feature/hub로부터 수신하는 매칭 결과, 승인 액션 송신(수신처는 feature/info·feature/hub 간 논의 중)은 위 "데이터 포맷 및 흐름" 참고
+- **feature/hub와만 직접 통신한다.** voice·info와는 직접 연결하지 않으며, voice의 의료 정보·예상 병명과 info의 병원 정보는 모두 feature/hub가 재가공한 통합 결과로만 받는다. 승인 액션 송신(수신처는 feature/info·feature/hub 간 논의 중)은 위 "데이터 포맷 및 흐름" 참고
 
 ---
 
