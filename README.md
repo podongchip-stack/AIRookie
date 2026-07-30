@@ -30,17 +30,30 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 
 ## 사용한 AI / 모델
 
-이 브랜치는 AI 모델을 사용하지 않는다. 규칙 기반 매칭 엔진으로 구현한다.
+거리·병상·존(Zone) 분류는 규칙 기반이지만, "예상 병명 ↔ 병원 진료과" 매칭만은
+가벼운 임베딩 모델로 보조한다. `expectedDiagnosis`가 voice의 LLM이 만든 자유
+텍스트라서, 하드코딩된 문자열 매칭으로는 실제 데이터를 안정적으로 못 잡기
+때문이다 (예: "흉부 손상" ↔ "흉부외과").
+
+| 구분 | 모델명 | 용도 | 비고 |
+|---|---|---|---|
+| 진료과 매칭 | paraphrase-multilingual-MiniLM-L12-v2 (sentence-transformers) — [sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) | 예상 병명과 병원 진료과명 임베딩 간 코사인 유사도로 최적 진료과 선택 | feature/voice의 "실시간 음성 필터링"과 동일 모델 재사용. 결정적(deterministic)이고 로컬에서만 동작해 On-Premise 원칙 유지 |
+| 거리 / 병상 / 존(Zone) 분류·확장 | — (규칙 기반) | GPS 거리 계산, 존 분류, 거절 비율 기반 존 확장 | 숫자 비교이므로 순수 규칙으로 충분 |
 
 > CLAUDE.md의 "핵심 AI 활용 원칙" 표 기준으로, 이 기능이 AI 처리 영역인지 규칙 기반 영역인지 명시:
-> - [ ] AI 처리
-> - [x] 규칙 기반
+> - [x] AI 처리 (진료과 매칭만, 임베딩 유사도 보조)
+> - [x] 규칙 기반 (거리·병상·존 로직, 최종 스코어링)
+
+**설명 가능성 유지**: 진료과 매칭도 결과에 `specialtyMatch.score`(0~1 유사도 점수)를
+그대로 노출하므로, 왜 이 병원이 이 순위인지 구급대원이 화면에서 확인할 수 있다.
+생성형 LLM은 이 브랜치 어디에도 쓰지 않는다 (매번 같은 입력엔 같은 점수가 나와야
+하는 매칭 단계라 재현성이 중요함).
 
 ## 개발 환경 / 언어
 
-- 언어: 미정
-- 주요 라이브러리·프레임워크: 미정
-- 실행 환경: 미정
+- 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
+- 주요 라이브러리·프레임워크: pydantic(스키마 검증), sentence-transformers(진료과 매칭), numpy
+- 실행 환경: 로컬 (CPU로 충분 — MiniLM은 경량 모델이라 GPU 불필요)
 
 ## 입출력 데이터 포맷
 
@@ -135,7 +148,18 @@ feature/hub는 이 중 `summary` 필드(부상 상태, 예상 병명, 중증도)
 
 ## 실행 방법
 
-<!-- 아직 구현 코드가 없어 미정. 개발 환경 세팅 방법은 DEVELOPMENT.md 참고 -->
+```bash
+conda create -n hub python=3.11
+conda activate hub
+pip install -r requirements.txt
+```
+
+**테스트 데이터로 매칭 엔진 실행** (`data/test/`의 병원 정보·voice 요약 샘플을 사용)
+```bash
+python run_match.py
+```
+1단계(GPS+병원 정보로 존 기반 후보 리스트 생성)와 2단계(voice 정보 반영 재처리) 결과를
+각각 터미널에 출력하고, 최종 결과는 `data/test/output_hub_match_result.json`에도 저장한다.
 
 ## 폴더 구조
 
@@ -144,14 +168,27 @@ hub/
 ├── .gitignore
 ├── CLAUDE.md
 ├── DEVELOPMENT.md
-└── README.md
+├── README.md
+├── requirements.txt
+├── schema.py            입출력 pydantic 모델 (voice/info/dashboard 스키마와 1:1 대응)
+├── geo.py                GPS 거리 계산, 존(Zone) 분류·확장 판단
+├── specialty_matcher.py  임베딩 기반 예상 병명 ↔ 진료과 매칭
+├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
+├── hub_engine.py         2단계 매칭 오케스트레이션 (상태 보관 + 재처리)
+├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
+└── data/
+    └── test/             테스트용 병원 정보·voice 요약 JSON 샘플 (.gitignore로 산출물만 제외)
 ```
 
 ## 알려진 제약사항 / TODO
 
-- 아직 실제 구현 코드가 없다 (README/CLAUDE.md/DEVELOPMENT.md/.gitignore만 존재)
-- 개발 언어/프레임워크 미정
-- 존(Zone) 확장 기준(명시적 거절 비율), 진료과 매칭 가중치 등 구체적인 스코어링 로직 미정
+- 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
+  `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
+  조정 필요
+- 승인 액션 수신(hospital_approve/hospital_reject/final_approval)은 아직 미연동이라,
+  `hospitals[].status`는 현재 항상 `"pending"`으로만 채워진다 (수신 주체 확정 후 반영)
+- feature/voice·feature/info로부터의 실시간 통신(WebSocket 등)은 미구현. 지금은 로컬
+  JSON 파일을 읽어 처리하는 형태로만 검증했다
 - 위 세 스키마 모두 가안이며 feature/voice, feature/info, feature/dashboard 팀과 리뷰 후 확정 필요
 
 ## 추가사항
