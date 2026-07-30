@@ -3,11 +3,11 @@
 <!-- 예: feature/voice — 실시간 음성 필터링 및 환자 정보 구조화 -->
 
 > **브랜치 이름 변경 안내**: 이 브랜치는 기존 `feature/vital`에서 이름이
-> 변경되었습니다. 바이탈 수집과 병원 매칭 로직 중 어디까지를 이 브랜치가
-> 계속 담당할지, 아니면 신설된 `feature/hub`로 옮길지는 아직 팀 내부에서
-> **역할 분담 확정 필요** 상태입니다. 아래 기존 서술(바이탈 수집, 존 기반
-> 매칭 관련 내용)은 삭제하지 않고 그대로 남겨두었으니, 역할 조정이 확정되면
-> 그에 맞춰 갱신해주세요.
+> 변경되었습니다. **병원 매칭·존(Zone) 로직은 `feature/hub`로 이관하는 것으로
+> 확정**되어 구 스키마(존 기반 병원 매칭 결과)는 이 문서에서 제거했습니다.
+> 다만 dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/
+> final_approval)을 이 브랜치와 `feature/hub` 중 어느 쪽이 수신할지는 아직
+> 논의 중이라 **잠정 보류** 상태입니다.
 
 ## 담당자
 
@@ -74,40 +74,14 @@
 | `timestamp` | string (ISO 8601) | 측정 시각 |
 | `source` | `"rule"` | 센서 직결, AI 미사용을 나타내는 고정값 |
 
-### 2. 존 기반 병원 매칭 결과 → dashboard
+> 존 기반 병원 매칭 결과 스키마는 `feature/hub` 신설로 대체되어 이 문서에서
+> 제거했습니다. 최신 스키마는 `feature/hub` README.md의 "입출력 데이터 포맷 >
+> 출력 스키마 3"을 참고하세요.
 
-**출력**
-```json
-{
-  "zone_active": [1, 2],
-  "hospitals": [
-    {
-      "hospital_id": "C",
-      "name": "C병원",
-      "distance_km": 2.1,
-      "status": "confirmed",
-      "eta_min": 6
-    },
-    {
-      "hospital_id": "D",
-      "name": "D병원",
-      "distance_km": 2.6,
-      "status": "rejected"
-    }
-  ],
-  "source": "rule"
-}
-```
+### 2. 승인 액션 ← dashboard (입력, 역방향)
 
-| 필드 | 타입 | 설명 |
-|---|---|---|
-| `zone_active` | number[] | 현재 활성화된 존 번호 목록 |
-| `hospitals[].hospital_id` | string | 병원 식별자 |
-| `hospitals[].status` | `"pending"` \| `"approved"` \| `"rejected"` \| `"confirmed"` | 병원 응답 상태 |
-| `hospitals[].distance_km` | number | GPS 기준 거리 |
-| `hospitals[].eta_min` | number | 도착 예상 시간(분), 확정 병원만 필요 |
-
-### 3. 승인 액션 ← dashboard (입력, 역방향)
+> `feature/info`와 `feature/hub` 중 어느 쪽이 이 액션을 수신할지 아직
+> 확정되지 않았습니다 (잠정 보류). 확정 전까지는 스키마 자체만 유효합니다.
 
 **입력**
 ```json
@@ -126,7 +100,7 @@
 | `actor` | `"hospital"` \| `"paramedic"` | 누가 누른 행위인지 |
 | `timestamp` | string | 행위 발생 시각 |
 
-### 4. 병원 정보 → feature/hub (신규, 가안)
+### 3. 병원 정보 → feature/hub (신규, 가안)
 
 > `feature/hub` 신설에 따라 추가된 스키마. `feature/hub`가 실제로 받는
 > 입력 형태와 동일하다. 가안이며 팀 리뷰 후 확정 예정.
