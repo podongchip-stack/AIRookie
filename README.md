@@ -5,9 +5,10 @@
 > **브랜치 이름 변경 안내**: 이 브랜치는 기존 `feature/vital`에서 이름이
 > 변경되었습니다. **병원 매칭·존(Zone) 로직은 `feature/hub`로 이관하는 것으로
 > 확정**되어 구 스키마(존 기반 병원 매칭 결과)는 이 문서에서 제거했습니다.
-> 다만 dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/
-> final_approval)을 이 브랜치와 `feature/hub` 중 어느 쪽이 수신할지는 아직
-> 논의 중이라 **잠정 보류** 상태입니다.
+> dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/final_approval)의
+> 수신 주체도 **`feature/hub`로 확정**되었습니다 (dashboard는 feature/hub와만
+> 직접 통신하기 때문). 이 브랜치는 승인 액션을 직접 받지 않는 대신, hub가
+> 확정 처리 후 내려주는 "병상 갱신 알림"을 받는다 (아래 참고).
 
 ## 담당자
 
@@ -47,29 +48,34 @@
 
 > 존 기반 병원 매칭 결과 스키마는 `feature/hub` 신설로 대체되어 이 문서에서
 > 제거했습니다. 최신 스키마는 `feature/hub` README.md의 "입출력 데이터 포맷 >
-> 출력 스키마 3"을 참고하세요.
+> 출력 스키마 4"를 참고하세요.
 
-### 1. 승인 액션 ← dashboard (입력, 역방향)
+### 1. 병상 갱신 알림 ← feature/hub (입력, 역방향, 신규)
 
-> `feature/info`와 `feature/hub` 중 어느 쪽이 이 액션을 수신할지 아직
-> 확정되지 않았습니다 (잠정 보류). 확정 전까지는 스키마 자체만 유효합니다.
+> dashboard의 승인 액션은 feature/hub가 직접 받는다 (feature/info는 받지 않음).
+> 대신 `final_approval`로 이송이 확정되면, 같은 병상에 다른 구급차가 중복
+> 매칭되는 걸 막기 위해 hub가 이 브랜치에 갱신된 병상 수를 알려준다. 동시에
+> 여러 구급차가 매칭 중일 수 있어서 필요한 흐름이다 — hv1/hvec 같은 외부
+> API의 갱신 주기만으로는 확정 시점에 바로 반영이 안 될 수 있기 때문.
 
 **입력**
 ```json
 {
-  "action": "final_approval",
-  "hospital_id": "C",
-  "actor": "paramedic",
-  "timestamp": "2026-07-28T14:34:05Z"
+  "hospitalId": "H001",
+  "availableBedCount": 11,
+  "status": "confirmed",
+  "updatedAt": "2026-07-30T14:20:00Z",
+  "source": "rule"
 }
 ```
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
-| `action` | `"hospital_approve"` \| `"hospital_reject"` \| `"final_approval"` | 어떤 승인 행위인지 |
-| `hospital_id` | string | 대상 병원 |
-| `actor` | `"hospital"` \| `"paramedic"` | 누가 누른 행위인지 |
-| `timestamp` | string | 행위 발생 시각 |
+| `hospitalId` | string | 대상 병원 식별자 |
+| `availableBedCount` | number | hub가 확정 처리 후 계산한 최신 가용 병상 수. 이 값으로 덮어쓰면 됨 |
+| `status` | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유 |
+| `updatedAt` | string (ISO 8601) | 이 갱신이 발생한 시각 |
+| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 
 ### 2. 병원 정보 → feature/hub (신규, 가안)
 
