@@ -183,8 +183,42 @@ hub/
 ├── hub_engine.py         2단계 매칭 오케스트레이션 (상태 보관 + 재처리)
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
 └── data/
-    └── test/             테스트용 병원 정보·voice 요약 JSON 샘플 (.gitignore로 산출물만 제외)
+    └── test/             테스트용 병원 정보·voice 요약 JSON 샘플 + 실행 결과(output_hub_match_result.json)
 ```
+
+## 코드 구조 — 모듈 간 관계
+
+```
+run_match.py  (테스트 실행 진입점)
+   │  HospitalInfo · VoiceCallSummaryMessage를 JSON에서 읽어들임
+   ▼
+hub_engine.py  (HubEngine — 병원 정보 상태 보관 + 2단계 매칭 오케스트레이션)
+   │
+   ├─→ schema.py             모든 모듈이 공유하는 데이터 형태 (다른 모듈에 의존하지 않음)
+   ├─→ geo.py                거리 계산 · 존 분류/확장 판단 (다른 모듈에 의존하지 않음)
+   ├─→ specialty_matcher.py  진료과 임베딩 매칭 (다른 모듈에 의존하지 않음)
+   └─→ scoring.py            점수 가중합 · 순위 결정 (다른 모듈에 의존하지 않음)
+```
+
+- **`schema.py`가 가장 아래 계층**이다. 나머지 5개 파일이 전부 이 파일의 타입을 가져다
+  쓰지만, `schema.py` 자신은 아무것도 import하지 않는다 — 데이터 "형태"만 정의하고
+  로직은 하나도 없기 때문.
+- **`geo.py` / `specialty_matcher.py` / `scoring.py`는 서로를 전혀 모른다.** 셋 다
+  `hub_engine.py`에서만 쓰이고, 서로 독립적이라 하나를 통째로 바꿔도(예: 진료과 매칭
+  모델을 다른 임베딩 모델로 교체) 나머지 둘과 `hub_engine.py`의 흐름 자체는 안 바뀐다.
+  CLAUDE.md의 "모델/API 호출부와 비즈니스 로직은 분리해서 구현한다" 원칙을 그대로
+  코드 구조에 반영한 것이다.
+- **`hub_engine.py`가 유일하게 저 세 계산 모듈을 전부 알고 조립하는 곳**이다. "1단계:
+  GPS로 존 후보 생성 → 2단계: voice 도착 시 진료과 매칭+스코어링으로 재처리"라는
+  실제 업무 흐름이 여기에만 있다.
+- **`run_match.py`는 `hub_engine.py`와 `schema.py`만 알면 된다.** geo/specialty_matcher/
+  scoring 내부 구현을 몰라도 `HubEngine`을 통해 실행할 수 있다 — 나중에 실제 통신
+  계층(WebSocket 등)을 붙일 때도 이 파일과 같은 방식으로 `HubEngine`만 가져다 쓰면 된다.
+
+> 위 다이어그램은 "코드가 무엇을 import하는지"(의존 관계)이고, 실제 운영 중 데이터가
+> 오가는 순서("데이터 포맷 및 흐름" 섹션에서 설명한 voice/info → hub → dashboard)는
+> 별개의 축이다. 예를 들어 `geo.py`는 다른 모듈에 의존하지 않지만, 실제로는
+> feature/info의 GPS 데이터가 들어와야 의미가 생긴다.
 
 ## 알려진 제약사항 / TODO
 
