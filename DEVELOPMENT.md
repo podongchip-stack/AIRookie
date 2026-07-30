@@ -3,9 +3,14 @@
 ## 가상환경 설정
 
 ```bash
-conda create -n hub python=3.11
-conda activate hub
+conda create -n rookie_hub python=3.11
+conda activate rookie_hub
 ```
+
+이 저장소는 5개 브랜치가 작업 폴더를 공유하기 때문에, 브랜치마다 가상환경 이름을
+분리해서 쓴다 (feature/voice는 `rookie_voice`). 같은 이름을 여러 브랜치가 같이
+쓰면 서로 다른 의존성 버전이 섞여 꼬일 수 있어서, `rookie_hub`는 이 브랜치의
+`requirements.txt`만으로 처음부터 새로 설치해 검증했다.
 
 ## 의존성 설치
 

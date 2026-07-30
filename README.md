@@ -54,6 +54,12 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 - 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
 - 주요 라이브러리·프레임워크: pydantic(스키마 검증), sentence-transformers(진료과 매칭), numpy
 - 실행 환경: 로컬 (CPU로 충분 — MiniLM은 경량 모델이라 GPU 불필요)
+- **가상환경 이름 컨벤션**: `rookie_hub`. 이 저장소는 5개 브랜치가 작업 폴더를 공유하기
+  때문에, feature/voice는 `rookie_voice`, feature/hub는 `rookie_hub`처럼 브랜치별로
+  가상환경 이름을 분리해서 쓴다 (같은 이름의 환경을 여러 브랜치가 같이 쓰면 서로 다른
+  의존성 버전이 섞여 꼬일 수 있음). `rookie_hub`는 hub의 `requirements.txt`만으로 처음부터
+  새로 설치해서 검증했다 — voice 쪽 라이브러리(faster-whisper 등)는 안 들어있는 깔끔한
+  환경이다.
 
 ## 입출력 데이터 포맷
 
@@ -149,8 +155,8 @@ feature/hub는 이 중 `summary` 필드(부상 상태, 예상 병명, 중증도)
 ## 실행 방법
 
 ```bash
-conda create -n hub python=3.11
-conda activate hub
+conda create -n rookie_hub python=3.11
+conda activate rookie_hub
 pip install -r requirements.txt
 ```
 

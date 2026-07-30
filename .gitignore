@@ -34,9 +34,6 @@ venv/
 # 100MB 파일 크기 제한으로 push가 거부된 적 있음) — 방어적으로 추가해둔다.
 node_modules/
 
-# 테스트 매칭 실행 결과 (run_match.py가 생성, 재현 가능한 산출물)
-data/test/output_*.json
-
 # Misc
 *.tmp
 .cache/
