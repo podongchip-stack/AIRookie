@@ -1,6 +1,13 @@
-# [feature/vital] — 기능 요약 한 줄
+# [feature/info] — 기능 요약 한 줄
 
 <!-- 예: feature/voice — 실시간 음성 필터링 및 환자 정보 구조화 -->
+
+> **브랜치 이름 변경 안내**: 이 브랜치는 기존 `feature/vital`에서 이름이
+> 변경되었습니다. 바이탈 수집과 병원 매칭 로직 중 어디까지를 이 브랜치가
+> 계속 담당할지, 아니면 신설된 `feature/hub`로 옮길지는 아직 팀 내부에서
+> **역할 분담 확정 필요** 상태입니다. 아래 기존 서술(바이탈 수집, 존 기반
+> 매칭 관련 내용)은 삭제하지 않고 그대로 남겨두었으니, 역할 조정이 확정되면
+> 그에 맞춰 갱신해주세요.
 
 ## 담당자
 
@@ -119,6 +126,44 @@
 | `actor` | `"hospital"` \| `"paramedic"` | 누가 누른 행위인지 |
 | `timestamp` | string | 행위 발생 시각 |
 
+### 4. 병원 정보 → feature/hub (신규, 가안)
+
+> `feature/hub` 신설에 따라 추가된 스키마. `feature/hub`가 실제로 받는
+> 입력 형태와 동일하다. 가안이며 팀 리뷰 후 확정 예정.
+
+**출력**
+```json
+{
+  "hospitalId": "H001",
+  "name": "○○병원",
+  "gps": { "lat": 35.1795, "lng": 128.1076 },
+  "availableBedCount": 12,
+  "nightDutyAvailable": true,
+  "specialties": [
+    {
+      "department": "흉부외과",
+      "doctorCount": 3,
+      "recentProcedureTags": ["기흉", "흉부외상"]
+    }
+  ],
+  "source": "rule",
+  "updatedAt": "2026-07-29T10:00:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `hospitalId` | string | 병원 고유 식별자 |
+| `name` | string | 병원명 |
+| `gps.lat` / `gps.lng` | number | 병원 위치 좌표 (Hub의 거리 계산에 사용) |
+| `availableBedCount` | number | 현재 실시간 가용 응급실 병상 수 |
+| `nightDutyAvailable` | boolean | 야간 당직 전문의 존재 여부 |
+| `specialties[].department` | string | 진료과명 |
+| `specialties[].doctorCount` | number | 해당 진료과 수술 가능 의사 수 |
+| `specialties[].recentProcedureTags` | string[] | 최근 수술 이력 기반 전문 분야 태그 (개인정보 블라인드 처리, 가안 DB 기반이며 향후 실제 데이터로 교체 예정) |
+| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+| `updatedAt` | string (ISO 8601) | 이 정보가 마지막으로 갱신된 시각 |
+
 ## 실행 방법
 
 ```bash
@@ -133,7 +178,7 @@ pip install -r requirements.txt
 ## 폴더 구조
 
 ```
-vital/
+info/
 ├── .gitignore
 ├── README.md
 └── requirements.txt
