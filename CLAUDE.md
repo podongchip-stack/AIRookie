@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 이 파일은 Claude Code가 이 저장소에서 작업할 때 참고하는 공통 컨텍스트입니다.
-모든 브랜치(main, develop, feature/voice, feature/vital, feature/dashboard)에서 동일하게 적용됩니다.
+모든 브랜치(main, develop, feature/voice, feature/info, feature/hub, feature/dashboard)에서 동일하게 적용됩니다.
 
 ---
 
@@ -56,9 +56,10 @@
 | 브랜치 | 담당 영역 |
 |---|---|
 | `main` | 배포 기준 브랜치 |
-| `develop` | 통합 개발 브랜치, 모든 feature는 여기서 분기·병합 |
+| `develop` | 통합 개발 브랜치 |
 | `feature/voice` | 음성 수집, STT, 실시간 음성 필터링, 정보 구조화 |
-| `feature/vital` | 바이탈 수집·전송, 존(Zone) 기반 병원 매칭 로직 |
+| `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화 (역할 범위 확정 중) |
+| `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직, 승인 상태 관리 |
 | `feature/dashboard` | 구급차·병원 대시보드 프론트엔드 |
 
 브랜치 전략: `feature/* → develop → main`
@@ -91,6 +92,7 @@ feature/voice ──(통화 요약 JSON)──────────→ featur
 feature/vital ──(바이탈 JSON)──────────────→ feature/dashboard
 feature/vital ──(병원 매칭 결과 JSON)──────→ feature/dashboard
 feature/dashboard ──(승인 액션 JSON)───────→ feature/vital
+feature/voice(환자 정보) + feature/info(병원 정보) → feature/hub(규칙 기반 매칭) → feature/dashboard(통합 결과)
 ```
 
 아래 포맷은 voice를 제외하고는 아직 약식이다. vital은 실제 구급차 바이탈 기기 스펙이 확정되지 않아 우선 가정한 형태이며, 확정되는 대로 갱신한다.
@@ -230,7 +232,12 @@ feature/dashboard ──(승인 액션 JSON)───────→ feature/vit
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/dashboard" 참고
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
 
-## feature/vital 담당자 참고사항
+## feature/info 담당자 참고사항
+
+> **브랜치 이름 변경 안내**: 이 브랜치는 기존 `feature/vital`에서 이름이
+> 변경되었습니다. 바이탈 수집과 병원 매칭 로직 중 어디까지를 이 브랜치가
+> 계속 담당할지, 아니면 신설된 `feature/hub`로 옮길지는 아직 팀 내부에서
+> **역할 분담 확정 필요** 상태입니다.
 
 - 바이탈 데이터는 AI 처리 없이 센서값을 그대로 전달 (규칙 기반)
 - 병원 매칭은 AI가 아닌 규칙 기반 적합도 엔진으로 구현: hv1(전문의 보유)/hvec(병상 현황)/hv2(중증 질환별 수용 가능 여부) API를 대조해 점수 산출
@@ -238,6 +245,16 @@ feature/dashboard ──(승인 액션 JSON)───────→ feature/vit
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
 - 바이탈 실시간 전송은 이송 승인이 확정된 병원 한 곳에만 이루어져야 하며, 병원 전환 시 기존 전송은 즉시 중단한다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 2, 3" 참고. dashboard로부터 승인 액션(4번 포맷)을 수신하는 처리도 구현해야 한다
+
+## feature/hub 담당자 참고사항
+
+- 입력은 두 가지: feature/voice가 보내는 환자 정보 JSON(부상 상태, 예상 병명, 중증도)과 feature/info가 보내는 병원 정보 JSON(위치, 병상, 전문성)
+- 처리는 규칙 기반 스코어링만 사용 (AI 미사용, source: "rule")
+  - 1차: GPS 기준 거리·존(Zone) 분류
+  - 2차: voice의 예상 병명·중증도와 info의 병원 전문성(specialties)을 결합한 가중합 스코어링으로 재정렬
+- 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준
+- 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON (feature/hub README.md의 "입출력 데이터 포맷" 참고)
+- dashboard가 보내는 hospital_approve / hospital_reject / final_approval 액션을 수신해 상태를 관리하고, 실시간 바이탈 스트리밍이 final_approval이 확정된 병원 한 곳에만 가도록 전환 처리
 
 ## feature/dashboard 담당자 참고사항
 
