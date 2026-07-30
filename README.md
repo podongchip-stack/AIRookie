@@ -152,6 +152,25 @@ feature/hub는 이 중 `summary` 필드(부상 상태, 예상 병명, 중증도)
 | `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 
+## 결과 저장 및 전송 방식 (`delivery.py`)
+
+지금은 dashboard 쪽 API가 없어서 로컬 파일 저장만 하지만, 나중에 Flask로 실시간
+통신을 붙일 자리를 미리 분리해뒀다.
+
+- **파일명 규칙**: feature/voice가 실제로 만드는 파일이 `<stem>_call_summary.json`
+  형태이므로(예: `DrRomantic3v3_call_summary.json`), hub의 결과물도 같은 stem을
+  이어받아 `<stem>_hub_match_result.json`으로 저장한다. 입력과 출력이 파일명만으로
+  짝지어지기 때문에, 여러 사건이 동시에 처리돼도 결과 파일이 서로 덮어써지거나
+  섞이지 않는다 (ERD에는 없는, 사건 단위로 voice↔hub를 연결할 임시 상관관계 키다).
+- **저장 위치**: `data/test/output/<stem>_hub_match_result.json`
+- **`deliver()` 하나로 로컬 저장 + 통신을 함께 수행**: `save_local()`이 로컬 저장,
+  `send_to_dashboard()`가 통신 담당인데, 지금은 `send_to_dashboard()`가 아무 것도
+  하지 않는 자리만 잡아둔 상태다. 나중에 `feature/dashboard`와 `develop`에서
+  병합할 때, 이 함수 내부에 `requests.post(...)`만 채우면 되고 `run_match.py`
+  같은 호출부는 코드를 바꿀 필요가 없다.
+- 데모 단계에서는 통신을 붙인 뒤에도 로컬 저장을 계속 같이 한다 (감사·재현 목적).
+  실제 사업화 단계에서는 이 부분을 재검토해야 한다.
+
 ## 실행 방법
 
 ```bash
@@ -165,7 +184,8 @@ pip install -r requirements.txt
 python run_match.py
 ```
 1단계(GPS+병원 정보로 존 기반 후보 리스트 생성)와 2단계(voice 정보 반영 재처리) 결과를
-각각 터미널에 출력하고, 최종 결과는 `data/test/output_hub_match_result.json`에도 저장한다.
+각각 터미널에 출력하고, 최종 결과는 `data/test/output/DrRomantic3v3_hub_match_result.json`에도
+저장한다 (파일명 규칙은 아래 "결과 저장 및 전송 방식" 참고).
 
 ## 폴더 구조
 
@@ -181,9 +201,14 @@ hub/
 ├── specialty_matcher.py  임베딩 기반 예상 병명 ↔ 진료과 매칭
 ├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
 ├── hub_engine.py         2단계 매칭 오케스트레이션 (상태 보관 + 재처리)
+├── delivery.py           결과 저장(+ 자리만 준비된 통신) — 파일명을 voice 입력에서 이어받음
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
 └── data/
-    └── test/             테스트용 병원 정보·voice 요약 JSON 샘플 + 실행 결과(output_hub_match_result.json)
+    └── test/
+        ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
+        ├── DrRomantic3v3_call_summary.json    voice 요약 샘플 (feature/voice 역할)
+        └── output/
+            └── DrRomantic3v3_hub_match_result.json  실행 결과 (delivery.py가 생성)
 ```
 
 ## 코드 구조 — 모듈 간 관계
@@ -198,6 +223,11 @@ hub_engine.py  (HubEngine — 병원 정보 상태 보관 + 2단계 매칭 오�
    ├─→ geo.py                거리 계산 · 존 분류/확장 판단 (다른 모듈에 의존하지 않음)
    ├─→ specialty_matcher.py  진료과 임베딩 매칭 (다른 모듈에 의존하지 않음)
    └─→ scoring.py            점수 가중합 · 순위 결정 (다른 모듈에 의존하지 않음)
+
+run_match.py
+   │  hub_engine.py가 만든 HubMatchResult를 그대로 넘김
+   ▼
+delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존)
 ```
 
 - **`schema.py`가 가장 아래 계층**이다. 나머지 5개 파일이 전부 이 파일의 타입을 가져다
@@ -212,8 +242,10 @@ hub_engine.py  (HubEngine — 병원 정보 상태 보관 + 2단계 매칭 오�
   GPS로 존 후보 생성 → 2단계: voice 도착 시 진료과 매칭+스코어링으로 재처리"라는
   실제 업무 흐름이 여기에만 있다.
 - **`run_match.py`는 `hub_engine.py`와 `schema.py`만 알면 된다.** geo/specialty_matcher/
-  scoring 내부 구현을 몰라도 `HubEngine`을 통해 실행할 수 있다 — 나중에 실제 통신
-  계층(WebSocket 등)을 붙일 때도 이 파일과 같은 방식으로 `HubEngine`만 가져다 쓰면 된다.
+  scoring 내부 구현을 몰라도 `HubEngine`을 통해 실행할 수 있다.
+- **`delivery.py`는 매칭 로직(`hub_engine.py`)과 완전히 분리돼 있다.** `schema.py`만
+  알고, "결과를 어떻게 내보낼지"(로컬 저장/통신)만 책임진다. 나중에 Flask 통신을
+  붙일 때 이 파일만 고치면 되고, `hub_engine.py`는 건드릴 필요가 없다.
 
 > 위 다이어그램은 "코드가 무엇을 import하는지"(의존 관계)이고, 실제 운영 중 데이터가
 > 오가는 순서("데이터 포맷 및 흐름" 섹션에서 설명한 voice/info → hub → dashboard)는
@@ -227,8 +259,9 @@ hub_engine.py  (HubEngine — 병원 정보 상태 보관 + 2단계 매칭 오�
   조정 필요
 - 승인 액션 수신(hospital_approve/hospital_reject/final_approval)은 아직 미연동이라,
   `hospitals[].status`는 현재 항상 `"pending"`으로만 채워진다 (수신 주체 확정 후 반영)
-- feature/voice·feature/info로부터의 실시간 통신(WebSocket 등)은 미구현. 지금은 로컬
-  JSON 파일을 읽어 처리하는 형태로만 검증했다
+- feature/voice·feature/info로부터의 실시간 통신, feature/dashboard로의 실시간 전송(Flask
+  예정)은 아직 미구현. 지금은 로컬 JSON 파일을 읽고 쓰는 형태로만 검증했고,
+  `delivery.py`의 `send_to_dashboard()`에 통신 붙일 자리만 미리 마련해뒀다
 - 위 세 스키마 모두 가안이며 feature/voice, feature/info, feature/dashboard 팀과 리뷰 후 확정 필요
 
 ## 추가사항

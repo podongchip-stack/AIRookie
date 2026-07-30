@@ -7,18 +7,19 @@
 """
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
+import delivery
 from hub_engine import HubEngine
 from schema import GpsPoint, HospitalInfo, VoiceCallSummaryMessage
 
 BASE_DIR = Path(__file__).resolve().parent
 TEST_DIR = BASE_DIR / "data" / "test"
 HOSPITALS_DIR = TEST_DIR / "hospitals"
-VOICE_SUMMARY_PATH = TEST_DIR / "voice_summary.json"
-OUTPUT_PATH = TEST_DIR / "output_hub_match_result.json"
+# feature/voice가 실제로 만드는 파일명 규칙(<stem>_call_summary.json)을 그대로 흉내낸
+# 테스트 픽스처. delivery.py가 이 파일명에서 stem을 뽑아 결과 파일명을 짓는다.
+VOICE_SUMMARY_PATH = TEST_DIR / "DrRomantic3v3_call_summary.json"
 
 AMBULANCE_GPS = GpsPoint(lat=35.1800, lng=128.1080)
 
@@ -70,11 +71,12 @@ def main() -> None:
     )
     print("  [확인] zone=1 밖의 H003은 아직 후보에 포함되지 않음")
 
-    # exclude_none을 쓰지 않는다 — specialtyMatch.department처럼 의미 있게 null일 수 있는
-    # 필드가 키 자체째 사라지면, 이걸 그대로 파싱하는 다른 브랜치(dashboard 등)에서
-    # 필드가 없다고 오류가 날 수 있다. 항상 모든 키를 포함하고 값만 null로 낸다.
-    OUTPUT_PATH.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-    print(f"\n  결과 저장: {OUTPUT_PATH}")
+    # 로컬 저장 + (자리만 준비된) 통신을 함께 수행한다. 결과 파일명은 voice 요약
+    # 파일명에서 stem을 그대로 이어받는다 (DrRomantic3v3_call_summary.json ->
+    # DrRomantic3v3_hub_match_result.json) — 입력과 출력이 파일명만으로 짝지어져서
+    # 여러 건이 동시에 처리돼도 서로 다른 파일로 섞이지 않는다.
+    saved_path = delivery.deliver(result, VOICE_SUMMARY_PATH)
+    print(f"\n  결과 저장: {saved_path}")
 
     print("\n=== 존 확장 시나리오: 거절 비율이 임계값을 넘으면 다음 존까지 확장 ===")
     max_zone = 1
