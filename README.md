@@ -60,7 +60,7 @@
 ```
 
 **송신** — 승인 액션 (구급대원/병원이 대시보드에서 버튼을 눌렀을 때. 수신처는
-`feature/info`·`feature/hub` 간 논의 중 — 잠정 보류)
+`feature/hub`로 확정됨 — dashboard는 feature/hub와만 직접 통신하기 때문)
 ```json
 {
   "action": "final_approval",
