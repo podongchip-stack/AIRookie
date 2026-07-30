@@ -6,11 +6,16 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
+    ApprovalAction,
     GpsPoint,
+    HospitalBedUpdate,
     HospitalInfo,
     HospitalMatch,
+    HospitalStatus,
     HubMatchResult,
     PatientInfo,
     SpecialtyMatch,
@@ -19,15 +24,59 @@ from schema import (
 from scoring import final_score, rank
 from specialty_matcher import SpecialtyMatcher
 
+# dashboard의 ApprovalAction.action -> 매칭 결과에 반영할 상태.
+# hospital_approve/hospital_reject는 "병원의 승인은 후보 등록일 뿐"(CLAUDE.md)이라
+# 상태만 바뀌고 병상은 안 줄어든다. final_approval(구급대원의 이송 승인)만 실제
+# 확정이라 병상을 차감하고 feature/info에도 알린다.
+_ACTION_TO_STATUS: dict[str, HospitalStatus] = {
+    "hospital_approve": "approved",
+    "hospital_reject": "rejected",
+    "final_approval": "confirmed",
+}
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 class HubEngine:
     def __init__(self, specialty_matcher: SpecialtyMatcher | None = None) -> None:
         self._hospitals: dict[str, HospitalInfo] = {}
         self._matcher = specialty_matcher or SpecialtyMatcher()
+        # dashboard가 보낸 승인 액션 결과. hospitalId 기준으로 보관해뒀다가
+        # 다음 매칭 결과의 hospitals[].status에 반영한다.
+        self._approval_status: dict[str, HospitalStatus] = {}
 
     def update_hospital_info(self, info: HospitalInfo) -> None:
         """feature/info로부터 받은 병원 정보를 hospitalId 기준으로 upsert한다."""
         self._hospitals[info.hospitalId] = info
+
+    def apply_approval_action(self, action: ApprovalAction) -> HospitalBedUpdate | None:
+        """dashboard가 보낸 승인 액션을 반영한다 (dashboard는 이 브랜치와만 직접
+        통신하므로 수신은 여기서 한다). hospitals[].status에 반영될 내부 상태를
+        갱신하고, 병상이 실제로 줄어드는 경우(final_approval)에만 feature/info로
+        보낼 HospitalBedUpdate를 만들어 반환한다 — 그 외에는 None을 반환한다.
+        """
+        new_status = _ACTION_TO_STATUS[action.action]
+        self._approval_status[action.hospital_id] = new_status
+
+        if action.action != "final_approval":
+            return None
+
+        info = self._hospitals.get(action.hospital_id)
+        if info is None or info.availableBedCount <= 0:
+            # 모르는 병원이거나 이미 병상이 없으면 더 깎지 않는다 (음수 방지)
+            return None
+
+        info.availableBedCount -= 1
+        info.updatedAt = _utcnow_iso()
+
+        return HospitalBedUpdate(
+            hospitalId=info.hospitalId,
+            availableBedCount=info.availableBedCount,
+            status="confirmed",
+            updatedAt=info.updatedAt,
+        )
 
     def _candidates_in_zone(
         self, ambulance_gps: GpsPoint, max_zone: int
@@ -87,9 +136,7 @@ class HubEngine:
                 distanceKm=item["distanceKm"],
                 specialtyMatch=item["specialtyMatch"],
                 availableBedCount=item["info"].availableBedCount,
-                # 승인 액션(hospital_approve/hospital_reject/final_approval) 수신은
-                # 아직 미연동이라(CLAUDE.md "잠정 보류" 참고) 항상 pending으로 둔다.
-                status="pending",
+                status=self._approval_status.get(item["hospitalId"], "pending"),
             )
             for item in rank(scored)
         ]

@@ -1,10 +1,11 @@
-"""HubMatchResult를 feature/dashboard로 내보내는 출구(delivery) 계층.
+"""hub_engine.py의 결과물을 feature/dashboard·feature/info로 내보내는 출구(delivery) 계층.
 
 지금은 로컬 파일 저장만 하지만, 나중에 Flask 기반 실시간 통신을 붙일 자리를
-미리 분리해뒀다. dashboard 쪽 엔드포인트가 정해지면 `send_to_dashboard()` 내부만
-채우면 되고, 호출부(run_match.py 등)는 `deliver()` 하나만 그대로 쓰면 된다 —
-CLAUDE.md의 "모델/API 호출부와 비즈니스 로직은 분리해서 구현한다" 원칙과 동일하게,
-저장 방식이 바뀌어도 매칭 로직(hub_engine.py)에는 영향이 없다.
+미리 분리해뒀다. 엔드포인트가 정해지면 `send_to_dashboard()`/`send_to_info()`
+내부만 채우면 되고, 호출부(run_match.py 등)는 `deliver()`/`deliver_bed_update()`
+하나씩만 그대로 쓰면 된다 — CLAUDE.md의 "모델/API 호출부와 비즈니스 로직은
+분리해서 구현한다" 원칙과 동일하게, 저장 방식이 바뀌어도 매칭 로직
+(hub_engine.py)에는 영향이 없다.
 
 파일명 규칙: feature/voice가 실제로 만드는 파일명이
 `<stem>_call_summary.json`이므로(예: DrRomantic3v3_call_summary.json), hub의
@@ -17,12 +18,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from schema import HubMatchResult
+from schema import HospitalBedUpdate, HubMatchResult
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "data" / "test" / "output"
 VOICE_SUMMARY_SUFFIX = "_call_summary.json"
 RESULT_SUFFIX = "_hub_match_result.json"
+BED_UPDATE_SUFFIX = "_bed_update.json"
 
 
 def result_filename(voice_summary_path: Path) -> str:
@@ -60,4 +62,35 @@ def deliver(result: HubMatchResult, voice_summary_path: Path) -> Path:
     """
     saved_path = save_local(result, voice_summary_path)
     send_to_dashboard(result)
+    return saved_path
+
+
+def bed_update_filename(hospital_id: str) -> str:
+    """병원 하나당 파일 하나 — 같은 병원이 다시 갱신되면 최신 상태로 덮어쓴다
+    (voice 요약처럼 사건 단위가 아니라 병원 단위의 "현재 상태"이기 때문)."""
+    return f"{hospital_id}{BED_UPDATE_SUFFIX}"
+
+
+def save_local_bed_update(update: HospitalBedUpdate, output_dir: Path = OUTPUT_DIR) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / bed_update_filename(update.hospitalId)
+    path.write_text(update.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
+def send_to_info(update: HospitalBedUpdate) -> None:
+    """TODO(Flask 연동): feature/info 엔드포인트가 정해지면
+    requests.post(INFO_URL, json=update.model_dump())로 전송한다. 지금은 info 쪽
+    API가 없어 아무 것도 하지 않는다 — 자리만 만들어둔다.
+    """
+    print(f"  [통신] feature/info로 병상 갱신 전송은 아직 미연동 (자리만 준비됨) — {update.hospitalId}")
+
+
+def deliver_bed_update(update: HospitalBedUpdate) -> Path:
+    """로컬 저장 + (나중에) feature/info로의 통신을 함께 수행하는 단일 진입점.
+    deliver()와 이름/구조를 맞춰서, 호출부가 "결과를 어디로 보내든" 같은
+    패턴(저장 후 전송 자리 호출)을 따르게 했다.
+    """
+    saved_path = save_local_bed_update(update)
+    send_to_info(update)
     return saved_path

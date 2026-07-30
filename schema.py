@@ -90,7 +90,7 @@ class HubMatchResult(BaseModel):
     source: Literal["rule"] = "rule"
 
 
-# ── feature/dashboard → (수신 주체 논의 중, 잠정 보류) ──────────────────────
+# ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
 
 ApprovalActionType = Literal["hospital_approve", "hospital_reject", "final_approval"]
 Actor = Literal["hospital", "paramedic"]
@@ -101,3 +101,18 @@ class ApprovalAction(BaseModel):
     hospital_id: str
     actor: Actor
     timestamp: str
+
+
+# ── feature/hub → feature/info (출력, HospitalInfo 부분 갱신) ───────────────
+
+class HospitalBedUpdate(BaseModel):
+    """final_approval로 병상이 실제로 줄었을 때만 보내는 부분 갱신(patch).
+    HospitalInfo 전체가 아니라 바뀐 필드만 담는다 (info README "통합 데이터
+    모델: HospitalInfo" 표의 "2번" 열 참고).
+    """
+
+    hospitalId: str
+    availableBedCount: int
+    status: Literal["confirmed", "rejected"]
+    updatedAt: str
+    source: Literal["rule"] = "rule"

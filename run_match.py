@@ -12,7 +12,7 @@ from pathlib import Path
 
 import delivery
 from hub_engine import HubEngine
-from schema import GpsPoint, HospitalInfo, VoiceCallSummaryMessage
+from schema import ApprovalAction, GpsPoint, HospitalInfo, VoiceCallSummaryMessage
 
 BASE_DIR = Path(__file__).resolve().parent
 TEST_DIR = BASE_DIR / "data" / "test"
@@ -89,6 +89,35 @@ def main() -> None:
     result_zone2 = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=2)
     included = {h.hospitalId for h in result_zone2.hospitals}
     print(f"  zone=2 활성 존: {result_zone2.zoneActive}, 후보 병원: {sorted(included)}")
+
+    print("\n=== 승인 액션 시뮬레이션: dashboard가 1위 병원에 최종 승인을 보냈다고 가정 ===")
+    # 지금은 feature/dashboard가 실제로 이 액션을 보내는 통신이 없으니, 여기서는
+    # 같은 모양의 ApprovalAction을 직접 만들어 engine에 넣어본다 — 나중에 실제
+    # 통신이 붙어도 HubEngine.apply_approval_action()을 그대로 부르면 되므로,
+    # 이 테스트가 검증하는 로직 자체는 병합 후에도 안 바뀐다.
+    top_hospital_id = result.hospitals[0].hospitalId
+    action = ApprovalAction(
+        action="final_approval",
+        hospital_id=top_hospital_id,
+        actor="paramedic",
+        timestamp="2026-07-30T14:20:00Z",
+    )
+    bed_update = engine.apply_approval_action(action)
+    assert bed_update is not None, "final_approval인데 병상 갱신이 안 나오면 안 된다"
+    print(f"  {top_hospital_id} 확정 → 남은 병상 {bed_update.availableBedCount}개로 갱신")
+
+    saved_bed_update_path = delivery.deliver_bed_update(bed_update)
+    print(f"  병상 갱신 결과 저장: {saved_bed_update_path}")
+
+    print("\n=== 재매칭: 같은 조건으로 다시 매칭하면 확정 상태·병상 수가 반영되는지 확인 ===")
+    result_after_approval = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=1)
+    for h in result_after_approval.hospitals:
+        print(f"  {h.hospitalId} {h.name} — availableBedCount={h.availableBedCount}, status={h.status}")
+
+    confirmed = next(h for h in result_after_approval.hospitals if h.hospitalId == top_hospital_id)
+    assert confirmed.status == "confirmed", "승인 액션을 반영했는데 status가 그대로면 안 된다"
+    assert confirmed.availableBedCount == bed_update.availableBedCount, "병상 수가 갱신되지 않았다"
+    print(f"\n  [확인] {top_hospital_id}의 status가 confirmed로, 병상 수가 감소분으로 반영됨")
 
 
 if __name__ == "__main__":

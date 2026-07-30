@@ -29,7 +29,8 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 > 수신 주체는 **이 브랜치(feature/hub)로 확정**되었습니다 (dashboard가 feature/hub와만
 > 직접 통신하기 때문). 매칭 상태(`hospitals[].status`) 반영과, `final_approval` 시
 > feature/info로 병상 갱신을 알리는 처리("입출력 데이터 포맷"의 입력 스키마 3 /
-> 출력 스키마 5 참고)는 문서만 정리된 상태이며 코드 구현은 아직입니다.
+> 출력 스키마 5 참고)는 `HubEngine.apply_approval_action()`으로 **구현·테스트
+> 완료**했습니다 (`run_match.py` 참고). 실제 통신(Flask)만 아직 미연동입니다.
 
 ## 사용한 AI / 모델
 
@@ -221,6 +222,10 @@ feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 �
   하지 않는 자리만 잡아둔 상태다. 나중에 `feature/dashboard`와 `develop`에서
   병합할 때, 이 함수 내부에 `requests.post(...)`만 채우면 되고 `run_match.py`
   같은 호출부는 코드를 바꿀 필요가 없다.
+- **`feature/info`로 보내는 병상 갱신도 같은 패턴**: `deliver_bed_update()`가
+  `save_local_bed_update()`(로컬 저장) + `send_to_info()`(통신 자리)를 묶는다.
+  파일명은 사건 단위가 아니라 병원 단위라 `<hospitalId>_bed_update.json`으로
+  저장하고, 같은 병원이 다시 갱신되면 최신 상태로 덮어쓴다.
 - 데모 단계에서는 통신을 붙인 뒤에도 로컬 저장을 계속 같이 한다 (감사·재현 목적).
   실제 사업화 단계에서는 이 부분을 재검토해야 한다.
 
@@ -253,7 +258,7 @@ hub/
 ├── geo.py                GPS 거리 계산, 존(Zone) 분류·확장 판단
 ├── specialty_matcher.py  임베딩 기반 예상 병명 ↔ 진료과 매칭
 ├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
-├── hub_engine.py         2단계 매칭 오케스트레이션 (상태 보관 + 재처리)
+├── hub_engine.py         2단계 매칭 오케스트레이션 + 승인 액션 반영(상태 보관 + 재처리)
 ├── delivery.py           결과 저장(+ 자리만 준비된 통신) — 파일명을 voice 입력에서 이어받음
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
 └── data/
@@ -261,7 +266,8 @@ hub/
         ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
         ├── DrRomantic3v3_call_summary.json    voice 요약 샘플 (feature/voice 역할)
         └── output/
-            └── DrRomantic3v3_hub_match_result.json  실행 결과 (delivery.py가 생성)
+            ├── DrRomantic3v3_hub_match_result.json  매칭 결과 (delivery.py가 생성)
+            └── H004_bed_update.json                 병상 갱신 알림 (delivery.py가 생성)
 ```
 
 ## 코드 구조 — 모듈 간 관계
@@ -278,7 +284,7 @@ hub_engine.py  (HubEngine — 병원 정보 상태 보관 + 2단계 매칭 오�
    └─→ scoring.py            점수 가중합 · 순위 결정 (다른 모듈에 의존하지 않음)
 
 run_match.py
-   │  hub_engine.py가 만든 HubMatchResult를 그대로 넘김
+   │  hub_engine.py가 만든 HubMatchResult / HospitalBedUpdate를 그대로 넘김
    ▼
 delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존)
 ```
@@ -310,12 +316,13 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
   `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- 승인 액션 수신 주체는 이 브랜치로 문서상 확정됐지만, 코드(`hub_engine.py`)는 아직
-  실제로 받아 처리하지 않는다 — `hospitals[].status`는 현재 항상 `"pending"`으로만
-  채워진다. feature/info로의 병상 갱신 알림(출력 스키마 5)도 마찬가지로 미구현
-- feature/voice·feature/info로부터의 실시간 통신, feature/dashboard로의 실시간 전송(Flask
-  예정)은 아직 미구현. 지금은 로컬 JSON 파일을 읽고 쓰는 형태로만 검증했고,
-  `delivery.py`의 `send_to_dashboard()`에 통신 붙일 자리만 미리 마련해뒀다
+- 승인 액션 처리 로직(`HubEngine.apply_approval_action()`)은 구현·테스트 완료했다.
+  다만 `self._approval_status`가 브랜치 분리 테스트를 단순하게 유지하려고
+  hospitalId 기준 전역 상태다 — 실제로 구급차 여러 대가 동시에 같은 병원을 두고
+  경쟁하는 케이스(사건 단위 구분)까지는 아직 다루지 않는다
+- feature/voice·feature/info·feature/dashboard와의 실시간 통신(Flask 예정)은 아직
+  미구현. 지금은 로컬 JSON 파일을 읽고 쓰는 형태로만 검증했고, `delivery.py`의
+  `send_to_dashboard()`/`send_to_info()`에 통신 붙일 자리만 미리 마련해뒀다
 - 위 세 스키마 모두 가안이며 feature/voice, feature/info, feature/dashboard 팀과 리뷰 후 확정 필요
 
 ## 추가사항
