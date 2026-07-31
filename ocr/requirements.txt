@@ -1,0 +1,28 @@
+# OCR 모듈 전용 의존성 (저장소 루트의 requirements.txt 와 별개다)
+#
+# PyTorch는 GPU에 맞는 빌드를 먼저 설치해야 한다.
+# RTX 50 시리즈(Blackwell)는 반드시 cu128 이상 빌드여야 인식된다:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# 그 다음:
+#   pip install -r ocr/requirements.txt
+
+# ===== 제품 실행 의존성 (전부 permissive 라이선스) =====
+torch==2.11.0            # BSD-3
+transformers==5.12.1     # Apache-2.0
+accelerate==1.14.0       # Apache-2.0
+huggingface_hub==1.21.0  # Apache-2.0
+onnxruntime==1.27.0      # MIT — 레이아웃 검출 실행 (CPU)
+opencv-python==5.0.0.93  # Apache-2.0 — 레이아웃 전처리
+numpy==2.5.1             # BSD-3
+pillow==12.3.0           # MIT-CMU
+PyYAML==6.0.3            # MIT
+
+# ===== 선택 =====
+truststore==0.10.4       # MIT — HuggingFace SSL 인증서 오류가 나는 환경에서만 필요
+
+# ===== 개발 전용 (제품 배포물에 포함하지 않는다) =====
+# ONNX 변환(scripts/export_layout_onnx.py)에만 필요하다.
+# doclayout-yolo 는 AGPL-3.0 이므로 제품 의존성에 넣지 않는다.
+# doclayout-yolo==0.0.4  # AGPL-3.0
+# onnx==1.22.0           # Apache-2.0
+# onnxscript==0.7.1      # MIT
