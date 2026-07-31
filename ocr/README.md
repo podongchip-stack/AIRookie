@@ -38,18 +38,23 @@ CLAUDE.md의 "핵심 AI 활용 원칙"에 따라 각 단계가 AI 처리인지 �
 
 | 역할 | 모델 | 크기 | 라이선스 |
 |---|---|---|---|
-| 레이아웃 검출 | [DocLayout-YOLO-DocStructBench](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench) | 77MB (ONNX) | Apache-2.0 |
+| 레이아웃 검출 | [DocLayout-YOLO-DocStructBench-ONNX](https://huggingface.co/podongchip/DocLayout-YOLO-DocStructBench-ONNX) | 77MB | Apache-2.0 |
 | 텍스트 인식 | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 1.8GB | Apache-2.0 |
 
-### ⚠️ 라이선스 주의사항
+### 레이아웃 모델을 ONNX로 쓰는 이유 (라이선스)
 
-DocLayout-YOLO는 **가중치(Apache-2.0)와 실행 패키지(AGPL-3.0)의 라이선스가 다르다.**
+원본 [DocLayout-YOLO](https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench)는
+**가중치(Apache-2.0)와 실행 패키지(AGPL-3.0)의 라이선스가 다르다.**
 `doclayout_yolo` 패키지를 그대로 쓰면 AGPL이 전염되어, 서버로 서비스할 때
 우리 소스도 AGPL로 공개해야 한다.
 
-그래서 가중치를 ONNX로 변환해 `onnxruntime`(MIT)으로 실행한다.
-변환은 `scripts/export_layout_onnx.py` 에서 **1회만** 수행하며, 이 스크립트는
-제품 실행 경로에 포함되지 않는다. 전환해도 정확도 손실은 없었다 (87% → 88%).
+그래서 Apache-2.0 인 가중치만 ONNX로 변환해 `onnxruntime`(MIT)으로 실행한다.
+변환본은 위 저장소에 재배포해 두었고(원본 출처·변경사항·라이선스 명시),
+**이 저장소에는 AGPL 코드도, 그것에 의존하는 스크립트도 없다.**
+전환해도 정확도 손실은 없었다 (87% → 88%).
+
+가중치는 원본과 동일하며 재학습·파인튜닝하지 않았다.
+변환 이력(원본 revision, 변환 설정, 도구 버전)은 위 모델 카드에 기록돼 있다.
 
 ## 셋업
 
@@ -67,13 +72,7 @@ python ocr\scripts\download_models.py
 ```
 
 모델 캐시 위치를 바꾸려면 `HF_HOME` 환경변수를 설정한다 (C드라이브 용량이 빠듯할 때).
-
-ONNX 변환본이 없다는 안내가 나오면 1회만 실행한다 (개발 전용 패키지 필요):
-
-```bat
-pip install doclayout-yolo onnx onnxscript
-python ocr\scripts\export_layout_onnx.py
-```
+두 모델 모두 공개 저장소라 HuggingFace 로그인은 필요 없다.
 
 ## 실행
 
@@ -115,7 +114,6 @@ for region in result["regions"]:
 | `configs/models.yaml` | 모델 ID·리비전·임계값 | — |
 | `scripts/download_models.py` | 가중치 내려받기 | — |
 | `scripts/run_ocr.py` | 실행 CLI | — |
-| `scripts/export_layout_onnx.py` | ONNX 변환 (**개발 전용, AGPL 의존**) | — |
 
 ## 검증이 confidence 만으로 부족한 이유
 

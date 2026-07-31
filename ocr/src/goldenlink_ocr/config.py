@@ -28,7 +28,6 @@ def apply_hf_environment() -> None:
 class LayoutConfig:
     repo_id: str
     revision: str
-    weight_file: str
     onnx_file: str
     license: str
     imgsz: int
@@ -70,7 +69,6 @@ def load_config(path: Path | str = CONFIG_PATH) -> Config:
         layout=LayoutConfig(
             repo_id=raw["layout"]["repo_id"],
             revision=raw["layout"]["revision"],
-            weight_file=raw["layout"]["weight_file"],
             onnx_file=raw["layout"]["onnx_file"],
             license=raw["layout"]["license"],
             imgsz=raw["layout"]["imgsz"],

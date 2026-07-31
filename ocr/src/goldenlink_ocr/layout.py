@@ -2,7 +2,7 @@
 
 DocLayout-YOLO(Apache-2.0) 가중치를 ONNX로 변환한 것을 onnxruntime(MIT)으로 실행한다.
 원본 .pt 를 돌리는 doclayout_yolo 패키지는 AGPL-3.0이라 배포물에서 제외했다.
-변환은 scripts/export_layout_onnx.py 에서 1회만 수행한다.
+변환본은 configs/models.yaml 의 layout.repo_id 저장소에 있고, 변환 이력은 그 모델 카드 참고.
 
 YOLOv10 계열이라 NMS가 모델 안에 없다(NMS-free). 출력이 이미
 [1, 300, 6] = (x1, y1, x2, y2, confidence, class_id) 형태여서

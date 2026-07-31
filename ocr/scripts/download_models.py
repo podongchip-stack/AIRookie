@@ -9,6 +9,7 @@ configs/models.yaml 의 repo_id + revision 을 그대로 받아오므로 팀원 
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -39,25 +40,17 @@ def main() -> None:
     print(f"      {config.recognizer.repo_id} @ {config.recognizer.revision[:8]}", flush=True)
     print(f"      → {path}", flush=True)
 
-    print("[2/2] 레이아웃 모델 (DocLayout-YOLO)", flush=True)
-    onnx_path = config.layout.onnx_path
-    if onnx_path.exists():
-        print(f"      ONNX 이미 존재: {onnx_path} ({onnx_path.stat().st_size / 1e6:.1f}MB)",
-              flush=True)
-    else:
-        MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        pt_path = hf_hub_download(
-            config.layout.repo_id,
-            config.layout.weight_file,
-            revision=config.layout.revision,
-        )
-        print(f"      원본 가중치 → {pt_path}", flush=True)
-        print(f"      ONNX 변환본이 없다. scripts/export_layout_onnx.py 를 1회 실행한다:",
-              flush=True)
-        print(f"        python scripts/export_layout_onnx.py", flush=True)
-        print(f"      (변환에는 AGPL-3.0 패키지 doclayout-yolo 가 필요하다. "
-              f"제품 실행에는 불필요하다.)", flush=True)
-        return
+    print("[2/2] 레이아웃 모델 (DocLayout-YOLO ONNX)", flush=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    cached = hf_hub_download(
+        config.layout.repo_id,
+        config.layout.onnx_file,
+        revision=config.layout.revision,
+    )
+    shutil.copyfile(cached, config.layout.onnx_path)
+    print(f"      {config.layout.repo_id} @ {config.layout.revision[:8]}", flush=True)
+    print(f"      → {config.layout.onnx_path} "
+          f"({config.layout.onnx_path.stat().st_size / 1e6:.1f}MB)", flush=True)
 
     print("\n준비 완료. 다음으로 확인:", flush=True)
     print("  python scripts/run_ocr.py <이미지경로>", flush=True)

@@ -3,14 +3,14 @@
 
 layout:
   # 레이아웃 검출: 영역 위치 + 종류 분류
-  repo_id: juliozhao/DocLayout-YOLO-DocStructBench
-  revision: 8c3299a30b8ff29a1503c4431b035b93220f7b11
-  weight_file: doclayout_yolo_docstructbench_imgsz1024.pt
+  # 원본(juliozhao/DocLayout-YOLO-DocStructBench, Apache-2.0)을 ONNX로 변환해
+  # 재배포한 것이다. 원본 .pt 를 실행하는 doclayout_yolo 패키지가 AGPL-3.0 이라,
+  # onnxruntime(MIT)으로 돌려 라이선스 전염을 피한다. 가중치는 원본과 동일하다.
+  repo_id: podongchip/DocLayout-YOLO-DocStructBench-ONNX
+  revision: 49eb1660e838bccee2a746f9c07b43ff1f73f191
   onnx_file: doclayout_yolo_docstructbench_imgsz1024.onnx
   license: apache-2.0
-  url: https://huggingface.co/juliozhao/DocLayout-YOLO-DocStructBench
-  # 배포물에는 ONNX 변환본만 사용한다. 원본 .pt 를 돌리는 doclayout_yolo 패키지가
-  # AGPL-3.0 이라, 변환 후 onnxruntime(MIT)으로 실행해 라이선스 전염을 피한다.
+  url: https://huggingface.co/podongchip/DocLayout-YOLO-DocStructBench-ONNX
   imgsz: 1024
   conf_threshold: 0.2
 
