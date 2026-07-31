@@ -84,7 +84,7 @@
 | `specialties[].department`          | string                       | 진료과명                                          | 포함                 | 미포함                                   |
 | `specialties[].doctorCount`         | number                       | 해당 진료과 수술 가능 의사 수                             | 포함                 | 미포함                                   |
 | `specialties[].recentProcedureTags` | string[]                     | 최근 수술 이력 기반 전문 분야 태그 (개인정보 블라인드 처리, 가안 DB 기반) | 포함                 | 미포함                                   |
-| `status`                            | `"confirmed"` | `"rejected"` | 이 갱신이 발생한 사유                                  | 미포함 (해당 없음)        | 포함                                    |
+| `status`                            | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유                                 | 미포함 (해당 없음)        | 포함                                    |
 | `source`                            | `"rule"`                     | 규칙 기반 데이터임을 나타내는 고정값                          | 포함                 | 포함                                    |
 | `updatedAt`                         | string (ISO 8601)            | 이 레코드/갱신이 마지막으로 발생한 시각                        | 포함                 | 포함                                    |
 

@@ -44,3 +44,6 @@ data/
 # Misc
 *.tmp
 .cache/
+
+# run
+run.txt
