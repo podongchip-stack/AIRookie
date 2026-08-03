@@ -21,6 +21,10 @@ pydantic==2.13.4
 # Ollama 주소, 모델명 등 환경 변수 관리
 python-dotenv==1.2.1
 
+# 라이브 마이크 캡처 (voice-live)
+sounddevice==0.5.5
+soundfile==0.14.0
+
 # ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
 annotated-types==0.8.0
 av==18.0.0

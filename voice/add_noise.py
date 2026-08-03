@@ -21,8 +21,9 @@ from pathlib import Path
 import av
 import numpy as np
 
-BASE_DIR = Path(__file__).resolve().parent
-ORIGIN_NOISE_DATA_DIR = BASE_DIR / "data" / "origin_noise_data"
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_VOICE_DIR = BASE_DIR / "data" / "voice_data"
+ORIGIN_NOISE_DATA_DIR = DATA_VOICE_DIR / "origin_noise_data"
 
 
 def load_audio_mono(path: str, target_rate: int = 16000) -> tuple[np.ndarray, int]:

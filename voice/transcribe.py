@@ -18,11 +18,12 @@ UNDIARIZED_SPEAKER_LABEL = "미분리"
 # .gitignore의 data/ 규칙에 걸려 저장소에는 올라가지 않는다 (README "폴더 구조" 참고).
 # origin_data·origin_noise_data 둘 다 입력 소스일 뿐이라, 어느 쪽 파일을 넣어도
 # 결과는 항상 origin_text/summary_text로 모인다 (아래 --audio 인자는 경로만 받음).
-BASE_DIR = Path(__file__).resolve().parent
-ORIGIN_DATA_DIR = BASE_DIR / "data" / "origin_data"
-ORIGIN_NOISE_DATA_DIR = BASE_DIR / "data" / "origin_noise_data"
-ORIGIN_TEXT_DIR = BASE_DIR / "data" / "origin_text"
-SUMMARY_TEXT_DIR = BASE_DIR / "data" / "summary_text"
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_VOICE_DIR = BASE_DIR / "data" / "voice_data"
+ORIGIN_DATA_DIR = DATA_VOICE_DIR / "origin_data"
+ORIGIN_NOISE_DATA_DIR = DATA_VOICE_DIR / "origin_noise_data"
+ORIGIN_TEXT_DIR = DATA_VOICE_DIR / "origin_text"
+SUMMARY_TEXT_DIR = DATA_VOICE_DIR / "summary_text"
 
 
 def format_timestamp(seconds: float) -> str:
