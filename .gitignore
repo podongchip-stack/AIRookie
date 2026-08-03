@@ -45,3 +45,8 @@ youtube_downloader.py
 # Misc
 *.tmp
 .cache/
+
+# 임의로 추가
+repomix-output.xml
+data/
+.claude/
