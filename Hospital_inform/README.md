@@ -24,8 +24,13 @@
 | **병원 서류 OCR** | 소수 기관 | 정적 | 깊음 (당직·인력) | 같은 브랜치 [`ocr/`](../ocr/README.md) |
 
 둘 다 `feature/info`가 담당하며 최종적으로 같은 `HospitalInfo`로 합류한다.
-현재는 서로 독립적으로 개발 중이고, 합류 지점(OCR 텍스트 → `HospitalInfo` 필드
-구조화)은 아직 미구현이다.
+현재는 서로 독립적으로 개발 중이다.
+
+OCR 쪽은 텍스트에서 필드를 뽑는 데까지 구현됐다(`DocumentFields`). 다만 서류에는
+좌표도 실시간 병상 수도 없어 그 자체로는 `HospitalInfo`가 될 수 없고, **합류
+지점(`DocumentFields` → `HospitalInfo` 병합)은 아직 미구현**이다. 병합할 때
+서류에서 온 정적인 값이 E-Gen의 실시간 값을 덮지 않게 하는 것이 핵심이다.
+자세한 것은 [`ocr/README.md`](../ocr/README.md) 참고.
 
 당직 전문의 정보는 공개 API로 나오지 않는다. 그 공백을 서류 OCR로 메우는 것이
 info의 고유 가치인데, **E-Gen의 "중증질환 수용가능 정보"가 그 상당 부분을
@@ -91,8 +96,10 @@ python info/build_hospitals.py
 `info/data/fixtures/`를 읽어 `info/data/output/`에 병원 1곳당 JSON 1개를 쓴다.
 fixture는 커밋되지 않으므로 **처음 클론했다면 먼저 만들어야 한다** (아래 참고).
 
-OCR 모듈(`ocr/`)과는 의존성이 겹치지 않는다. 여기서는 pydantic만 있으면 되고,
-torch·onnxruntime은 필요 없다.
+여기서는 pydantic만 있으면 되고 torch·onnxruntime은 필요 없다. `ocr/`의 무거운
+스택(이미지 → 텍스트)은 이 경로와 무관하다 — 다만 `ocr/`의 필드 추출 패키지
+(`goldenlink_extract`) 역시 pydantic 하나로 돌게 만들어져 있어, 그쪽도 GPU 없이
+개발할 수 있다.
 
 ### hub 연동 검증 (임베딩 모델 필요)
 

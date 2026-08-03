@@ -44,13 +44,21 @@ CLAUDE.md의 "핵심 AI 활용 원칙"에 따라 각 단계가 AI 처리인지 �
 
 ## 사용 모델
 
-가중치는 저장소에 커밋하지 않는다. `configs/models.yaml` 에 저장소 ID와 **커밋 SHA**를
-고정해두고 스크립트로 내려받는다 (원본이 갱신돼도 같은 결과가 재현되도록).
+전부 permissive 라이선스이고 전부 로컬에서 돈다.
 
-| 역할 | 모델 | 크기 | 라이선스 |
-|---|---|---|---|
-| 레이아웃 검출 | [DocLayout-YOLO-DocStructBench-ONNX](https://huggingface.co/podongchip/DocLayout-YOLO-DocStructBench-ONNX) | 77MB | Apache-2.0 |
-| 텍스트 인식 | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 1.8GB | Apache-2.0 |
+| 역할 | 모델 | 크기 | 라이선스 | 관리 |
+|---|---|---|---|---|
+| 레이아웃 검출 | [DocLayout-YOLO-DocStructBench-ONNX](https://huggingface.co/podongchip/DocLayout-YOLO-DocStructBench-ONNX) | 77MB | Apache-2.0 | `configs/models.yaml` |
+| 텍스트 인식 | [PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6) | 1.8GB | Apache-2.0 | `configs/models.yaml` |
+| 필드 추출 | [Qwen3-14B](https://huggingface.co/Qwen/Qwen3-14B) (Ollama `qwen3:14b`, Q4_K_M) | 9.3GB | Apache-2.0 | 환경변수 `GOLDENLINK_LLM_MODEL` |
+
+앞의 두 모델은 가중치를 저장소에 커밋하지 않는다. `configs/models.yaml` 에 저장소
+ID와 **커밋 SHA**를 고정해두고 스크립트로 내려받는다 (원본이 갱신돼도 같은 결과가
+재현되도록).
+
+LLM은 Ollama가 관리하므로 `models.yaml`에 넣지 않았다. 대신 모델 이름을 코드에
+박지 않고 환경변수로 뺐다 — 개발 장비와 실행 장비의 GPU가 달라 쓰는 크기도 다르기
+때문이다 (맥 `qwen3:8b` / 5080 `qwen3:14b`, 코드 변경 0).
 
 ### 레이아웃 모델을 ONNX로 쓰는 이유 (라이선스)
 
