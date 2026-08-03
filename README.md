@@ -229,6 +229,21 @@ feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 �
 - 데모 단계에서는 통신을 붙인 뒤에도 로컬 저장을 계속 같이 한다 (감사·재현 목적).
   실제 사업화 단계에서는 이 부분을 재검토해야 한다.
 
+## 의사결정 로그 (`decision_log.py`)
+
+CLAUDE.md "보안 및 개인정보 원칙"의 "모든 의사결정 로그는 타임스탬프 + SHA-256
+해시로 저장해 사후 위변조 여부를 검증할 수 있게 한다"를 구현한다.
+
+- `hub_engine.py`가 매칭 결과(`process_voice_summary`)를 만들거나 승인 액션
+  (`apply_approval_action`)을 처리할 때마다 `decision_log.log_decision()`을 호출해
+  `data/logs/decision_log.jsonl`에 한 줄씩 append한다 (기존 줄은 절대 수정하지 않음)
+- 기록 하나는 `{timestamp, eventType, payload, hash}` 형태이고, `hash`는
+  `timestamp+eventType+payload`를 정렬된 JSON으로 직렬화한 값의 SHA-256이다.
+  누군가 로그 파일의 `payload`를 사후에 고치면 저장된 `hash`와 재계산한 `hash`가
+  달라져서 위변조를 바로 알 수 있다
+- `decision_log.verify_log()`로 로그 파일 전체를 검증할 수 있다 — 위변조 여부와
+  검사한 줄 수를 반환한다 (`run_match.py` 맨 마지막에서 실행함)
+
 ## 실행 방법
 
 ```bash
@@ -259,15 +274,18 @@ hub/
 ├── specialty_matcher.py  임베딩 기반 예상 병명 ↔ 진료과 매칭
 ├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
 ├── hub_engine.py         2단계 매칭 오케스트레이션 + 승인 액션 반영(상태 보관 + 재처리)
+├── decision_log.py       의사결정 로그 (타임스탬프 + SHA-256 해시, 위변조 검증 가능)
 ├── delivery.py           결과 저장(+ 자리만 준비된 통신) — 파일명을 voice 입력에서 이어받음
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
 └── data/
-    └── test/
-        ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
-        ├── DrRomantic3v3_call_summary.json    voice 요약 샘플 (feature/voice 역할)
-        └── output/
-            ├── DrRomantic3v3_hub_match_result.json  매칭 결과 (delivery.py가 생성)
-            └── H004_bed_update.json                 병상 갱신 알림 (delivery.py가 생성)
+    ├── test/
+    │   ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
+    │   ├── DrRomantic3v3_call_summary.json    voice 요약 샘플 (feature/voice 역할)
+    │   └── output/
+    │       ├── DrRomantic3v3_hub_match_result.json  매칭 결과 (delivery.py가 생성)
+    │       └── H004_bed_update.json                 병상 갱신 알림 (delivery.py가 생성)
+    └── logs/
+        └── decision_log.jsonl   의사결정 로그 (decision_log.py가 생성, append-only)
 ```
 
 ## 코드 구조 — 모듈 간 관계
@@ -281,7 +299,8 @@ hub_engine.py  (HubEngine — 병원 정보 상태 보관 + 2단계 매칭 오�
    ├─→ schema.py             모든 모듈이 공유하는 데이터 형태 (다른 모듈에 의존하지 않음)
    ├─→ geo.py                거리 계산 · 존 분류/확장 판단 (다른 모듈에 의존하지 않음)
    ├─→ specialty_matcher.py  진료과 임베딩 매칭 (다른 모듈에 의존하지 않음)
-   └─→ scoring.py            점수 가중합 · 순위 결정 (다른 모듈에 의존하지 않음)
+   ├─→ scoring.py            점수 가중합 · 순위 결정 (다른 모듈에 의존하지 않음)
+   └─→ decision_log.py       매칭 결과·승인 처리마다 로그 기록 (다른 모듈에 의존하지 않음)
 
 run_match.py
    │  hub_engine.py가 만든 HubMatchResult / HospitalBedUpdate를 그대로 넘김
@@ -305,6 +324,9 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - **`delivery.py`는 매칭 로직(`hub_engine.py`)과 완전히 분리돼 있다.** `schema.py`만
   알고, "결과를 어떻게 내보낼지"(로컬 저장/통신)만 책임진다. 나중에 Flask 통신을
   붙일 때 이 파일만 고치면 되고, `hub_engine.py`는 건드릴 필요가 없다.
+- **`decision_log.py`도 매칭 로직과 분리돼 있다.** `hub_engine.py`가 매칭 결과를
+  만들거나 승인 액션을 처리할 때마다 호출만 하고, "어떻게 기록·검증할지"는
+  전적으로 이 모듈이 책임진다.
 
 > 위 다이어그램은 "코드가 무엇을 import하는지"(의존 관계)이고, 실제 운영 중 데이터가
 > 오가는 순서("데이터 포맷 및 흐름" 섹션에서 설명한 voice/info → hub → dashboard)는
@@ -316,10 +338,13 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
   `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- 승인 액션 처리 로직(`HubEngine.apply_approval_action()`)은 구현·테스트 완료했다.
-  다만 `self._approval_status`가 브랜치 분리 테스트를 단순하게 유지하려고
-  hospitalId 기준 전역 상태다 — 실제로 구급차 여러 대가 동시에 같은 병원을 두고
-  경쟁하는 케이스(사건 단위 구분)까지는 아직 다루지 않는다
+- 승인 액션 처리(`apply_approval_action()`), 실제 거절 비율 계산(`reject_ratio()`),
+  중복 승인 요청 무시(멱등성), 진료과 임베딩 캐싱, 의사결정 로그(타임스탬프+SHA-256)까지
+  전부 구현·테스트 완료했다 (`run_match.py` 참고). 다만 `self._approval_status`가
+  브랜치 분리 테스트를 단순하게 유지하려고 hospitalId 기준 **전역** 상태다 — 구급차
+  여러 대가 동시에 다른 사건으로 같은 병원을 두고 경쟁하면 상태가 서로 섞인다.
+  스키마에 caseId 같은 사건 식별자가 없어서 완전히 고치긴 어렵고, **develop 병합
+  시점에 사건 단위로 `HubEngine`을 분리 생성하는 방식으로 다루기로 함**
 - feature/voice·feature/info·feature/dashboard와의 실시간 통신(Flask 예정)은 아직
   미구현. 지금은 로컬 JSON 파일을 읽고 쓰는 형태로만 검증했고, `delivery.py`의
   `send_to_dashboard()`/`send_to_info()`에 통신 붙일 자리만 미리 마련해뒀다

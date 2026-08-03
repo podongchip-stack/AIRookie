@@ -2,14 +2,15 @@
 
 1단계: 병원 정보만으로 존 기반 후보 리스트 생성
 2단계: voice 요약이 도착했다고 가정하고 최종 매칭 결과 생성
-추가로 존 확장(거절 비율 기반)과, 진료과 정보가 없는 병원이 배제되지 않는지도
-같이 확인한다.
+추가로 존 확장(실제 계산된 거절 비율 기반), 승인 액션 멱등성, 진료과 임베딩
+캐싱에 따른 속도 개선, 의사결정 로그 위변조 검증까지 같이 확인한다.
 """
 from __future__ import annotations
 
 import time
 from pathlib import Path
 
+import decision_log
 import delivery
 from hub_engine import HubEngine
 from schema import ApprovalAction, GpsPoint, HospitalInfo, VoiceCallSummaryMessage
@@ -78,17 +79,29 @@ def main() -> None:
     saved_path = delivery.deliver(result, VOICE_SUMMARY_PATH)
     print(f"\n  결과 저장: {saved_path}")
 
-    print("\n=== 존 확장 시나리오: 거절 비율이 임계값을 넘으면 다음 존까지 확장 ===")
+    print("\n=== 거절 비율 계산: 아직 아무도 응답 안 했을 때는 0.0이어야 함 ===")
+    ratio_before = engine.reject_ratio(AMBULANCE_GPS, max_zone=1)
+    assert ratio_before == 0.0, "아무도 응답 안 했는데 거절 비율이 0이 아니면 안 된다"
+    print(f"  거절 비율(응답 전): {ratio_before:.0%}")
+
+    print("\n=== 존 확장 시나리오: 병원 두 곳이 거절하면 실제 거절 비율로 확장 판단 ===")
+    for hospital_id in ("H001", "H002"):
+        engine.apply_approval_action(
+            ApprovalAction(
+                action="hospital_reject", hospital_id=hospital_id, actor="hospital", timestamp="2026-07-30T14:15:00Z"
+            )
+        )
     max_zone = 1
-    for reject_ratio in (0.2, 0.6):
-        new_max_zone = engine.expand_if_needed(max_zone, reject_ratio)
-        expanded = new_max_zone != max_zone
-        print(f"  거절 비율 {reject_ratio:.0%} → 존 확장 {'O' if expanded else 'X'} (zone 1~{new_max_zone})")
+    ratio_after = engine.reject_ratio(AMBULANCE_GPS, max_zone)
+    new_max_zone = engine.expand_if_needed(max_zone, ratio_after)
+    print(f"  H001, H002 거절 → 거절 비율 {ratio_after:.0%} (임계값 넘으면 확장)")
+    print(f"  존 확장 {'O' if new_max_zone != max_zone else 'X'} (zone 1~{new_max_zone})")
+    assert new_max_zone == 2, "2/3 병원이 거절했으면 임계값(50%)을 넘어 존이 확장돼야 한다"
 
     print("\n=== 존 확장 후 재매칭: zone=2까지 넓히면 H003도 후보에 포함되는지 확인 ===")
-    result_zone2 = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=2)
+    result_zone2 = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=new_max_zone)
     included = {h.hospitalId for h in result_zone2.hospitals}
-    print(f"  zone=2 활성 존: {result_zone2.zoneActive}, 후보 병원: {sorted(included)}")
+    print(f"  zone={new_max_zone} 활성 존: {result_zone2.zoneActive}, 후보 병원: {sorted(included)}")
 
     print("\n=== 승인 액션 시뮬레이션: dashboard가 1위 병원에 최종 승인을 보냈다고 가정 ===")
     # 지금은 feature/dashboard가 실제로 이 액션을 보내는 통신이 없으니, 여기서는
@@ -109,15 +122,34 @@ def main() -> None:
     saved_bed_update_path = delivery.deliver_bed_update(bed_update)
     print(f"  병상 갱신 결과 저장: {saved_bed_update_path}")
 
+    print("\n=== 멱등성 확인: 같은 최종 승인이 중복으로 다시 도착해도 병상이 또 안 깎여야 함 ===")
+    duplicate_update = engine.apply_approval_action(action)
+    assert duplicate_update is None, (
+        "이미 confirmed된 병원에 중복 요청이 오면 None을 반환해야 한다 "
+        "(None이 아니라 새 HospitalBedUpdate가 나온다는 건 병상이 또 깎였다는 뜻)"
+    )
+    print(f"  [확인] 중복 final_approval 무시됨 — {top_hospital_id} 병상이 또 깎이지 않음")
+
     print("\n=== 재매칭: 같은 조건으로 다시 매칭하면 확정 상태·병상 수가 반영되는지 확인 ===")
+    t1 = time.perf_counter()
     result_after_approval = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=1)
+    elapsed_cached = time.perf_counter() - t1
     for h in result_after_approval.hospitals:
         print(f"  {h.hospitalId} {h.name} — availableBedCount={h.availableBedCount}, status={h.status}")
+    print(
+        f"  매칭 소요 시간: {elapsed_cached:.3f}초 (최초 {elapsed:.3f}초 대비, 진료과 임베딩은 이미 "
+        f"캐시돼 있어 훨씬 빠름)"
+    )
 
     confirmed = next(h for h in result_after_approval.hospitals if h.hospitalId == top_hospital_id)
     assert confirmed.status == "confirmed", "승인 액션을 반영했는데 status가 그대로면 안 된다"
     assert confirmed.availableBedCount == bed_update.availableBedCount, "병상 수가 갱신되지 않았다"
     print(f"\n  [확인] {top_hospital_id}의 status가 confirmed로, 병상 수가 감소분으로 반영됨")
+
+    print("\n=== 의사결정 로그 위변조 검증 ===")
+    ok, checked = decision_log.verify_log()
+    print(f"  {checked}건 검증, 위변조 {'없음' if ok else '발견됨'} — {decision_log.LOG_PATH}")
+    assert ok, "의사결정 로그 해시가 안 맞으면 위변조 검증 실패"
 
 
 if __name__ == "__main__":
