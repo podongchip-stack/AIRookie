@@ -19,6 +19,7 @@ import queue
 import sys
 import tkinter as tk
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -27,6 +28,7 @@ from PIL import Image, ImageTk
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ollama_service  # noqa: E402
+import settings as settings_store  # noqa: E402
 from runner import DocumentRunner, llm_host  # noqa: E402
 
 try:
@@ -54,6 +56,7 @@ class SimulationApp:
         self._root = root
         self._events: queue.Queue = queue.Queue()
         self._runner = DocumentRunner(self._events)
+        self._settings = settings_store.load()
 
         self._page: Image.Image | None = None
         self._photo: ImageTk.PhotoImage | None = None
@@ -62,6 +65,7 @@ class SimulationApp:
         root.title("골든링크 — 서류 인식 시뮬레이션")
         root.geometry("1360x900")
         self._build()
+        self._show_settings_summary()
         self._refresh_ollama()
 
         root.drop_target_register(DND_FILES)
@@ -71,30 +75,29 @@ class SimulationApp:
     # --- 화면 구성 -----------------------------------------------------------
 
     def _build(self) -> None:
+        # 머리말은 두 줄이다. 위는 하는 일, 아래는 **지금 무엇이 켜져 있는지**.
+        # 설정을 모달로 감춘 대신 상태는 늘 보여야 한다 — 학습 데이터가 쌓이는
+        # 중인지 아닌지를 모른 채 돌리는 상황을 만들면 안 된다
         header = ttk.Frame(self._root, padding=(10, 8))
         header.pack(fill="x")
         ttk.Label(
-            header, text="PDF 또는 이미지를 창 안에 끌어놓으세요", font=FONT_HEAD
+            header, text="PDF 또는 이미지를 창 안에 끌어놓으세요 (여러 개 가능)", font=FONT_HEAD
         ).pack(side="left")
         ttk.Button(header, text="파일 선택…", command=self._choose_file).pack(side="right")
-
-        self._dpi = tk.StringVar(value="200")
-        ttk.Spinbox(
-            header, from_=100, to=400, increment=50, width=5, textvariable=self._dpi
-        ).pack(side="right", padx=(4, 12))
-        ttk.Label(header, text="PDF 해상도(dpi)", font=FONT).pack(side="right")
-
-        self._llm = tk.StringVar(value="ollama")
-        ttk.Radiobutton(
-            header, text="Stub (LLM 없이 로직만)", value="stub", variable=self._llm
-        ).pack(side="right", padx=(4, 16))
-        ttk.Radiobutton(
-            header, text="Ollama (실제 추출)", value="ollama", variable=self._llm
-        ).pack(side="right", padx=4)
+        ttk.Button(header, text="설정…", command=self._open_settings).pack(
+            side="right", padx=(0, 6)
+        )
 
         # 서버가 꺼진 걸 서류 놓고 30초 뒤에 알게 되면 늦다. 창을 열자마자 보여준다
         self._ollama_label = ttk.Label(header, text="Ollama 확인 중…", font=FONT)
         self._ollama_label.pack(side="right", padx=(12, 6))
+
+        summary = ttk.Frame(self._root, padding=(10, 0))
+        summary.pack(fill="x")
+        self._settings_var = tk.StringVar()
+        ttk.Label(
+            summary, textvariable=self._settings_var, font=FONT, foreground="#5f6368"
+        ).pack(side="left")
 
         panes = ttk.PanedWindow(self._root, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=10)
@@ -172,25 +175,23 @@ class SimulationApp:
 
     def _on_drop(self, event) -> None:
         paths = [path for path in self._root.tk.splitlist(event.data) if path]
-        if not paths:
-            return
-        if len(paths) > 1:
-            self._log(f"{len(paths)}개가 들어왔다. 첫 번째만 처리한다.", tag="warn")
-        self._start(paths[0])
+        if paths:
+            self._start(paths)
 
     def _choose_file(self) -> None:
-        path = filedialog.askopenfilename(
-            title="서류 선택",
+        paths = filedialog.askopenfilenames(
+            title="서류 선택 (여러 개 고를 수 있습니다)",
             filetypes=[("서류", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff *.bmp"), ("모든 파일", "*.*")],
         )
-        if path:
-            self._start(path)
+        if paths:
+            self._start(list(paths))
 
-    def _start(self, path: str) -> None:
-        use_llm = self._llm.get() == "ollama"
+    def _start(self, paths: list[str]) -> None:
+        """서류들을 대기열에 넣는다. 처리 중이면 뒤에 붙는다."""
+        settings = self._settings
         autostart = False
 
-        if use_llm and not self._refresh_ollama():
+        if settings.use_llm and not self._refresh_ollama():
             answer = self._ask_ollama_off()
             if answer is None:
                 self._log("취소했다.", tag="warn")
@@ -198,16 +199,130 @@ class SimulationApp:
             if answer:
                 autostart = True
             else:
-                # 화면의 선택도 실제와 맞춰준다. Ollama가 켜진 것처럼 보이면 안 된다
-                use_llm = False
-                self._llm.set("stub")
-                self._log("Ollama 없이 Stub으로 진행한다.", tag="warn")
+                # 이번 실행만 Stub으로 돌린다. 저장된 설정은 건드리지 않는다 —
+                # 서버가 꺼져 있었다는 사정 때문에 사람이 고른 기본값을 바꾸면
+                # 다음에 켜고 들어와도 Stub으로 도는 일이 생긴다
+                settings = replace(settings, use_llm=False)
+                self._log("Ollama 없이 이번 실행만 Stub으로 진행한다.", tag="warn")
 
-        started = self._runner.submit(
-            path, use_llm=use_llm, dpi=int(self._dpi.get()), autostart_ollama=autostart
+        self._runner.submit(paths, settings, autostart_ollama=autostart)
+
+    # --- 설정 ---------------------------------------------------------------
+
+    def _show_settings_summary(self) -> None:
+        self._settings_var.set(self._settings.summary())
+
+    def _open_settings(self) -> None:
+        """설정 모달. [저장]을 눌러야 반영되고 파일에도 적힌다.
+
+        처리 중에도 열 수 있다. 바꾼 값은 **다음에 넣는 서류부터** 적용된다 —
+        이미 대기열에 들어간 것은 넣을 때의 설정을 그대로 갖고 간다. 배치 도중에
+        저장 위치가 바뀌어 결과가 두 군데로 흩어지는 것을 막으려는 것이다.
+        """
+        current = self._settings
+        dialog = tk.Toplevel(self._root)
+        dialog.title("설정")
+        dialog.transient(self._root)
+        dialog.resizable(False, False)
+
+        use_llm = tk.BooleanVar(value=current.use_llm)
+        dpi = tk.StringVar(value=str(current.dpi))
+        save_result = tk.BooleanVar(value=current.save_result)
+        result_dir = tk.StringVar(value=current.result_dir)
+        collect = tk.BooleanVar(value=current.collect_training_data)
+        training_dir = tk.StringVar(value=current.training_dir)
+
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill="both", expand=True)
+
+        extract = ttk.LabelFrame(body, text="추출", padding=10)
+        extract.pack(fill="x")
+        ttk.Radiobutton(
+            extract, text="Ollama — 실제 추출", value=True, variable=use_llm
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Radiobutton(
+            extract, text="Stub — LLM 없이 OCR과 검증 로직만 (GPU·Ollama 불필요)",
+            value=False, variable=use_llm,
+        ).grid(row=1, column=0, columnspan=3, sticky="w")
+        ttk.Label(extract, text="PDF 해상도", font=FONT).grid(
+            row=2, column=0, sticky="w", pady=(8, 0)
         )
-        if not started:
-            self._log("아직 처리 중이다. 끝난 뒤에 다시 놓을 것.", tag="warn")
+        ttk.Spinbox(
+            extract, from_=100, to=400, increment=50, width=6, textvariable=dpi
+        ).grid(row=2, column=1, sticky="w", pady=(8, 0), padx=(8, 4))
+        ttk.Label(extract, text="dpi", font=FONT).grid(row=2, column=2, sticky="w", pady=(8, 0))
+
+        store = ttk.LabelFrame(body, text="저장", padding=10)
+        store.pack(fill="x", pady=(10, 0))
+
+        result_entry, result_button = self._dir_row(
+            store, 0, "추출 결과 (필드 JSON)", save_result, result_dir,
+            "끄면 파일을 만들지 않고 아래 '최종 JSON' 탭에서만 봅니다",
+        )
+        collect_entry, collect_button = self._dir_row(
+            store, 3, "학습 데이터 수집 (OCR 텍스트 + LLM 원시 응답)", collect, training_dir,
+            "raw/ 와 llm_raw/ 아래에 쌓입니다. 필드 추출 모델 학습용입니다",
+        )
+
+        def sync() -> None:
+            for entry, button, flag in (
+                (result_entry, result_button, save_result),
+                (collect_entry, collect_button, collect),
+            ):
+                state = "normal" if flag.get() else "disabled"
+                entry.configure(state=state)
+                button.configure(state=state)
+
+        save_result.trace_add("write", lambda *_: sync())
+        collect.trace_add("write", lambda *_: sync())
+        sync()
+
+        def apply() -> None:
+            try:
+                value = int(dpi.get())
+            except ValueError:
+                messagebox.showwarning("설정", "해상도는 숫자여야 합니다.", parent=dialog)
+                return
+            self._settings = settings_store.Settings(
+                use_llm=use_llm.get(),
+                dpi=max(100, min(400, value)),
+                save_result=save_result.get(),
+                result_dir=result_dir.get().strip() or "ocr/output",
+                collect_training_data=collect.get(),
+                training_dir=training_dir.get().strip() or "LLMdata",
+            )
+            settings_store.save(self._settings)
+            self._show_settings_summary()
+            self._log(f"설정을 바꿨다 — {self._settings.summary()}")
+            dialog.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x", pady=(12, 0))
+        ttk.Button(buttons, text="저장", command=apply).pack(side="right")
+        ttk.Button(buttons, text="취소", command=dialog.destroy).pack(side="right", padx=(0, 6))
+
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
+
+    def _dir_row(self, parent, row: int, label: str, flag, path_var, hint: str):
+        """'켤지' 체크박스 + 경로 입력 + [찾기] 한 묶음. (입력칸, 버튼)을 돌려준다."""
+        ttk.Checkbutton(parent, text=label, variable=flag).grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(0 if row == 0 else 10, 0)
+        )
+        ttk.Label(parent, text=hint, font=FONT, foreground="#5f6368").grid(
+            row=row + 1, column=0, columnspan=3, sticky="w", padx=(22, 0)
+        )
+        entry = ttk.Entry(parent, textvariable=path_var, width=46, font=FONT)
+        entry.grid(row=row + 2, column=0, columnspan=2, sticky="w", padx=(22, 6), pady=(4, 0))
+
+        def browse() -> None:
+            chosen = filedialog.askdirectory(title=label, parent=parent.winfo_toplevel())
+            if chosen:
+                path_var.set(chosen)
+
+        button = ttk.Button(parent, text="찾기…", command=browse)
+        button.grid(row=row + 2, column=2, sticky="w", pady=(4, 0))
+        return entry, button
 
     def _ask_ollama_off(self) -> bool | None:
         """서버가 꺼져 있을 때 어떻게 할지 묻는다. 예=켠다 / 아니오=Stub / 취소=중단."""
@@ -248,10 +363,18 @@ class SimulationApp:
     def _handle(self, event: dict) -> None:
         stage = event["stage"]
 
-        if stage == "job_start":
-            self._reset()
+        if stage == "queued":
+            self._log(
+                f"대기열에 {event['added']}건 넣었다 (대기 {event['pending']}건)", tag="head"
+            )
+
+        elif stage == "job_start":
+            # 로그는 지우지 않는다. 여러 건을 걸어두고 자리를 비웠을 때 마지막
+            # 것만 남으면 배치를 돌린 의미가 없다. 미리보기·표만 새 문서 것으로 바꾼다
+            self._reset_document()
             kind = "PDF" if event["kind"] == "pdf" else "이미지"
-            self._log(f"── {event['name']} ({kind} {event['pages']}장)", tag="head")
+            remaining = f" · 뒤에 {event['pending']}건" if event["pending"] else ""
+            self._log(f"── {event['name']} ({kind} {event['pages']}장){remaining}", tag="head")
 
         elif stage == "loading":
             if event["what"] == "ollama":
@@ -329,22 +452,34 @@ class SimulationApp:
             self._log(f"'{event['label']}' 실패 — {event['error']}", tag="error")
 
         elif stage == "page_done":
-            self._fill_table(event["fields"])
-            self._show_json(event["fields"], event["path"])
             fields = event["fields"]
-            self._log(f"저장 — {event['path'].name}", tag="head")
+            self._fill_table(fields)
+            self._show_json(fields, event["path"])
+            self._log(
+                f"저장 — {event['path'].name}" if event["path"]
+                else "결과 저장이 꺼져 있어 파일을 만들지 않았다 (화면에서만 본다)",
+                tag="head",
+            )
             self._log(f"    채택된 필드: {', '.join(fields.filled_fields()) or '없음'}")
             if fields.needsReview:
                 self._log(f"    사람 확인 필요 ({len(fields.reviewReasons)}건)", tag="warn")
 
         elif stage == "job_done":
-            self._status(f"완료 — {event['pages']}장 처리")
-            self._log("완료", tag="head")
+            self._log(f"이 서류 완료 — {event['pages']}장", tag="head")
+
+        elif stage == "batch_done":
+            done, failed, flagged = event["processed"], event["failed"], event["flagged"]
+            summary = f"{done + failed}건 — 성공 {done}"
+            if failed:
+                summary += f" / 실패 {failed}"
+            summary += f" / 검토 필요 {flagged}"
+            self._status(f"완료 — {summary}")
+            self._log(f"전부 완료 · {summary}", tag="error" if failed else "head")
             self._refresh_ollama()
 
         elif stage == "error":
-            self._status("오류로 중단됨")
-            self._refresh_ollama()
+            # 이 서류만 접고 다음으로 넘어간다. 배치가 통째로 멈추면 안 된다
+            self._status("이 서류에서 오류 — 다음으로 넘어간다")
             self._log(event["message"], tag="error")
             if event.get("detail"):
                 self._log(event["detail"], tag="error")
@@ -421,15 +556,17 @@ class SimulationApp:
                 tags=() if item.grounded else ("dropped",),
             )
 
-    def _show_json(self, fields, path: Path) -> None:
-        """저장된 결과를 그대로 보여준다.
+    def _show_json(self, fields, path: Path | None) -> None:
+        """결과를 그대로 보여준다. `path`가 None이면 저장이 꺼져 있다는 뜻이다.
 
         디스크의 파일을 다시 읽지 않고 방금 쓴 것과 같은 객체에서 만든다. 파일을
         읽어오면 화면과 파일이 어긋날 여지가 생기는데, 어차피 같은 `to_json()`이
-        양쪽에 쓰였으므로 읽을 이유가 없다.
+        양쪽에 쓰였으므로 읽을 이유가 없다. 저장을 꺼도 화면 내용이 같은 이유다.
         """
         self._set_text(self._json_text, fields.to_json())
-        self._json_path.set(f"저장 위치: {path}")
+        self._json_path.set(
+            f"저장 위치: {path}" if path else "저장하지 않음 — [복사]로 가져가세요"
+        )
 
     def _copy_json(self) -> None:
         body = self._json_text.get("1.0", "end").strip()
@@ -442,12 +579,17 @@ class SimulationApp:
 
     # --- 잡다 ---------------------------------------------------------------
 
-    def _reset(self) -> None:
+    def _reset_document(self) -> None:
+        """새 서류를 시작할 때 화면을 비운다. **로그는 남긴다.**
+
+        미리보기·필드 표·JSON은 지금 보는 문서 하나의 것이라 갈아끼우는 게 맞지만,
+        로그는 배치 전체의 기록이다. 여러 건을 걸어두고 자리를 비운 뒤 돌아왔을 때
+        무엇이 어떻게 지나갔는지가 거기에만 남는다.
+        """
         self._page, self._regions = None, []
         self._render()
         self._tree.delete(*self._tree.get_children())
         self._set_text(self._region_text, "")
-        self._set_text(self._log_text, "")
         self._set_text(self._json_text, "")
         self._json_path.set("아직 결과가 없습니다")
 

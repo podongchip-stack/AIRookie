@@ -71,8 +71,12 @@ class FieldExtractor:
         각각 수십 초씩 걸리므로, 먼저 끝난 그룹부터 보여줄 수 있어야 한다.
 
             {"stage": "group_start",  "source": "ai",   "key": ..., "label": ..., "index": 0, "total": 4}
-            {"stage": "group_done",   "source": "rule", ..., "values": {...}, "evidence": [...]}
+            {"stage": "group_done",   "source": "rule", ..., "values": {...}, "evidence": [...], "raw": {...}}
             {"stage": "group_failed", "source": "rule", ..., "error": "..."}
+
+        `group_done`의 `raw`는 가공 전 LLM 응답 그대로다. 이 파일은 그걸 값·근거로
+        바꾸고 나면 버리는데, 받는 쪽에서 필요할 수 있어 이벤트에 함께 싣는다
+        (필드 추출 모델을 학습시키려면 이 원본이 타깃이 된다 — `LLMdata/README.md`).
 
         값을 **찾는** 것은 AI(`group_start`)이고 그것을 **받아들일지** 정하는 것은
         규칙(`group_done`의 근거 대조)이라 `source`가 다르다.
@@ -135,6 +139,8 @@ class FieldExtractor:
                 "values": outcome.values,
                 "evidence": outcome.evidence,
                 "reasons": outcome.reasons,
+                # 가공 전 원본. 이 파일은 안 쓰지만 학습 데이터의 타깃이 된다
+                "raw": raw,
                 **progress,
             })
 
