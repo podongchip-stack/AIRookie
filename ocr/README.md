@@ -201,6 +201,10 @@ python ocr\scripts\run_extract.py --ocr-json <결과.json> --llm stub-hallucinat
 않는다 — 프롬프트나 모델을 바꿔가며 돌렸을 때 이전 결과와 비교할 수 있어야 하고,
 의료 정보 추출 이력은 지우지 않는 편이 맞다. (커밋되지 않는 폴더다.)
 
+과정을 눈으로 보려면 [`simulation/`](../simulation/README.md)에 창이 있다. PDF를
+끌어놓으면 영역 검출부터 근거 대조까지 진행 중에 그려진다. CLI는 PDF를 받지
+않으므로(이미지만) PDF 서류는 지금 그쪽이 유일한 경로다.
+
 라이브러리로 쓸 때:
 
 ```python
@@ -231,28 +235,73 @@ fields.evidence           # 값별 원문 근거 (버려진 값 포함)
 print(fields.to_json())
 ```
 
+### 진행 상황 받아보기
+
+`read()`와 `extract()`에 `on_progress`를 주면 **끝나기 전에** 중간 결과를 알린다.
+서류 한 장에 10초 안팎이 걸려서, 그동안 아무 반응이 없으면 죽은 것과 구분되지
+않기 때문이다. 기본값은 `None`이고 이때는 아무 일도 하지 않는다 — 기존 호출부는
+영향받지 않는다.
+
+```python
+ocr.read("당직표.png", on_progress=print)
+# {'stage': 'detect',    'source': 'ai',   'count': 6}
+# {'stage': 'route',     'source': 'rule', 'regions': [...]}
+# {'stage': 'recognize', 'source': 'ai',   'index': 0, 'total': 5, 'region': {...}}
+
+extractor.extract(result, "당직표", on_progress=print)
+# {'stage': 'group_start', 'source': 'ai',   'label': '서류 기본정보', 'index': 0, 'total': 4}
+# {'stage': 'group_done',  'source': 'rule', 'values': {...}, 'evidence': [...]}
+```
+
+`source`는 그 단계가 AI 처리인지 규칙 기반인지다. 값을 **찾는** 것은 AI이고 그
+값을 **받아들일지** 정하는 것은 규칙이라 단계마다 갈린다.
+
+콜백은 처리와 같은 스레드에서 불린다. 예외를 던지면 읽기가 그 자리에서 멈추므로
+받는 쪽에서 삼켜야 한다 — 화면에 그리는 용도라면 큐에 넣기만 하는 편이 안전하다.
+
 ## 구조
 
-| 경로 | 역할 | 구분 |
-|---|---|---|
-| `src/goldenlink_ocr/layout.py` | ONNX 레이아웃 검출 | AI |
-| `src/goldenlink_ocr/router.py` | 중복 제거·읽기 순서·태스크 매핑 | 규칙 |
-| `src/goldenlink_ocr/recognizer.py` | PaddleOCR-VL 래퍼 | AI |
-| `src/goldenlink_ocr/validator.py` | 반복 생성·잘림 감지 → needs_review | 규칙 |
-| `src/goldenlink_ocr/pipeline.py` | 위 넷을 엮는 진입점 | — |
-| `src/goldenlink_ocr/config.py` | models.yaml 로더 | — |
-| `src/goldenlink_extract/prompts.py` | 필드 그룹 정의 + JSON Schema | — |
-| `src/goldenlink_extract/llm/ollama.py` | Ollama 호출 (구조화 출력) | AI |
-| `src/goldenlink_extract/llm/stub.py` | LLM 없이 도는 구현 (개발·테스트) | 규칙 |
-| `src/goldenlink_extract/grounding.py` | 근거 대조 — 환각 필터 | 규칙 |
-| `src/goldenlink_extract/schema.py` | 출력 형식 + 어휘 검증 | 규칙 |
-| `src/goldenlink_extract/vocabulary.py` | 표준 코드 (복사본) + 서류 종류 | — |
-| `src/goldenlink_extract/extractor.py` | 위를 엮는 본체 | — |
-| `src/goldenlink_extract/config.py` | 모델·동작 설정 (환경변수) | — |
-| `configs/models.yaml` | OCR 모델 ID·리비전·임계값 | — |
-| `scripts/download_models.py` | OCR 가중치 내려받기 | — |
-| `scripts/run_ocr.py` | 텍스트 추출 CLI | — |
-| `scripts/run_extract.py` | 필드 추출 CLI | — |
+```
+ocr/
+├── README.md                     이 문서
+├── requirements.txt              torch·onnxruntime 등 — 이미지 → 텍스트
+├── requirements-extract.txt      pydantic — 텍스트 → 필드
+├── configs/
+│   └── models.yaml               모델 저장소 ID·커밋 SHA·임계값
+├── models/                       OCR 가중치 (커밋하지 않음, 스크립트로 내려받음)
+├── output/                       추출 결과 JSON (커밋하지 않음, 실행마다 누적)
+├── scripts/
+│   ├── download_models.py        가중치 내려받기 (models.yaml의 SHA로 고정)
+│   ├── run_ocr.py                이미지 → 텍스트 CLI
+│   └── run_extract.py            이미지/OCR결과 → 필드 CLI · 어휘 대조
+└── src/
+    ├── goldenlink_ocr/           이미지 → 텍스트   (torch·onnxruntime·GPU 필요)
+    │   ├── __init__.py           DocumentOCR 등 공개 이름
+    │   ├── layout.py             영역 위치 + 종류 10종 검출 (ONNX)      [AI]
+    │   ├── router.py             중복 제거 → 읽기 순서 → 태스크 배분     [규칙]
+    │   ├── recognizer.py         PaddleOCR-VL 래퍼 — 잘라낸 영역을 읽음  [AI]
+    │   ├── validator.py          반복 생성·잘림 감지 → needs_review     [규칙]
+    │   ├── pipeline.py           위 넷을 엮는 진입점 · 진행 콜백
+    │   └── config.py             models.yaml 로더 · HF 캐시 경로 적용
+    └── goldenlink_extract/       텍스트 → 필드     (pydantic만 필요)
+        ├── __init__.py           FieldExtractor 등 공개 이름
+        ├── prompts.py            필드 그룹 4종 + 그룹별 JSON Schema
+        ├── llm/
+        │   ├── __init__.py       클라이언트 공개 이름
+        │   ├── base.py           LlmClient Protocol — 모델 교체 지점
+        │   ├── ollama.py         Ollama 호출 (구조화 출력)             [AI]
+        │   └── stub.py           LLM 없이 도는 구현 (개발·테스트)      [규칙]
+        ├── grounding.py          근거 대조 — 환각 필터                 [규칙]
+        ├── schema.py             DocumentFields 정의 + 어휘 검증        [규칙]
+        ├── vocabulary.py         표준 역량·병상 코드(복사본) + 서류 종류
+        ├── extractor.py          위를 엮는 본체 · 진행 콜백
+        └── config.py             모델·동작 설정 (환경변수로 주입)
+```
+
+`[AI]`는 값을 **찾는** 단계, `[규칙]`은 그 값을 **받아들일지 정하는** 단계다.
+표시가 없는 파일은 둘을 엮거나 설정을 읽는 역할이라 어느 쪽도 아니다.
+
+처리 과정을 화면으로 보려면 [`simulation/`](../simulation/README.md)에 GUI가 있다.
 
 ### 왜 필드 그룹별로 나눠 호출하는가
 

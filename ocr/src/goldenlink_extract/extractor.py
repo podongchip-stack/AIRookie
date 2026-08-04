@@ -55,13 +55,31 @@ class FieldExtractor:
         self._llm = client
         self._cfg = config or ExtractConfig.from_env()
 
-    def extract(self, ocr_result: dict, document_id: str) -> DocumentFields:
+    def extract(
+        self,
+        ocr_result: dict,
+        document_id: str,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> DocumentFields:
         """OCR 결과에서 필드를 뽑는다.
 
         `ocr_result`는 `goldenlink_ocr.DocumentOCR.read()`의 반환값 형태다
         (`text`, `regions`, `needs_review`). `run_ocr.py --json`으로 저장해둔
         출력을 그대로 넣어도 된다.
+
+        `on_progress`를 주면 그룹(LLM 호출 1회) 단위로 진행을 알린다. 4번의 호출이
+        각각 수십 초씩 걸리므로, 먼저 끝난 그룹부터 보여줄 수 있어야 한다.
+
+            {"stage": "group_start",  "source": "ai",   "key": ..., "label": ..., "index": 0, "total": 4}
+            {"stage": "group_done",   "source": "rule", ..., "values": {...}, "evidence": [...]}
+            {"stage": "group_failed", "source": "rule", ..., "error": "..."}
+
+        값을 **찾는** 것은 AI(`group_start`)이고 그것을 **받아들일지** 정하는 것은
+        규칙(`group_done`의 근거 대조)이라 `source`가 다르다.
+        콜백은 추출과 같은 스레드에서 불리며 예외를 던지지 않아야 한다.
         """
+        notify = on_progress or (lambda event: None)
+
         text = (ocr_result.get("text") or "").strip()
         regions = ocr_result.get("regions") or []
 
@@ -86,7 +104,13 @@ class FieldExtractor:
             prompts.CAPABILITIES.key: self._handle_capabilities,
         }
 
-        for group in prompts.FIELD_GROUPS:
+        total = len(prompts.FIELD_GROUPS)
+        for index, group in enumerate(prompts.FIELD_GROUPS):
+            progress = {
+                "key": group.key, "label": group.label, "index": index, "total": total,
+            }
+            notify({"stage": "group_start", "source": "ai", **progress})
+
             try:
                 raw = self._llm.complete_json(
                     system=prompts.SYSTEM_PROMPT,
@@ -96,12 +120,23 @@ class FieldExtractor:
             except LlmError as error:
                 # 그룹 하나의 실패가 문서 전체를 버리게 두지 않는다
                 reasons.append(f"'{group.label}' 추출 실패: {error}")
+                notify({
+                    "stage": "group_failed", "source": "rule",
+                    "error": str(error), **progress,
+                })
                 continue
 
             outcome = handlers[group.key](raw, text, regions)
             values.update(outcome.values)
             evidence.extend(outcome.evidence)
             reasons.extend(outcome.reasons)
+            notify({
+                "stage": "group_done", "source": "rule",
+                "values": outcome.values,
+                "evidence": outcome.evidence,
+                "reasons": outcome.reasons,
+                **progress,
+            })
 
         return self._build(document_id, values, evidence, reasons)
 

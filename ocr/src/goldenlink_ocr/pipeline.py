@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image, ImageOps
 
@@ -35,34 +36,60 @@ class DocumentOCR:
             self.config.layout.onnx_path, imgsz=self.config.layout.imgsz)
         self.recognizer = Recognizer(self.config.recognizer, device=device)
 
-    def read(self, image_or_path: Image.Image | str | Path) -> dict:
+    def read(
+        self,
+        image_or_path: Image.Image | str | Path,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> dict:
         """문서 1장을 읽는다.
 
         반환:
             text          결합된 전체 텍스트 (읽기 순서)
             regions       영역별 결과 [{cls, conf, xyxy, task, text, needs_review, review_reasons}]
             needs_review  하나라도 검토가 필요하면 True
+
+        `on_progress`를 주면 **끝나기 전에** 중간 결과를 알린다. 영역이 많은 서류는
+        한 장에 수십 초가 걸리는데, 그동안 화면이 멎어 있으면 죽은 것과 구분되지
+        않는다. 반환값으로 알 수 있는 것(최종 결과)은 이벤트로 보내지 않는다.
+
+            {"stage": "detect",    "source": "ai",   "count": 12}
+            {"stage": "route",     "source": "rule", "regions": [...]}
+            {"stage": "recognize", "source": "ai",   "index": 0, "total": 12, "region": {...}}
+
+        `source`는 그 단계가 AI 처리인지 규칙 기반인지다 (CLAUDE.md 핵심 AI 활용 원칙).
+        콜백은 파이프라인과 같은 스레드에서 불린다. 예외를 던지면 읽기가 그 자리에서
+        멈추므로 받는 쪽에서 삼켜야 한다 — GUI라면 큐에 넣기만 할 것.
         """
+        notify = on_progress or (lambda event: None)
+
         image = self._load_image(image_or_path)
         regions = self.detector.detect(image, self.config.layout.conf_threshold)
+        notify({"stage": "detect", "source": "ai", "count": len(regions)})
+
         planned = plan_regions(regions, self.config.router)
+        notify({"stage": "route", "source": "rule", "regions": planned})
 
         results, texts = [], []
-        for region in planned:
+        for index, region in enumerate(planned):
             crop = self._prepare_crop(image, region["xyxy"])
             if crop is None:
                 continue
             recognized = self.recognizer.recognize(crop, region["task"])
             reasons = review_reasons(recognized)
-            results.append({
+            result = {
                 **region,
                 "text": recognized["text"],
                 "generated_tokens": recognized["generated_tokens"],
                 "needs_review": bool(reasons),
                 "review_reasons": reasons,
-            })
+            }
+            results.append(result)
             if recognized["text"]:
                 texts.append(recognized["text"])
+            notify({
+                "stage": "recognize", "source": "ai",
+                "index": index, "total": len(planned), "region": result,
+            })
 
         return {
             "text": "\n".join(texts),

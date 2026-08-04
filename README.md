@@ -92,6 +92,7 @@
 | `requirements.txt` | Flask, Flask-SocketIO, requests, python-dotenv | 서버·E-Gen API 호출. **서버는 아직 미구현**(의존성만 선언) |
 | `ocr/requirements.txt` | torch, transformers, onnxruntime, opencv 등 | 서류 이미지 → 텍스트. **NVIDIA GPU 필요** |
 | `ocr/requirements-extract.txt` | pydantic | 텍스트 → 필드. GPU 불필요, Ollama 서버만 있으면 됨 |
+| `simulation/requirements.txt` | tkinterdnd2, pypdfium2 | 처리 과정을 보는 GUI. 위 두 개 위에 창만 얹는다 |
 
 `Hospital_inform/`(경로 A)은 pydantic만 있으면 돌아간다 — torch도 onnxruntime도
 필요 없다. GPU 없는 장비에서 E-Gen 정규화와 필드 추출 로직을 개발할 수 있게
@@ -297,6 +298,19 @@ python ocr\scripts\run_extract.py --ocr-json <결과.json> --llm stub-hallucinat
 
 결과는 `ocr/output/`에 `YYYYMMDD_HHMMSS_<문서명>.json`으로 쌓인다. 덮어쓰지 않는다.
 
+### 경로 B를 눈으로 확인 (`simulation/`)
+
+```bat
+pip install -r simulation\requirements.txt
+python simulation\gui.py
+```
+
+서류를 창에 끌어놓으면 영역 검출 → 인식 → 필드 추출 → 근거 대조가 진행 중에
+그려진다. 결과와 저장 위치는 CLI와 같고, 다른 것은 과정이 보인다는 점뿐이다.
+**PDF를 받는 유일한 경로**이기도 하다 — CLI는 이미지만 받는다.
+상단에서 `Stub`을 고르면 Ollama 없이도 전 과정이 돈다
+([`simulation/README.md`](simulation/README.md)).
+
 ## 폴더 구조
 
 ```
@@ -319,41 +333,51 @@ AIRookie/                          (feature/info 브랜치)
 │       ├── verify_with_hub.py     hub 엔진 연동 검증 (검증 전용, 프로덕션 아님)
 │       └── data/                  fixture · 변환 결과 (커밋하지 않음)
 │
-└── ocr/                           [경로 B] 병원 서류 이미지 → 필드   (AI + 규칙)
-    ├── README.md                  이 경로의 상세 문서
-    ├── requirements.txt           torch·onnxruntime 등 — 이미지 → 텍스트
-    ├── requirements-extract.txt   pydantic — 텍스트 → 필드
-    ├── configs/models.yaml        OCR 모델 저장소 ID·커밋 SHA·임계값
-    ├── models/                    OCR 가중치 (커밋하지 않음, 스크립트로 내려받음)
-    ├── output/                    추출 결과 JSON (커밋하지 않음, 실행마다 누적)
-    ├── scripts/
-    │   ├── download_models.py     OCR 가중치 내려받기
-    │   ├── run_ocr.py             이미지 → 텍스트 CLI
-    │   └── run_extract.py         이미지/텍스트 → 필드 CLI
-    └── src/
-        ├── goldenlink_ocr/        이미지 → 텍스트     (torch·GPU 필요)
-        │   ├── layout.py          ONNX 레이아웃 검출                    [AI]
-        │   ├── router.py          중복 제거·읽기 순서·태스크 배분        [규칙]
-        │   ├── recognizer.py      PaddleOCR-VL 래퍼                     [AI]
-        │   ├── validator.py       반복 생성·잘림 감지 → needs_review    [규칙]
-        │   ├── pipeline.py        위 넷을 엮는 진입점
-        │   └── config.py          models.yaml 로더
-        └── goldenlink_extract/    텍스트 → 필드       (pydantic만 필요)
-            ├── prompts.py         필드 그룹 4종 + JSON Schema
-            ├── llm/
-            │   ├── base.py        LlmClient Protocol (모델 교체 지점)
-            │   ├── ollama.py      Ollama 구조화 출력 호출               [AI]
-            │   └── stub.py        LLM 없이 도는 구현 (개발·테스트)
-            ├── grounding.py       근거 대조 — 환각 필터                 [규칙]
-            ├── schema.py          DocumentFields 정의 + 어휘 검증       [규칙]
-            ├── vocabulary.py      표준 코드(복사본) + 서류 종류
-            ├── extractor.py       위를 엮는 본체
-            └── config.py          모델·동작 설정 (환경변수)
+├── ocr/                           [경로 B] 병원 서류 이미지 → 필드   (AI + 규칙)
+│   ├── README.md                  이 경로의 상세 문서
+│   ├── requirements.txt           torch·onnxruntime 등 — 이미지 → 텍스트
+│   ├── requirements-extract.txt   pydantic — 텍스트 → 필드
+│   ├── configs/models.yaml        OCR 모델 저장소 ID·커밋 SHA·임계값
+│   ├── models/                    OCR 가중치 (커밋하지 않음, 스크립트로 내려받음)
+│   ├── output/                    추출 결과 JSON (커밋하지 않음, 실행마다 누적)
+│   ├── scripts/
+│   │   ├── download_models.py     OCR 가중치 내려받기
+│   │   ├── run_ocr.py             이미지 → 텍스트 CLI
+│   │   └── run_extract.py         이미지/텍스트 → 필드 CLI
+│   └── src/
+│       ├── goldenlink_ocr/        이미지 → 텍스트     (torch·GPU 필요)
+│       │   ├── layout.py          ONNX 레이아웃 검출                    [AI]
+│       │   ├── router.py          중복 제거·읽기 순서·태스크 배분        [규칙]
+│       │   ├── recognizer.py      PaddleOCR-VL 래퍼                     [AI]
+│       │   ├── validator.py       반복 생성·잘림 감지 → needs_review    [규칙]
+│       │   ├── pipeline.py        위 넷을 엮는 진입점 (진행 콜백 제공)
+│       │   └── config.py          models.yaml 로더
+│       └── goldenlink_extract/    텍스트 → 필드       (pydantic만 필요)
+│           ├── prompts.py         필드 그룹 4종 + JSON Schema
+│           ├── llm/
+│           │   ├── base.py        LlmClient Protocol (모델 교체 지점)
+│           │   ├── ollama.py      Ollama 구조화 출력 호출               [AI]
+│           │   └── stub.py        LLM 없이 도는 구현 (개발·테스트)
+│           ├── grounding.py       근거 대조 — 환각 필터                 [규칙]
+│           ├── schema.py          DocumentFields 정의 + 어휘 검증       [규칙]
+│           ├── vocabulary.py      표준 코드(복사본) + 서류 종류
+│           ├── extractor.py       위를 엮는 본체 (진행 콜백 제공)
+│           └── config.py          모델·동작 설정 (환경변수)
+│
+└── simulation/                    [경로 B 확인용] 처리 과정을 보는 GUI
+    ├── README.md                  화면 · 성능 실측 · 의존성
+    ├── requirements.txt           tkinterdnd2 · pypdfium2
+    ├── gui.py                     화면 (tkinter)
+    ├── runner.py                  워커 스레드 — 이벤트를 큐로 (Tk 의존 없음)
+    └── pdf.py                     PDF 페이지 → 이미지 (pypdfium2)
 ```
 
 `ocr/src/` 아래 패키지를 둘로 나눈 이유는 **의존성이 다르기 때문**이다. 추출만
 돌릴 때는 torch도 onnxruntime도 필요 없어서, GPU 없는 장비에서 저장된 OCR
 결과(`run_ocr.py --json`)로 추출 로직만 따로 개발할 수 있다.
+
+`simulation/`은 `ocr/`을 가져다 쓰기만 하는 확인용 창이다. 반대 방향 의존은
+없다 — `ocr/`은 이 폴더의 존재를 모르고, 폴더를 통째로 지워도 CLI는 그대로 돈다.
 
 `Hospital_inform/`은 개인 작업 공간에서 개발하던 것을 옮겨온 것이라 아직 브랜치
 폴더 구조에 편입하지 않았다. hub 연동 검증이 끝난 뒤에 합친다.
