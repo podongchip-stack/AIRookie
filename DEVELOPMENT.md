@@ -6,7 +6,8 @@
 main
  └── develop
        ├── feature/voice
-       ├── feature/vital
+       ├── feature/info        (기존 feature/vital 에서 이름 변경)
+       ├── feature/hub
        └── feature/dashboard
 ```
 
