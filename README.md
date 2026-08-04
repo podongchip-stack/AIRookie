@@ -306,10 +306,12 @@ python simulation\gui.py
 ```
 
 서류를 창에 끌어놓으면 영역 검출 → 인식 → 필드 추출 → 근거 대조가 진행 중에
-그려진다. 결과와 저장 위치는 CLI와 같고, 다른 것은 과정이 보인다는 점뿐이다.
+그려지고, 최종 JSON도 탭에서 바로 볼 수 있다.
+결과와 저장 위치는 CLI와 같고, 다른 것은 과정이 보인다는 점뿐이다.
 **PDF를 받는 유일한 경로**이기도 하다 — CLI는 이미지만 받는다.
-상단에서 `Stub`을 고르면 Ollama 없이도 전 과정이 돈다
-([`simulation/README.md`](simulation/README.md)).
+상단에서 `Stub`을 고르면 Ollama 없이도 전 과정이 돈다.
+Ollama가 꺼져 있으면 시작할 때 확인창이 떠서 **켤지 Stub으로 갈지** 고르게 되고,
+켜기를 고르면 서버를 자동으로 띄운다 ([`simulation/README.md`](simulation/README.md)).
 
 ## 폴더 구조
 
@@ -369,6 +371,7 @@ AIRookie/                          (feature/info 브랜치)
     ├── requirements.txt           tkinterdnd2 · pypdfium2
     ├── gui.py                     화면 (tkinter)
     ├── runner.py                  워커 스레드 — 이벤트를 큐로 (Tk 의존 없음)
+    ├── ollama_service.py          Ollama 상태 확인 · 자동 실행
     └── pdf.py                     PDF 페이지 → 이미지 (pypdfium2)
 ```
 

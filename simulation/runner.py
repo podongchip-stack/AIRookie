@@ -16,7 +16,7 @@ Tk 위젯은 메인 스레드에서만 건드릴 수 있는데, 서류 한 장 �
 `goldenlink_extract`가 주는 것을 그대로 흘려보내고 `page`만 얹는다.
 
     job_start    name, pages, kind          처리 시작
-    loading      what("ocr"|"llm")          모델 올리는 중 (첫 회만 실제로 걸린다)
+    loading      what("ollama"|"ocr"|"llm") 서버를 켜거나 모델을 올리는 중
     page_start   page, pages, image         이 페이지를 시작한다 (미리보기용 이미지)
     detect       page, count                [AI]  레이아웃 검출
     route        page, regions              [규칙] 중복 제거·읽기 순서·태스크 배분
@@ -41,6 +41,7 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+import ollama_service
 import pdf as pdf_reader
 
 OCR_ROOT = Path(__file__).resolve().parents[1] / "ocr"
@@ -54,6 +55,15 @@ from goldenlink_extract.llm import LlmError, OllamaClient, StubLlmClient  # noqa
 # 결과 파일명 규칙(`YYYYMMDD_HHMMSS_문서명.json`, 덮어쓰지 않음)을 CLI와 공유한다.
 # 여기서 다시 구현하면 두 경로의 규칙이 언젠가 갈라진다
 from run_extract import _output_path  # noqa: E402
+
+
+def llm_host() -> str:
+    """설정된 Ollama 주소. 화면이 서버 상태를 확인할 때 쓴다.
+
+    환경변수 처리를 여기서 다시 하지 않는다 — 기본값도 `GOLDENLINK_OLLAMA_HOST`도
+    `goldenlink_extract`가 이미 알고 있고, 두 벌이 되면 언젠가 갈라진다.
+    """
+    return ExtractConfig.from_env().llm.host
 
 
 class DocumentRunner:
@@ -73,21 +83,35 @@ class DocumentRunner:
     def busy(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def submit(self, path: str | Path, *, use_llm: bool = True, dpi: int = pdf_reader.DEFAULT_DPI) -> bool:
-        """처리를 시작한다. 이미 돌고 있으면 아무것도 하지 않고 False."""
+    def submit(
+        self,
+        path: str | Path,
+        *,
+        use_llm: bool = True,
+        dpi: int = pdf_reader.DEFAULT_DPI,
+        autostart_ollama: bool = False,
+    ) -> bool:
+        """처리를 시작한다. 이미 돌고 있으면 아무것도 하지 않고 False.
+
+        `autostart_ollama`는 서버가 꺼져 있을 때 켤지 여부다. 켜는 데 수 초가
+        걸려서 화면 스레드가 아니라 여기 워커에서 한다. 켤지 말지는 사람이
+        고른 결과여야 한다 — 화면이 물어보고 그 답을 넘긴다.
+        """
         if self.busy:
             return False
         self._thread = threading.Thread(
-            target=self._run, args=(Path(path), use_llm, dpi), daemon=True
+            target=self._run, args=(Path(path), use_llm, dpi, autostart_ollama), daemon=True
         )
         self._thread.start()
         return True
 
     # --- 워커 스레드 ---------------------------------------------------------
 
-    def _run(self, path: Path, use_llm: bool, dpi: int) -> None:
+    def _run(self, path: Path, use_llm: bool, dpi: int, autostart_ollama: bool) -> None:
         try:
-            self._process(path, use_llm, dpi)
+            self._process(path, use_llm, dpi, autostart_ollama)
+        except ollama_service.OllamaError as error:
+            self._emit(stage="error", message=f"Ollama를 켜지 못했다.\n{error}")
         except LlmError as error:
             # Ollama가 안 떠 있는 경우가 대부분이다. 추적선을 보여줄 이유가 없다
             self._emit(
@@ -103,17 +127,24 @@ class DocumentRunner:
                 detail=traceback.format_exc(),
             )
 
-    def _process(self, path: Path, use_llm: bool, dpi: int) -> None:
+    def _process(self, path: Path, use_llm: bool, dpi: int, autostart_ollama: bool) -> None:
         is_pdf = pdf_reader.is_pdf(path)
         total = pdf_reader.page_count(path) if is_pdf else 1
         self._emit(
             stage="job_start", name=path.name, pages=total, kind="pdf" if is_pdf else "image"
         )
 
+        config = ExtractConfig.from_env()
+
+        # 서버를 켜는 일이 가장 먼저다. 여기서 실패할 거라면 OCR 모델 2GB를
+        # 올리기 전에 알아야 한다
+        if use_llm and autostart_ollama and not ollama_service.is_running(config.llm.host):
+            self._emit(stage="loading", what="ollama", host=config.llm.host)
+            ollama_service.start_and_wait(config.llm.host)
+
         self._emit(stage="loading", what="ocr")
         ocr = self._ensure_ocr()
 
-        config = ExtractConfig.from_env()
         if use_llm:
             client = OllamaClient(config.llm)
             self._emit(stage="loading", what="llm", model=config.llm.model)

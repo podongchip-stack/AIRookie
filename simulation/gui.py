@@ -1,6 +1,6 @@
 """병원 서류(PDF·이미지)를 끌어놓으면 처리 과정을 눈으로 보여주는 창.
 
-    끌어놓기 → 페이지 렌더링 → 영역 검출·인식 → 필드 추출 → 표
+    끌어놓기 → 페이지 렌더링 → 영역 검출·인식 → 필드 추출 → 필드 표 · 최종 JSON
 
 CLI(`ocr/scripts/run_extract.py`)와 결과는 같다. 다른 것은 **과정이 보인다**는 점뿐이다.
 어느 영역을 어떤 태스크로 읽었는지, 어떤 값이 어떤 근거로 채택·기각됐는지를
@@ -20,13 +20,14 @@ import sys
 import tkinter as tk
 from collections import Counter
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from runner import DocumentRunner  # noqa: E402
+import ollama_service  # noqa: E402
+from runner import DocumentRunner, llm_host  # noqa: E402
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -38,6 +39,8 @@ except ImportError:
 
 FONT = ("맑은 고딕", 9)
 FONT_HEAD = ("맑은 고딕", 10, "bold")
+#: JSON은 들여쓰기가 줄마다 맞아야 읽힌다. 고정폭이 아니면 계층이 눈에 안 들어온다
+FONT_MONO = ("Consolas", 9)
 
 #: 영역 박스 색. 아직 안 읽음 / 읽음 / 검토 필요
 STATE_COLOR = {"pending": "#9aa0a6", "done": "#2e7d32", "review": "#ef6c00"}
@@ -59,6 +62,7 @@ class SimulationApp:
         root.title("골든링크 — 서류 인식 시뮬레이션")
         root.geometry("1360x900")
         self._build()
+        self._refresh_ollama()
 
         root.drop_target_register(DND_FILES)
         root.dnd_bind("<<Drop>>", self._on_drop)
@@ -88,6 +92,10 @@ class SimulationApp:
             header, text="Ollama (실제 추출)", value="ollama", variable=self._llm
         ).pack(side="right", padx=4)
 
+        # 서버가 꺼진 걸 서류 놓고 30초 뒤에 알게 되면 늦다. 창을 열자마자 보여준다
+        self._ollama_label = ttk.Label(header, text="Ollama 확인 중…", font=FONT)
+        self._ollama_label.pack(side="right", padx=(12, 6))
+
         panes = ttk.PanedWindow(self._root, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=10)
 
@@ -116,8 +124,13 @@ class SimulationApp:
         self._log_text.tag_configure("head", font=FONT_HEAD)
         panes.add(right, weight=2)
 
-        table = ttk.LabelFrame(self._root, text="추출 필드 — 값은 AI가 찾고, 채택 여부는 규칙이 정한다")
-        table.pack(fill="both", expand=False, padx=10, pady=(8, 4))
+        # 표와 JSON은 같은 결과를 다르게 본 것뿐이라 한 자리에 탭으로 겹쳐 둔다.
+        # 표는 무엇을 왜 버렸는지 보려고, JSON은 hub로 넘어갈 형태 그대로 보려고 쓴다
+        results = ttk.Notebook(self._root)
+        results.pack(fill="both", expand=False, padx=10, pady=(8, 4))
+
+        table = ttk.Frame(results)
+        results.add(table, text="추출 필드 — 값은 AI가 찾고, 채택 여부는 규칙이 정한다")
         columns = ("field", "value", "evidence", "verdict")
         self._tree = ttk.Treeview(table, columns=columns, show="headings", height=9)
         for name, title, width in (
@@ -131,6 +144,24 @@ class SimulationApp:
         tree_scroll.pack(side="right", fill="y")
         self._tree.pack(side="left", fill="both", expand=True)
         self._tree.tag_configure("dropped", foreground="#c62828")
+
+        json_tab = ttk.Frame(results)
+        results.add(json_tab, text="최종 JSON — 저장된 파일과 같은 내용")
+        json_head = ttk.Frame(json_tab)
+        json_head.pack(fill="x", padx=4, pady=(4, 2))
+        self._json_path = tk.StringVar(value="아직 결과가 없습니다")
+        ttk.Label(json_head, textvariable=self._json_path, font=FONT).pack(side="left")
+        ttk.Button(json_head, text="복사", command=self._copy_json).pack(side="right")
+
+        self._json_text = tk.Text(
+            json_tab, font=FONT_MONO, wrap="none", state="disabled", height=9
+        )
+        json_y = ttk.Scrollbar(json_tab, orient="vertical", command=self._json_text.yview)
+        json_x = ttk.Scrollbar(json_tab, orient="horizontal", command=self._json_text.xview)
+        self._json_text.configure(yscrollcommand=json_y.set, xscrollcommand=json_x.set)
+        json_x.pack(side="bottom", fill="x")
+        json_y.pack(side="right", fill="y")
+        self._json_text.pack(side="left", fill="both", expand=True)
 
         self._status_var = tk.StringVar(value="대기 중 — 서류를 끌어놓으세요")
         ttk.Label(
@@ -156,11 +187,48 @@ class SimulationApp:
             self._start(path)
 
     def _start(self, path: str) -> None:
+        use_llm = self._llm.get() == "ollama"
+        autostart = False
+
+        if use_llm and not self._refresh_ollama():
+            answer = self._ask_ollama_off()
+            if answer is None:
+                self._log("취소했다.", tag="warn")
+                return
+            if answer:
+                autostart = True
+            else:
+                # 화면의 선택도 실제와 맞춰준다. Ollama가 켜진 것처럼 보이면 안 된다
+                use_llm = False
+                self._llm.set("stub")
+                self._log("Ollama 없이 Stub으로 진행한다.", tag="warn")
+
         started = self._runner.submit(
-            path, use_llm=self._llm.get() == "ollama", dpi=int(self._dpi.get())
+            path, use_llm=use_llm, dpi=int(self._dpi.get()), autostart_ollama=autostart
         )
         if not started:
             self._log("아직 처리 중이다. 끝난 뒤에 다시 놓을 것.", tag="warn")
+
+    def _ask_ollama_off(self) -> bool | None:
+        """서버가 꺼져 있을 때 어떻게 할지 묻는다. 예=켠다 / 아니오=Stub / 취소=중단."""
+        return messagebox.askyesnocancel(
+            "Ollama가 꺼져 있습니다",
+            f"Ollama 서버({llm_host()})가 응답하지 않습니다.\n"
+            f"이대로 진행하면 실제 필드 추출을 할 수 없습니다.\n\n"
+            f"[예]     Ollama를 켜고 실제 추출로 진행 (실측 20여 초 걸립니다)\n"
+            f"[아니오]  Stub으로 진행 — LLM 없이 OCR과 검증 로직만\n"
+            f"[취소]    아무것도 하지 않음",
+            parent=self._root,
+        )
+
+    def _refresh_ollama(self) -> bool:
+        """서버 상태를 다시 보고 머리말 표시를 갱신한다. 켜져 있으면 True."""
+        running = ollama_service.is_running(llm_host())
+        self._ollama_label.configure(
+            text="Ollama 켜짐" if running else "Ollama 꺼짐",
+            foreground="#2e7d32" if running else "#c62828",
+        )
+        return running
 
     # --- 이벤트 소비 ---------------------------------------------------------
 
@@ -186,9 +254,17 @@ class SimulationApp:
             self._log(f"── {event['name']} ({kind} {event['pages']}장)", tag="head")
 
         elif stage == "loading":
-            what = "OCR 모델(레이아웃 + 인식)" if event["what"] == "ocr" else f"LLM {event.get('model', '')}"
-            self._status(f"{what} 로드 중…")
-            self._log(f"{what} 로드 중…")
+            if event["what"] == "ollama":
+                self._status("Ollama 서버 켜는 중…")
+                self._log(f"Ollama 서버 켜는 중… ({event['host']})", tag="warn")
+            else:
+                what = (
+                    "OCR 모델(레이아웃 + 인식)" if event["what"] == "ocr"
+                    else f"LLM {event.get('model', '')}"
+                )
+                self._status(f"{what} 로드 중…")
+                self._log(f"{what} 로드 중…")
+                self._refresh_ollama()
 
         elif stage == "page_start":
             self._page, self._regions = event["image"], []
@@ -254,6 +330,7 @@ class SimulationApp:
 
         elif stage == "page_done":
             self._fill_table(event["fields"])
+            self._show_json(event["fields"], event["path"])
             fields = event["fields"]
             self._log(f"저장 — {event['path'].name}", tag="head")
             self._log(f"    채택된 필드: {', '.join(fields.filled_fields()) or '없음'}")
@@ -263,9 +340,11 @@ class SimulationApp:
         elif stage == "job_done":
             self._status(f"완료 — {event['pages']}장 처리")
             self._log("완료", tag="head")
+            self._refresh_ollama()
 
         elif stage == "error":
             self._status("오류로 중단됨")
+            self._refresh_ollama()
             self._log(event["message"], tag="error")
             if event.get("detail"):
                 self._log(event["detail"], tag="error")
@@ -342,6 +421,25 @@ class SimulationApp:
                 tags=() if item.grounded else ("dropped",),
             )
 
+    def _show_json(self, fields, path: Path) -> None:
+        """저장된 결과를 그대로 보여준다.
+
+        디스크의 파일을 다시 읽지 않고 방금 쓴 것과 같은 객체에서 만든다. 파일을
+        읽어오면 화면과 파일이 어긋날 여지가 생기는데, 어차피 같은 `to_json()`이
+        양쪽에 쓰였으므로 읽을 이유가 없다.
+        """
+        self._set_text(self._json_text, fields.to_json())
+        self._json_path.set(f"저장 위치: {path}")
+
+    def _copy_json(self) -> None:
+        body = self._json_text.get("1.0", "end").strip()
+        if not body:
+            self._log("복사할 결과가 아직 없다.", tag="warn")
+            return
+        self._root.clipboard_clear()
+        self._root.clipboard_append(body)
+        self._log(f"최종 JSON {len(body)}자를 클립보드에 복사했다.")
+
     # --- 잡다 ---------------------------------------------------------------
 
     def _reset(self) -> None:
@@ -350,6 +448,8 @@ class SimulationApp:
         self._tree.delete(*self._tree.get_children())
         self._set_text(self._region_text, "")
         self._set_text(self._log_text, "")
+        self._set_text(self._json_text, "")
+        self._json_path.set("아직 결과가 없습니다")
 
     def _log(self, message: str, *, source: str | None = None, tag: str = "") -> None:
         badge = {"ai": "[AI]   ", "rule": "[규칙] "}.get(source, "       ")
