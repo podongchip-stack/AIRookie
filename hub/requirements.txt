@@ -1,0 +1,15 @@
+# 요구 Python 버전: 3.11 (예: conda create -n hub python=3.11)
+# feature/voice와 동일한 sentence-transformers 버전을 사용해 두 브랜치의 임베딩
+# 결과가 서로 어긋나지 않게 맞춰뒀다.
+
+# ===== 직접 의존성 (용도별) =====
+
+# 입출력 JSON 스키마 검증 (feature/voice·feature/info·feature/dashboard 포맷과 1:1 대응)
+pydantic==2.13.4
+
+# 진료과 매칭: 예상 병명 ↔ 병원 진료과 임베딩 유사도 (specialty_matcher.py, AI 보조)
+sentence-transformers==5.6.1
+torch==2.8.0
+
+# 벡터/수치 연산
+numpy==2.4.6
