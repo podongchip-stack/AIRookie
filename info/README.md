@@ -253,9 +253,14 @@ optional 확장으로 덧붙여 내보낸다. 기존 필드는 하나도 바꾸�
 
 ## 실행 방법
 
+> 아래 명령은 모두 저장소 루트가 아니라 `info/` 안에서 실행한다 (`cd info`).
+> `Hospital_inform/`·`ocr/`·`simulation/` 등 하위 경로는 전부 `info/` 기준
+> 상대 경로다.
+
 ### 공통
 
 ```bash
+cd info
 conda create -n <가상환경명> python=3.11
 conda activate <가상환경명>
 pip install -r requirements.txt
@@ -331,12 +336,10 @@ Ollama가 꺼져 있으면 시작할 때 확인창이 떠서 **켤지 Stub으로
 ## 폴더 구조
 
 ```
-AIRookie/                          (feature/info 브랜치)
+info/                              (저장소 루트의 .gitignore, CLAUDE.md, pull-all.sh는 브랜치 공통이라 여기 포함 안 됨)
 ├── README.md                      이 문서
-├── CLAUDE.md                      팀 공통 컨텍스트 (전 브랜치 동일)
 ├── DEVELOPMENT.md                 브랜치 전략
 ├── requirements.txt               서버 의존성 (Flask·WebSocket) — 서버는 미구현
-├── pull-all.sh                    전체 브랜치 일괄 pull
 │
 ├── Hospital_inform/               [경로 A] E-Gen 공개 API → HospitalInfo   (규칙 기반)
 │   ├── README.md                  이 경로의 상세 문서
