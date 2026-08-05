@@ -4,8 +4,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import soundfile as sf
 from faster_whisper import WhisperModel
 
+from audio_preprocess import preprocess_for_stt
 from filtering import MedicalRelevanceFilter
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
 from summarizer import StructuringError, structure_call_summary
@@ -50,7 +52,11 @@ def transcribe(
 
     print(f"변환 중: {audio_path.name}")
     transcribe_start = time.perf_counter()
-    segments, info = model.transcribe(str(audio_path), language=language, vad_filter=True)
+    audio_data, sample_rate = sf.read(str(audio_path), dtype="float32")
+    if audio_data.ndim > 1:
+        audio_data = audio_data.mean(axis=1)  # 스테레오 -> 모노
+    clean_audio = preprocess_for_stt(audio_data, sample_rate)
+    segments, info = model.transcribe(clean_audio, language=language, vad_filter=True)
 
     turn_texts: list[str] = []
     turn_offsets: list[float] = []
@@ -135,11 +141,14 @@ def build_and_emit_call_summary(
         filtered_text = full_text
 
     print(f"\nSBAR 구조화 중... ({llm_model})")
+    structure_start = time.perf_counter()
     try:
         structured = structure_call_summary(filtered_text, llm_model)
     except StructuringError as e:
         print(f"\n구조화 실패: {e}", file=sys.stderr)
         return
+    structure_elapsed = time.perf_counter() - structure_start
+    print(f"구조화 완료 ({structure_elapsed:.2f}초)")
 
     message = CallSummaryMessage(
         transcript=Transcript(
@@ -170,7 +179,7 @@ def build_and_emit_call_summary(
 def main() -> None:
     parser = argparse.ArgumentParser(description="로컬 음성 파일을 텍스트로 변환하고, 선택적으로 요약합니다.")
     parser.add_argument("audio", type=Path, help="변환할 오디오 파일 경로")
-    parser.add_argument("--model", default="large-v3", help="Whisper 모델 크기 (기본: large-v3)")
+    parser.add_argument("--model", default="medium", help="Whisper 모델 크기 (기본: medium)")
     parser.add_argument("--language", default="ko", help="언어 코드 (기본: ko)")
     parser.add_argument(
         "--device",

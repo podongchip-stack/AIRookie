@@ -13,12 +13,14 @@ stt_interval_sec초마다 그 시점까지 누적된 오디오 전체를 다시 
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
 from faster_whisper import WhisperModel
 
+from audio_preprocess import preprocess_for_stt
 from filtering import MedicalRelevanceFilter
 from mic_recorder import MicRecorder
 from transcribe import build_and_emit_call_summary, format_timestamp
@@ -41,12 +43,25 @@ def live_transcribe(
 ) -> None:
     print(f"모델 로딩 중... ({model_size}, device={device}, compute_type={compute_type})")
     load_start = time.perf_counter()
-    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    try:
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    except RuntimeError as e:
+        print(f"Whisper 모델 로딩 실패: {e}", file=sys.stderr)
+        print("GPU 메모리를 확인하세요.", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        print(f"모델 다운로드 실패: {e}", file=sys.stderr)
+        print("네트워크와 디스크 공간을 확인하세요.", file=sys.stderr)
+        sys.exit(1)
     load_elapsed = time.perf_counter() - load_start
     print(f"모델 로딩 완료 ({load_elapsed:.2f}초)")
 
     recorder = MicRecorder()
-    recorder.start()
+    try:
+        recorder.start()
+    except RuntimeError as e:
+        print(f"{e}", file=sys.stderr)
+        sys.exit(1)
 
     # 임베딩 모델 로딩 비용이 크므로 루프 진입 전 1회만 생성한다.
     relevance_filter = MedicalRelevanceFilter()
@@ -77,8 +92,9 @@ def live_transcribe(
             print(f"\n[{iteration}차] 재변환 중... 누적 {buffer_elapsed:.1f}초")
 
             transcribe_start = time.perf_counter()
+            clean_audio = preprocess_for_stt(buffer.flatten(), recorder.sample_rate)
             segments, info = model.transcribe(
-                buffer.flatten(),
+                clean_audio,
                 language=language,
                 vad_filter=True,
             )
@@ -131,6 +147,27 @@ def live_transcribe(
         print("\n\n🛑 녹음 중지 (Ctrl+C)")
 
     finally:
+        # 루프는 stt_interval_sec마다만 재변환하므로, 마지막 재변환 이후
+        # ~ 종료 시점 사이에 한 말은 아직 한 번도 STT를 거치지 않은 상태다.
+        # 종료 직전 마지막 스냅샷을 한 번 더 재변환해 그 구간이 누락되지
+        # 않게 한다 (없으면 오디오 파일에는 남지만 텍스트/JSON에는 빠짐).
+        final_buffer = recorder.snapshot()
+        final_elapsed = final_buffer.shape[0] / recorder.sample_rate if final_buffer.shape[0] else 0.0
+        if final_elapsed > buffer_elapsed:
+            print(f"\n[종료 전 마지막 구간 재변환 중... 누적 {final_elapsed:.1f}초]")
+            clean_audio = preprocess_for_stt(final_buffer.flatten(), recorder.sample_rate)
+            segments, info = model.transcribe(clean_audio, language=language, vad_filter=True)
+            for seg in segments:
+                if seg.end <= printed_until:
+                    continue
+                ts = format_timestamp(seg.start)
+                text = seg.text.strip()
+                print(f"[{ts}] {text}")
+                all_turn_texts.append(text)
+                all_turn_offsets.append(seg.start)
+                printed_until = seg.end
+            buffer_elapsed = final_elapsed
+
         # 인터벌마다 잘라 재변환했을 뿐, 실제로는 처음부터 계속 하나의
         # 버퍼에 누적 녹음해왔으므로 그 전체를 그대로 WAV 하나로 저장하면
         # 된다 — 인터벌 조각들을 따로 이어붙이는 과정이 필요 없다.
@@ -167,7 +204,7 @@ def main() -> None:
         default=None,
         help="세션 이름 (예: live_test1). 지정하지 않으면 실행 시각으로 자동 생성 (예: 2026_0801_2312)",
     )
-    parser.add_argument("--model", default="base", help="Whisper 모델 크기 (기본: base)")
+    parser.add_argument("--model", default="medium", help="Whisper 모델 크기 (기본: medium)")
     parser.add_argument("--language", default="ko", help="언어 코드 (기본: ko)")
     parser.add_argument(
         "--device",

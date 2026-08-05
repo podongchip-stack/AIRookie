@@ -42,14 +42,22 @@ class MicRecorder:
             self._accumulated = np.concatenate([self._accumulated, indata[:, 0].copy()])
 
     def start(self) -> None:
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            blocksize=self.blocksize,
-            channels=1,
-            dtype="float32",
-            callback=self._on_audio_block,
-        )
-        self._stream.start()
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                blocksize=self.blocksize,
+                channels=1,
+                dtype="float32",
+                callback=self._on_audio_block,
+            )
+            self._stream.start()
+        except PermissionError as e:
+            raise RuntimeError(
+                "마이크 권한 없음. macOS의 경우, "
+                "시스템 설정 > 개인정보 보호 > 마이크에서 '터미널'을 추가하세요."
+            ) from e
+        except OSError as e:
+            raise RuntimeError(f"마이크를 사용할 수 없습니다: {e}") from e
 
     def snapshot(self) -> np.ndarray:
         """지금까지 누적된 오디오 버퍼의 복사본을 반환한다 (비파괴적)."""
@@ -57,8 +65,11 @@ class MicRecorder:
             return self._accumulated.copy()
 
     def save_wav(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        sf.write(str(path), self.snapshot(), samplerate=self.sample_rate)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(str(path), self.snapshot(), samplerate=self.sample_rate)
+        except OSError as e:
+            raise RuntimeError(f"오디오 저장 실패: {e}. 디스크 공간을 확인하세요.") from e
 
     def stop(self) -> None:
         if self._stream is not None:
