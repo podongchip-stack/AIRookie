@@ -1,5 +1,12 @@
 # [feature/info] — 병원 정보 수집·정규화 (E-Gen API + 서류 OCR)
 
+> **폴더 구조 안내(모노레포)**: 이 저장소는 `feature/voice`·`feature/hub`·
+> `feature/info`·`feature/dashboard`가 하나의 저장소를 공유하며, 각 브랜치는
+> 자기 작업 폴더(`voice/`·`hub/`·`info/`·`dashboard/`)만 갖는다. **지금 이
+> 브랜치에는 `info/` 폴더만 있고 `voice/`·`hub/`·`dashboard/`는 없다.** 만약
+> 작업 중 낯선 폴더가 보인다면 `develop`을 머지했거나 다른 브랜치를 체크아웃한
+> 상태라는 뜻이니, 실수로 만들어진 게 아닌지 걱정하지 않아도 된다.
+
 > **브랜치 이름 변경 안내**: 이 브랜치는 기존 `feature/vital`에서 이름이
 > 변경되었습니다. **병원 매칭·존(Zone) 로직은** `feature/hub`**로 이관하는 것으로
 > 확정**되어 구 스키마(존 기반 병원 매칭 결과)는 이 문서에서 제거했습니다.
