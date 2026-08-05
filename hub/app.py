@@ -25,9 +25,12 @@ app.json.ensure_ascii = False  # 한글 필드를 유니코드 이스케이프 �
 engine = HubEngine()
 
 # 구급차 GPS를 보내는 별도 채널이 아직 없다 (feature/voice 출력 스키마에도 없음).
-# 단독 처리 검증 단계라 run_match.py와 동일한 테스트 좌표(진주시청 부근)를
-# 고정값으로 둔다 — 실제 GPS 연동은 이번 범위가 아니다.
-AMBULANCE_GPS = GpsPoint(lat=35.1800, lng=128.1080)
+# 단독 처리 검증 단계라 테스트 좌표를 고정값으로 둔다 — 실제 GPS 연동은 이번
+# 범위가 아니다. info가 Supabase로 서울 권역응급의료센터 데이터를 보내므로
+# (info/send_to_hub.py 참고), 병원들과 같은 서울 권내 좌표(서울시청 부근)로
+# 맞춰뒀다 — 이전엔 run_match.py용 진주 좌표를 그대로 썼는데, 병원이 전부
+# 서울이라 zone 밖으로 걸러지는 문제가 있었다.
+AMBULANCE_GPS = GpsPoint(lat=37.5665, lng=126.9780)
 MAX_ZONE = 1
 
 
