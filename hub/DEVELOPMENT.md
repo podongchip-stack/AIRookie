@@ -15,12 +15,14 @@ conda activate rookie_hub
 ## 의존성 설치
 
 ```bash
+cd hub
 pip install -r requirements.txt
 ```
 
 ## 실행 방법
 
 ```bash
+cd hub
 python run_match.py
 ```
 

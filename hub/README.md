@@ -247,6 +247,7 @@ CLAUDE.md "보안 및 개인정보 원칙"의 "모든 의사결정 로그는 타
 ## 실행 방법
 
 ```bash
+cd hub
 conda create -n rookie_hub python=3.11
 conda activate rookie_hub
 pip install -r requirements.txt
@@ -263,9 +264,7 @@ python run_match.py
 ## 폴더 구조
 
 ```
-hub/
-├── .gitignore
-├── CLAUDE.md
+hub/                        (저장소 루트의 .gitignore, CLAUDE.md는 브랜치 공통이라 여기 포함 안 됨)
 ├── DEVELOPMENT.md
 ├── README.md
 ├── requirements.txt
