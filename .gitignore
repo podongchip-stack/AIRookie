@@ -38,16 +38,9 @@ styled-system/
 next-env.d.ts
 *.tsbuildinfo
 
-# 실제로 쓰지 않는 로컬 전용 도구 (로컬에는 남겨두되 저장소에는 올리지 않음)
-youtube_downloader.py
-
+# Data
+data/
 
 # Misc
 *.tmp
 .cache/
-
-# 임의로 추가
-repomix-output.xml
-data/
-.claude/
-.docs/
