@@ -2,6 +2,13 @@
 
 <!-- 예: feature/voice — 실시간 음성 필터링 및 환자 정보 구조화 -->
 
+> **폴더 구조 안내(모노레포)**: 이 저장소는 `feature/voice`·`feature/hub`·
+> `feature/info`·`feature/dashboard`가 하나의 저장소를 공유하며, 각 브랜치는
+> 자기 작업 폴더(`voice/`·`hub/`·`info/`·`dashboard/`)만 갖는다. **지금 이
+> 브랜치에는 `hub/` 폴더만 있고 `voice/`·`info/`·`dashboard/`는 없다.** 만약
+> 작업 중 낯선 폴더가 보인다면 `develop`을 머지했거나 다른 브랜치를 체크아웃한
+> 상태라는 뜻이니, 실수로 만들어진 게 아닌지 걱정하지 않아도 된다.
+
 > **신설 브랜치 안내**: `feature/hub`는 develop 기준으로 새로 만들어진 브랜치입니다.
 > 아래 "입출력 데이터 포맷"에 정리된 스키마(feature/voice 입력, feature/info 입력,
 > feature/dashboard 입력·출력, feature/info 출력)는 모두 **가안이며 팀 리뷰 후 확정
