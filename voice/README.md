@@ -21,15 +21,16 @@
 ## 빠른 시작
 
 ```bash
+cd voice
 conda create -n rookie python=3.11
 conda activate rookie
 pip install -r requirements.txt
 ```
 
-설치가 끝나면 마이크로 바로 시작해볼 수 있다:
+설치가 끝나면 마이크로 바로 시작해볼 수 있다 (아래 명령부터는 전부 `voice/` 안에서 실행):
 
 ```bash
-python voice/call_capture.py
+python call_capture.py
 ```
 
 마이크로 통화를 녹음하다가 Ctrl+C를 누르면(통화 종료), 그 즉시 STT → 실시간 음성
@@ -149,7 +150,7 @@ Ollama 설치(brew) + `--llm-model`로 지정한 모델 다운로드 때문에 �
 **2-1. 스모크 테스트: 마이크로 5초 녹음**
 
 ```bash
-python voice/mic_recorder.py --seconds 5
+python mic_recorder.py --seconds 5
 ```
 
 ```
@@ -167,7 +168,7 @@ STT 파이프라인에 들어간다")을 그대로 구현한 진입점. 통화 �
 Ctrl+C(통화 종료)를 누른 시점에 한 번만 전체 오디오를 STT에 넣는다.
 
 ```bash
-python voice/call_capture.py --session live_test1
+python call_capture.py --session live_test1
 ```
 
 <details>
@@ -218,7 +219,7 @@ JSON 파일 저장: data/voice_data/summary_text/live_test1_call_summary.json
 > `call_capture.py`를 쓰는 게 맞다.
 
 ```bash
-python voice/live_transcribe.py --model medium --stt-interval 5 --sbar-interval 50
+python live_transcribe.py --model medium --stt-interval 5 --sbar-interval 50
 ```
 
 <details>
@@ -450,13 +451,11 @@ dashboard로는 직접 보내지 않는다. `feature/dashboard`의 `CallSummaryM
 ## 폴더 구조
 
 ```
-AIRookie/
-├── .gitignore
-├── CLAUDE.md
-├── README.md
-├── requirements.txt
-├── pull-all.sh
+AIRookie/                     (.gitignore, CLAUDE.md, pull-all.sh는 브랜치 공통이라 아래 안 보임)
 ├── voice/                   (.gitignore로 제외 안 됨)
+│   ├── README.md            이 문서
+│   ├── DEVELOPMENT.md       개발 환경 가이드
+│   ├── requirements.txt     의존성 목록
 │   ├── add_noise.py         오디오에 노이즈 합성
 │   ├── audio_preprocess.py  STT 직전 소음 제거/정규화/고주파 강조
 │   ├── call_capture.py      마이크로 통화 캡처 → 종료 시 배치 파이프라인 자동 실행 (권장)
@@ -478,8 +477,11 @@ AIRookie/
 ```
 
 모든 파이썬 코드는 `voice/` 폴더에 있으므로 상호 import(`from filtering import
-...`)는 그대로 동작하며, 실행은 저장소 루트에서 `python voice/transcribe.py ...`
-형태로 한다. 모든 데이터는 `data/voice_data/` 하위에 조직되어, 각 기능 모듈이
+...`)는 그대로 동작하며, 데이터 경로는 파일 위치(`__file__`) 기준으로 계산되어
+`voice/` 안에서 `python transcribe.py ...`로 실행해도, 저장소 루트에서
+`python voice/transcribe.py ...`로 실행해도 동일하게 동작한다 (다만
+`requirements.txt`가 `voice/`에 있으므로 설치·실행은 `voice/` 안에서 하는 쪽으로
+통일했다). 모든 데이터는 `data/voice_data/` 하위에 조직되어, 각 기능 모듈이
 서로 다른 데이터 폴더를 가질 수 있도록 확장 가능한 구조다.
 
 `youtube_downloader.py`는 실제로 쓰이지 않아 저장소에서 뺐다 (`.gitignore` 참고,
