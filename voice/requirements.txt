@@ -1,0 +1,63 @@
+# 요구 Python 버전: 3.11 (예: conda create -n rookie python=3.11)
+# torch==2.8.0 / transformers==4.57.6 조합은 Python 3.11 기준으로 검증됨
+# 직접 의존성 + 하위 의존성까지 전부 버전 고정되어 있어 pip install -r requirements.txt 만으로 재현 가능
+
+# ===== 직접 의존성 (용도별) =====
+
+# STT: 음성 → 텍스트 변환 (AI 처리)
+faster-whisper==1.2.1
+
+# 실시간 음성 필터링: 의료 관련 문장 분류(경량 분류기 / KM-BERT) + sLLM SBAR 구조화용 (AI 처리)
+torch==2.8.0
+transformers==4.57.6
+sentencepiece==0.2.2
+
+# 실시간 음성 필터링: 발화 턴 단위 의료 관련성 분류용 다국어 문장 임베딩 (filtering.py, AI 처리)
+sentence-transformers==5.6.1
+
+# 통화 요약 출력 JSON 스키마 검증 (feature/dashboard 전달 포맷 고정)
+pydantic==2.13.4
+
+# Ollama 주소, 모델명 등 환경 변수 관리
+python-dotenv==1.2.1
+
+# 라이브 마이크 캡처 (voice-live)
+sounddevice==0.5.5
+soundfile==0.14.0
+
+# ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
+annotated-types==0.8.0
+av==18.0.0
+certifi==2026.7.22
+charset-normalizer==3.4.9
+ctranslate2==4.8.1
+filelock==3.32.0
+flatbuffers==25.12.19
+fsspec==2026.6.0
+hf-xet==1.5.2
+huggingface_hub==0.36.2
+idna==3.18
+Jinja2==3.1.6
+joblib==1.5.3
+MarkupSafe==3.0.3
+mpmath==1.3.0
+narwhals==2.24.0
+networkx==3.6.1
+numpy==2.4.6
+onnxruntime==1.28.0
+packaging==26.0
+protobuf==7.35.1
+pydantic_core==2.46.4
+PyYAML==6.0.3
+regex==2026.7.19
+requests==2.34.2
+safetensors==0.8.0
+scikit-learn==1.9.0
+scipy==1.17.1
+sympy==1.14.0
+threadpoolctl==3.6.0
+tokenizers==0.22.2
+tqdm==4.70.0
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+urllib3==2.7.0
