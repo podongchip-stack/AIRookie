@@ -20,7 +20,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
-from egen.client import FixtureEgenClient  # noqa: E402
+from egen.client import FixtureEgenClient, SupabaseEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
 
 OUTPUT_DIR = BASE_DIR / "data" / "output"
@@ -28,11 +28,16 @@ OUTPUT_DIR = BASE_DIR / "data" / "output"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="E-Gen 데이터를 HospitalInfo JSON으로 변환한다")
-    parser.add_argument("--region", default="jinju", help="fixture 지역 이름 (기본: jinju)")
+    parser.add_argument("--region", default="jinju", help="fixture 지역 이름 (기본: jinju, --supabase와 무관)")
+    parser.add_argument(
+        "--supabase",
+        action="store_true",
+        help="fixture 대신 Supabase 대체 DB를 읽는다 (SUPABASE_URL, SUPABASE_KEY 환경변수 필요)",
+    )
     parser.add_argument("--out", type=Path, default=OUTPUT_DIR, help="출력 폴더")
     args = parser.parse_args()
 
-    client = FixtureEgenClient(region=args.region)
+    client = SupabaseEgenClient() if args.supabase else FixtureEgenClient(region=args.region)
     hospitals, report = map_all(
         client.get_realtime_beds(),
         client.get_list_info(),

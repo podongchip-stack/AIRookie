@@ -1,15 +1,19 @@
 """E-Gen(국립중앙의료원 응급의료기관 정보 조회 서비스) 데이터를 가져오는 통로.
 
-같은 메서드를 가진 구현이 두 개 있다.
+같은 메서드를 가진 구현이 세 개 있다.
 
-- `FixtureEgenClient` : 미리 만들어둔 파일을 읽는다. API 키가 없어도 개발이 굴러간다.
-- `HttpEgenClient`    : 진짜 API를 호출한다. 키가 나오면 채운다.
+- `FixtureEgenClient`  : 미리 만들어둔 파일을 읽는다. API 키가 없어도 개발이 굴러간다.
+- `SupabaseEgenClient` : E-Gen 서비스키 승인 전까지, Supabase에 만들어둔 대체 DB를
+                         읽는다 (`supabase/schema.sql` 참고). 실제 서비스 운영 데이터가
+                         아니라 임시 대체 데이터다.
+- `HttpEgenClient`     : 진짜 API를 호출한다. 키가 나오면 채운다.
 
-쓰는 쪽은 둘 중 어느 것인지 몰라도 되게 만들었다. 나중에 실제 API로 바꿀 때
+쓰는 쪽은 셋 중 어느 것인지 몰라도 되게 만들었다. 나중에 실제 API로 바꿀 때
 클라이언트를 만드는 한 줄만 고치면 되고, 매퍼(mapper.py)는 손대지 않는다.
 
-    client = FixtureEgenClient()     # 지금
-    client = HttpEgenClient(key)     # 키 나오면
+    client = FixtureEgenClient()                    # fixture 파일
+    client = SupabaseEgenClient(url, key)           # Supabase 대체 DB
+    client = HttpEgenClient(key)                    # 키 나오면 진짜 API
 
 명세 출처
 --------
@@ -24,6 +28,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -103,6 +109,94 @@ class FixtureEgenClient:
 
     def get_list_info(self, q0: str = "경상남도", q1: str = "진주시") -> list[dict]:
         return self._load("list_info")
+
+
+class SupabaseEgenClient:
+    """Supabase의 `hospitals` 테이블(`supabase/schema.sql`)에서 읽는 구현.
+
+    E-Gen 서비스키 승인 전까지 실제 API를 대체한다. 테이블은 세 오퍼레이션의
+    필드를 한 행에 다 갖고 있지만(단일 테이블), 이 클라이언트가 오퍼레이션별로
+    필요한 컬럼만 골라 E-Gen 원본 필드명(hpid, dutyName, wgs84Lat …)으로 다시
+    이름 붙여 돌려준다 — 매퍼(mapper.py)는 이게 fixture에서 온 건지 Supabase에서
+    온 건지 구분할 필요가 없다.
+
+    지금은 지역(STAGE1/STAGE2, Q0/Q1) 필터링을 하지 않고 테이블 전체를 돌려준다
+    — 시연 지역이 서울 하나뿐이라 필요 없었다. 여러 지역을 나눠 담게 되면
+    테이블에 `stage1`/`stage2` 컬럼을 추가하고 여기서 필터링하면 된다.
+    """
+
+    TABLE = "hospitals"
+
+    def __init__(self, url: str | None = None, key: str | None = None) -> None:
+        # .env 파일(Hospital_inform/.env)을 환경변수로 로드한다. 이미 환경변수가
+        # 있으면 덮어쓰지 않는다 — 코드에 키를 하드코딩하지 않는다는 원칙(CLAUDE.md
+        # "외부 API 키 등 환경 변수 관리")은 지키되, 실제 값은 .env로 관리한다.
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        self._url = url or os.environ["SUPABASE_URL"]
+        self._key = key or os.environ["SUPABASE_KEY"]
+
+        try:
+            from supabase import create_client
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "supabase-py가 설치되어 있지 않다. `pip install supabase`로 설치할 것 "
+                "(info/requirements.txt에 추가되어 있음)."
+            ) from exc
+
+        self._client = create_client(self._url, self._key)
+
+    def _select(self, columns: str) -> list[dict]:
+        response = self._client.table(self.TABLE).select(columns).execute()
+        return response.data or []
+
+    @staticmethod
+    def _format_hvidate(raw: object) -> str | None:
+        """timestamptz(ISO 8601)로 오는 값을 mapper.py의 parse_hvidate()가 기대하는
+        `yyyyMMddHHmmss` 형식으로 되돌린다."""
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return dt.strftime("%Y%m%d%H%M%S")
+
+    def get_realtime_beds(self, stage1: str = "", stage2: str = "") -> list[dict]:
+        rows = self._select("hpid,duty_name,hvec,hvoc,hv11,hv2,hv3,hvidate")
+        return [
+            {
+                "hpid": row["hpid"],
+                "dutyName": row["duty_name"],
+                "hvec": row.get("hvec"),
+                "hvoc": row.get("hvoc"),
+                "hv11": row.get("hv11"),
+                "hv2": row.get("hv2"),
+                "hv3": row.get("hv3"),
+                "hvidate": self._format_hvidate(row.get("hvidate")),
+            }
+            for row in rows
+        ]
+
+    def get_severe_illness(self, stage1: str = "", stage2: str = "") -> list[dict]:
+        rows = self._select("hpid,severe_illness")
+        return [
+            {"hpid": row["hpid"], **(row.get("severe_illness") or {})}
+            for row in rows
+        ]
+
+    def get_list_info(self, q0: str = "", q1: str = "") -> list[dict]:
+        rows = self._select("hpid,duty_name,wgs84_lat,wgs84_lon")
+        return [
+            {
+                "hpid": row["hpid"],
+                "dutyName": row["duty_name"],
+                "wgs84Lat": row.get("wgs84_lat"),
+                "wgs84Lon": row.get("wgs84_lon"),
+            }
+            for row in rows
+        ]
 
 
 class HttpEgenClient:
