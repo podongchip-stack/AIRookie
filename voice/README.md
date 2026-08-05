@@ -1,5 +1,12 @@
 # feature/voice — 유튜브/음성 파일 STT 변환 및 로컬 LLM 요약 파이프라인
 
+> **폴더 구조 안내(모노레포)**: 이 저장소는 `feature/voice`·`feature/hub`·
+> `feature/info`·`feature/dashboard`가 하나의 저장소를 공유하며, 각 브랜치는
+> 자기 작업 폴더(`voice/`·`hub/`·`info/`·`dashboard/`)만 갖는다. **지금 이
+> 브랜치에는 `voice/` 폴더만 있고 `hub/`·`info/`·`dashboard/`는 없다.** 만약
+> 작업 중 낯선 폴더가 보인다면 `develop`을 머지했거나 다른 브랜치를 체크아웃한
+> 상태라는 뜻이니, 실수로 만들어진 게 아닌지 걱정하지 않아도 된다.
+
 ## 담당자
 
 - 이승주 — 리드 개발자
