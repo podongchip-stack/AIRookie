@@ -1,0 +1,35 @@
+# 요구 Python 버전: 3.11 (예: conda create -n <가상환경명> python=3.11)
+# 직접 의존성 + 하위 의존성까지 전부 버전 고정되어 있어 pip install -r requirements.txt 만으로 재현 가능
+
+# ===== 직접 의존성 (용도별) =====
+
+# 웹 프레임워크: 승인 액션 수신, 존 기반 병원 매칭 API 서빙 (규칙 기반)
+flask==3.1.3
+
+# 대시보드로의 실시간 바이탈/병원 매칭 결과 전송 (WebSocket)
+flask-socketio==5.6.1
+simple-websocket==1.1.0
+
+# hv1(전문의 보유) / hvec(병상 현황) / hv2(중증질환별 수용 가능) 외부 API 호출
+requests==2.32.5
+
+# 외부 API 키 등 환경 변수 관리
+python-dotenv==1.2.1
+
+# ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
+bidict==0.23.1
+blinker==1.9.0
+certifi==2026.7.22
+charset-normalizer==3.4.9
+click==8.4.2
+h11==0.16.0
+idna==3.18
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+packaging==26.0
+python-engineio==4.13.3
+python-socketio==5.16.3
+urllib3==2.7.0
+Werkzeug==3.1.8
+wsproto==1.3.2

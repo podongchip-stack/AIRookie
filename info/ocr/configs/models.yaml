@@ -1,0 +1,35 @@
+# 사용 모델 정의 — 가중치는 저장소에 커밋하지 않고 이 정의로 내려받는다.
+# revision(커밋 SHA)까지 고정해야 나중에 원본이 갱신돼도 같은 결과가 재현된다.
+
+layout:
+  # 레이아웃 검출: 영역 위치 + 종류 분류
+  # 원본(juliozhao/DocLayout-YOLO-DocStructBench, Apache-2.0)을 ONNX로 변환해
+  # 재배포한 것이다. 원본 .pt 를 실행하는 doclayout_yolo 패키지가 AGPL-3.0 이라,
+  # onnxruntime(MIT)으로 돌려 라이선스 전염을 피한다. 가중치는 원본과 동일하다.
+  repo_id: podongchip/DocLayout-YOLO-DocStructBench-ONNX
+  revision: 49eb1660e838bccee2a746f9c07b43ff1f73f191
+  onnx_file: doclayout_yolo_docstructbench_imgsz1024.onnx
+  license: apache-2.0
+  url: https://huggingface.co/podongchip/DocLayout-YOLO-DocStructBench-ONNX
+  imgsz: 1024
+  conf_threshold: 0.2
+
+recognizer:
+  # 텍스트 인식: 잘라낸 영역을 읽는 VLM
+  repo_id: PaddlePaddle/PaddleOCR-VL-1.6
+  revision: 66317acc4c9fc17bd154591ce650735cd2855f3e
+  license: apache-2.0
+  url: https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6
+  dtype: bfloat16
+  max_new_tokens: 2048
+
+router:
+  # 규칙 기반 설정 (AI 아님) — 영역 종류를 어떤 인식 태스크로 보낼지
+  task_by_class:
+    table: "Table Recognition:"
+    isolate_formula: "Formula Recognition:"
+  default_task: "OCR:"
+  # 겹치는 검출을 같은 영역으로 볼 IoU 임계값
+  iou_threshold: 0.6
+  # 짧은 변이 이 값보다 작은 영역은 업스케일 후 인식 (저해상도 오독 완화)
+  min_side: 320

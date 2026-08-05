@@ -1,0 +1,5 @@
+# 모델 가중치는 저장소에 커밋하지 않는다.
+# configs/models.yaml 의 repo_id + revision 으로 재현하며,
+# scripts/download_models.py 가 내려받는다.
+*
+!.gitignore
