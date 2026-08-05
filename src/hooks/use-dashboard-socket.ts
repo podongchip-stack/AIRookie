@@ -1,46 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  mockCallSummary,
-  mockHospitalCapacity,
-  mockHospitalMatch,
-  mockVitals,
-} from "@/lib/mock-data";
-import type {
-  ApprovalAction,
-  DashboardState,
-  InboundMessage,
-} from "@/types/dashboard";
+import { mockHubMatchResult } from "@/lib/mock-data";
+import type { ApprovalAction, DashboardState, HubMatchResult } from "@/types/dashboard";
 
 const INITIAL_STATE: DashboardState = {
-  callSummary: null,
-  vitals: null,
-  hospitalMatch: null,
-  hospitalCapacity: null,
+  matchResult: null,
+  receivedAt: null,
 };
 
-// voice/vital 브랜치는 아직 WS 서버가 없다. NEXT_PUBLIC_DASHBOARD_WS_URL이
-// 설정되지 않으면 목데이터를 순차적으로 흘려보내 화면 작업을 진행할 수 있게 한다.
-function applyInboundMessage(
-  state: DashboardState,
-  message: InboundMessage,
-): DashboardState {
-  if ("transcript" in message) {
-    return { ...state, callSummary: message };
-  }
-  if ("vitals" in message) {
-    return { ...state, vitals: message };
-  }
-  if ("hospitals" in message) {
-    return { ...state, hospitalMatch: message };
-  }
-  if ("specialist_on_call" in message) {
-    return { ...state, hospitalCapacity: message };
-  }
-  return state;
-}
-
+// feature/hub가 dashboard와 직접 통신하는 유일한 브랜치다 (CLAUDE.md). voice/info는
+// hub를 거쳐서만 도착하므로, dashboard가 실제로 받는 건 hub의 통합 매칭 결과 메시지
+// 하나뿐이다. NEXT_PUBLIC_DASHBOARD_WS_URL이 설정되지 않으면 목데이터를 흘려보내
+// 화면 작업을 진행할 수 있게 한다.
 export function useDashboardSocket() {
   const [state, setState] = useState<DashboardState>(INITIAL_STATE);
   const [connectionMode, setConnectionMode] = useState<"live" | "mock">(
@@ -48,35 +20,19 @@ export function useDashboardSocket() {
   );
   const socketRef = useRef<WebSocket | null>(null);
 
+  const applyMatchResult = useCallback((matchResult: HubMatchResult) => {
+    setState((prev) => ({
+      matchResult,
+      receivedAt: prev.receivedAt ?? new Date().toISOString(),
+    }));
+  }, []);
+
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_DASHBOARD_WS_URL;
 
     if (!wsUrl) {
-      // 완료된 정보부터 순차적으로 갱신 (CLAUDE.md 실시간 갱신 원칙)
-      const timers = [
-        setTimeout(
-          () =>
-            setState((prev) => applyInboundMessage(prev, mockCallSummary)),
-          600,
-        ),
-        setTimeout(
-          () => setState((prev) => applyInboundMessage(prev, mockVitals)),
-          1400,
-        ),
-        setTimeout(
-          () =>
-            setState((prev) => applyInboundMessage(prev, mockHospitalMatch)),
-          2200,
-        ),
-        setTimeout(
-          () =>
-            setState((prev) =>
-              applyInboundMessage(prev, mockHospitalCapacity),
-            ),
-          2800,
-        ),
-      ];
-      return () => timers.forEach(clearTimeout);
+      const timer = setTimeout(() => applyMatchResult(mockHubMatchResult), 900);
+      return () => clearTimeout(timer);
     }
 
     const socket = new WebSocket(wsUrl);
@@ -87,15 +43,15 @@ export function useDashboardSocket() {
     socket.onerror = () => setConnectionMode("mock");
     socket.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as InboundMessage;
-        setState((prev) => applyInboundMessage(prev, parsed));
+        const parsed = JSON.parse(event.data) as HubMatchResult;
+        applyMatchResult(parsed);
       } catch {
         // 파싱 불가능한 메시지는 무시
       }
     };
 
     return () => socket.close();
-  }, []);
+  }, [applyMatchResult]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;

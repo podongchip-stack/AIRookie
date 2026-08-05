@@ -5,7 +5,7 @@ import { hospitalStatusBadge } from "styled-system/recipes";
 import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
 import { mintButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
-import type { HospitalMatchMessage, HospitalStatus } from "@/types/dashboard";
+import type { HospitalStatus, HubMatchResult } from "@/types/dashboard";
 
 const STATUS_LABEL: Record<HospitalStatus, string> = {
   pending: "판단 대기",
@@ -14,6 +14,17 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
   confirmed: "이송 확정",
 };
 
+const deptChipStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "2xs",
+  fontWeight: "medium",
+  color: "navy",
+  backgroundColor: "navySoft",
+  paddingX: "1.5",
+  borderRadius: "chip",
+});
+
 // 병원이 "승인"(후보 등록) 응답을 보내야만 버튼이 활성화된다. 버튼을 누르면 그 자리에서
 // 바로 이송 승인(final_approval)이 전송된다 — 별도의 "선택 → 하단에서 최종 승인" 2단계가 아니다.
 export function HospitalCandidateListPanel({
@@ -21,7 +32,7 @@ export function HospitalCandidateListPanel({
   confirmedHospitalId,
   onApprove,
 }: {
-  data: HospitalMatchMessage | null;
+  data: HubMatchResult | null;
   confirmedHospitalId: string | null;
   onApprove: (hospitalId: string) => void;
 }) {
@@ -36,12 +47,12 @@ export function HospitalCandidateListPanel({
   return (
     <Panel
       title="병원 후보 리스트"
-      subtitle={`Zone ${data.zone_active.join(", ")} 내 후보`}
+      subtitle={`Zone ${data.zoneActive.join(", ")} 내 후보`}
       badge={<Tag source="rule">hv1 · hvec · hv2</Tag>}
     >
       <ul className={css({ display: "flex", flexDirection: "column", gap: "2" })}>
         {data.hospitals.map((hospital) => {
-          const confirmed = hospital.hospital_id === confirmedHospitalId;
+          const confirmed = hospital.hospitalId === confirmedHospitalId;
           const approvable = hospital.status === "approved" || hospital.status === "confirmed";
           // "이송 확정"은 실제로 이 구급차 세션에서 승인 버튼을 눌렀을 때만 보여준다.
           // 데이터상 이미 confirmed여도, 로컬에서 아직 안 눌렀으면 "후보 등록"으로 표시한다.
@@ -53,7 +64,7 @@ export function HospitalCandidateListPanel({
 
           return (
             <li
-              key={hospital.hospital_id}
+              key={hospital.hospitalId}
               className={css({
                 display: "flex",
                 alignItems: "center",
@@ -72,8 +83,11 @@ export function HospitalCandidateListPanel({
                   {hospital.name}
                 </span>
                 <span className={css({ fontSize: "xs", color: "ink2" })}>
-                  {hospital.distance_km}km
-                  {hospital.eta_min != null ? ` · ETA ${hospital.eta_min}분` : ""}
+                  {hospital.distanceKm}km
+                  {hospital.etaMin != null ? ` · ETA ${hospital.etaMin}분` : ""}
+                </span>
+                <span className={deptChipStyle}>
+                  {hospital.specialtyMatch.department} · 적합도 {Math.round(hospital.specialtyMatch.score * 100)}%
                 </span>
               </div>
 
@@ -84,7 +98,7 @@ export function HospitalCandidateListPanel({
                 <button
                   type="button"
                   disabled={!approvable}
-                  onClick={() => onApprove(hospital.hospital_id)}
+                  onClick={() => onApprove(hospital.hospitalId)}
                   className={confirmed ? mintButtonStyle : primaryButtonStyle}
                 >
                   {confirmed ? "승인 완료" : "이송 승인"}

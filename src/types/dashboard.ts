@@ -1,82 +1,40 @@
-// CLAUDE.md > "데이터 포맷 및 흐름"에 정의된 스키마와 1:1로 대응한다.
-// 필드를 추가/변경할 때는 CLAUDE.md도 함께 갱신할 것.
+// feature/hub README.md > "입출력 데이터 포맷"의 출력 스키마 4(feature/hub → feature/dashboard)와
+// 입력 스키마 3(feature/dashboard → feature/hub, 승인 액션)에 1:1로 대응한다.
+// dashboard는 feature/hub와만 직접 통신하므로(CLAUDE.md), feature/voice·feature/info의
+// 원본 스키마(transcript, vitals 등)는 여기서 다루지 않는다. 필드를 추가/변경할 때는
+// feature/hub README도 함께 확인할 것 — 출력 스키마 4는 아직 "가안, 팀 리뷰 후 확정 예정" 상태다.
 
 export type Severity = "high" | "medium" | "low";
 
-// 발화 턴 단위 원본 로그. CLAUDE.md는 transcript.raw_text를 전문 string으로만
-// 정의하지만, "필터링된 문장도 원본 로그에는 남겨두고 요약 제외 표시만 한다"는
-// 원칙을 화면에 실제로 보여주려면 턴 단위 구조가 필요하다.
-// voice 담당자와 정식 스키마 반영 여부를 협의하기 전까지는 optional 확장 필드로 둔다.
-export interface TranscriptTurn {
-  speaker: string;
-  timestamp: string;
-  text: string;
-  excludedFromSummary?: boolean;
+export interface PatientInfo {
+  injuryStatus: string[];
+  expectedDiagnosis: string;
+  severityTag: Severity;
 }
 
-export interface CallSummaryMessage {
-  transcript: {
-    raw_text: string;
-    filtered_text: string;
-    language: string;
-    timestamp: string;
-    duration_sec: number;
-    turns?: TranscriptTurn[];
-  };
-  summary: {
-    patient: string;
-    mechanism: string;
-    symptoms: string[];
-    treatment: string[];
-    severity_tag: Severity;
-    // 병원 대시보드 시안 반영용 확장 필드 (아직 CLAUDE.md 미정 스키마)
-    required_department?: string;
-  };
-  source: "ai";
-  model_used: {
-    stt: string;
-    llm: string;
-  };
-}
-
-export interface VitalsMessage {
-  vitals: {
-    bp_systolic: number;
-    bp_diastolic: number;
-    pulse: number;
-    spo2: number;
-    gcs: number;
-    temperature: number;
-    resp_rate: number;
-  };
-  timestamp: string;
-  source: "rule";
-  // 추세 판단은 이력 데이터가 필요해 현재 규칙 엔진 스펙에 없다. 백엔드가
-  // 계산해 내려줄 때만 표시하고, 프론트에서 추세를 추정하지 않는다.
-  trend_note?: string;
-}
-
-// CLAUDE.md가 언급하는 hv1(전문의)/hvec(병상)/hv2(중증질환) API 대조 결과의
-// JSON 스키마는 아직 확정되지 않았다. vital 담당자와 협의 후 정식 반영할 것.
-export interface HospitalCapacitySnapshot {
-  specialist_on_call: boolean;
-  beds_available: number;
-  or_available: boolean;
-  or_available_in_min?: number;
+// 예상 병명 ↔ 병원 진료과 임베딩 유사도 매칭 결과. score를 그대로 노출해
+// "왜 이 병원 순위인지" 설명 가능하게 유지한다 (hub README "설명 가능성 유지" 참고).
+export interface SpecialtyMatch {
+  department: string;
+  score: number;
 }
 
 export type HospitalStatus = "pending" | "approved" | "rejected" | "confirmed";
 
 export interface HospitalCandidate {
-  hospital_id: string;
+  hospitalId: string;
   name: string;
-  distance_km: number;
+  gps: { lat: number; lng: number };
+  distanceKm: number;
+  specialtyMatch: SpecialtyMatch;
+  availableBedCount: number;
   status: HospitalStatus;
-  eta_min?: number;
+  etaMin?: number;
 }
 
-export interface HospitalMatchMessage {
-  zone_active: number[];
+export interface HubMatchResult {
+  patientInfo: PatientInfo;
+  zoneActive: number[];
   hospitals: HospitalCandidate[];
   source: "rule";
 }
@@ -88,6 +46,7 @@ export type ApprovalActionType =
 
 export type Actor = "hospital" | "paramedic";
 
+// dashboard → feature/hub. 이 스키마만 CLAUDE.md/hub README 모두 snake_case로 확정돼 있다.
 export interface ApprovalAction {
   action: ApprovalActionType;
   hospital_id: string;
@@ -98,14 +57,10 @@ export interface ApprovalAction {
 export type DashboardRole = "ambulance" | "hospital";
 
 export interface DashboardState {
-  callSummary: CallSummaryMessage | null;
-  vitals: VitalsMessage | null;
-  hospitalMatch: HospitalMatchMessage | null;
-  hospitalCapacity: HospitalCapacitySnapshot | null;
+  matchResult: HubMatchResult | null;
+  // hub 메시지 자체엔 타임스탬프가 없어서, "정보 수신 후 경과" 표시를 위해
+  // 대시보드가 최초 수신 시각을 로컬에서 기록해 둔다.
+  receivedAt: string | null;
 }
 
-export type InboundMessage =
-  | CallSummaryMessage
-  | VitalsMessage
-  | HospitalMatchMessage
-  | HospitalCapacitySnapshot;
+export type InboundMessage = HubMatchResult;

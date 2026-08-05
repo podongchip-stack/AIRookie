@@ -3,7 +3,7 @@
 import { css } from "styled-system/css";
 import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
-import type { HospitalCandidate, HospitalMatchMessage } from "@/types/dashboard";
+import type { HospitalCandidate, HubMatchResult } from "@/types/dashboard";
 
 const mapLabelStyle = css({
   position: "absolute",
@@ -40,18 +40,12 @@ const sideBoxStyle = css({
 const AMBULANCE_LEFT = 12;
 const AMBULANCE_TOP = 50;
 
-// 후보 병원을 거리순으로 지도 위 22%~78% 구간에 펼쳐 배치한다 (구급차 마커는 12% 고정).
-function positionFor(distance: number, min: number, max: number) {
-  if (max === min) return 50;
-  return 22 + ((distance - min) / (max - min)) * 56;
-}
-
-// 모든 마커가 한 줄에 나란히 찍히면 지도처럼 안 보이므로, 병원별로 세로 위치도
-// (id + 순서 기반으로 결정적이게) 흩뿌려 실제 지도처럼 보이게 한다.
-function verticalFor(hospitalId: string, index: number) {
-  const seed =
-    Array.from(hospitalId).reduce((sum, ch) => sum + ch.charCodeAt(0), 0) + index * 17;
-  return 18 + (seed % 65);
+// hub가 병원별 실제 gps(lat/lng)를 내려주므로, 위경도를 후보군 범위 안에서 정규화해
+// 지도 위 22%~78%(가로) / 18%~82%(세로) 구간에 배치한다 (구급차 마커는 12%/50% 고정 —
+// hub 스키마에 구급차 자신의 gps는 없으므로 스타일화된 고정 위치를 유지한다).
+function normalize(value: number, min: number, max: number, rangeMin: number, rangeMax: number) {
+  if (max === min) return (rangeMin + rangeMax) / 2;
+  return rangeMin + ((value - min) / (max - min)) * (rangeMax - rangeMin);
 }
 
 function markerColor(hospital: HospitalCandidate, isConfirmed: boolean): string {
@@ -65,22 +59,26 @@ export function CandidateMapPanel({
   data,
   confirmedHospitalId,
 }: {
-  data: HospitalMatchMessage | null;
+  data: HubMatchResult | null;
   confirmedHospitalId: string | null;
 }) {
   const hospitals = data?.hospitals ?? [];
-  const confirmedHospital = hospitals.find((h) => h.hospital_id === confirmedHospitalId) ?? null;
+  const confirmedHospital = hospitals.find((h) => h.hospitalId === confirmedHospitalId) ?? null;
 
-  const distances = hospitals.map((h) => h.distance_km);
-  const minD = distances.length ? Math.min(...distances) : 0;
-  const maxD = distances.length ? Math.max(...distances) : 0;
+  const lats = hospitals.map((h) => h.gps.lat);
+  const lngs = hospitals.map((h) => h.gps.lng);
+  const minLat = lats.length ? Math.min(...lats) : 0;
+  const maxLat = lats.length ? Math.max(...lats) : 0;
+  const minLng = lngs.length ? Math.min(...lngs) : 0;
+  const maxLng = lngs.length ? Math.max(...lngs) : 0;
 
-  const positioned = hospitals.map((hospital, index) => ({
+  const positioned = hospitals.map((hospital) => ({
     hospital,
-    left: positionFor(hospital.distance_km, minD, maxD),
-    top: verticalFor(hospital.hospital_id, index),
+    left: normalize(hospital.gps.lng, minLng, maxLng, 22, 78),
+    // 위도가 클수록(북쪽) 화면 위쪽에 오도록 반전한다.
+    top: normalize(hospital.gps.lat, minLat, maxLat, 82, 18),
   }));
-  const confirmedPosition = positioned.find((p) => p.hospital.hospital_id === confirmedHospitalId);
+  const confirmedPosition = positioned.find((p) => p.hospital.hospitalId === confirmedHospitalId);
 
   return (
     <Panel
@@ -140,12 +138,12 @@ export function CandidateMapPanel({
           </div>
 
           {positioned.map(({ hospital, left, top }) => {
-            const isConfirmed = hospital.hospital_id === confirmedHospitalId;
+            const isConfirmed = hospital.hospitalId === confirmedHospitalId;
             const muted = hospital.status === "rejected" && !isConfirmed;
 
             return (
               <div
-                key={hospital.hospital_id}
+                key={hospital.hospitalId}
                 className={css({ position: "absolute", transform: "translate(-50%, -50%)" })}
                 style={{ left: `${left}%`, top: `${top}%` }}
               >
@@ -194,7 +192,7 @@ export function CandidateMapPanel({
                   color: "#0A7351",
                 })}
               >
-                {confirmedHospital.eta_min != null ? `${confirmedHospital.eta_min}분` : "-"}
+                {confirmedHospital.etaMin != null ? `${confirmedHospital.etaMin}분` : "-"}
               </div>
               <div className={css({ fontSize: "2xs", color: "ink3", marginTop: "0.5" })}>
                 실시간 교통 반영
@@ -225,7 +223,7 @@ export function CandidateMapPanel({
           <div className={sideBoxStyle}>
             <div className={css({ fontSize: "xs", color: "ink" })}>직선 거리</div>
             <div className={css({ fontSize: "xl", fontWeight: "semibold", letterSpacing: "-0.02em", color: "ink" })}>
-              {confirmedHospital ? `${confirmedHospital.distance_km}km` : "-"}
+              {confirmedHospital ? `${confirmedHospital.distanceKm}km` : "-"}
             </div>
           </div>
 

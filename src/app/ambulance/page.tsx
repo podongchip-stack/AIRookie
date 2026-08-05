@@ -6,7 +6,6 @@ import { AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
 import { Legend } from "@/components/hospital/Legend";
 import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEditablePanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
-import { VitalsEcgPanel } from "@/components/hospital/VitalsEcgPanel";
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 
@@ -37,7 +36,7 @@ export default function AmbulanceDashboardPage() {
       <AmbulanceTopBar
         confirmed={confirmedHospitalId != null}
         connectionMode={connectionMode}
-        since={state.callSummary?.transcript.timestamp ?? null}
+        since={state.receivedAt}
       />
       <Legend />
 
@@ -45,51 +44,26 @@ export default function AmbulanceDashboardPage() {
         className={css({
           display: "grid",
           gridTemplateColumns: { base: "1fr", md: "1fr 1fr", lg: "1fr 1.15fr 1.05fr" },
-          gridTemplateRows: { base: "none", lg: "auto minmax(0, 1fr)" },
           gap: "6",
           alignItems: "stretch",
           flex: "1",
           minHeight: "0",
         })}
       >
-        <div
-          className={css({
-            gridColumn: { base: "1", lg: "1" },
-            gridRow: { base: "auto", lg: "1" },
-          })}
-        >
-          <CallSummaryEditablePanel data={state.callSummary} />
-        </div>
+        <CallSummaryEditablePanel data={state.matchResult} />
 
-        <div
-          className={css({
-            gridColumn: { base: "1", md: "2", lg: "2" },
-            gridRow: { base: "auto", lg: "1" },
-          })}
-        >
-          <HospitalCandidateListPanel
-            data={state.hospitalMatch}
-            confirmedHospitalId={confirmedHospitalId}
-            onApprove={handleApprove}
-          />
-        </div>
+        <HospitalCandidateListPanel
+          data={state.matchResult}
+          confirmedHospitalId={confirmedHospitalId}
+          onApprove={handleApprove}
+        />
 
         <div
           className={css({
             gridColumn: { base: "1", md: "1 / span 2", lg: "3" },
-            gridRow: { base: "auto", lg: "1 / span 2" },
           })}
         >
-          <CandidateMapPanel data={state.hospitalMatch} confirmedHospitalId={confirmedHospitalId} />
-        </div>
-
-        <div
-          className={css({
-            gridColumn: { base: "1", md: "1 / span 2", lg: "1 / span 2" },
-            gridRow: "auto",
-          })}
-        >
-          <VitalsEcgPanel data={state.vitals} subtitle="현재 측정 중" showLockNote={false} layout="grid" />
+          <CandidateMapPanel data={state.matchResult} confirmedHospitalId={confirmedHospitalId} />
         </div>
       </main>
 

@@ -10,9 +10,7 @@ import {
   primaryButtonStyle,
   secondaryButtonStyle,
 } from "@/components/ui/button-styles";
-import type { CallSummaryMessage, Severity } from "@/types/dashboard";
-
-type SummaryDraft = CallSummaryMessage["summary"];
+import type { HubMatchResult, PatientInfo, Severity } from "@/types/dashboard";
 
 const SEVERITY_RISK_LABEL: Record<Severity, string> = {
   high: "중증 의심",
@@ -34,25 +32,25 @@ function fromListInput(value: string) {
     .filter(Boolean);
 }
 
-// AI가 생성한 통화 요약은 최종 전송 전 구급대원이 확인·수정할 수 있어야 한다 (Override, CLAUDE.md).
-export function CallSummaryEditablePanel({ data }: { data: CallSummaryMessage | null }) {
+// AI가 생성한 통화 요약(hub가 재가공해 넘긴 patientInfo)은 최종 전송 전 구급대원이
+// 확인·수정할 수 있어야 한다 (Override, CLAUDE.md).
+export function CallSummaryEditablePanel({ data }: { data: HubMatchResult | null }) {
+  const patientInfo = data?.patientInfo ?? null;
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<SummaryDraft | null>(data?.summary ?? null);
-  // 증상/처치는 편집 중 배열이 아닌 순수 문자열로 유지한다 (쉼표 입력 도중 배열 변환을
+  const [draft, setDraft] = useState<PatientInfo | null>(patientInfo);
+  // 증상은 편집 중 배열이 아닌 순수 문자열로 유지한다 (쉼표 입력 도중 배열 변환을
   // 거치면 빈 항목이 즉시 filter(Boolean)로 제거되어 콤마가 사라진 것처럼 보이는 버그 방지).
-  const [symptomsText, setSymptomsText] = useState(toListInput(data?.summary.symptoms ?? []));
-  const [treatmentText, setTreatmentText] = useState(toListInput(data?.summary.treatment ?? []));
-  // data가 새로 도착했을 때만 draft를 리셋한다 (렌더링 중 상태 조정 패턴).
-  const [syncedData, setSyncedData] = useState(data);
-  if (data !== syncedData) {
-    setSyncedData(data);
-    setDraft(data?.summary ?? null);
-    setSymptomsText(toListInput(data?.summary.symptoms ?? []));
-    setTreatmentText(toListInput(data?.summary.treatment ?? []));
+  const [symptomsText, setSymptomsText] = useState(toListInput(patientInfo?.injuryStatus ?? []));
+  // patientInfo가 새로 도착했을 때만 draft를 리셋한다 (렌더링 중 상태 조정 패턴).
+  const [syncedPatientInfo, setSyncedPatientInfo] = useState(patientInfo);
+  if (patientInfo !== syncedPatientInfo) {
+    setSyncedPatientInfo(patientInfo);
+    setDraft(patientInfo);
+    setSymptomsText(toListInput(patientInfo?.injuryStatus ?? []));
     setEditing(false);
   }
 
-  if (!data || !draft) {
+  if (!patientInfo || !draft) {
     return (
       <Panel title="통화 요약 · 구조화" badge={<Tag source="ai">sLLM · KM-BERT</Tag>}>
         <p className={css({ color: "ink3", fontSize: "sm" })}>수신 대기 중...</p>
@@ -74,28 +72,16 @@ export function CallSummaryEditablePanel({ data }: { data: CallSummaryMessage | 
           alignItems: "center",
         })}
       >
-        <dt className={kvDt}>환자</dt>
+        <dt className={kvDt}>예상 병명</dt>
         <dd>
           {editing ? (
             <input
               className={inputStyle}
-              value={draft.patient}
-              onChange={(e) => setDraft({ ...draft, patient: e.target.value })}
+              value={draft.expectedDiagnosis}
+              onChange={(e) => setDraft({ ...draft, expectedDiagnosis: e.target.value })}
             />
           ) : (
-            <span className={kvValue}>{draft.patient}</span>
-          )}
-        </dd>
-        <dt className={kvDt}>기전</dt>
-        <dd>
-          {editing ? (
-            <input
-              className={inputStyle}
-              value={draft.mechanism}
-              onChange={(e) => setDraft({ ...draft, mechanism: e.target.value })}
-            />
-          ) : (
-            <span className={kvValue}>{draft.mechanism}</span>
+            <span className={kvValue}>{draft.expectedDiagnosis}</span>
           )}
         </dd>
         <dt className={kvDt}>증상</dt>
@@ -107,26 +93,14 @@ export function CallSummaryEditablePanel({ data }: { data: CallSummaryMessage | 
               onChange={(e) => setSymptomsText(e.target.value)}
             />
           ) : (
-            <span className={kvValue}>{draft.symptoms.join(", ")}</span>
-          )}
-        </dd>
-        <dt className={kvDt}>처치</dt>
-        <dd>
-          {editing ? (
-            <input
-              className={inputStyle}
-              value={treatmentText}
-              onChange={(e) => setTreatmentText(e.target.value)}
-            />
-          ) : (
-            <span className={kvValue}>{draft.treatment.join(", ")}</span>
+            <span className={kvValue}>{draft.injuryStatus.join(", ")}</span>
           )}
         </dd>
       </dl>
 
       <div className={css({ display: "flex", gap: "1.5", flexWrap: "wrap", marginTop: "3" })}>
-        <span className={severityBadge({ severity: draft.severity_tag })}>
-          {SEVERITY_RISK_LABEL[draft.severity_tag]} · {draft.mechanism}
+        <span className={severityBadge({ severity: draft.severityTag })}>
+          {SEVERITY_RISK_LABEL[draft.severityTag]} · {draft.expectedDiagnosis}
         </span>
       </div>
 
@@ -137,9 +111,8 @@ export function CallSummaryEditablePanel({ data }: { data: CallSummaryMessage | 
               type="button"
               className={secondaryButtonStyle}
               onClick={() => {
-                setDraft(data.summary);
-                setSymptomsText(toListInput(data.summary.symptoms));
-                setTreatmentText(toListInput(data.summary.treatment));
+                setDraft(patientInfo);
+                setSymptomsText(toListInput(patientInfo.injuryStatus));
                 setEditing(false);
               }}
             >
@@ -151,8 +124,7 @@ export function CallSummaryEditablePanel({ data }: { data: CallSummaryMessage | 
               onClick={() => {
                 setDraft({
                   ...draft,
-                  symptoms: fromListInput(symptomsText),
-                  treatment: fromListInput(treatmentText),
+                  injuryStatus: fromListInput(symptomsText),
                 });
                 setEditing(false);
               }}

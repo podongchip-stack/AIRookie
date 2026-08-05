@@ -123,7 +123,7 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
                 color: confirmed ? "#0A7351" : "ink",
               })}
             >
-              {hospital?.eta_min != null ? `${hospital.eta_min}분` : "-"}
+              {hospital?.etaMin != null ? `${hospital.etaMin}분` : "-"}
             </div>
             <div className={css({ fontSize: "2xs", color: "ink", marginTop: "0.5" })}>
               실시간 교통 반영
@@ -133,7 +133,7 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
           <div className={sideBoxStyle}>
             <div className={css({ fontSize: "xs", color: "ink" })}>직선 거리</div>
             <div className={css({ fontSize: "xl", fontWeight: "semibold", letterSpacing: "-0.02em" })}>
-              {hospital ? `${hospital.distance_km}km` : "-"}
+              {hospital ? `${hospital.distanceKm}km` : "-"}
             </div>
           </div>
 

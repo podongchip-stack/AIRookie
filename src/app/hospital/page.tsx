@@ -5,9 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { css } from "styled-system/css";
 import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
 import { Legend } from "@/components/hospital/Legend";
-import { RawTranscriptPanel } from "@/components/hospital/RawTranscriptPanel";
+import { DiagnosisMatchPanel } from "@/components/hospital/DiagnosisMatchPanel";
 import { SummaryCapacityPanel } from "@/components/hospital/SummaryCapacityPanel";
-import { VitalsEcgPanel } from "@/components/hospital/VitalsEcgPanel";
 import { MapPanel } from "@/components/hospital/MapPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 
@@ -22,7 +21,7 @@ function HospitalDashboardContent() {
   const { state, sendAction } = useDashboardSocket();
 
   const myHospital =
-    state.hospitalMatch?.hospitals.find((h) => h.hospital_id === MY_HOSPITAL_ID) ?? null;
+    state.matchResult?.hospitals.find((h) => h.hospitalId === MY_HOSPITAL_ID) ?? null;
 
   return (
     <div
@@ -34,60 +33,29 @@ function HospitalDashboardContent() {
         padding: "7",
       })}
     >
-      <HospitalTopBar
-        status={myHospital?.status ?? null}
-        since={state.callSummary?.transcript.timestamp ?? null}
-      />
+      <HospitalTopBar status={myHospital?.status ?? null} since={state.receivedAt} />
       <Legend />
 
       <main
         className={css({
           display: "grid",
           gridTemplateColumns: { base: "1fr", md: "1fr 1fr", lg: "1fr 1.15fr 1.05fr" },
-          gridTemplateRows: { base: "none", lg: "auto minmax(0, 1fr)" },
           gap: "6",
           alignItems: "stretch",
           flex: "1",
           minHeight: "0",
         })}
       >
-        <div
-          className={css({
-            gridColumn: { base: "1", lg: "1" },
-            gridRow: { base: "auto", lg: "1" },
-          })}
-        >
-          <RawTranscriptPanel data={state.callSummary} />
-        </div>
+        <DiagnosisMatchPanel
+          patientInfo={state.matchResult?.patientInfo ?? null}
+          specialtyMatch={myHospital?.specialtyMatch ?? null}
+        />
 
-        <div
-          className={css({
-            gridColumn: { base: "1", md: "2", lg: "2" },
-            gridRow: { base: "auto", lg: "1" },
-          })}
-        >
-          <SummaryCapacityPanel
-            data={state.callSummary}
-            vitals={state.vitals}
-            capacity={state.hospitalCapacity}
-            hospitalId={MY_HOSPITAL_ID}
-            onAction={sendAction}
-          />
-        </div>
+        <SummaryCapacityPanel hospital={myHospital} hospitalId={MY_HOSPITAL_ID} onAction={sendAction} />
 
         <div
           className={css({
             gridColumn: { base: "1", md: "1 / span 2", lg: "3" },
-            gridRow: { base: "auto", lg: "1 / span 2" },
-          })}
-        >
-          <VitalsEcgPanel data={state.vitals} />
-        </div>
-
-        <div
-          className={css({
-            gridColumn: { base: "1", md: "1 / span 2", lg: "1 / span 2" },
-            gridRow: "auto",
           })}
         >
           <MapPanel hospital={myHospital} />
