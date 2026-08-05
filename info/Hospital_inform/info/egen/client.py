@@ -131,9 +131,13 @@ class SupabaseEgenClient:
         # .env 파일(Hospital_inform/.env)을 환경변수로 로드한다. 이미 환경변수가
         # 있으면 덮어쓰지 않는다 — 코드에 키를 하드코딩하지 않는다는 원칙(CLAUDE.md
         # "외부 API 키 등 환경 변수 관리")은 지키되, 실제 값은 .env로 관리한다.
+        # 경로를 __file__ 기준으로 고정해서, 이 클라이언트를 어디서 실행하든
+        # (Hospital_inform/에서든, info/send_to_hub.py처럼 info/에서든) 항상 같은
+        # .env를 찾는다 — load_dotenv()의 기본 동작(cwd 기준 탐색)에 의존하지 않는다.
         from dotenv import load_dotenv
 
-        load_dotenv()
+        env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+        load_dotenv(env_path)
         self._url = url or os.environ["SUPABASE_URL"]
         self._key = key or os.environ["SUPABASE_KEY"]
 
