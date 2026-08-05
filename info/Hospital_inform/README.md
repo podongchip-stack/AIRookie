@@ -101,6 +101,35 @@ fixture는 커밋되지 않으므로 **처음 클론했다면 먼저 만들어�
 (`goldenlink_extract`) 역시 pydantic 하나로 돌게 만들어져 있어, 그쪽도 GPU 없이
 개발할 수 있다.
 
+### 변환 (Supabase 대체 DB 사용 — E-Gen 서비스키 승인 전 임시)
+
+```bash
+cd Hospital_inform
+conda activate dev
+pip install supabase python-dotenv   # 버전 고정은 설치 후 `pip freeze`로 확인해 채워 넣을 것
+```
+
+`Hospital_inform/.env`에 아래 두 값을 채운다 (이 파일은 `.gitignore`에 이미
+등록되어 있어 커밋되지 않는다):
+```
+SUPABASE_URL=https://xxxxxxxx.supabase.co
+SUPABASE_KEY=sb_secret_...
+```
+
+**반드시 secret key(`sb_secret_...`, 예전 이름 service_role key)를 써야 한다.**
+`hospitals` 테이블은 RLS(Row Level Security)를 켜둔 상태라, publishable
+key(예전 이름 anon key)로는 정책을 따로 만들지 않는 한 조회 결과가 조용히
+0건으로 나온다 (에러 없이 빈 결과만 돌아오므로 헷갈리기 쉽다).
+
+```bash
+python info/build_hospitals.py --supabase
+```
+
+`supabase/schema.sql`을 Supabase 프로젝트의 SQL Editor에서 먼저 실행해 `hospitals`
+테이블을 만들어둬야 한다. `SupabaseEgenClient`(`egen/client.py`)가 그 테이블을
+읽어 E-Gen 원본 필드명으로 다시 포장해주므로, 매퍼(`mapper.py`)는 fixture를 쓸
+때와 코드가 완전히 동일하다.
+
 ### hub 연동 검증 (임베딩 모델 필요)
 
 ```bash
