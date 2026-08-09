@@ -7,6 +7,8 @@ export const mockHubMatchResult: HubMatchResult = {
     injuryStatus: ["의식 저하", "호흡 곤란"],
     expectedDiagnosis: "흉부 손상",
     severityTag: "high",
+    rawTranscript: "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다... A병원: 네 잠시만요...",
+    filteredTranscript: "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란.",
   },
   zoneActive: [1, 2],
   hospitals: [

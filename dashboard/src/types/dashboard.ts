@@ -10,6 +10,11 @@ export interface PatientInfo {
   injuryStatus: string[];
   expectedDiagnosis: string;
   severityTag: Severity;
+  // feature/voice의 통화 원문 전체(raw_text)와 실시간 음성 필터링을 거친 텍스트
+  // (filtered_text). 예전엔 hub가 summary만 쓰고 버렸는데, 이제 hub의
+  // VoiceCallSummaryMessage.transcript를 그대로 받아 여기로 넘겨준다.
+  rawTranscript: string;
+  filteredTranscript: string;
 }
 
 // 예상 병명 ↔ 병원 진료과 임베딩 유사도 매칭 결과. score를 그대로 노출해
@@ -55,9 +60,9 @@ export interface ApprovalAction {
 }
 
 // 통화 시연 컴포넌트(구급차 대시보드)가 hub에 보내는 통화 시작/종료 신호.
-// hub README에는 아직 없는 가안 스키마다 — 실제 음성 캡처는 원래 feature/voice
-// 담당 영역(Whisper STT)이라, 이 라이브 데모가 hub로 직접 오디오를 보내는 방식으로
-// 확정할지는 voice/hub 팀과 별도 협의가 필요하다.
+// hub가 이 신호를 받아 feature/voice의 로컬 마이크(mic_recorder.py)에
+// 시작/종료를 중계한다(확정) — sendAudioChunk()로 보내는 브라우저 오디오는
+// 화면 시각화용으로만 남고, 실제 STT 입력으로는 쓰지 않는다.
 export type CallSignalType = "call_started" | "call_ended";
 
 export interface CallSignal {
