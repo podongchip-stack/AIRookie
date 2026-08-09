@@ -31,6 +31,7 @@ venv/
 # Node / JS
 dist/
 build/
+out/
 .next/
 .turbo/
 styled-system/
