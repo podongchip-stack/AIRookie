@@ -1,9 +1,11 @@
 import argparse
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import requests
 import soundfile as sf
 from faster_whisper import WhisperModel
 
@@ -11,6 +13,10 @@ from audio_preprocess import preprocess_for_stt
 from filtering import MedicalRelevanceFilter
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
 from summarizer import StructuringError, structure_call_summary
+
+# feature/hub의 voice 요약 수신 엔드포인트. dashboard로는 직접 보내지 않고
+# 이 브랜치를 거쳐 전달된다 (CLAUDE.md "데이터 포맷 및 흐름" 참고).
+HUB_VOICE_SUMMARY_URL = os.environ.get("HUB_VOICE_SUMMARY_URL", "http://127.0.0.1:5001/voice/summary")
 
 # 화자 분리(diarization)는 아직 구현되어 있지 않다. 실제 화자 분리가 붙기 전까지는
 # 모든 발화 턴에 동일한 placeholder를 채운다 (README "알려진 제약사항" 참고).
@@ -26,6 +32,25 @@ ORIGIN_DATA_DIR = DATA_VOICE_DIR / "origin_data"
 ORIGIN_NOISE_DATA_DIR = DATA_VOICE_DIR / "origin_noise_data"
 ORIGIN_TEXT_DIR = DATA_VOICE_DIR / "origin_text"
 SUMMARY_TEXT_DIR = DATA_VOICE_DIR / "summary_text"
+
+
+def send_to_hub(message: CallSummaryMessage) -> None:
+    """통화 요약을 feature/hub로 전송한다. hub는 summary/source만 사용하므로
+    transcript 등 나머지 필드가 섞여 있어도 그대로 보낸다 (schema.py 참고).
+    hub가 아직 안 떠 있어도 배치 파이프라인 자체는 계속 진행되어야 하므로,
+    실패해도 예외를 올리지 않고 콘솔에만 알린다.
+    """
+    try:
+        response = requests.post(
+            HUB_VOICE_SUMMARY_URL,
+            json=message.model_dump(exclude_none=True),
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"\n[통신] feature/hub 전송 실패 ({HUB_VOICE_SUMMARY_URL}): {e}", file=sys.stderr)
+        return
+    print(f"\n[통신] feature/hub 전송 완료 ({HUB_VOICE_SUMMARY_URL}) — 매칭 결과 {len(response.json().get('hospitals', []))}건 수신")
 
 
 def format_timestamp(seconds: float) -> str:
@@ -169,11 +194,11 @@ def build_and_emit_call_summary(
     summary_path = SUMMARY_TEXT_DIR / (audio_path.stem + "_call_summary.json")
     summary_path.write_text(output_json, encoding="utf-8")
 
-    # dashboard로의 실시간 전송(WebSocket)은 아직 미연동 상태다. 연동 전까지는
-    # 최종 페이로드를 터미널에 그대로 출력해, 통신 계층만 나중에 갈아 끼울 수 있게 한다.
-    print("\n=== feature/dashboard로 전송될 JSON (현재는 터미널 출력만, 통신 미연동) ===")
+    print("\n=== feature/hub로 전송될 JSON ===")
     print(output_json)
     print(f"\nJSON 파일 저장: {summary_path}")
+
+    send_to_hub(message)
 
 
 def main() -> None:

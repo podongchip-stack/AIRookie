@@ -25,6 +25,9 @@ python-dotenv==1.2.1
 sounddevice==0.5.5
 soundfile==0.14.0
 
+# feature/hub로 통화 요약 JSON 전송 (HTTP POST)
+requests==2.34.2
+
 # ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
 annotated-types==0.8.0
 av==18.0.0
@@ -50,7 +53,6 @@ protobuf==7.35.1
 pydantic_core==2.46.4
 PyYAML==6.0.3
 regex==2026.7.19
-requests==2.34.2
 safetensors==0.8.0
 scikit-learn==1.9.0
 scipy==1.17.1
