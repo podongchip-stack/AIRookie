@@ -5,8 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { css } from "styled-system/css";
 import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
 import { Legend } from "@/components/hospital/Legend";
-import { DiagnosisMatchPanel } from "@/components/hospital/DiagnosisMatchPanel";
-import { SummaryCapacityPanel } from "@/components/hospital/SummaryCapacityPanel";
+import { CaseMatchPanel } from "@/components/hospital/CaseMatchPanel";
 import { MapPanel } from "@/components/hospital/MapPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 
@@ -39,27 +38,23 @@ function HospitalDashboardContent() {
       <main
         className={css({
           display: "grid",
-          gridTemplateColumns: { base: "1fr", md: "1fr 1fr", lg: "1fr 1.15fr 1.05fr" },
+          // 예상 병명 · 수용 판단 쪽에 더 넓은 공간을 준다 — 나중에 여러 구급차(사건)를
+          // 동시에 보여주게 되면 이 컬럼이 카드 목록을 담을 자리라, 지금부터 넉넉하게 잡아둔다.
+          gridTemplateColumns: { base: "1fr", lg: "1.8fr 1fr" },
           gap: "6",
           alignItems: "stretch",
           flex: "1",
           minHeight: "0",
         })}
       >
-        <DiagnosisMatchPanel
+        <CaseMatchPanel
           patientInfo={state.matchResult?.patientInfo ?? null}
-          specialtyMatch={myHospital?.specialtyMatch ?? null}
+          hospital={myHospital}
+          hospitalId={MY_HOSPITAL_ID}
+          onAction={sendAction}
         />
 
-        <SummaryCapacityPanel hospital={myHospital} hospitalId={MY_HOSPITAL_ID} onAction={sendAction} />
-
-        <div
-          className={css({
-            gridColumn: { base: "1", md: "1 / span 2", lg: "3" },
-          })}
-        >
-          <MapPanel hospital={myHospital} />
-        </div>
+        <MapPanel hospital={myHospital} />
       </main>
 
       <p

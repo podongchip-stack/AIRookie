@@ -5,12 +5,13 @@ import { css } from "styled-system/css";
 import { AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
 import { Legend } from "@/components/hospital/Legend";
 import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEditablePanel";
+import { CallDemoPanel } from "@/components/ambulance/CallDemoPanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 
 export default function AmbulanceDashboardPage() {
-  const { state, connectionMode, sendAction } = useDashboardSocket();
+  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk } = useDashboardSocket();
   const [confirmedHospitalId, setConfirmedHospitalId] = useState<string | null>(null);
 
   function handleApprove(hospitalId: string) {
@@ -50,7 +51,16 @@ export default function AmbulanceDashboardPage() {
           minHeight: "0",
         })}
       >
-        <CallSummaryEditablePanel data={state.matchResult} />
+        <div className={css({ display: "flex", flexDirection: "column", gap: "6", minHeight: "0" })}>
+          {/* 통화 요약보다 통화 시연(실시간 텍스트 변환) 쪽에 더 넓은 공간을 준다 — flex-basis를
+              0으로 고정해서 내용 크기가 아니라 비율(2:3)로만 나뉘게 한다. */}
+          <div className={css({ flex: "2 1 0", minHeight: "0" })}>
+            <CallSummaryEditablePanel data={state.matchResult} />
+          </div>
+          <div className={css({ flex: "3 1 0", minHeight: "0" })}>
+            <CallDemoPanel onCallSignal={sendCallSignal} onAudioChunk={sendAudioChunk} />
+          </div>
+        </div>
 
         <HospitalCandidateListPanel
           data={state.matchResult}

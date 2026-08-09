@@ -27,6 +27,7 @@ const mapLabelStyle = css({
 });
 
 const sideBoxStyle = css({
+  flex: "1",
   borderWidth: "1px",
   borderColor: "line",
   borderRadius: "field",
@@ -43,6 +44,8 @@ const markerDotStyle = css({
   boxShadow: "0 0 0 1px #CBD5E1",
 });
 
+// 구급차 대시보드의 CandidateMapPanel과 같은 구조(지도가 위, 정보 박스 3개가 그 아래
+// 한 줄)로 맞췄다 — 이전엔 지도 옆에 세로 사이드바를 두는 다른 레이아웃이었다(2026-08-09).
 export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
   const confirmed = hospital?.status === "confirmed";
 
@@ -52,7 +55,7 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
       subtitle="구급차 현재 위치 및 본원까지 이동 시간"
       badge={<Tag source="rule">GPS · 카카오내비</Tag>}
     >
-      <div className={css({ display: "flex", gap: "3.5", flex: "1", minHeight: "0", flexWrap: "wrap" })}>
+      <div className={css({ display: "flex", flexDirection: "column", gap: "3.5", flex: "1", minHeight: "0" })}>
         <div
           role="img"
           aria-label="구급차 현재 위치와 본원까지의 경로를 표시한 지도"
@@ -60,7 +63,7 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
             position: "relative",
             flex: "1",
             minWidth: "240px",
-            minHeight: "200px",
+            minHeight: "160px",
             borderWidth: "1px",
             borderColor: "line",
             borderRadius: "field",
@@ -101,9 +104,10 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
           </div>
         </div>
 
-        <div className={css({ width: "210px", flexShrink: "0", display: "flex", flexDirection: "column", gap: "2.5" })}>
+        <div className={css({ width: "100%", display: "flex", flexDirection: "row", gap: "2.5" })}>
           <div
             className={css({
+              flex: "1",
               borderWidth: "1px",
               borderColor: confirmed ? "#B9E4D3" : "line",
               backgroundColor: confirmed ? "mintSoft" : "surface",

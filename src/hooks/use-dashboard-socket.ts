@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mockHubMatchResult } from "@/lib/mock-data";
-import type { ApprovalAction, DashboardState, HubMatchResult } from "@/types/dashboard";
+import type {
+  ApprovalAction,
+  CallSignal,
+  CallSignalType,
+  DashboardState,
+  HubMatchResult,
+} from "@/types/dashboard";
 
 const INITIAL_STATE: DashboardState = {
   matchResult: null,
@@ -62,5 +68,27 @@ export function useDashboardSocket() {
     }
   }, []);
 
-  return { state, connectionMode, sendAction };
+  // 통화 시연(CallDemoPanel)이 통화 시작/종료를 hub에 알리는 신호. hub README에
+  // 아직 정의되지 않은 가안 스키마라 그대로 JSON 문자열 프레임으로 보낸다.
+  const sendCallSignal = useCallback((signal: CallSignalType) => {
+    const payload: CallSignal = { type: "call_signal", signal, timestamp: new Date().toISOString() };
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+    } else {
+      console.info("[mock] 통화 신호 전송(WS 미연결):", payload);
+    }
+  }, []);
+
+  // 마이크로 캡처한 오디오 조각을 실시간으로 hub에 전달한다(바이너리 프레임).
+  // WS 미연결(mock 모드)에서는 hub로 보낼 대상이 없으니 조용히 버린다 — 화면
+  // 시각화는 CallDemoPanel이 소켓과 무관하게 로컬에서 직접 처리한다.
+  const sendAudioChunk = useCallback((chunk: Blob) => {
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(chunk);
+    }
+  }, []);
+
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk };
 }

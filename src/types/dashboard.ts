@@ -54,6 +54,18 @@ export interface ApprovalAction {
   timestamp: string;
 }
 
+// 통화 시연 컴포넌트(구급차 대시보드)가 hub에 보내는 통화 시작/종료 신호.
+// hub README에는 아직 없는 가안 스키마다 — 실제 음성 캡처는 원래 feature/voice
+// 담당 영역(Whisper STT)이라, 이 라이브 데모가 hub로 직접 오디오를 보내는 방식으로
+// 확정할지는 voice/hub 팀과 별도 협의가 필요하다.
+export type CallSignalType = "call_started" | "call_ended";
+
+export interface CallSignal {
+  type: "call_signal";
+  signal: CallSignalType;
+  timestamp: string;
+}
+
 export type DashboardRole = "ambulance" | "hospital";
 
 export interface DashboardState {

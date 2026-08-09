@@ -25,6 +25,28 @@ const deptChipStyle = css({
   borderRadius: "chip",
 });
 
+const bedChipAvailableStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "2xs",
+  fontWeight: "medium",
+  color: "mint",
+  backgroundColor: "mintSoft",
+  paddingX: "1.5",
+  borderRadius: "chip",
+});
+
+const bedChipEmptyStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "2xs",
+  fontWeight: "medium",
+  color: "coral",
+  backgroundColor: "coralSoft",
+  paddingX: "1.5",
+  borderRadius: "chip",
+});
+
 // 병원이 "승인"(후보 등록) 응답을 보내야만 버튼이 활성화된다. 버튼을 누르면 그 자리에서
 // 바로 이송 승인(final_approval)이 전송된다 — 별도의 "선택 → 하단에서 최종 승인" 2단계가 아니다.
 export function HospitalCandidateListPanel({
@@ -86,9 +108,14 @@ export function HospitalCandidateListPanel({
                   {hospital.distanceKm}km
                   {hospital.etaMin != null ? ` · ETA ${hospital.etaMin}분` : ""}
                 </span>
-                <span className={deptChipStyle}>
-                  {hospital.specialtyMatch.department} · 적합도 {Math.round(hospital.specialtyMatch.score * 100)}%
-                </span>
+                <div className={css({ display: "flex", gap: "1", flexWrap: "wrap" })}>
+                  <span className={deptChipStyle}>
+                    {hospital.specialtyMatch.department} · 적합도 {Math.round(hospital.specialtyMatch.score * 100)}%
+                  </span>
+                  <span className={hospital.availableBedCount > 0 ? bedChipAvailableStyle : bedChipEmptyStyle}>
+                    {hospital.availableBedCount > 0 ? `병상 ${hospital.availableBedCount}석` : "병상 없음"}
+                  </span>
+                </div>
               </div>
 
               <div className={css({ display: "flex", alignItems: "center", gap: "2", flexShrink: "0" })}>
