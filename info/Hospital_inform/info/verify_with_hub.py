@@ -36,7 +36,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_HUB_REPO = Path(r"C:\Dev\AIRookie")
 HUB_BRANCH = "feature/hub"
-HUB_MODULES = ("schema.py", "geo.py", "scoring.py", "specialty_matcher.py", "hub_engine.py")
+HUB_MODULES = ("schema.py", "geo.py", "scoring.py", "specialty_matcher.py", "decision_log.py", "hub_engine.py")
 
 #: hub의 run_match.py에 박혀 있는 구급차 위치(진주시청 부근). 거리 계산 기준점.
 AMBULANCE = {"lat": 35.1800, "lng": 128.1080}
@@ -47,6 +47,13 @@ SCENARIOS: dict[str, dict] = {
         "제목": "① 뇌졸중 의심 — 가까운 병원이 아니라 재관류 가능 병원이 뽑혀야 한다",
         "기대": "경상국립대학교병원(4.2km, 재관류 가능)이 진주고려병원(1.5km, 불가)보다 위",
         "voice": {
+            # hub의 VoiceCallSummaryMessage가 transcript를 필수로 받기 시작해서
+            # (rawTranscript/filteredTranscript를 dashboard까지 전달하기 위함),
+            # 이 검증 스크립트도 최소 형태로 맞춰준다 — 매칭 로직과는 무관.
+            "transcript": {
+                "raw_text": "구급대원: 60대 남성, 급성 허혈성 뇌졸중 의심입니다.",
+                "filtered_text": "60대 남성, 급성 허혈성 뇌졸중 의심. 우측 편마비, 언어 장애.",
+            },
             "summary": {
                 "patient": "60대 남성",
                 "mechanism": "급성 허혈성 뇌졸중 의심",
@@ -61,6 +68,10 @@ SCENARIOS: dict[str, dict] = {
         "제목": "② 소아 고열 경련 — 소아 병상이 있는 병원이 뽑혀야 한다",
         "기대": "hub가 bedsByType을 읽기 전까지는 성립하지 않는다 (진료과 매칭으로만 부분 재현)",
         "voice": {
+            "transcript": {
+                "raw_text": "구급대원: 4세 여아, 소아 열성 경련입니다.",
+                "filtered_text": "4세 여아, 소아 열성 경련. 전신 강직, 고열.",
+            },
             "summary": {
                 "patient": "4세 여아",
                 "mechanism": "소아 열성 경련",
@@ -75,15 +86,20 @@ SCENARIOS: dict[str, dict] = {
 
 
 def extract_hub_modules(repo: Path, dest: Path) -> None:
-    """git에서 feature/hub의 모듈을 꺼내 dest에 쓴다. 작업 트리는 건드리지 않는다."""
+    """git에서 feature/hub의 모듈을 꺼내 dest에 쓴다. 작업 트리는 건드리지 않는다.
+
+    hub 브랜치가 코드를 hub/ 폴더로 옮긴 뒤로(develop 통합), git show 경로는
+    hub/<name>이어야 하지만 로컬에는 원래 이름 그대로 풀어서 import가
+    그대로 되게 한다.
+    """
     for name in HUB_MODULES:
         result = subprocess.run(
-            ["git", "-C", str(repo), "show", f"{HUB_BRANCH}:{name}"],
+            ["git", "-C", str(repo), "show", f"{HUB_BRANCH}:hub/{name}"],
             capture_output=True,
         )
         if result.returncode != 0:
             raise SystemExit(
-                f"hub 모듈을 꺼내지 못했다: {name}\n"
+                f"hub 모듈을 꺼내지 못했다: hub/{name}\n"
                 f"  저장소: {repo}\n"
                 f"  {result.stderr.decode('utf-8', 'replace').strip()}"
             )
