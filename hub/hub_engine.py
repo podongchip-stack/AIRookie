@@ -180,6 +180,8 @@ class HubEngine:
                 injuryStatus=injury_status,
                 expectedDiagnosis=expected_diagnosis,
                 severityTag=severity_tag,
+                rawTranscript=voice.transcript.raw_text,
+                filteredTranscript=voice.transcript.filtered_text,
             ),
             zoneActive=active_zones(max_zone),
             hospitals=hospital_matches,

@@ -81,8 +81,10 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 기존 feature/voice README.md에 정의된 출력 스키마를 그대로 참조한다
 (`transcript`, `summary.mechanism`, `summary.symptoms`, `summary.treatment`,
 `summary.severity_tag` 등, 자세한 필드 설명은 feature/voice README.md 참고).
-feature/hub는 이 중 `summary` 필드(부상 상태, 예상 병명, 중증도)만 매칭
-스코어링에 사용한다.
+feature/hub는 `summary` 필드(부상 상태, 예상 병명, 중증도)는 매칭 스코어링에
+쓰고, `transcript.raw_text`/`transcript.filtered_text`(원본·필터링 전문)는
+스코어링에는 안 쓰지만 dashboard가 확인할 수 있도록 "출력 스키마 4"의
+`patientInfo`에 그대로 실어 전달한다.
 
 ### 입력 스키마 2: feature/info로부터 (병원 정보)
 
@@ -121,8 +123,10 @@ feature/hub는 이 중 `summary` 필드(부상 상태, 예상 병명, 중증도)
 ### 입력 스키마 3: feature/dashboard로부터 (승인 액션)
 
 dashboard는 feature/hub와만 직접 통신하므로, 승인 액션(hospital_approve/
-hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한다. 스키마는
-CLAUDE.md "데이터 포맷 및 흐름"에 정의된 것을 그대로 참조한다.
+hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한다. **전송
+방식은 WebSocket이다** — dashboard가 `new WebSocket()`(socket.io 아님)으로
+`ws://<hub 주소>/ws/dashboard`에 연결해 JSON 문자열 프레임으로 보낸다
+(`app.py`의 `/ws/dashboard` 참고).
 
 ```json
 {
@@ -143,6 +147,29 @@ CLAUDE.md "데이터 포맷 및 흐름"에 정의된 것을 그대로 참조한�
 이 액션을 받으면 해당 병원의 `hospitals[].status`를 갱신하고, `final_approval`인
 경우 아래 "출력 스키마 5"로 feature/info에도 병상 갱신을 알린다.
 
+### 입력 스키마 6: feature/dashboard로부터 (통화 시작/종료 신호)
+
+같은 `/ws/dashboard` 연결로 dashboard의 "통화 시작"/"통화 종료" 버튼 신호도
+받는다. hub는 이 신호를 그대로 feature/voice의 로컬 마이크 서버
+(`voice/app.py`)로 HTTP POST 중계만 한다 — 오디오 자체는 hub를 거치지 않는다
+(dashboard가 `sendAudioChunk()`로 브라우저 마이크 오디오도 같이 보내지만,
+실제 STT 입력은 voice의 로컬 마이크로 확정되어 hub는 그 바이너리 프레임을
+받기만 하고 버린다).
+
+```json
+{
+  "type": "call_signal",
+  "signal": "call_started",
+  "timestamp": "2026-07-30T14:15:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `type` | `"call_signal"` | 고정값 |
+| `signal` | `"call_started"` \| `"call_ended"` | 통화 시작인지 종료인지 |
+| `timestamp` | string (ISO 8601) | 신호 발생 시각 |
+
 ### 출력 스키마 4: feature/hub → feature/dashboard (통합 매칭 결과)
 
 ```json
@@ -150,7 +177,9 @@ CLAUDE.md "데이터 포맷 및 흐름"에 정의된 것을 그대로 참조한�
   "patientInfo": {
     "injuryStatus": ["의식 저하", "호흡 곤란"],
     "expectedDiagnosis": "흉부 손상",
-    "severityTag": "high"
+    "severityTag": "high",
+    "rawTranscript": "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다...",
+    "filteredTranscript": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란."
   },
   "zoneActive": [1, 2],
   "hospitals": [
@@ -177,6 +206,8 @@ CLAUDE.md "데이터 포맷 및 흐름"에 정의된 것을 그대로 참조한�
 | `patientInfo.injuryStatus` | string[] | voice가 추출한 부상 상태 목록 (원본 `summary.symptoms` 기반) |
 | `patientInfo.expectedDiagnosis` | string | voice가 추출한 예상 병명 (원본 `summary.mechanism` 기반) |
 | `patientInfo.severityTag` | `"high"` \| `"medium"` \| `"low"` | 중증도 |
+| `patientInfo.rawTranscript` | string | voice의 통화 원문 전체 (`transcript.raw_text` 그대로) |
+| `patientInfo.filteredTranscript` | string | 실시간 음성 필터링을 거친 텍스트 (`transcript.filtered_text` 그대로) |
 | `zoneActive` | number[] | 현재 활성화된 존 번호 목록 |
 | `hospitals[].hospitalId` / `name` | string | 병원 식별자 및 병원명 |
 | `hospitals[].gps` | object | 병원 위치 좌표 (대시보드 지도 표시용) |
@@ -215,8 +246,7 @@ feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 �
 
 ## 결과 저장 및 전송 방식 (`delivery.py`)
 
-지금은 dashboard 쪽 API가 없어서 로컬 파일 저장만 하지만, 나중에 Flask로 실시간
-통신을 붙일 자리를 미리 분리해뒀다.
+로컬 파일 저장은 항상 하고, 실시간 dashboard 전송은 `app.py`가 처리한다.
 
 - **파일명 규칙**: feature/voice가 실제로 만드는 파일이 `<stem>_call_summary.json`
   형태이므로(예: `DrRomantic3v3_call_summary.json`), hub의 결과물도 같은 stem을
@@ -224,11 +254,13 @@ feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 �
   짝지어지기 때문에, 여러 사건이 동시에 처리돼도 결과 파일이 서로 덮어써지거나
   섞이지 않는다 (ERD에는 없는, 사건 단위로 voice↔hub를 연결할 임시 상관관계 키다).
 - **저장 위치**: `data/test/output/<stem>_hub_match_result.json`
-- **`deliver()` 하나로 로컬 저장 + 통신을 함께 수행**: `save_local()`이 로컬 저장,
-  `send_to_dashboard()`가 통신 담당인데, 지금은 `send_to_dashboard()`가 아무 것도
-  하지 않는 자리만 잡아둔 상태다. 나중에 `feature/dashboard`와 `develop`에서
-  병합할 때, 이 함수 내부에 `requests.post(...)`만 채우면 되고 `run_match.py`
-  같은 호출부는 코드를 바꿀 필요가 없다.
+- **`deliver()`는 로컬 저장 전용으로 남겨뒀다**: `save_local()`이 로컬 저장을
+  담당하고, `send_to_dashboard()`는 원래 계획대로라면 `requests.post(...)`를
+  채울 자리였는데, 실제 전송 채널이 살아있는 WebSocket 연결(dashboard가
+  `new WebSocket()`으로 접속)이라 그 연결 객체를 쥐고 있는 `app.py`의
+  `/voice/summary` 핸들러에서 직접 `ws.send(...)`로 처리한다 (`app.py`의
+  `_send_to_dashboard()` 참고). `send_to_dashboard()` 자체는 로그만 남기는
+  자리로 남아 있다.
 - **`feature/info`로 보내는 병상 갱신도 같은 패턴**: `deliver_bed_update()`가
   `save_local_bed_update()`(로컬 저장) + `send_to_info()`(통신 자리)를 묶는다.
   파일명은 사건 단위가 아니라 병원 단위라 `<hospitalId>_bed_update.json`으로
@@ -344,16 +376,11 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
   `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- 승인 액션 처리(`apply_approval_action()`), 실제 거절 비율 계산(`reject_ratio()`),
-  중복 승인 요청 무시(멱등성), 진료과 임베딩 캐싱, 의사결정 로그(타임스탬프+SHA-256)까지
-  전부 구현·테스트 완료했다 (`run_match.py` 참고). 다만 `self._approval_status`가
-  브랜치 분리 테스트를 단순하게 유지하려고 hospitalId 기준 **전역** 상태다 — 구급차
-  여러 대가 동시에 다른 사건으로 같은 병원을 두고 경쟁하면 상태가 서로 섞인다.
-  스키마에 caseId 같은 사건 식별자가 없어서 완전히 고치긴 어렵고, **develop 병합
-  시점에 사건 단위로 `HubEngine`을 분리 생성하는 방식으로 다루기로 함**
-- feature/voice·feature/info·feature/dashboard와의 실시간 통신(Flask 예정)은 아직
-  미구현. 지금은 로컬 JSON 파일을 읽고 쓰는 형태로만 검증했고, `delivery.py`의
-  `send_to_dashboard()`/`send_to_info()`에 통신 붙일 자리만 미리 마련해뒀다
-- 위 세 스키마 모두 가안이며 feature/voice, feature/info, feature/dashboard 팀과 리뷰 후 확정 필요
+- dashboard WebSocket 연결은 단독 처리(구급차 한 대) 기준으로 하나만 기억한다.
+  여러 사건이 동시에 처리되는 경우(사건별 상태 분리)는 다음 단계에서 다룬다
+- 구급차 실제 GPS 입력 채널이 아직 없어 `app.py`의 `AMBULANCE_GPS`가 고정값이다
+- dashboard가 브라우저 마이크 오디오를 실시간으로 hub에 보내는 코드
+  (`sendAudioChunk`)는 이미 있지만, 실제 STT 입력은 voice의 로컬 마이크로
+  확정되어 hub는 그 오디오 프레임을 받기만 하고 버린다 — 필요해지면 재검토
 
 ## 추가사항

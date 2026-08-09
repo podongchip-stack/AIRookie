@@ -1,28 +1,46 @@
-"""hub_engine.py 위에 얹는 HTTP 레이어. 매칭 로직(hub_engine.py)과 승인
-처리(decision_log.py, delivery.py)는 손대지 않고 그대로 재사용한다 — 이
-파일은 요청을 받아 파싱하고 엔진을 호출한 뒤 결과를 JSON으로 돌려주는
-역할만 한다 (CLAUDE.md "모델/API 호출부와 비즈니스 로직은 분리해서
-구현한다" 원칙).
+"""hub_engine.py 위에 얹는 HTTP/WebSocket 레이어. 매칭 로직(hub_engine.py)과
+승인 처리(decision_log.py, delivery.py)는 손대지 않고 그대로 재사용한다 — 이
+파일은 요청을 받아 파싱하고 엔진을 호출한 뒤 결과를 돌려주는 역할만 한다
+(CLAUDE.md "모델/API 호출부와 비즈니스 로직은 분리해서 구현한다" 원칙).
 
-지금은 사건(구급차) 1건 단독 처리만 다룬다. HubEngine 인스턴스 하나를
-전역으로 두고 쓰며, 여러 사건이 동시에 처리되는 경우(사건별 상태 분리)는
-다음 단계에서 다룬다.
+지금은 사건(구급차) 1건 단독 처리만 다룬다. HubEngine 인스턴스 하나, dashboard
+WebSocket 연결 하나만 전역으로 두고 쓰며, 여러 사건이 동시에 처리되는 경우
+(사건별 상태 분리)는 다음 단계에서 다룬다.
 """
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
 from flask import Flask, jsonify, request
+from flask_sock import Sock
 from pydantic import ValidationError
 
-from delivery import deliver
+from delivery import deliver, deliver_bed_update
 from hub_engine import HubEngine
-from schema import GpsPoint, HospitalInfo, VoiceCallSummaryMessage
+from schema import (
+    ApprovalAction,
+    CallSignal,
+    GpsPoint,
+    HospitalInfo,
+    VoiceCallSummaryMessage,
+)
 
 app = Flask(__name__)
 app.json.ensure_ascii = False  # 한글 필드를 유니코드 이스케이프 없이 그대로 응답
+sock = Sock(app)
 engine = HubEngine()
+
+# dashboard는 순수 WebSocket 클라이언트(new WebSocket(), socket.io 아님)라
+# flask-sock(순수 WS)으로 받는다. 단독 처리 범위라 연결도 하나만 기억한다.
+_dashboard_ws = None
+
+# feature/voice의 통화 시작/종료 서버 주소. hub는 dashboard의 신호를 그대로
+# 중계만 하고, 실제 마이크 제어는 voice/app.py가 담당한다.
+VOICE_BASE_URL = os.environ.get("VOICE_BASE_URL", "http://127.0.0.1:5002")
 
 # 구급차 GPS를 보내는 별도 채널이 아직 없다 (feature/voice 출력 스키마에도 없음).
 # 단독 처리 검증 단계라 테스트 좌표를 고정값으로 둔다 — 실제 GPS 연동은 이번
@@ -67,7 +85,81 @@ def receive_voice_summary():
     synthetic_path = Path(f"live_{_utcnow_iso().replace(':', '')}_call_summary.json")
     deliver(result, synthetic_path)
 
+    _send_to_dashboard(result.model_dump())
+
     return jsonify(result.model_dump()), 200
+
+
+def _send_to_dashboard(payload: dict) -> None:
+    """dashboard가 연결되어 있으면 결과를 그 자리에서 밀어준다. delivery.py의
+    send_to_dashboard()는 로컬 저장 스텁 그대로 두고, 실제 실시간 전송은
+    WebSocket 연결을 쥐고 있는 여기서 처리한다 — 연결이 없거나 끊겼으면
+    조용히 무시한다 (voice의 send_to_hub()와 동일한 방어 패턴)."""
+    if _dashboard_ws is None:
+        return
+    try:
+        _dashboard_ws.send(json.dumps(payload, ensure_ascii=False))
+    except Exception as e:  # noqa: BLE001 — 연결이 죽어있어도 본 요청은 계속되어야 함
+        print(f"  [통신] dashboard WebSocket 전송 실패: {e}")
+
+
+def _relay_call_signal(signal: CallSignal) -> None:
+    """dashboard의 통화 시작/종료 신호를 feature/voice로 중계한다. voice가
+    안 떠 있어도 dashboard 쪽 흐름은 끊기면 안 되므로 예외를 흡수한다."""
+    path = "/call/start" if signal.signal == "call_started" else "/call/end"
+    try:
+        requests.post(f"{VOICE_BASE_URL}{path}", json={"timestamp": signal.timestamp}, timeout=10)
+    except requests.RequestException as e:
+        print(f"  [통신] feature/voice로 통화 신호 중계 실패 ({path}): {e}")
+
+
+def _handle_dashboard_action(payload: dict) -> None:
+    """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
+    구현·테스트되어 있으므로 그대로 호출만 한다."""
+    try:
+        action = ApprovalAction.model_validate(payload)
+    except ValidationError as exc:
+        print(f"  [통신] 잘못된 ApprovalAction 수신: {exc.errors()}")
+        return
+
+    bed_update = engine.apply_approval_action(action)
+    if bed_update is not None:
+        deliver_bed_update(bed_update)
+
+
+@sock.route("/ws/dashboard")
+def dashboard_socket(ws):
+    """dashboard와의 단일 WebSocket 연결. 승인 액션(JSON)과 통화 시작/종료
+    신호(JSON)를 받고, 매칭 결과는 /voice/summary 처리 후 이 연결로 밀어준다.
+    브라우저 마이크 오디오(바이너리 프레임)는 화면 시각화 용도로만 쓰기로
+    했으므로 여기서는 받기만 하고 버린다.
+    """
+    global _dashboard_ws
+    _dashboard_ws = ws
+    try:
+        while True:
+            message = ws.receive()
+            if message is None:  # 연결 종료
+                break
+            if isinstance(message, (bytes, bytearray)):
+                continue  # 오디오 청크 — 실제 STT는 voice 로컬 마이크를 쓰므로 무시
+
+            try:
+                payload = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+
+            if payload.get("type") == "call_signal":
+                try:
+                    signal = CallSignal.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 CallSignal 수신: {exc.errors()}")
+                    continue
+                _relay_call_signal(signal)
+            elif "action" in payload:
+                _handle_dashboard_action(payload)
+    finally:
+        _dashboard_ws = None
 
 
 if __name__ == "__main__":
