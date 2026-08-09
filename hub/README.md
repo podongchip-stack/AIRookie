@@ -344,16 +344,5 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
   `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- 승인 액션 처리(`apply_approval_action()`), 실제 거절 비율 계산(`reject_ratio()`),
-  중복 승인 요청 무시(멱등성), 진료과 임베딩 캐싱, 의사결정 로그(타임스탬프+SHA-256)까지
-  전부 구현·테스트 완료했다 (`run_match.py` 참고). 다만 `self._approval_status`가
-  브랜치 분리 테스트를 단순하게 유지하려고 hospitalId 기준 **전역** 상태다 — 구급차
-  여러 대가 동시에 다른 사건으로 같은 병원을 두고 경쟁하면 상태가 서로 섞인다.
-  스키마에 caseId 같은 사건 식별자가 없어서 완전히 고치긴 어렵고, **develop 병합
-  시점에 사건 단위로 `HubEngine`을 분리 생성하는 방식으로 다루기로 함**
-- feature/voice·feature/info·feature/dashboard와의 실시간 통신(Flask 예정)은 아직
-  미구현. 지금은 로컬 JSON 파일을 읽고 쓰는 형태로만 검증했고, `delivery.py`의
-  `send_to_dashboard()`/`send_to_info()`에 통신 붙일 자리만 미리 마련해뒀다
-- 위 세 스키마 모두 가안이며 feature/voice, feature/info, feature/dashboard 팀과 리뷰 후 확정 필요
 
 ## 추가사항
