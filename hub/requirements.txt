@@ -4,6 +4,16 @@
 
 # ===== 직접 의존성 (용도별) =====
 
+# 웹 프레임워크: feature/voice·feature/info로부터 HTTP로 수신 (app.py)
+flask==3.1.3
+
+# feature/dashboard와의 실시간 통신 (순수 WebSocket — dashboard가 socket.io가
+# 아닌 new WebSocket()을 쓰므로 flask-socketio 대신 flask-sock을 쓴다)
+flask-sock==0.7.0
+
+# feature/voice로 통화 시작/종료 신호 중계 (HTTP POST)
+requests==2.34.2
+
 # 입출력 JSON 스키마 검증 (feature/voice·feature/info·feature/dashboard 포맷과 1:1 대응)
 pydantic==2.13.4
 
@@ -13,3 +23,18 @@ torch==2.8.0
 
 # 벡터/수치 연산
 numpy==2.4.6
+
+# ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
+blinker==1.9.0
+certifi==2026.7.22
+charset-normalizer==3.4.9
+click==8.4.2
+h11==0.16.0
+idna==3.18
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+simple-websocket==1.1.0
+urllib3==2.7.0
+Werkzeug==3.1.8
+wsproto==1.3.2

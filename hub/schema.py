@@ -25,12 +25,23 @@ class VoiceSummary(BaseModel):
     required_department: Optional[str] = None
 
 
-class VoiceCallSummaryMessage(BaseModel):
-    """feature/voice의 전체 출력. hub는 summary/source만 사용하므로 나머지
-    필드(transcript, model_used 등)는 모델링하지 않는다 — pydantic이 알 수 없는
-    필드는 기본적으로 무시하므로 실제 voice 출력 JSON을 그대로 넣어도 된다.
+class VoiceTranscript(BaseModel):
+    """feature/voice CallSummaryMessage.transcript 중 hub가 실제로 쓰는 두
+    필드만 가져온다 (turns, duration_sec 등은 dashboard까지 전달할 필요가
+    없어 모델링하지 않음 — pydantic이 모르는 필드는 무시하므로 그대로 둬도 됨).
     """
 
+    raw_text: str
+    filtered_text: str
+
+
+class VoiceCallSummaryMessage(BaseModel):
+    """feature/voice의 전체 출력. summary/source 외에 transcript(원본·필터링
+    전문)도 이제 받아서 dashboard까지 그대로 전달한다 (PatientInfo 참고).
+    나머지 필드(model_used 등)는 여전히 모델링하지 않는다.
+    """
+
+    transcript: VoiceTranscript
     summary: VoiceSummary
     source: Literal["ai"] = "ai"
 
@@ -65,6 +76,8 @@ class PatientInfo(BaseModel):
     injuryStatus: list[str]
     expectedDiagnosis: str
     severityTag: Severity
+    rawTranscript: str
+    filteredTranscript: str
 
 
 class SpecialtyMatch(BaseModel):
@@ -100,6 +113,20 @@ class ApprovalAction(BaseModel):
     action: ApprovalActionType
     hospital_id: str
     actor: Actor
+    timestamp: str
+
+
+# ── feature/dashboard → feature/hub (입력, 통화 시작/종료 신호) ─────────────
+# dashboard의 "통화 시작"/"통화 종료" 버튼이 WebSocket으로 보내는 신호.
+# hub는 이 신호를 feature/voice의 로컬 마이크 서버(voice/app.py)로 그대로
+# 중계한다 — hub가 오디오 자체를 다루지는 않는다.
+
+CallSignalType = Literal["call_started", "call_ended"]
+
+
+class CallSignal(BaseModel):
+    type: Literal["call_signal"] = "call_signal"
+    signal: CallSignalType
     timestamp: str
 
 
