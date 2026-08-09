@@ -58,8 +58,8 @@
 | `main` | 배포 기준 브랜치 |
 | `develop` | 통합 개발 브랜치 |
 | `feature/voice` | 음성 수집, STT, 실시간 음성 필터링, 정보 구조화 |
-| `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화 (병원 매칭/존 로직은 feature/hub로 이관 확정, 바이탈 수집은 더 이상 사용하지 않음. 승인 액션 수신 주체는 논의 중 — 잠정 보류) |
-| `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직 (승인 액션 수신 주체는 논의 중 — 잠정 보류) |
+| `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화 (병원 매칭/존 로직은 feature/hub로 이관 확정, 바이탈 수집은 더 이상 사용하지 않음. 승인 액션 수신 주체는 feature/hub로 확정) |
+| `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직, dashboard와의 WebSocket 통신(승인 액션 수신, 통화 시작/종료 신호를 voice로 중계) |
 | `feature/dashboard` | 구급차·병원 대시보드 프론트엔드 |
 
 브랜치 전략: `feature/* → develop → main`
@@ -92,14 +92,17 @@ feature/hub를 거친다. feature/hub는 GPS와 feature/info의 병원 정보로
 도착하면 이를 반영해 리스트를 재처리한 뒤, 의료 정보·예상 병명·병원 정보·병원 리스트를
 합쳐 dashboard로 전달한다. 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련
 스키마를 제거했다. dashboard에서 발생하는 승인 행위
-(hospital_approve/hospital_reject/final_approval)를 feature/info와 feature/hub 중 누가
-수신할지는 아직 팀 내부에서 논의 중이라 **잠정 보류** 상태다 (아래 2번 포맷 참고).
+(hospital_approve/hospital_reject/final_approval)의 수신 주체는 **feature/hub로 확정**됐다
+(아래 2번 포맷 참고). dashboard↔hub 구간은 REST가 아니라 **WebSocket**이다 — dashboard가
+`new WebSocket()`(socket.io 아님)으로 접속해 승인 액션과 통화 시작/종료 신호(3번 포맷)를
+보내고, hub는 매칭 결과를 같은 연결로 실시간으로 밀어준다.
 
 ```
-feature/voice ──(의료 정보·예상 병명 JSON)──→ feature/hub
-feature/info ──(병원 정보 JSON)──────────────→ feature/hub
-feature/hub ──(통합 매칭 결과 JSON: 의료 정보+예상 병명+병원 정보+병원 리스트)──→ feature/dashboard
-feature/dashboard ──(승인 액션 JSON)─────────→ (수신 주체 논의 중 — feature/info 또는 feature/hub)
+feature/voice ──(의료 정보·예상 병명·통화 전문 JSON)──→ feature/hub
+feature/info ──(병원 정보 JSON)──────────────────────→ feature/hub
+feature/hub ──(통합 매칭 결과 JSON, WebSocket)───────→ feature/dashboard
+feature/dashboard ──(승인 액션 JSON, WebSocket)──────→ feature/hub
+feature/dashboard ──(통화 시작/종료 신호, WebSocket)─→ feature/hub ──(HTTP 중계)──→ feature/voice
 ```
 
 아래 포맷은 voice를 제외하고는 아직 약식이다. 병원 매칭 결과 스키마는 feature/hub
@@ -146,18 +149,17 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
 | `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명 |
 
-이 JSON은 feature/hub로 전달되며, feature/hub는 이 중 `summary`(부상 상태·예상 병명·
-중증도)만 매칭 스코어링에 사용한다. dashboard는 이 JSON을 직접 받지 않고, feature/hub가
-재가공한 통합 결과(아래 feature/hub README.md 참고)를 통해서만 받는다.
+이 JSON은 feature/hub로 전달되며, feature/hub는 `summary`(부상 상태·예상 병명·중증도)는
+매칭 스코어링에 쓰고, `transcript.raw_text`/`transcript.filtered_text`(통화 원문 전체·
+필터링된 텍스트)는 스코어링에는 안 쓰지만 dashboard가 확인할 수 있도록 통합 결과에
+그대로 실어 전달한다. dashboard는 이 JSON을 직접 받지 않고, feature/hub가 재가공한
+통합 결과(아래 feature/hub README.md 참고)를 통해서만 받는다.
 
 > 병원 정보 스키마(feature/info → feature/hub)와 통합 매칭 결과 스키마(feature/hub →
 > feature/dashboard)는 feature/hub README.md의 "입출력 데이터 포맷"이 최신 버전이므로,
 > 여기서는 중복 정의하지 않는다.
 
-### 2. feature/dashboard → (수신 주체 논의 중) : 승인 액션 (약식)
-
-> feature/info와 feature/hub 중 어느 쪽이 이 액션을 수신할지 아직 확정되지 않았다
-> (잠정 보류). 확정 전까지는 아래 스키마 자체만 유효하고, 화살표 대상은 비워둔다.
+### 2. feature/dashboard → feature/hub : 승인 액션 (약식)
 
 ```json
 {
@@ -175,6 +177,29 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | `actor` | `"hospital"` \| `"paramedic"` | 누가 누른 행위인지 |
 | `timestamp` | string (ISO 8601) | 행위 발생 시각 |
 
+### 3. feature/dashboard → feature/hub → feature/voice : 통화 시작/종료 신호
+
+dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연결로 오며, hub는
+오디오 자체는 다루지 않고 이 신호만 feature/voice의 로컬 마이크 서버로 HTTP 중계한다.
+실제 STT 입력은 voice의 로컬 마이크로 확정했다 — dashboard가 브라우저 마이크로 캡처해
+보내는 오디오(`sendAudioChunk`)는 화면 시각화 용도로만 쓰고, hub는 그 프레임을 받기만
+하고 버린다 (voice와 dashboard/hub가 물리적으로 같은 공간에 있다고 가정하는 단독 처리
+단계의 임시 구성 — 여러 사건이 동시에 처리되는 경우와 함께 다음 단계에서 재검토한다).
+
+```json
+{
+  "type": "call_signal",
+  "signal": "call_started",
+  "timestamp": "2026-07-28T14:15:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `type` | `"call_signal"` | 고정값 |
+| `signal` | `"call_started"` \| `"call_ended"` | 통화 시작인지 종료인지 |
+| `timestamp` | string (ISO 8601) | 신호 발생 시각 |
+
 ---
 
 ## feature/voice 담당자 참고사항
@@ -185,19 +210,20 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 - 잡담·인사말·통화 연결 관련 발화는 필터링 대상이며, 필터링된 문장도 원본 로그에는 남겨두고 "요약 제외" 표시만 한다 (완전 삭제 금지 — 사후 검증 및 audit trail 때문)
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
+- hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 통화 시작 시 로컬 마이크 녹음을 시작하고, 종료 시 기존 배치 파이프라인(STT→필터링→SBAR)을 그대로 실행한다 — 동시 통화 여러 건 처리는 다음 단계
 
 ## feature/info 담당자 참고사항
 
 > **브랜치 이름 변경 안내**: 이 브랜치는 기존 `feature/vital`에서 이름이
 > 변경되었습니다. **병원 매칭·존(Zone) 로직은 `feature/hub`로 이관하는 것으로
-> 확정**되었습니다. 다만 dashboard가 보내는 승인 액션
-> (hospital_approve/hospital_reject/final_approval)을 이 브랜치와 `feature/hub`
-> 중 어느 쪽이 수신할지는 아직 논의 중이라 **잠정 보류** 상태입니다.
+> 확정**되었습니다. dashboard가 보내는 승인 액션
+> (hospital_approve/hospital_reject/final_approval)의 수신 주체도
+> **`feature/hub`로 확정**되었습니다.
 
 - 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어, 바이탈 수집·전송 관련 서술은 모두 제거했다
 - 병원 매칭·존(Zone) 로직은 더 이상 이 브랜치가 담당하지 않는다 (`feature/hub` 담당자 참고사항 참고)
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
-- 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷) 수신 처리는 feature/hub와 역할 분담이 확정되면 구현한다 (현재는 대기)
+- 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷)은 feature/hub가 수신하므로 이 브랜치는 별도 구현이 필요 없다
 
 ## feature/hub 담당자 참고사항
 
@@ -208,8 +234,9 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
   2. feature/voice의 의료 정보(예상 병명·중증도)가 도착하면, 보관해둔 리스트를 voice의 예상 병명과 info의 진료과를 임베딩 유사도로 매칭한 점수 + 거리 점수를 가중합해 재처리한다
 - 진료과 매칭이 실패해도(유사도가 낮거나 병원에 진료과 정보가 없어도) 병원을 후보에서 제외하지 않는다 — 거리 기준만으로 순위에 남긴다 (뺑뺑이 방지가 목적이므로 잘못 걸러내는 게 더 위험함)
 - 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준
-- 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON — 의료 정보·예상 병명·병원 정보·병원 리스트를 모두 포함한다 (feature/hub README.md의 "입출력 데이터 포맷" 참고)
-- dashboard가 보내는 hospital_approve / hospital_reject / final_approval 액션을 이 브랜치가 수신할지, feature/info가 수신할지는 아직 논의 중 — **잠정 보류**. 확정되면 매칭 상태(`hospitals[].status`)에 반영하는 처리를 구현한다
+- 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON — 의료 정보·예상 병명·통화 전문·병원 정보·병원 리스트를 모두 포함한다 (feature/hub README.md의 "입출력 데이터 포맷" 참고)
+- dashboard와는 WebSocket으로 통신한다 (`new WebSocket()`, socket.io 아님 — flask-socketio 대신 순수 WebSocket 라이브러리를 쓴다). hospital_approve/hospital_reject/final_approval 액션의 수신 주체는 **이 브랜치로 확정**됐고, 매칭 상태(`hospitals[].status`) 반영까지 구현·테스트 완료했다
+- dashboard의 통화 시작/종료 신호(3번 포맷)를 같은 WebSocket으로 받아 feature/voice의 로컬 마이크 서버로 HTTP 중계한다 — 오디오 자체는 hub를 거치지 않는다
 
 ## feature/dashboard 담당자 참고사항
 
@@ -217,7 +244,8 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 - 각 정보 패널에는 출처 표시가 필요하다: AI 처리된 정보(통화 요약 등)와 규칙 기반 정보(병원 리스트, 지도)를 시각적으로 구분해서 보여준다
 - Override 구조를 UI로 드러낼 것: AI가 생성한 요약은 전송 전 구급대원이 확인·수정할 수 있어야 한다
 - 실시간 갱신: WebSocket 기반, 완료된 정보부터 순차적으로 갱신 (전체 처리 완료까지 기다리지 않음)
-- **feature/hub와만 직접 통신한다.** voice·info와는 직접 연결하지 않으며, voice의 의료 정보·예상 병명과 info의 병원 정보는 모두 feature/hub가 재가공한 통합 결과로만 받는다. 승인 액션 송신(수신처는 feature/info·feature/hub 간 논의 중)은 위 "데이터 포맷 및 흐름" 참고
+- **feature/hub와만 직접 통신한다.** voice·info와는 직접 연결하지 않으며, voice의 의료 정보·예상 병명·통화 전문과 info의 병원 정보는 모두 feature/hub가 재가공한 통합 결과로만 받는다. 승인 액션(수신처는 feature/hub로 확정)과 통화 시작/종료 신호는 위 "데이터 포맷 및 흐름" 2·3번 참고
+- 통화 시작/종료 버튼은 WebSocket으로 hub에 신호를 보낸다. 브라우저 마이크로 캡처한 오디오(`sendAudioChunk`)도 같은 연결로 보낼 수 있지만, 실제 STT 입력은 feature/voice의 로컬 마이크로 확정되어 이 오디오는 화면 시각화(파형, 로컬 자막) 용도로만 쓰인다
 
 ---
 
