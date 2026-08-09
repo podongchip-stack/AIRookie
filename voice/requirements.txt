@@ -28,11 +28,16 @@ soundfile==0.14.0
 # feature/hub로 통화 요약 JSON 전송 (HTTP POST)
 requests==2.34.2
 
+# 웹 프레임워크: hub가 중계하는 통화 시작/종료 신호 수신 (app.py)
+flask==3.1.3
+
 # ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
 annotated-types==0.8.0
 av==18.0.0
+blinker==1.9.0
 certifi==2026.7.22
 charset-normalizer==3.4.9
+click==8.4.2
 ctranslate2==4.8.1
 filelock==3.32.0
 flatbuffers==25.12.19
@@ -40,6 +45,7 @@ fsspec==2026.6.0
 hf-xet==1.5.2
 huggingface_hub==0.36.2
 idna==3.18
+itsdangerous==2.2.0
 Jinja2==3.1.6
 joblib==1.5.3
 MarkupSafe==3.0.3
@@ -63,3 +69,4 @@ tqdm==4.70.0
 typing-inspection==0.4.2
 typing_extensions==4.16.0
 urllib3==2.7.0
+Werkzeug==3.1.8
