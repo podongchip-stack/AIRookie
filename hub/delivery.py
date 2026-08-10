@@ -16,7 +16,10 @@
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import requests
 
 from schema import HospitalBedUpdate, HubMatchResult
 
@@ -25,6 +28,11 @@ OUTPUT_DIR = BASE_DIR / "data" / "test" / "output"
 VOICE_SUMMARY_SUFFIX = "_call_summary.json"
 RESULT_SUFFIX = "_hub_match_result.json"
 BED_UPDATE_SUFFIX = "_bed_update.json"
+
+# feature/info의 병상 갱신 수신 서버(info/app.py) 주소. hub=5001, voice=5002와
+# 겹치지 않게 info는 5003을 쓴다 (info/send_to_hub.py의 HUB_HOSPITALS_URL과
+# 같은 방식의 환경변수 처리).
+INFO_BED_UPDATE_URL = os.environ.get("INFO_BED_UPDATE_URL", "http://127.0.0.1:5003/hub/bed-update")
 
 
 def result_filename(voice_summary_path: Path) -> str:
@@ -79,11 +87,25 @@ def save_local_bed_update(update: HospitalBedUpdate, output_dir: Path = OUTPUT_D
 
 
 def send_to_info(update: HospitalBedUpdate) -> None:
-    """TODO(Flask 연동): feature/info 엔드포인트가 정해지면
-    requests.post(INFO_URL, json=update.model_dump())로 전송한다. 지금은 info 쪽
-    API가 없어 아무 것도 하지 않는다 — 자리만 만들어둔다.
+    """feature/info의 POST /hub/bed-update로 병상 갱신을 전달한다.
+
+    info가 잠깐 안 떠 있어도(재시작 등) hub 프로세스 전체가 죽으면 안 된다 —
+    info/send_to_hub.py가 "이번 주기 실패, 다음 주기에 재시도"로 예외를
+    흡수하는 것과 동일한 방어 패턴으로, 여기서도 실패를 삼키고 로그만
+    남긴다. 이 전송이 실패해도 info는 다음 주기적 재조회(기본 30분) 때
+    Supabase를 다시 읽어가므로 영구히 어긋나지는 않는다 — 다만 그 사이엔
+    낡은 값일 수 있다.
     """
-    print(f"  [통신] feature/info로 병상 갱신 전송은 아직 미연동 (자리만 준비됨) — {update.hospitalId}")
+    try:
+        response = requests.post(
+            INFO_BED_UPDATE_URL,
+            json=update.model_dump(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        print(f"  [통신] feature/info로 병상 갱신 전송 완료 -> {INFO_BED_UPDATE_URL} — {update.hospitalId}")
+    except requests.RequestException as e:
+        print(f"  [통신] feature/info로 병상 갱신 전송 실패, 무시하고 계속 진행 — {update.hospitalId}: {e}")
 
 
 def deliver_bed_update(update: HospitalBedUpdate) -> Path:
