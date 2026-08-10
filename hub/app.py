@@ -3,14 +3,15 @@
 파일은 요청을 받아 파싱하고 엔진을 호출한 뒤 결과를 돌려주는 역할만 한다
 (CLAUDE.md "모델/API 호출부와 비즈니스 로직은 분리해서 구현한다" 원칙).
 
-지금은 사건(구급차) 1건 단독 처리만 다룬다. HubEngine 인스턴스 하나, dashboard
-WebSocket 연결 하나만 전역으로 두고 쓰며, 여러 사건이 동시에 처리되는 경우
-(사건별 상태 분리)는 다음 단계에서 다룬다.
+여러 사건(구급차)이 동시에 진행될 수 있다. dashboard 연결은 여러 개(구급차
+대시보드 여러 개 + 병원 대시보드 여러 개)를 동시에 유지하고 전체에
+브로드캐스트하며, voice는 구급차마다 별도 장비에서 뜨므로 apid로 구분해
+주소를 따로 관리한다. 사건별 상태 분리는 hub_engine.py의 caseId 키 구조를
+그대로 따른다.
 """
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,11 +23,13 @@ from pydantic import ValidationError
 from delivery import deliver, deliver_bed_update
 from hub_engine import HubEngine
 from schema import (
+    AmbulanceInfo,
     ApprovalAction,
     CallSignal,
     GpsPoint,
     HospitalInfo,
     VoiceCallSummaryMessage,
+    VoiceRegistration,
 )
 
 app = Flask(__name__)
@@ -35,20 +38,22 @@ sock = Sock(app)
 engine = HubEngine()
 
 # dashboard는 순수 WebSocket 클라이언트(new WebSocket(), socket.io 아님)라
-# flask-sock(순수 WS)으로 받는다. 단독 처리 범위라 연결도 하나만 기억한다.
-_dashboard_ws = None
+# flask-sock(순수 WS)으로 받는다. 구급차 대시보드 여러 개 + 병원 대시보드
+# 여러 개가 동시에 붙을 수 있어 연결을 집합으로 관리하고 전체에 브로드캐스트한다
+# (예전엔 전역 변수 하나라 마지막 연결만 갱신을 받는 버그가 있었다).
+_dashboard_sockets: set = set()
 
-# feature/voice의 통화 시작/종료 서버 주소. hub는 dashboard의 신호를 그대로
-# 중계만 하고, 실제 마이크 제어는 voice/app.py가 담당한다.
-VOICE_BASE_URL = os.environ.get("VOICE_BASE_URL", "http://127.0.0.1:5002")
+# apid별 voice 주소. voice가 뜰 때 자기 IP를 자동 탐지해 /voice/register로
+# 알려주면 여기 저장해두고(포트는 AmbulanceInfo.voicePort로 이미 앎), 통화
+# 시작/종료 신호를 그 구급차의 voice로 중계할 때 쓴다. 구급차 노트북마다
+# 네트워크(와이파이/핫스팟)가 달라 IP가 자주 바뀔 수 있어, Supabase 등에
+# 고정 저장하지 않고 이렇게 런타임에만 들고 있는다.
+_voice_addresses: dict[str, str] = {}
 
-# 구급차 GPS를 보내는 별도 채널이 아직 없다 (feature/voice 출력 스키마에도 없음).
-# 단독 처리 검증 단계라 테스트 좌표를 고정값으로 둔다 — 실제 GPS 연동은 이번
-# 범위가 아니다. info가 Supabase로 서울 권역응급의료센터 데이터를 보내므로
-# (info/send_to_hub.py 참고), 병원들과 같은 서울 권내 좌표(서울시청 부근)로
-# 맞춰뒀다 — 이전엔 run_match.py용 진주 좌표를 그대로 썼는데, 병원이 전부
-# 서울이라 zone 밖으로 걸러지는 문제가 있었다.
-AMBULANCE_GPS = GpsPoint(lat=37.5665, lng=126.9780)
+# 사건이 apid로 등록되지 않은 채(테스트 등으로 CallSignal 없이 직접
+# /voice/summary가 오는 경우) 도착하면 이 좌표로 대체한다. 병원이 전부
+# 서울이라 존(zone) 밖으로 걸러지지 않게 서울시청 부근으로 맞춰뒀다.
+FALLBACK_AMBULANCE_GPS = GpsPoint(lat=37.5665, lng=126.9780)
 MAX_ZONE = 1
 
 
@@ -68,6 +73,40 @@ def receive_hospital_info():
     return jsonify({"status": "ok", "hospitalId": info.hospitalId}), 200
 
 
+@app.post("/info/ambulances")
+def receive_ambulance_info():
+    """feature/info로부터 구급차 정보(AmbulanceInfo, Supabase ambulances
+    테이블 미러)를 받아 등록/갱신한다. /info/hospitals와 같은 패턴이다."""
+    try:
+        info = AmbulanceInfo.model_validate(request.get_json(force=True))
+    except ValidationError as exc:
+        return jsonify({"error": "invalid AmbulanceInfo", "detail": exc.errors()}), 400
+
+    engine.update_ambulance_info(info)
+    return jsonify({"status": "ok", "apid": info.apid}), 200
+
+
+@app.post("/voice/register")
+def receive_voice_registration():
+    """feature/voice가 뜰 때 자기 IP를 자동 탐지해 보내는 자가 등록.
+    포트는 AmbulanceInfo.voicePort로 이미 알고 있으므로 IP만 받아서
+    합친 주소를 저장해둔다. 이 apid의 AmbulanceInfo가 아직 등록 전이면
+    (info가 아직 이 구급차를 안 보냈으면) 포트를 모르니 등록을 보류한다.
+    """
+    try:
+        registration = VoiceRegistration.model_validate(request.get_json(force=True))
+    except ValidationError as exc:
+        return jsonify({"error": "invalid VoiceRegistration", "detail": exc.errors()}), 400
+
+    ambulance = engine.get_ambulance(registration.apid)
+    if ambulance is None:
+        return jsonify({"error": f"unknown apid: {registration.apid} (아직 ambulances 정보 미수신)"}), 409
+
+    _voice_addresses[registration.apid] = f"http://{registration.ip}:{ambulance.voicePort}"
+    print(f"  [통신] voice 자가등록 완료 — {registration.apid} -> {_voice_addresses[registration.apid]}")
+    return jsonify({"status": "ok", "apid": registration.apid}), 200
+
+
 @app.post("/voice/summary")
 def receive_voice_summary():
     """feature/voice로부터 통화 요약(VoiceCallSummaryMessage)을 받아 2단계
@@ -78,7 +117,13 @@ def receive_voice_summary():
     except ValidationError as exc:
         return jsonify({"error": "invalid VoiceCallSummaryMessage", "detail": exc.errors()}), 400
 
-    result = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=MAX_ZONE)
+    apid = engine.get_case_apid(voice.caseId)
+    ambulance = engine.get_ambulance(apid) if apid else None
+    ambulance_gps = ambulance.gps if ambulance is not None else FALLBACK_AMBULANCE_GPS
+    if ambulance is None:
+        print(f"  [통신] caseId={voice.caseId}의 구급차 GPS를 못 찾아 기본 좌표로 대체")
+
+    result = engine.process_voice_summary(voice, ambulance_gps, max_zone=MAX_ZONE)
 
     # run_match.py와 동일하게 로컬 저장(감사용 사본)도 같이 남긴다. 실제
     # voice 요약 파일명이 없는 HTTP 경로라 타임스탬프로 이름을 대신한다.
@@ -91,31 +136,51 @@ def receive_voice_summary():
 
 
 def _send_to_dashboard(payload: dict) -> None:
-    """dashboard가 연결되어 있으면 결과를 그 자리에서 밀어준다. delivery.py의
-    send_to_dashboard()는 로컬 저장 스텁 그대로 두고, 실제 실시간 전송은
-    WebSocket 연결을 쥐고 있는 여기서 처리한다 — 연결이 없거나 끊겼으면
-    조용히 무시한다 (voice의 send_to_hub()와 동일한 방어 패턴)."""
-    if _dashboard_ws is None:
-        return
-    try:
-        _dashboard_ws.send(json.dumps(payload, ensure_ascii=False))
-    except Exception as e:  # noqa: BLE001 — 연결이 죽어있어도 본 요청은 계속되어야 함
-        print(f"  [통신] dashboard WebSocket 전송 실패: {e}")
+    """연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다.
+    delivery.py의 send_to_dashboard()는 로컬 저장 스텁 그대로 두고, 실제
+    실시간 전송은 WebSocket 연결을 쥐고 있는 여기서 처리한다. 전송 실패한
+    소켓은 죽은 것으로 보고 집합에서 뺀다 (voice의 send_to_hub()와 동일한
+    방어 패턴 — 연결이 없거나 끊겼어도 본 요청은 계속돼야 함)."""
+    dead = set()
+    for ws in _dashboard_sockets:
+        try:
+            ws.send(json.dumps(payload, ensure_ascii=False))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [통신] dashboard WebSocket 전송 실패, 연결 제거: {e}")
+            dead.add(ws)
+    _dashboard_sockets.difference_update(dead)
 
 
 def _relay_call_signal(signal: CallSignal) -> None:
-    """dashboard의 통화 시작/종료 신호를 feature/voice로 중계한다. voice가
-    안 떠 있어도 dashboard 쪽 흐름은 끊기면 안 되므로 예외를 흡수한다."""
+    """dashboard의 통화 시작/종료 신호를 그 apid로 등록된 feature/voice
+    인스턴스로 중계한다. call_started 시점에 (caseId -> apid)를 hub_engine에
+    등록해둬야, 나중에 그 caseId로 도착하는 /voice/summary가 이 구급차의
+    GPS를 찾을 수 있다. voice가 아직 자가등록 전이거나 안 떠 있어도
+    dashboard 쪽 흐름은 끊기면 안 되므로 예외를 흡수한다."""
+    if signal.signal == "call_started":
+        engine.register_case(signal.caseId, signal.apid)
+
+    voice_base_url = _voice_addresses.get(signal.apid)
+    if voice_base_url is None:
+        print(f"  [통신] {signal.apid}의 voice 주소가 아직 등록되지 않아 신호 중계를 건너뜀")
+        return
+
     path = "/call/start" if signal.signal == "call_started" else "/call/end"
     try:
-        requests.post(f"{VOICE_BASE_URL}{path}", json={"timestamp": signal.timestamp}, timeout=10)
+        requests.post(
+            f"{voice_base_url}{path}",
+            json={"timestamp": signal.timestamp, "caseId": signal.caseId},
+            timeout=10,
+        )
     except requests.RequestException as e:
-        print(f"  [통신] feature/voice로 통화 신호 중계 실패 ({path}): {e}")
+        print(f"  [통신] {signal.apid}의 feature/voice로 통화 신호 중계 실패 ({path}): {e}")
 
 
 def _handle_dashboard_action(payload: dict) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
-    구현·테스트되어 있으므로 그대로 호출만 한다."""
+    구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 캐시된 최신
+    사건 결과를 꺼내 전체 dashboard에 재브로드캐스트한다 — 예전엔 이 단계가
+    없어서 승인 버튼을 눌러도 화면에 반영이 안 됐다."""
     try:
         action = ApprovalAction.model_validate(payload)
     except ValidationError as exc:
@@ -126,16 +191,20 @@ def _handle_dashboard_action(payload: dict) -> None:
     if bed_update is not None:
         deliver_bed_update(bed_update)
 
+    updated_result = engine.get_case_result(action.caseId)
+    if updated_result is not None:
+        _send_to_dashboard(updated_result.model_dump())
+
 
 @sock.route("/ws/dashboard")
 def dashboard_socket(ws):
-    """dashboard와의 단일 WebSocket 연결. 승인 액션(JSON)과 통화 시작/종료
-    신호(JSON)를 받고, 매칭 결과는 /voice/summary 처리 후 이 연결로 밀어준다.
-    브라우저 마이크 오디오(바이너리 프레임)는 화면 시각화 용도로만 쓰기로
-    했으므로 여기서는 받기만 하고 버린다.
+    """dashboard와의 WebSocket 연결. 구급차 대시보드 여러 개 + 병원 대시보드
+    여러 개가 동시에 붙을 수 있어 연결마다 집합에 추가/제거한다. 승인
+    액션(JSON)과 통화 시작/종료 신호(JSON)를 받고, 매칭 결과는 /voice/summary
+    처리 후 전체 연결에 밀어준다. 브라우저 마이크 오디오(바이너리 프레임)는
+    화면 시각화 용도로만 쓰기로 했으므로 여기서는 받기만 하고 버린다.
     """
-    global _dashboard_ws
-    _dashboard_ws = ws
+    _dashboard_sockets.add(ws)
     try:
         while True:
             message = ws.receive()
@@ -159,7 +228,7 @@ def dashboard_socket(ws):
             elif "action" in payload:
                 _handle_dashboard_action(payload)
     finally:
-        _dashboard_ws = None
+        _dashboard_sockets.discard(ws)
 
 
 if __name__ == "__main__":

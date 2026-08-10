@@ -40,6 +40,21 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 > 완료**했습니다 (`run_match.py` 참고). dashboard와의 실제 WebSocket 통신, feature/info로의
 > 실제 HTTP 전송(`send_to_info()`) 모두 연동 완료됐습니다.
 
+> **여러 사건(구급차) 동시 처리 지원 완료.** 처음엔 사건 1건 단독 처리만
+> 다뤘지만, 이제 `caseId`로 사건을, `apid`로 구급차(voice 인스턴스)를 구분해
+> 여러 구급차가 동시에 진행돼도 서로 안 섞인다. 바뀐 것 세 가지:
+> 1. **dashboard 연결을 소켓 집합으로 관리하고 전체에 브로드캐스트한다** —
+>    예전엔 전역 변수 하나라 마지막에 연결한 탭만 갱신을 받는 버그가 있었다
+>    (구급차 대시보드 + 병원 대시보드를 동시에 열면 한쪽만 죽는 문제)
+> 2. **승인 액션 처리 후 캐시된 사건 결과를 재브로드캐스트한다** — 예전엔
+>    이 단계가 아예 없어서 승인 버튼을 눌러도 화면에 반영되지 않았다
+> 3. **voice가 여러 대(구급차마다 한 대씩)로 늘어나 apid로 구분**한다.
+>    voice가 뜰 때 자기 IP를 자동 탐지해 hub에 자가등록하면(`POST
+>    /voice/register`), hub는 그 IP + `AmbulanceInfo.voicePort`를 합쳐
+>    주소를 기억해뒀다가 통화 시작/종료 신호를 그 구급차의 voice로 중계한다.
+>    구급차 GPS도 하드코딩된 고정값 대신 이 `AmbulanceInfo`(feature/info가
+>    Supabase `ambulances` 테이블에서 읽어 보내줌) 조회로 대체했다.
+
 ## 사용한 AI / 모델
 
 거리·병상·존(Zone) 분류는 규칙 기반이지만, "예상 병명 ↔ 병원 진료과" 매칭만은
@@ -133,6 +148,7 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 
 ```json
 {
+  "caseId": "case-abc123",
   "action": "final_approval",
   "hospital_id": "H001",
   "actor": "paramedic",
@@ -142,6 +158,7 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
+| `caseId` | string | 어느 사건(구급차)에 대한 승인인지. 여러 사건이 동시에 진행되면 `hospital_id`만으로는 특정할 수 없어 추가됐다. dashboard는 자기가 보고 있는 사건의 caseId를 "출력 스키마 4"로 이미 받아 알고 있다 |
 | `action` | `"hospital_approve"` \| `"hospital_reject"` \| `"final_approval"` | 어떤 승인 행위인지 |
 | `hospital_id` | string | 대상 병원 식별자 |
 | `actor` | `"hospital"` \| `"paramedic"` | 누가 누른 행위인지 |
@@ -153,17 +170,24 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 ### 입력 스키마 6: feature/dashboard로부터 (통화 시작/종료 신호)
 
 같은 `/ws/dashboard` 연결로 dashboard의 "통화 시작"/"통화 종료" 버튼 신호도
-받는다. hub는 이 신호를 그대로 feature/voice의 로컬 마이크 서버
-(`voice/app.py`)로 HTTP POST 중계만 한다 — 오디오 자체는 hub를 거치지 않는다
-(dashboard가 `sendAudioChunk()`로 브라우저 마이크 오디오도 같이 보내지만,
-실제 STT 입력은 voice의 로컬 마이크로 확정되어 hub는 그 바이너리 프레임을
-받기만 하고 버린다).
+받는다. hub는 이 신호를 **그 구급차(apid)의 voice 인스턴스로** HTTP POST
+중계한다 — 오디오 자체는 hub를 거치지 않는다 (dashboard가 `sendAudioChunk()`로
+브라우저 마이크 오디오도 같이 보내지만, 실제 STT 입력은 voice의 로컬 마이크로
+확정되어 hub는 그 바이너리 프레임을 받기만 하고 버린다).
+
+구급차마다 voice가 별도 장비에서 뜨기 때문에(apid별로 다름), hub는 이 apid로
+`POST /voice/register`(아래 "입력 스키마 8" 참고)로 등록된 주소를 찾아 그
+주소로 중계한다 — 아직 등록 전이면 조용히 건너뛴다. `call_started` 시점에
+`(caseId -> apid)`를 기억해뒀다가, 나중에 그 caseId로 도착하는 voice 요약이
+어느 구급차의 GPS를 써야 하는지 찾는 데도 쓴다.
 
 ```json
 {
   "type": "call_signal",
   "signal": "call_started",
-  "timestamp": "2026-07-30T14:15:00Z"
+  "timestamp": "2026-07-30T14:15:00Z",
+  "apid": "A0000001",
+  "caseId": "case-abc123"
 }
 ```
 
@@ -172,11 +196,61 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 | `type` | `"call_signal"` | 고정값 |
 | `signal` | `"call_started"` \| `"call_ended"` | 통화 시작인지 종료인지 |
 | `timestamp` | string (ISO 8601) | 신호 발생 시각 |
+| `apid` | string | 어느 구급차(voice 인스턴스)인지. hub가 중계 대상 주소를 찾는 키 |
+| `caseId` | string | 이번 통화가 어느 사건인지. dashboard가 `call_started` 시점에 새로 생성해 보낸다 |
+
+### 입력 스키마 7: feature/info로부터 (구급차 정보)
+
+병원 정보(입력 스키마 2)와 짝을 이루는 구급차 레지스트리. feature/info가
+Supabase `ambulances` 테이블에서 읽어 보내준다.
+
+```json
+{
+  "apid": "A0000001",
+  "name": "구급 1호차",
+  "gps": { "lat": 37.4979, "lng": 127.0276 },
+  "voicePort": 6000,
+  "source": "rule",
+  "updatedAt": "2026-08-11T00:00:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `apid` | string | 구급차 고유 식별자 |
+| `name` | string | 표시용 이름 |
+| `gps.lat` / `gps.lng` | number | 구급차 위치. 대회 데모 단계라 서울 랜드마크로 고정한 값(실시간 GPS 아님) |
+| `voicePort` | number | 이 구급차 voice 인스턴스가 뜰 포트. 장비마다 미리 정해둔 값이라 안정적이다 — IP는 여기 없다(아래 "입력 스키마 8" 참고) |
+| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+| `updatedAt` | string (ISO 8601) | 마지막 갱신 시각 |
+
+### 입력 스키마 8: feature/voice로부터 (voice 자가등록)
+
+voice는 구급차 노트북마다 별도로 뜨고, 노트북이 붙는 네트워크(와이파이/
+핫스풋)가 자주 바뀔 수 있어 IP를 Supabase 등에 고정 저장하지 않는다. 대신
+voice가 뜰 때 자기 IP를 자동 탐지해 이 엔드포인트로 hub에 알려준다.
+
+```json
+{
+  "apid": "A0000001",
+  "ip": "192.168.0.101"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `apid` | string | 이 voice 인스턴스가 담당하는 구급차 |
+| `ip` | string | 이 voice 인스턴스가 자동 탐지한 자기 IP. hub는 `AmbulanceInfo.voicePort`와 합쳐 `http://{ip}:{voicePort}` 주소로 저장한다 |
+
+이 apid의 `AmbulanceInfo`가 아직 hub에 등록되기 전이면(포트를 모르므로)
+`409`를 반환하고 등록을 보류한다 — feature/info가 구급차 정보를 먼저 보낸
+뒤에 voice가 자가등록하는 순서를 전제로 한다.
 
 ### 출력 스키마 4: feature/hub → feature/dashboard (통합 매칭 결과)
 
 ```json
 {
+  "caseId": "case-abc123",
   "patientInfo": {
     "injuryStatus": ["의식 저하", "호흡 곤란"],
     "expectedDiagnosis": "흉부 손상",
@@ -207,6 +281,7 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
+| `caseId` | string | 이 매칭 결과가 어느 사건 것인지. dashboard는 여러 사건을 동시에 받을 수 있어 자기가 보는 사건의 caseId로 걸러 써야 한다 |
 | `patientInfo.injuryStatus` | string[] | voice가 추출한 부상 상태 목록 (원본 `summary.symptoms` 기반) |
 | `patientInfo.expectedDiagnosis` | string | voice가 추출한 예상 병명 (원본 `summary.mechanism` 기반) |
 | `patientInfo.severityTag` | `"high"` \| `"medium"` \| `"low"` | 중증도 |
@@ -232,8 +307,9 @@ feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 �
 내려준다.
 
 **구현 완료 (+ 재시도 큐).** `feature/info`의 `POST /hub/bed-update`
-(`info/app.py`, 기본 포트 5003)로 전송한다. hub 쪽 대상 URL은
-`INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5003/hub/bed-update`)로
+(`info/app.py`, 기본 포트 5002 — voice가 5002를 쓰던 초기 배정에서 포트
+재정리 후 info로 넘어왔다)로 전송한다. hub 쪽 대상 URL은
+`INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5002/hub/bed-update`)로
 바꿀 수 있다.
 
 전송이 실패하면(info가 잠깐 안 떠 있는 등) 그냥 버리지 않고
@@ -409,9 +485,13 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
   `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- dashboard WebSocket 연결은 단독 처리(구급차 한 대) 기준으로 하나만 기억한다.
-  여러 사건이 동시에 처리되는 경우(사건별 상태 분리)는 다음 단계에서 다룬다
-- 구급차 실제 GPS 입력 채널이 아직 없어 `app.py`의 `AMBULANCE_GPS`가 고정값이다
+- 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다(대회 데모 단계라
+  구급차가 실제로 이동하지 않아 서울 랜드마크로 고정) — 진짜 실시간 GPS 연동은
+  이번 범위가 아니다
+- voice 자가등록(`/voice/register`)이 온 apid의 `AmbulanceInfo`가 아직 없으면(즉
+  feature/info가 그 구급차 정보를 아직 안 보냈으면) 409로 거부하고 재시도 큐 없이
+  그냥 실패한다 — voice 쪽에서 재시도 로직을 두거나, info가 먼저 뜨는 걸 운영 순서로
+  못박아야 한다
 - dashboard가 브라우저 마이크 오디오를 실시간으로 hub에 보내는 코드
   (`sendAudioChunk`)는 이미 있지만, 실제 STT 입력은 voice의 로컬 마이크로
   확정되어 hub는 그 오디오 프레임을 받기만 하고 버린다 — 필요해지면 재검토
