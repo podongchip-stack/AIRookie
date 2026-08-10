@@ -3,10 +3,10 @@
 같은 메서드를 가진 구현이 세 개 있다.
 
 - `FixtureEgenClient`  : 미리 만들어둔 파일을 읽는다. API 키가 없어도 개발이 굴러간다.
-- `SupabaseEgenClient` : E-Gen 서비스키 승인 전까지, Supabase에 만들어둔 대체 DB를
-                         읽는다 (`supabase/schema.sql` 참고). 실제 서비스 운영 데이터가
-                         아니라 임시 대체 데이터다.
-- `HttpEgenClient`     : 진짜 API를 호출한다. 키가 나오면 채운다.
+- `SupabaseEgenClient` : E-Gen 서비스키 승인 전까지 쓰던 Supabase 대체 DB를 읽는다
+                         (`supabase/schema.sql` 참고). 서비스키가 승인돼 역할이
+                         끝났지만, 대조용으로 남겨둔다.
+- `HttpEgenClient`     : 진짜 API를 호출한다. 서비스키 승인(2026-08-10)으로 사용 가능.
 
 쓰는 쪽은 셋 중 어느 것인지 몰라도 되게 만들었다. 나중에 실제 API로 바꿀 때
 클라이언트를 만드는 한 줄만 고치면 되고, 매퍼(mapper.py)는 손대지 않는다.
@@ -20,18 +20,19 @@
 공공데이터포털 "국립중앙의료원_전국 응급의료기관 정보 조회 서비스" (data.go.kr/data/15000563)
 기본 주소: http://apis.data.go.kr/B552657/ErmctInfoInqireService/
 
-⚠️ 아직 실제 응답을 받아본 적이 없다. 아래 [확인됨]/[미확인] 표시를 지켜서 읽을 것.
-키가 승인되면 `HttpEgenClient`로 실제 응답을 받아 fixture와 대조하고, [미확인]을
-전부 [확인됨]으로 바꾸는 작업이 먼저다.
+⚠️ `mapper.py` 상단 매핑표에 아직 [추정]/[미확인]이 남아 있다. `HttpEgenClient`로
+실제 응답을 받아 그 표부터 교정할 것.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import unquote
 
 BASE_URL = "http://apis.data.go.kr/B552657/ErmctInfoInqireService"
 
@@ -41,6 +42,18 @@ OP_SEVERE_ILLNESS = "getSrsillDissAceptncPosblInfoInqire"  # 중증질환자 수
 OP_LIST_INFO = "getEgytListInfoInqire"  # 응급의료기관 목록정보
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "data" / "fixtures"
+
+#: 자격증명 파일. 실행 위치와 무관하게 항상 같은 파일을 찾도록 `__file__` 기준으로 고정한다
+#: (load_dotenv()의 기본 동작인 cwd 기준 탐색에 의존하지 않는다).
+ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+
+
+class EgenApiError(RuntimeError):
+    """E-Gen이 오류를 돌려줬을 때 올린다.
+
+    이 API는 실패해도 HTTP 상태코드는 200으로 주고 본문에 오류를 담아 보낸다.
+    `raise_for_status()`만 믿으면 오류 응답을 정상 데이터로 착각하게 된다.
+    """
 
 
 def extract_items(payload: dict) -> list[dict]:
@@ -142,16 +155,12 @@ class SupabaseEgenClient:
     TABLE = "hospitals"
 
     def __init__(self, url: str | None = None, key: str | None = None) -> None:
-        # .env 파일(Hospital_inform/.env)을 환경변수로 로드한다. 이미 환경변수가
-        # 있으면 덮어쓰지 않는다 — 코드에 키를 하드코딩하지 않는다는 원칙(CLAUDE.md
-        # "외부 API 키 등 환경 변수 관리")은 지키되, 실제 값은 .env로 관리한다.
-        # 경로를 __file__ 기준으로 고정해서, 이 클라이언트를 어디서 실행하든
-        # (Hospital_inform/에서든, info/send_to_hub.py처럼 info/에서든) 항상 같은
-        # .env를 찾는다 — load_dotenv()의 기본 동작(cwd 기준 탐색)에 의존하지 않는다.
+        # 코드에 키를 하드코딩하지 않는다는 원칙(CLAUDE.md "외부 API 키 등 환경 변수
+        # 관리")은 지키되, 실제 값은 .env로 관리한다. 이미 환경변수가 있으면 덮어쓰지
+        # 않는다.
         from dotenv import load_dotenv
 
-        env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-        load_dotenv(env_path)
+        load_dotenv(ENV_PATH)
         self._url = url or os.environ["SUPABASE_URL"]
         self._key = key or os.environ["SUPABASE_KEY"]
 
@@ -182,16 +191,20 @@ class SupabaseEgenClient:
         return dt.strftime("%Y%m%d%H%M%S")
 
     def get_realtime_beds(self, stage1: str = "", stage2: str = "") -> list[dict]:
-        rows = self._select("hpid,duty_name,hvec,hvoc,hv11,hv2,hv3,hvidate")
+        # `hvicc`(일반 중환자실)는 매퍼가 ICU 코드를 만들 때 읽는 컬럼이다. 예전에는
+        # ICU를 hv2+hv3 합산으로 만들어서 조회하지 않았는데, 실 API 명세 확인 후
+        # 매퍼가 hvicc를 쓰도록 바뀌었으므로 여기서도 같이 가져와야 ICU가 안 빠진다.
+        # 이 테이블에는 hv28(소아)·hv29(응급실 음압격리)·hv34(심장내과 중환자실)
+        # 컬럼이 없어 해당 병상 종류는 이 경로에서 늘 미상이다 — 실 API(--http)를
+        # 쓰면 채워진다.
+        rows = self._select("hpid,duty_name,hvec,hvoc,hvicc,hvidate")
         return [
             {
                 "hpid": row["hpid"],
                 "dutyName": row["duty_name"],
                 "hvec": row.get("hvec"),
                 "hvoc": row.get("hvoc"),
-                "hv11": row.get("hv11"),
-                "hv2": row.get("hv2"),
-                "hv3": row.get("hv3"),
+                "hvicc": row.get("hvicc"),
                 "hvidate": self._format_hvidate(row.get("hvidate")),
             }
             for row in rows
@@ -227,35 +240,125 @@ class SupabaseEgenClient:
 class HttpEgenClient:
     """진짜 E-Gen API를 호출하는 구현.
 
-    아직 서비스키가 없어 미구현이다. 키가 승인되면 이 클래스만 채우면 되고,
-    매퍼와 나머지 코드는 건드리지 않는다.
+    응답이 XML이라 표준 라이브러리(`xml.etree.ElementTree`)로 파싱한다.
+    `xmltodict` 같은 의존성을 더하지 않으려는 선택이고, 항목의 자식 요소가 전부
+    말단 값이라 이 정도로 충분하다.
 
-    구현할 때 주의할 점 (실제 응답을 받으면 확인할 것):
-    - 응답이 XML이다. `xmltodict` 등으로 딕셔너리로 바꾼 뒤 `extract_items()`에 넘긴다.
-    - 서비스키는 인코딩/디코딩 두 종류가 발급된다. `requests`에 넘길 때 이중 인코딩되면
-      인증 오류가 나므로 어느 쪽을 쓰는지 확인해야 한다.
-    - 값이 없는 필드를 어떻게 표현하는지(-1 / 빈 문자열 / 필드 자체 누락) 반드시 확인하고
-      fixture와 매퍼에 반영한다. [미확인]
+    다른 두 구현과 마찬가지로 **원본 필드명(hpid, hvec, dutyName …)을 그대로**
+    돌려준다 — 이름을 바꾸는 일은 매퍼가 한다.
+
+    지역 인자를 비우면 시도 전체를 받는다. 개발계정은 일일 트래픽 한도가 있어서,
+    시군구를 25번 나눠 부르는 것보다 시도 단위 1회가 훨씬 유리하다.
     """
 
-    def __init__(self, service_key: str, base_url: str = BASE_URL) -> None:
+    #: 한 번에 받을 항목 수. 크게 잡아 1페이지로 끝내면 호출 횟수를 아낀다
+    DEFAULT_NUM_OF_ROWS = 1000
+
+    #: 페이지 폭주 방지. 일일 트래픽 한도가 있어서 무한 루프가 곧 하루치 소진이다
+    MAX_PAGES = 20
+
+    def __init__(
+        self,
+        service_key: str | None = None,
+        base_url: str = BASE_URL,
+        num_of_rows: int = DEFAULT_NUM_OF_ROWS,
+        timeout: float = 10.0,
+    ) -> None:
+        if service_key is None:
+            from dotenv import load_dotenv
+
+            load_dotenv(ENV_PATH)
+            service_key = os.environ.get("EGEN_SERVICE_KEY")
+        if not service_key:
+            raise RuntimeError(
+                f"E-Gen 서비스키가 없다. {ENV_PATH} 에 EGEN_SERVICE_KEY=... 한 줄을 넣을 것."
+            )
+
+        # 서비스키는 인코딩/디코딩 두 종류로 발급된다. requests가 params를 다시 URL
+        # 인코딩하므로 인코딩된 키를 그대로 넘기면 이중 인코딩으로 인증에 실패한다.
+        # 디코딩된 키는 base64 문자(A-Za-z0-9+/=)뿐이라 '%'가 있으면 인코딩된 쪽이다.
+        if "%" in service_key:
+            service_key = unquote(service_key)
+
         self._key = service_key
-        self._base = base_url
+        self._base = base_url.rstrip("/")
+        self._num_of_rows = num_of_rows
+        self._timeout = timeout
+
+    @staticmethod
+    def _parse(text: str) -> tuple[list[dict], int]:
+        """응답 XML에서 항목 목록과 전체 건수를 꺼낸다. 오류면 예외를 올린다.
+
+        오류 봉투가 두 종류다. 인증 실패·트래픽 초과 같은 게이트웨이 오류는 봉투
+        자체가 `response`가 아니고, 서비스 수준 오류는 봉투는 같고 `resultCode`만
+        다르다. 둘 다 HTTP 200으로 오므로 여기서 걸러야 한다.
+        """
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as exc:
+            raise EgenApiError(f"XML 파싱 실패: {text[:200]}") from exc
+
+        if root.tag != "response":
+            code = root.findtext(".//returnReasonCode") or "?"
+            msg = root.findtext(".//returnAuthMsg") or root.findtext(".//errMsg") or text[:200]
+            raise EgenApiError(f"게이트웨이 오류 [{code}] {msg}")
+
+        result_code = root.findtext("./header/resultCode")
+        if result_code not in (None, "00"):
+            raise EgenApiError(
+                f"서비스 오류 [{result_code}] {root.findtext('./header/resultMsg')}"
+            )
+
+        rows = [
+            {child.tag: (child.text or "").strip() for child in item}
+            for item in root.findall("./body/items/item")
+        ]
+        total_text = root.findtext("./body/totalCount")
+        total = int(total_text) if total_text and total_text.isdigit() else len(rows)
+        return rows, total
 
     def _call(self, operation: str, params: dict) -> list[dict]:
-        raise NotImplementedError(
-            "E-Gen 서비스키가 아직 없어 미구현이다. "
-            "공공데이터포털 활용신청 승인 후 구현할 것. "
-            "그 전까지는 FixtureEgenClient를 쓴다."
-        )
+        import requests
 
-    def get_realtime_beds(self, stage1: str, stage2: str) -> list[dict]:
+        # 빈 지역 인자는 아예 보내지 않는다. 빈 문자열을 보내면 "그 이름의 시군구"를
+        # 찾아 0건이 되는 경우가 있어, 생략과 같지 않다
+        query = {key: value for key, value in params.items() if value}
+
+        rows: list[dict] = []
+        page = 1
+        while True:
+            response = requests.get(
+                f"{self._base}/{operation}",
+                params={
+                    "serviceKey": self._key,
+                    "pageNo": page,
+                    "numOfRows": self._num_of_rows,
+                    **query,
+                },
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            page_rows, total = self._parse(response.text)
+            rows.extend(page_rows)
+
+            if not page_rows or len(rows) >= total:
+                break
+            if page >= self.MAX_PAGES:
+                raise EgenApiError(
+                    f"{operation}: 페이지가 {self.MAX_PAGES}쪽을 넘었다 "
+                    f"(누적 {len(rows)}건 / 전체 {total}건). 응답이 이상하니 확인할 것."
+                )
+            page += 1
+
+        return rows
+
+    def get_realtime_beds(self, stage1: str = "서울특별시", stage2: str = "") -> list[dict]:
         return self._call(OP_REALTIME_BEDS, {"STAGE1": stage1, "STAGE2": stage2})
 
-    def get_severe_illness(self, stage1: str, stage2: str) -> list[dict]:
+    def get_severe_illness(self, stage1: str = "서울특별시", stage2: str = "") -> list[dict]:
         return self._call(OP_SEVERE_ILLNESS, {"STAGE1": stage1, "STAGE2": stage2})
 
-    def get_list_info(self, q0: str, q1: str) -> list[dict]:
+    def get_list_info(self, q0: str = "서울특별시", q1: str = "") -> list[dict]:
         return self._call(OP_LIST_INFO, {"Q0": q0, "Q1": q1})
 
     def update_bed_count(self, hpid: str, hvec_value: int) -> None:
