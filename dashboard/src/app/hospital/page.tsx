@@ -17,7 +17,7 @@ const DEFAULT_HOSPITAL_ID = "C";
 function HospitalDashboardContent() {
   const searchParams = useSearchParams();
   const MY_HOSPITAL_ID = searchParams.get("id") ?? DEFAULT_HOSPITAL_ID;
-  const { state, sendAction } = useDashboardSocket();
+  const { state, connectionMode, sendAction } = useDashboardSocket();
 
   const myHospital =
     state.matchResult?.hospitals.find((h) => h.hospitalId === MY_HOSPITAL_ID) ?? null;
@@ -32,7 +32,11 @@ function HospitalDashboardContent() {
         padding: "7",
       })}
     >
-      <HospitalTopBar status={myHospital?.status ?? null} since={state.receivedAt} />
+      <HospitalTopBar
+        status={myHospital?.status ?? null}
+        connectionMode={connectionMode}
+        since={state.receivedAt}
+      />
       <Legend />
 
       <main

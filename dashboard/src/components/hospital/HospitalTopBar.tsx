@@ -13,9 +13,11 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
 
 export function HospitalTopBar({
   status,
+  connectionMode,
   since,
 }: {
   status: HospitalStatus | null;
+  connectionMode: "live" | "mock";
   since: string | null;
 }) {
   const elapsed = useElapsedSeconds(since);
@@ -95,6 +97,14 @@ export function HospitalTopBar({
             })}
           />
           {status ? STATUS_LABEL[status] : "수신 대기 중"}
+        </span>
+        <span
+          className={css({
+            fontSize: "xs",
+            color: connectionMode === "live" ? "hospitalStatus.confirmed" : "ink2",
+          })}
+        >
+          {connectionMode === "live" ? "● 실시간 연동" : "○ 목데이터 모드"}
         </span>
         <span className={css({ fontSize: "xs", color: "ink" })}>
           정보 수신 후{" "}

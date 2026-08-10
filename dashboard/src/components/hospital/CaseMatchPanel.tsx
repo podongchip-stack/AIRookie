@@ -69,13 +69,28 @@ export function CaseMatchPanel({
         </div>
       </div>
 
-      {hospital && (
+      {hospital ? (
         <div className={css({ marginTop: "auto" })}>
           <ApprovalActions role="hospital" hospitalId={hospitalId} onAction={onAction} />
           <p className={css({ marginTop: "2", fontSize: "xs", color: "ink", textAlign: "center" })}>
             이송 여부는 구급대원이 최종 결정합니다
           </p>
         </div>
+      ) : (
+        // hospitalId가 이번 매칭 결과의 hospitals[] 안에 없는 경우다 — 승인 버튼을
+        // 그냥 숨기면 "버튼이 안 눌린다"는 오해를 사기 쉬워서, 원인을 그대로 보여준다
+        // (2026-08-10, develop 테스트에서 실제로 이 상황이 "버튼 비활성화"로 오인됐다).
+        <p
+          className={css({
+            marginTop: "auto",
+            fontSize: "xs",
+            color: "coral",
+            textAlign: "center",
+          })}
+        >
+          본원(ID: {hospitalId})이 이번 사건의 후보 목록에 없습니다. 병원 ID가 hub 데이터와
+          일치하는지 확인하세요.
+        </p>
       )}
     </Panel>
   );
