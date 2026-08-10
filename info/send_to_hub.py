@@ -13,8 +13,13 @@ Supabase의 병상 데이터는 계속 바뀌는데 hub는 한 번 받은 값을
 게 아니라 REFETCH_INTERVAL_SEC마다 계속 재조회·재전송하는 상시 프로세스로
 돈다 (팀 논의 결과 — Supabase realtime 구독 대신 주기적 재조회 방식을 택함).
 그 주기 사이에 생기는 병상 변동은 hub가 이송 확정(final_approval) 시 보내는
-HospitalBedUpdate로 보정하기로 설계돼 있다 (별도 항목, 아직 미구현 —
-info/README.md "hub → info" 참고).
+HospitalBedUpdate로 보정한다 (info/app.py, info/README.md "hub → info" 참고).
+
+같은 주기로 구급차 레지스트리(Supabase `ambulances` 테이블 — 병원용과는
+별도의 Supabase 프로젝트)도 읽어 hub에 보낸다. `AMBULANCE_SUPABASE_URL`/
+`AMBULANCE_SUPABASE_KEY` 환경변수가 없으면(아직 그 프로젝트 credential을
+안 받은 팀원 등) 조용히 건너뛴다 — 병원 정보 동기화는 그것과 무관하게
+계속 돈다.
 """
 from __future__ import annotations
 
@@ -30,9 +35,23 @@ sys.path.insert(0, str(HOSPITAL_INFORM_INFO_DIR))
 
 from egen.client import SupabaseEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
-from schema import HospitalInfo  # noqa: E402
+from schema import AmbulanceInfo, HospitalInfo  # noqa: E402
+
+# SupabaseEgenClient.__init__()도 같은 .env를 로드하지만, 그건 fetch_hospitals()가
+# 호출될 때(즉 이 파일이 이미 import되고 난 뒤)에만 실행된다. 아래
+# AMBULANCE_SUPABASE_URL/KEY는 모듈 로드 시점(=import 시점, SupabaseEgenClient가
+# 아직 한 번도 안 만들어졌을 수 있는 시점)에 바로 읽으므로, 여기서 미리 명시적으로
+# 로드해두지 않으면 .env에 값이 있어도 항상 빈 값으로 읽힌다.
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(HOSPITAL_INFORM_INFO_DIR.parent / ".env")
 
 HUB_HOSPITALS_URL = os.environ.get("HUB_HOSPITALS_URL", "http://127.0.0.1:5001/info/hospitals")
+HUB_AMBULANCES_URL = os.environ.get("HUB_AMBULANCES_URL", "http://127.0.0.1:5001/info/ambulances")
+
+AMBULANCE_SUPABASE_URL = os.environ.get("AMBULANCE_SUPABASE_URL")
+AMBULANCE_SUPABASE_KEY = os.environ.get("AMBULANCE_SUPABASE_KEY")
+AMBULANCE_TABLE = "ambulances"
 
 # 재조회 주기 기본값 30분. 운영 중 주기를 바꿔야 하면 코드 수정 없이
 # INFO_REFETCH_INTERVAL_SEC 환경변수로 덮어쓴다.
@@ -53,6 +72,32 @@ def fetch_hospitals() -> list[HospitalInfo]:
     return hospitals
 
 
+def fetch_ambulances() -> list[AmbulanceInfo]:
+    """구급차 Supabase(병원용과 별도 프로젝트, ambulances 테이블)에서 조회한다.
+    credential이 없으면 빈 목록을 돌려준다 — 이 기능 없이도 병원 정보
+    동기화는 계속 돌아야 한다."""
+    if not AMBULANCE_SUPABASE_URL or not AMBULANCE_SUPABASE_KEY:
+        print("=== AMBULANCE_SUPABASE_URL/KEY 미설정 — 구급차 정보 동기화 건너뜀 ===")
+        return []
+
+    from supabase import create_client
+
+    client = create_client(AMBULANCE_SUPABASE_URL, AMBULANCE_SUPABASE_KEY)
+    rows = client.table(AMBULANCE_TABLE).select("apid,name,wgs84_lat,wgs84_lon,voice_port,updated_at").execute().data
+    ambulances = [
+        AmbulanceInfo(
+            apid=row["apid"],
+            name=row["name"],
+            gps={"lat": row["wgs84_lat"], "lng": row["wgs84_lon"]},
+            voicePort=row["voice_port"],
+            updatedAt=str(row["updated_at"]),
+        )
+        for row in rows or []
+    ]
+    print(f"=== 구급차 Supabase에서 {len(ambulances)}건 조회 ===")
+    return ambulances
+
+
 def send_to_hub(hospital: HospitalInfo) -> None:
     response = requests.post(
         HUB_HOSPITALS_URL,
@@ -64,11 +109,28 @@ def send_to_hub(hospital: HospitalInfo) -> None:
     print(f"  [통신] {hospital.hospitalId} {hospital.name} 전송 완료 -> {HUB_HOSPITALS_URL}")
 
 
+def send_ambulance_to_hub(ambulance: AmbulanceInfo) -> None:
+    response = requests.post(
+        HUB_AMBULANCES_URL,
+        data=ambulance.model_dump_json(),
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    print(f"  [통신] {ambulance.apid} {ambulance.name} 전송 완료 -> {HUB_AMBULANCES_URL}")
+
+
 def sync_once() -> None:
     hospitals = fetch_hospitals()
     print(f"\n=== 병원 정보 {len(hospitals)}건을 feature/hub로 전송 ===")
     for hospital in hospitals:
         send_to_hub(hospital)
+
+    ambulances = fetch_ambulances()
+    if ambulances:
+        print(f"\n=== 구급차 정보 {len(ambulances)}건을 feature/hub로 전송 ===")
+        for ambulance in ambulances:
+            send_ambulance_to_hub(ambulance)
 
 
 def main() -> None:
