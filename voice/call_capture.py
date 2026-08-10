@@ -27,6 +27,7 @@ def capture_call(
     compute_type: str,
     llm_model: str,
     beam_size: int = DEFAULT_BEAM_SIZE,
+    case_id: str | None = None,
 ) -> None:
     audio_path = ORIGIN_DATA_DIR / f"{session}.wav"
 
@@ -61,6 +62,7 @@ def capture_call(
         do_summarize=True,
         llm_model=llm_model,
         beam_size=beam_size,
+        case_id=case_id,
     )
 
 
@@ -90,6 +92,12 @@ def main() -> None:
         default=DEFAULT_BEAM_SIZE,
         help=f"Whisper 빔 서치 크기 (기본: {DEFAULT_BEAM_SIZE}. 클수록 정확도↑ 속도↓)",
     )
+    parser.add_argument(
+        "--case-id",
+        type=str,
+        default=None,
+        help="hub에 보낼 caseId. 지정하지 않으면 세션 이름 기반으로 자동 생성",
+    )
     args = parser.parse_args()
 
     session = args.session or datetime.now().strftime("%Y_%m%d_%H%M")
@@ -104,6 +112,7 @@ def main() -> None:
         compute_type=args.compute_type,
         llm_model=args.llm_model,
         beam_size=args.beam_size,
+        case_id=args.case_id,
     )
 
 

@@ -44,6 +44,12 @@ class ModelUsed(BaseModel):
 
 
 class CallSummaryMessage(BaseModel):
+    # 여러 사건(구급차)이 동시에 진행될 수 있어 hub가 이 통화를 어느 사건과
+    # 짝지을지 구분하는 값. hub가 통화 시작 신호를 중계할 때 함께 보내주고,
+    # voice/app.py가 세션에 들고 있다가 그대로 돌려준다 (feature/hub
+    # CallSignal.caseId 참고). 실시간 파이프라인과 무관한 CLI 단독 실행
+    # (call_capture.py 등)에서는 자동 생성된 값이 들어간다.
+    caseId: str
     transcript: Transcript
     summary: Summary
     source: Literal["ai"] = "ai"
