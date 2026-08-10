@@ -38,31 +38,43 @@
 | 폴더 | [`Hospital_inform/`](Hospital_inform/README.md) | [`ocr/`](ocr/README.md) |
 | 범위 | 전국 전 기관 | 소수 기관 |
 | 실시간성 | 실시간 | 정적 (서류 발급 시점) |
-| 깊이 | 얕음 — 병상 수, 중증질환 수용 가능 여부 | 깊음 — 당직 전문의, 진료과별 인력 |
+| 깊이 | 얕음 — 병상 6종, 시술·장비 역량 | 깊음 — 당직 전문의, 진료과별 인력 |
 | 처리 | 규칙 기반 (AI 미사용) | AI(레이아웃·인식·추출) + 규칙(검증) |
-| 현재 상태 | 서비스키 승인 대기 — fixture로 개발 | 로직 완성 — 실측 대기 |
+| 현재 상태 | **실 API 연동 완료** (2026-08-10 승인) | 로직 완성 — 실측 대기 |
 
 **당직 전문의 정보는 공개 API로 나오지 않는다.** 그 공백을 서류 OCR로 메우는 것이
-이 브랜치의 고유 가치다. 다만 E-Gen의 "중증질환 수용가능 정보"가 그 상당 부분을
-대체할 수 있는지가 아직 미검증이라, 서비스키 승인 후 커버리지 실측으로 판단한다
-([`Hospital_inform/README.md`](Hospital_inform/README.md) "미해결 항목" 참고).
+이 브랜치의 고유 가치다. E-Gen의 "중증질환 수용가능 정보"가 그 상당 부분을 대체할
+수 있는지는 서비스키 승인 후 실측으로 확인했다 — **일부만 대체된다.**
+
+- 대체됨: 재관류(심근경색·뇌경색), 뇌출혈 수술, 응급 제왕절개, CT·혈관촬영기 가용 여부
+- **대체 안 됨**: 진료과별 의사 수(공개 API에 항목 자체가 없음),
+  정맥 혈전용해술(tPA — `MKioskTy` 28개 항목 어디에도 없음)
+
+즉 서류 OCR이 메워야 할 공백이 **무엇인지가 구체적으로 확정**됐다. 자세한 것은
+[`Hospital_inform/README.md`](Hospital_inform/README.md) "실측으로 확인한 것" 참고.
 
 ```
 [경로 A] E-Gen 공개 API
     ├─ getEgytListInfoInqire               좌표 · 기관분류
-    ├─ getEmrrmRltmUsefulSckbdInfoInqire   실시간 가용병상
+    ├─ getEmrrmRltmUsefulSckbdInfoInqire   실시간 가용병상 · 장비 가용
     └─ getSrsillDissAceptncPosblInfoInqire 중증질환 수용가능
-         ↓ [규칙] 3개 응답을 hpid로 합치고 결측 처리 (egen/mapper.py)
-      HospitalInfo ──────────────────────────────────────┐
-                                                         │
-[경로 B] 병원 서류 이미지                                  │
-         ↓ [AI]  레이아웃 검출 → 영역별 텍스트 인식        │
-      텍스트                                              │
-         ↓ [AI]  필드 그룹별 추출 (JSON Schema 제약 디코딩) │
-         ↓ [규칙] 근거 대조(환각 필터) · 어휘 검증          │
-      DocumentFields ──→ (병합 미구현) ───────────────────┤
-                                                         ↓
-                                                   feature/hub
+         │
+         ├─ [규칙] 3개 응답을 hpid로 합치고 결측·과밀·입력오류 처리 (egen/mapper.py)
+         │     HospitalInfo ────────────────────────────┐
+         │                                              │
+         └─ [축적] 원본 응답 그대로 시계열 저장 (snapshot.py)
+               data/snapshots/YYYY-MM-DD.jsonl          │
+               └→ 병상 추정 · 과밀 추세 · 갱신 성실도의 재료
+                  (E-Gen은 과거 이력을 안 주므로 직접 쌓아야 한다)
+                                                        │
+[경로 B] 병원 서류 이미지                                 │
+         ↓ [AI]  레이아웃 검출 → 영역별 텍스트 인식       │
+      텍스트                                             │
+         ↓ [AI]  필드 그룹별 추출 (JSON Schema 제약 디코딩)│
+         ↓ [규칙] 근거 대조(환각 필터) · 어휘 검증         │
+      DocumentFields ──→ (병합 미구현) ──────────────────┤
+                                                        ↓
+                                                  feature/hub
 ```
 
 두 경로의 **합류 지점(`DocumentFields` → `HospitalInfo` 병합)은 아직 미구현**이다.
@@ -104,14 +116,18 @@
 `LLMdata/`는 코드가 아니라 데이터라 의존성이 없다 — 서류 원본과, 처리하면서 쌓이는
 학습용 입력·타깃이 들어간다.
 
-`Hospital_inform/`(경로 A)은 pydantic만 있으면 돌아간다 — torch도 onnxruntime도
-필요 없다. GPU 없는 장비에서 E-Gen 정규화와 필드 추출 로직을 개발할 수 있게
-의존성을 이렇게 갈라 두었다.
+`Hospital_inform/`(경로 A)은 가볍다 — torch도 onnxruntime도 필요 없다.
+fixture로 로직만 돌릴 때는 **pydantic 하나**, 실제 API를 칠 때는 여기에
+`requests`·`python-dotenv`가 더 필요하다(XML 파싱은 표준 라이브러리를 쓴다).
+GPU 없는 장비에서 E-Gen 정규화와 필드 추출 로직을 개발할 수 있게 의존성을 이렇게
+갈라 두었다.
 
 > `requirements.txt`의 주석은 외부 API를 "hv1(전문의 보유) / hvec(병상 현황) /
 > hv2(중증질환별 수용 가능)"로 적고 있는데 **이는 CLAUDE.md에서 온 명세 오류다.**
-> `hv1`·`hv2`는 별도 API가 아니라 가용병상 응답 안의 필드이고, 뜻도 각각 응급실
-> 당직의 직통 전화번호·내과중환자실 병상 수다. 정정 요청 내용은
+> 활용가이드 V4와 실응답으로 확인했다 — `hvec`·`hv2`는 별도 API가 아니라 가용병상
+> 응답 **안의 필드**이고, 뜻도 각각 응급실 일반병상 수·**내과 중환자실 병상 수**다.
+> 중증질환 수용가능은 `getSrsillDissAceptncPosblInfoInqire`라는 별개 오퍼레이션이며
+> 필드는 `MKioskTy1`~`MKioskTy28`이다. 정정 요청 내용은
 > [`Hospital_inform/README.md`](Hospital_inform/README.md) "팀 확인 요청" 참고.
 
 ## 입출력 데이터 포맷 (약식)
@@ -288,13 +304,33 @@ pip install -r requirements.txt
 
 ```bash
 cd Hospital_inform
-pip install pydantic
-python info/build_hospitals.py
+pip install pydantic requests python-dotenv
+
+python info/build_hospitals.py --http     # 실제 API (서울 전체)
+python info/build_hospitals.py            # fixture (키 없이 개발할 때)
 ```
 
-`info/data/fixtures/`를 읽어 `info/data/output/`에 병원 1곳당 JSON 1개를 쓴다.
-fixture는 커밋되지 않으므로 처음 클론했다면 먼저 만들어야 한다
+`--http`는 `Hospital_inform/.env`의 `EGEN_SERVICE_KEY`를 쓴다. 결과는
+`info/data/output/`에 병원 1곳당 JSON 1개로 떨어진다. fixture는 커밋되지 않으므로
+`--http` 없이 돌리려면 먼저 만들어야 한다
 ([`Hospital_inform/README.md`](Hospital_inform/README.md) "데이터 정책" 참고).
+
+### 경로 A — 시계열 축적 (`snapshot.py`)
+
+```bash
+cd Hospital_inform
+python info/snapshot.py                   # 1회 (작업 스케줄러용)
+python info/snapshot.py --interval 600    # 600초마다 반복 (콘솔 상주)
+```
+
+E-Gen은 **"지금 값"만 주고 과거 이력을 주지 않는다.** 나중에 몰아서 받을 방법이
+없으므로 지금부터 직접 찍어 쌓는다. `data/snapshots/YYYY-MM-DD.jsonl`에 **가공하지
+않은 원본 행**을 append하며, 호출 실패도 한 줄로 남긴다 ("데이터가 없다"와 "호출이
+실패했다"는 다르다). 좌표·기관분류는 거의 안 바뀌므로 하루 한 번만 부른다 —
+10분 주기 기준 하루 289회다.
+
+상시 수집은 `snapshot.bat`을 Windows 작업 스케줄러에 등록해서 쓴다 (파일 상단에
+등록 방법이 적혀 있다).
 
 ### 경로 B — 서류 OCR·필드 추출 (`ocr/`)
 
@@ -361,14 +397,16 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 ├── Hospital_inform/               [경로 A] E-Gen 공개 API → HospitalInfo   (규칙 기반)
 │   ├── README.md                  이 경로의 상세 문서
 │   ├── hospital-info-interface-proposal.md   hub 인터페이스 변경 제안
+│   ├── snapshot.bat               시계열 수집 1회 (작업 스케줄러 등록용)
 │   └── info/
 │       ├── schema.py              HospitalInfo 정의 + 검사기 (hub 계약, 아무것도 import 안 함)
 │       ├── egen/
-│       │   ├── client.py          데이터 취득 — FixtureEgenClient / HttpEgenClient
+│       │   ├── client.py          데이터 취득 — Fixture / Supabase / Http 세 구현
 │       │   └── mapper.py          E-Gen 원본 → HospitalInfo 변환          ★본체
 │       ├── build_hospitals.py     변환 실행 진입점
+│       ├── snapshot.py            원본 응답을 주기적으로 떠서 시계열로 축적
 │       ├── verify_with_hub.py     hub 엔진 연동 검증 (검증 전용, 프로덕션 아님)
-│       └── data/                  fixture · 변환 결과 (커밋하지 않음)
+│       └── data/                  fixture · 변환 결과 · 스냅샷 (커밋하지 않음)
 │
 ├── ocr/                           [경로 B] 병원 서류 이미지 → 필드   (AI + 규칙)
 │   ├── README.md                  이 경로의 상세 문서
@@ -430,13 +468,13 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 
 ## 알려진 제약사항 / TODO
 
-### 외부 대기 (최우선)
+### 외부 대기
 
-- **E-Gen 서비스키 미승인.** 유일한 외부 대기 항목이고, 승인 전까지 아래 항목을
-  확정할 수 없다. 신청: [공공데이터포털 15000563](https://www.data.go.kr/data/15000563/openapi.do)
-- 실측 전 가정이 남아 있다 — `hv11`=소아 병상, `MKioskTy1/2/3` 번호별 질환,
-  결측 표현이 `-1`인지 등. 전부 `egen/mapper.py` 상단 매핑표 한 곳에 모아 뒀으므로
-  **키가 나오면 그 표 3개만 고치면 나머지 코드는 손대지 않아도 된다**
+- ~~E-Gen 서비스키 미승인~~ → **2026-08-10 승인 완료.** 실 API 연동·매핑 확정까지
+  끝났다. 개발계정이라 일일 트래픽 한도가 있어 폴링 주기를 여기에 맞춘다
+- ~~실측 전 가정 (`hv11`=소아 병상, `MKioskTy` 번호별 질환, 결측 표현)~~ →
+  **활용가이드 V4 + 실응답으로 전부 확정.** `egen/mapper.py` 상단에 `[추정]`이 하나도
+  남아 있지 않다
 
 ### 미구현
 
@@ -455,9 +493,11 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 - **재현율을 아직 못 쟀다.** 근거 통과율은 쟀지만(아래 실측 참고), "원문에 있는데
   안 뽑은 값"은 사람이 만든 정답지가 있어야 센다.
   `LLMdata/07_eval_gold.jsonl`이 그 형식이고 손으로 채워야 한다
-- **OCR 존폐를 가르는 커버리지 실측** — 대상 지역 병원 중 중증질환 수용가능 값을
-  채운 비율과 마지막 갱신 시각. 커버리지가 높으면 E-Gen만으로 충분하다
+- ~~OCR 존폐를 가르는 커버리지 실측~~ → **측정 완료** (아래 "E-Gen 실측" 참고).
+  E-Gen이 시술 역량 상당 부분을 덮지만 **의사 수와 tPA는 못 덮는다**는 결론
 - hub 엔진 연동 검증(매칭 순위 확인)은 계약 검증(4/4 통과)까지만 됐고 실행 대기
+- **병상 추정 모델** — 스냅샷이 1주 이상 쌓여야 시작할 수 있다. v1은 모델이 아니라
+  `(병원 × 요일 × 시간대)` 중앙값 테이블이고, 정확도는 백테스트로 잰다
 
 ### 유지보수 주의
 
@@ -473,6 +513,56 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
   팩스 저품질 문서 (실측 268개 항목 중 13개)
 
 ## 추가사항
+
+### E-Gen 실측 (2026-08-10 · 서울특별시 전체)
+
+서비스키 승인 후 실제 응답을 처음 받아 본 결과다. **fixture로 개발하는 동안 세워둔
+가정 중 세 개가 틀렸고, 셋 다 조용히 잘못된 값을 내보내고 있었다.**
+
+| 발견 | 무슨 일이 있었나 |
+|---|---|
+| **음수 병상 = 과밀** | `hvec`에 `-24 ~ -2`가 온다. "정원보다 환자가 그만큼 많다"는 뜻인데, 매퍼가 `-1` 이하를 전부 미상 처리해 **가장 갈 수 없는 병원이 "모르는 병원"이 되고 있었다.** 서울 55곳 중 6곳이 여기 해당했고 전부 상급종합병원이다 |
+| **소아 병상 필드가 틀렸다** | `hv11`을 소아 병상으로 매핑해 뒀는데 실제로는 인큐베이터 보유 여부(Y/N)다. `int('Y')`가 실패해 **소아 병상이 늘 미상**이었다. 진짜 필드는 `hv28` |
+| **`불가능`과 `정보미제공`이 뭉개졌다** | 중증질환 값은 `Y`/`불가능`/`정보미제공` 3종인데 매퍼가 `N`으로 시작하는 값만 불가로 봤다. 3상태를 지키려던 설계가 실제 값 앞에서 무너져 있었다 |
+
+고친 뒤 결과 — 어휘의 병상 코드 6개가 **전부** 채워졌다 (3개는 정의만 있고 한 번도
+쓰이지 않던 것이다).
+
+| 병상 코드 | E-Gen 필드 | 신고 병원 (55곳 중) |
+|---|---|---|
+| `ER_ADULT` | `hvec` 일반 | 55 |
+| `ER_PEDIATRIC` | `hv28` 소아 | 23 |
+| `ER_NEGATIVE` | `hv29` 응급실 음압격리 | 37 |
+| `ICU` | `hvicc` [중환자실] 일반 | 35 |
+| `CCU` | `hv34` [중환자실] 심장내과 | 12 |
+| `OR` | `hvoc` [기타] 수술실 | 54 |
+
+역량 코드도 **장비 가용 여부(`hvctayn`·`hvangioayn`)가 가용병상 응답에 같이 온다**는
+걸 확인해 연결했다. "역량 정보가 전혀 없는 병원"이 21곳 → 1곳으로 줄었다.
+
+| 역량 코드 | 보유 병원 |
+|---|---|
+| `EQP_CT_24H` | 54 |
+| `EQP_ANGIO_SUITE` | 38 |
+| `PROC_PCI_EMERGENCY` | 33 |
+| `PROC_CRANIOTOMY` | 31 |
+| `PROC_EVT_THROMBECTOMY` | 29 |
+| `PROC_CESAREAN_EMERGENCY` | 22 |
+| `PROC_IV_THROMBOLYSIS` | **0 — E-Gen에 대응 항목이 없다** |
+
+마지막 줄이 OCR의 존재 이유다. tPA(정맥 혈전용해술)는 `MKioskTy` 28개 항목 어디에도
+없어서 **공개 API로는 영원히 채울 수 없고**, 진료과별 의사 수도 마찬가지다.
+
+그 밖에 확인한 것:
+
+- **병상 "미상"은 서울에 거의 없다** (55곳 중 0~1곳). 병원들이 병상 수는 성실히
+  입력한다. 미상 보간보다 **도착 시점 예측**이 실제 문제라는 뜻이다
+- **입력 오류가 있다** — 국립중앙의료원이 거의 전 필드에 `12312` 같은 시험값을 넣어
+  뒀다. 임의의 상한 대신 그 병원이 신고한 총 병상(`hvs38`)을 넘으면 버린다
+- **시도 전체를 1회 호출로 받을 수 있다** (`STAGE2` 생략 가능). 자치구 25번 나눠
+  부를 필요가 없어 트래픽이 크게 절약된다
+- 값은 실제로 계속 변한다 — 14분 사이에 과밀 병원 목록과 수치가 모두 바뀌었다.
+  시계열을 쌓을 가치가 데이터로 확인된 셈이다
 
 ### 필드 추출 실측 (합성 서류 53건 · 81페이지 · qwen3:14b)
 
