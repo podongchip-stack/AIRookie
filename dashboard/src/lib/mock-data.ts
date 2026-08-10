@@ -19,6 +19,7 @@ export const mockHubMatchResult: HubMatchResult = {
       distanceKm: 1.4,
       specialtyMatch: { department: "외과", score: 0.61 },
       availableBedCount: 4,
+      bedCountUnknown: false,
       status: "pending",
     },
     {
@@ -28,6 +29,7 @@ export const mockHubMatchResult: HubMatchResult = {
       distanceKm: 1.9,
       specialtyMatch: { department: "흉부외과", score: 0.74 },
       availableBedCount: 6,
+      bedCountUnknown: false,
       status: "approved",
       etaMin: 5,
     },
@@ -38,6 +40,7 @@ export const mockHubMatchResult: HubMatchResult = {
       distanceKm: 2.1,
       specialtyMatch: { department: "흉부외과", score: 0.82 },
       availableBedCount: 12,
+      bedCountUnknown: false,
       status: "confirmed",
       etaMin: 6,
     },
@@ -48,7 +51,21 @@ export const mockHubMatchResult: HubMatchResult = {
       distanceKm: 2.6,
       specialtyMatch: { department: "정형외과", score: 0.35 },
       availableBedCount: 0,
+      bedCountUnknown: false,
       status: "rejected",
+    },
+    {
+      // 병상 수가 "확인된 만실"(D병원)이 아니라 "미상"인 경우의 예시 —
+      // availableBedCount는 D와 똑같이 0이지만 화면엔 "병상 없음"이 아니라
+      // "병상 미상"으로 떠야 한다.
+      hospitalId: "E",
+      name: "E병원",
+      gps: { lat: 35.1820, lng: 128.1030 },
+      distanceKm: 3.0,
+      specialtyMatch: { department: "외과", score: 0.48 },
+      availableBedCount: 0,
+      bedCountUnknown: true,
+      status: "pending",
     },
   ],
   source: "rule",
