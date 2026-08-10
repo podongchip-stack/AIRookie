@@ -51,7 +51,7 @@ def capture_call(
         recorder.stop()
         print(f"녹음 저장: {audio_path}")
 
-    print("\n=== 파이프라인 시작: STT -> 실시간 음성 필터링 -> SBAR 구조화 ===")
+    print("\n=== 파이프라인 시작: STT -> SBAR 구조화 ===")
     transcribe(
         audio_path=audio_path,
         model_size=model_size,

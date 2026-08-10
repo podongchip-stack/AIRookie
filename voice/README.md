@@ -17,7 +17,7 @@
 - [빠른 시작](#빠른-시작)
 - [이 브랜치가 하는 일](#이-브랜치가-하는-일)
 - [실행 방법](#실행-방법)
-- [실시간 음성 필터링](#실시간-음성-필터링)
+- [STT 정확도 개선 / SBAR 구조화](#stt-정확도-개선--sbar-구조화)
 - [사용한 AI / 모델](#사용한-ai--모델)
 - [입출력 데이터 포맷](#입출력-데이터-포맷)
 - [폴더 구조](#폴더-구조)
@@ -40,8 +40,8 @@ pip install -r requirements.txt
 python call_capture.py
 ```
 
-마이크로 통화를 녹음하다가 Ctrl+C를 누르면(통화 종료), 그 즉시 STT → 실시간 음성
-필터링 → SBAR 구조화까지 자동으로 이어서 실행된다. 자세한 사용 예시는 아래
+마이크로 통화를 녹음하다가 Ctrl+C를 누르면(통화 종료), 그 즉시 STT → SBAR
+구조화까지 자동으로 이어서 실행된다. 자세한 사용 예시는 아래
 ["2-2. 통화 캡처"](#2-2-통화-캡처--종료-시-자동-파이프라인-실행-권장) 참고.
 
 | 옵션 | 기본값 | 설명 |
@@ -58,17 +58,23 @@ python call_capture.py
 
 ## 이 브랜치가 하는 일
 
-음성 파일을 텍스트로 변환 → 실시간 음성 필터링(의료 관련 문장 분류) → SBAR 구조화
-→ `feature/hub` 전달용 JSON 생성까지 이어지는 파이프라인. dashboard로는 직접
-보내지 않고 `feature/hub`를 거쳐 전달된다.
+음성 파일을 텍스트로 변환 → SBAR 구조화 → `feature/hub` 전달용 JSON 생성까지
+이어지는 파이프라인. dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐
+전달된다.
+
+> STT 결과를 의료/비의료로 걸러내던 "실시간 음성 필터링" 단계(`filtering.py`)는
+> 정확도 개선 과정에서 파이프라인 호출부에서 뺐다 (아래 [알려진
+> 한계](#알려진-제약사항--todo)와 `.docs/stt-applied-initial-prompt-and-filtering-removed.md`
+> 참고). `filtering.py` 파일 자체는 참고용으로 남아있지만 `transcribe.py`/
+> `live_transcribe.py`가 더 이상 import하지 않는다.
 
 **배치 처리**
 
 | 파일 | 역할 |
 | --- | --- |
-| `transcribe.py` | 오디오 파일 → STT → (선택)필터링+SBAR 구조화 CLI |
-| `filtering.py` | 발화 턴별 의료 관련성 분류 |
-| `summarizer.py` | 필터링된 텍스트 → LLM SBAR 구조화 |
+| `transcribe.py` | 오디오 파일 → STT → (선택)SBAR 구조화 CLI |
+| `filtering.py` | *(현재 미사용)* 발화 턴별 의료 관련성 분류 — 참고용으로만 남김 |
+| `summarizer.py` | STT 텍스트 → LLM SBAR 구조화 |
 | `ollama_bootstrap.py` | Ollama 설치·서버 실행·모델 pull 자동화 |
 | `schema.py` | 출력 JSON pydantic 스키마 |
 | `add_noise.py` | 강건성 테스트용 노이즈 합성 |
@@ -106,14 +112,14 @@ python call_capture.py
 python add_noise.py data/origin_data/원본.mp3 10
 ```
 
-STT/필터링이 소음 환경에서도 잘 동작하는지 확인하고 싶을 때 쓴다. 두 번째
+STT가 소음 환경에서도 잘 동작하는지 확인하고 싶을 때 쓴다. 두 번째
 인자(SNR dB)를 낮출수록 더 심한 소음이 섞인다 (예: 10=중간, 0=심함). 결과는
 `data/origin_noise_data/`에 `원본_noisy10db.wav` 형태로 자동 저장된다
 (`--output`으로 경로 직접 지정 가능).
 
 </details>
 
-**1-2. 음성 → 텍스트 변환 + 실시간 음성 필터링 + SBAR 구조화**
+**1-2. 음성 → 텍스트 변환 + SBAR 구조화**
 
 ```bash
 python transcribe.py data/origin_data/파일명.wav --summarize
@@ -135,7 +141,7 @@ python transcribe.py data/origin_noise_data/파일명_noisy10db.wav --summarize
 | `--language` | `ko` | 언어 코드 |
 | `--device` | `auto` | 연산 장치 (`auto` / `cuda` / `cpu`) |
 | `--compute-type` | `auto` | 연산 정밀도 |
-| `--summarize` | (off) | 필터링 + SBAR 구조화까지 수행 |
+| `--summarize` | (off) | SBAR 구조화까지 수행 |
 | `--llm-model` | `qwen3:14b` | 구조화에 사용할 Ollama 모델 |
 | `--beam-size` | `5` | Whisper 빔 서치 크기. 클수록 도메인 용어 인식 정확도↑, 속도↓ |
 
@@ -147,9 +153,6 @@ Homebrew 기준). `ollama_bootstrap.py`가 필요한 걸 자동으로 준비한�
 Ollama 설치(brew) + `--llm-model`로 지정한 모델 다운로드 때문에 시간이 걸릴 수
 있다. 자동 설치를 원치 않으면 미리 `ollama serve` / `ollama pull <모델명>`을 직접
 실행해두면 그대로 재사용한다.
-
-분류기(`filtering.py`)가 처음 실행될 때는 `paraphrase-multilingual-MiniLM-L12-v2`
-모델을 Hugging Face에서 자동 다운로드한다 (약 470MB, 최초 1회).
 
 </details>
 
@@ -190,15 +193,13 @@ python call_capture.py --session live_test1
 통화 종료 (Ctrl+C)
 녹음 저장: data/voice_data/origin_data/live_test1.wav
 
-=== 파이프라인 시작: STT -> 실시간 음성 필터링 -> SBAR 구조화 ===
+=== 파이프라인 시작: STT -> SBAR 구조화 ===
 모델 로딩 중... (medium, device=auto, compute_type=auto)
 모델 로딩 완료 (2.10초)
-변환 중: live_test1.wav
+변환 중: live_test1.wav (beam_size=5)
 [00:00:00.320 -> 00:00:04.140] 환자는 의식이 없습니다
 텍스트 파일 저장: data/voice_data/origin_text/live_test1.txt
 
-실시간 음성 필터링: 의료 관련 문장 분류 중...
-분류 완료 (0.08초, threshold=0.4)
 SBAR 구조화 중... (qwen3:14b)
 구조화 완료 (3.42초)
 
@@ -239,15 +240,11 @@ python live_transcribe.py --model medium --stt-interval 5 --sbar-interval 50
 
 [1차] 재변환 중... 누적 10.5초
 [00:00:05.360] 환자가 의식이 없어요
-  [0.627] 유지  환자가 의식이 없어요
 
 [2차] 재변환 중... 누적 16.2초
 [00:00:10.120] 호흡이 약해졌습니다
-  [0.734] 유지  호흡이 약해졌습니다
 
 [SBAR 생성 중... (20초 경과)]
-실시간 음성 필터링: 의료 관련 문장 분류 중...
-분류 완료 (0.08초, threshold=0.4)
 SBAR 구조화 중... (qwen3:14b)
 
 === feature/hub로 전송될 JSON ===
@@ -290,47 +287,50 @@ Ctrl+C로 중지하면, 마지막 재변환 주기 이후 아직 STT를 거치�
 
 **마이크 캡처 공통 특징**
 
-- 배치 처리(`transcribe.py`)와 동일한 필터링·구조화 로직을 재사용한다 — 코드 중복 없음
+- 배치 처리(`transcribe.py`)와 동일한 STT/구조화 로직을 재사용한다 — 코드 중복 없음
 - 마이크 권한, Ollama 자동 부트스트래핑 등은 배치 처리와 동일하게 자동 처리된다
 - 실제 구급대원 통화 시나리오를 시뮬레이션하려면 `.docs/voice-live-getting-started.md` 참고 (Step 1~5 상세 가이드)
 
 ---
 
-## 실시간 음성 필터링
+## STT 정확도 개선 / SBAR 구조화
 
-STT 결과를 발화 턴(문장) 단위로 분리한 뒤, 각 턴이 의료 관련 내용인지 분류해서
-잡담·인사말·통화 연결 발화를 요약 대상에서 제외하고, 의료 관련 문장만 LLM에
-전달해 SBAR 형태로 구조화한다. CLAUDE.md의 "통화 내용 필터링·구조화 (AI: sLLM +
-KM-BERT)" 항목을 구현한 것이다.
+**STT 도메인 프롬프트** (`transcribe.py`의 `STT_INITIAL_PROMPT`)
 
-**분류 방식** (`filtering.py`)
+Whisper 호출 시 `initial_prompt`로 "이 통화가 어떤 종류의 대화인가"(119
+구급대원이 병원 응급실에 환자 수용 가능 여부를 확인하는 통화라는 장르/구조)를
+문장으로 흘려준다. 등장 어휘의 사전 확률을 도메인 쪽으로 기울이는 문맥 힌트일
+뿐 강제 디코딩은 아니다. 구체적인 시나리오 어휘(교통사고, 흉부 충격 등)는
+일부러 안 넣었다 — 테스트 샘플의 실제 발화를 보고 답을 역산해서 프롬프트에
+끼워넣으면 일반화되는 개선이 아니라 그 샘플 하나에 대한 오버피팅이기 때문
+(실제로 초기 버전은 이 실수를 했다가 되돌렸다). `beam_size`도 CLI(`--beam-size`,
+기본 5)로 조정 가능하다. 실측 결과와 판단 근거는
+`.docs/stt-applied-initial-prompt-and-filtering-removed.md` 참고.
 
-라벨링된 학습 데이터가 없어 KM-BERT를 직접 파인튜닝하는 대신, 다국어 문장 임베딩
-모델(`paraphrase-multilingual-MiniLM-L12-v2`)로 "의료 관련" 예시 문장들의 중심
-벡터를 만들고, 각 발화 턴과의 코사인 유사도가 threshold(기본 0.4) 이상이면
-의료 관련으로 분류한다. CLAUDE.md가 "경량 분류기 또는 KM-BERT" 중 하나를
-허용하므로, 이는 그중 경량 분류기 선택지에 해당한다.
+**실시간 음성 필터링은 제거됨** (`filtering.py`, 현재 미사용)
 
-<details>
-<summary>검증 예시 / 나중에 KM-BERT로 교체하는 경우</summary>
+원래는 STT 결과를 발화 턴 단위로 분리해 의료 관련 여부를 분류하고, 관련 턴만
+LLM에 전달하는 필터링 단계가 있었다 (다국어 문장 임베딩
+`paraphrase-multilingual-MiniLM-L12-v2`로 "의료 관련" anchor 문장들과의 코사인
+유사도가 threshold 0.4 이상이면 통과시키는 방식, CLAUDE.md의 "통화 내용
+필터링·구조화" 항목 중 경량 분류기 선택지). 하지만 이 필터링은 단어 오인식
+자체를 고치지 못하고, threshold가 실제 통화 데이터로 검증된 적이 없어 중요한
+문장을 잘못 제외할 리스크가 있었으며, `summarizer.py`의 프롬프트가 이미
+잡담/인사말을 스스로 걸러낼 만큼 구체적이라 정확도에 실제로 기여한다는 근거가
+없었다. 그래서 `transcribe.py`/`live_transcribe.py`의 호출부에서 뺐다 (판단
+근거·실측 비교는 `.docs/stt-accuracy-round2-nbest-and-term-dict.md` 참고).
+`filtering.py` 파일 자체는 삭제하지 않고 남겨뒀다.
 
-anchor 문장 vs 테스트 문장 코사인 유사도: 의료 관련 문장은 0.57~0.76, 잡담/인사말은
-0.13~0.29로 나와 threshold 0.4로 명확히 구분됨을 확인함. 나중에 라벨 데이터가
-쌓이면 `MedicalRelevanceFilter`를 KM-BERT 분류 헤드로 교체해도 호출부
-(`transcribe.py`)는 바뀌지 않는다.
-
-</details>
-
-**원본 보존 원칙**
-
-필터링에서 제외된 발화도 삭제하지 않는다. `transcript.raw_text`와
-`transcript.turns`에는 모든 발화가 그대로 남고, 제외된 턴에만
-`excludedFromSummary: true`가 붙는다. `transcript.filtered_text`(요약 입력값)와
-`summary.*`(SBAR 구조화 결과)에만 의료 관련 발화가 반영된다.
+**원본 보존 원칙**은 필터링 제거와 무관하게 유지된다. `transcript.raw_text`와
+`transcript.turns`에는 모든 발화가 그대로 남는다. 다만 필터링이 없어져서
+`transcript.filtered_text`는 이제 항상 `raw_text`와 동일한 값이고, 개별 턴에
+`excludedFromSummary`가 붙는 일도 없다 (스키마 필드 자체는 호환성을 위해
+`schema.py`에 남겨뒀다 — dashboard 타입과 1:1 대응이라 필드 삭제는 더 큰
+파급력이 있어 보류 중).
 
 **구조화** (`summarizer.py`)
 
-필터링된 텍스트를 Ollama(`/api/generate`)에 전달해 `patient` / `mechanism` /
+STT 결과 텍스트를 Ollama(`/api/generate`)에 전달해 `patient` / `mechanism` /
 `symptoms` / `treatment` / `severity_tag` / `required_department` 필드를 가진
 JSON으로 구조화한다. 응답에서 `<think>...</think>` 추론 태그를 제거하고 JSON
 객체만 관대하게 추출해서 파싱한다. 파싱에 실패하면 예외를 던지고 파이프라인은
@@ -370,9 +370,10 @@ ollama` → 서버 자동 기동 → `qwen2.5:0.5b`(스모크 테스트용 소�
 **알려진 한계**
 
 - 화자 분리(diarization)가 아직 없어 모든 턴의 `speaker`는 `"미분리"`로 고정
-- threshold 기반 분류기라 애매한 경계 문장은 오분류할 수 있음. 실제 통화 녹음으로 threshold 재조정하거나 KM-BERT로 교체하는 게 다음 단계
-- **필터링보다 그 앞 단계인 STT 정확도가 병목이다.** "산소포화도", "심정지" 같은 의료 용어를 Whisper가 오인식하는 경우가 실제로 관찰됨 (예: "심정지가 왔었습니다" → "심정도 너무 왔었습니다"). 소음 제거·정규화·고주파 강조 형태의 신호 전처리를 시도했으나 실제 통화 녹음 3건으로 검증한 결과 개선 효과가 없었고 일부는 오히려 오인식을 유발해(`구급대원`→`9급대원`) 제거함 — 근본 해결에는 응급실 도메인 데이터 파인튜닝 검토가 필요함
-  - 1차 완화 시도로 `transcribe()`/`live_transcribe()` 호출 시 Whisper `initial_prompt`에 응급이송 통화 도메인 문장(의식 저하, 산소포화도, 심정지·심폐소생술, 지혈, 흉부외과 등)을 흘려 어휘 사전 확률을 도메인 쪽으로 기울이고, `beam_size`를 CLI(`--beam-size`, 기본 5)로 노출해 정확도/속도를 실측 조정할 수 있게 함(`transcribe.py`의 `STT_INITIAL_PROMPT`/`DEFAULT_BEAM_SIZE`). 실제 통화 녹음으로 효과 검증은 아직 못 함 — 다음 단계에서 확인 필요
+- **STT 정확도가 여전히 병목이다.** "산소포화도", "심정지" 같은 의료 용어를 Whisper가 오인식하는 경우가 실제로 관찰됨 (예: "심정지가 왔었습니다" → "심정도 너무 왔었습니다"). 소음 제거·정규화·고주파 강조 형태의 신호 전처리(`audio_preprocess.py`)를 시도했으나 실제 통화 녹음 3건으로 검증한 결과 개선 효과가 없었고 일부는 오히려 오인식을 유발해(`구급대원`→`9급대원`) 제거함
+  - `STT_INITIAL_PROMPT`(위 참고)로 일부 오류(`수형 가능`→`수용 가능`, `진조 가능`→`진료 가능`)는 실측으로 고쳐졌으나, `구급대회`(→구급대) 같은 일부 오류는 프롬프트만으로는 못 이기는 acoustic 신호로 보여 여전히 남아있음
+  - 실제 의학용어집(대한의사협회, `kma_pages.jsonl`, 5만여 표제어)을 확보해뒀고, 편집거리 기반 사전 매칭 후처리(`term_correction_dict.py`)로 확장하는 방향을 검토 중이나 아직 정식 파이프라인엔 미반영
+  - 이 모든 실측은 통화 샘플 1개(`test1.wav`) 기준이라 일반화는 검증 안 됨
 - 통신(WebSocket으로 `feature/hub`에 실시간 전송)은 아직 미구현. 지금은 JSON을 터미널 출력 + 파일 저장까지만 한다
 - macOS + Homebrew가 아닌 환경에서는 Ollama 자동 설치가 동작하지 않음. [ollama.com](https://ollama.com)에서 직접 설치 필요
 
@@ -382,9 +383,9 @@ ollama` → 서버 자동 기동 → `qwen2.5:0.5b`(스모크 테스트용 소�
 
 | 구분 | 모델 | 용도 |
 | --- | --- | --- |
-| STT | [Whisper medium](https://huggingface.co/Systran/faster-whisper-medium) (faster-whisper) | 음성 → 텍스트, `--model`로 변경 가능 |
-| 의료 관련성 분류 | [paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) | 발화 턴 의료 관련성 분류 |
-| 정보 구조화 | [Qwen3-14B](https://huggingface.co/Qwen/Qwen3-14B) (Ollama `qwen3:14b`) | 필터링 텍스트 → SBAR JSON, `--llm-model`로 변경 가능 |
+| STT | [Whisper medium](https://huggingface.co/Systran/faster-whisper-medium) (faster-whisper) | 음성 → 텍스트, `--model`로 변경 가능. `STT_INITIAL_PROMPT`로 도메인 문맥 힌트 제공 |
+| 정보 구조화 | [Qwen3-14B](https://huggingface.co/Qwen/Qwen3-14B) (Ollama `qwen3:14b`) | STT 텍스트 → SBAR JSON, `--llm-model`로 변경 가능 |
+| ~~의료 관련성 분류~~ | ~~[paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)~~ | *(현재 미사용)* `filtering.py`가 쓰던 모델 — 파이프라인에서 제거됨 |
 
 > CLAUDE.md "핵심 AI 활용 원칙" 표 기준: **[x] AI 처리** / [ ] 규칙 기반
 
@@ -413,7 +414,7 @@ dashboard로는 직접 보내지 않는다. `feature/dashboard`의 `CallSummaryM
     "timestamp": "2026-07-28T14:32:31Z",
     "duration_sec": 42.3,
     "turns": [
-      { "speaker": "미분리", "timestamp": "14:32:07", "text": "여보세요, 안녕하세요.", "excludedFromSummary": true },
+      { "speaker": "미분리", "timestamp": "14:32:07", "text": "여보세요, 안녕하세요." },
       { "speaker": "미분리", "timestamp": "14:32:11", "text": "환자 50대 남성이고 교통사고 흉부 충격입니다..." }
     ]
   },
@@ -435,12 +436,12 @@ dashboard로는 직접 보내지 않는다. `feature/dashboard`의 `CallSummaryM
 
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
-| `transcript.raw_text` | string | STT 원본 전문. 필터링 전 전체 발화, 삭제하지 않고 보존 |
-| `transcript.filtered_text` | string | 필터링 후 남은 텍스트. 요약의 실제 입력값 |
+| `transcript.raw_text` | string | STT 원본 전문. 전체 발화, 삭제하지 않고 보존 |
+| `transcript.filtered_text` | string | 요약(LLM)에 실제로 들어간 입력값. 필터링이 제거된 현재는 항상 `raw_text`와 동일 |
 | `transcript.language` | string | 언어 코드 |
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 (사전 녹음 파일 처리 특성상 근사값) |
 | `transcript.duration_sec` | number | 통화 길이(초) |
-| `transcript.turns` | array | 발화 턴별 원본 로그 (`speaker`/`timestamp`/`text`/`excludedFromSummary?`) |
+| `transcript.turns` | array | 발화 턴별 원본 로그 (`speaker`/`timestamp`/`text`, `excludedFromSummary`는 필터링 제거로 현재 항상 비어있음) |
 | `summary.patient` | string | 환자 인적사항 요약 |
 | `summary.mechanism` | string | 사고 기전 |
 | `summary.symptoms` | string[] | 증상 목록 |
@@ -468,13 +469,13 @@ AIRookie/                     (.gitignore, CLAUDE.md, pull-all.sh는 브랜치 �
 │   ├── requirements.txt     의존성 목록
 │   ├── add_noise.py         오디오에 노이즈 합성
 │   ├── call_capture.py      마이크로 통화 캡처 → 종료 시 배치 파이프라인 자동 실행 (권장)
-│   ├── filtering.py         의료 관련성 분류기
+│   ├── filtering.py         (현재 미사용) 의료 관련성 분류기, 참고용으로 남김
 │   ├── live_transcribe.py   (실험적) 마이크 라이브 캡처 + 주기적 재변환
 │   ├── mic_recorder.py      마이크 입력 버퍼 축적 (스모크 테스트용)
 │   ├── ollama_bootstrap.py  Ollama 자동 설치/실행/모델 다운로드
 │   ├── schema.py            Pydantic 스키마 (전송용 JSON)
-│   ├── summarizer.py        필터링 텍스트 → LLM 구조화
-│   └── transcribe.py        음성 파일 → STT 변환 + 필터링/구조화
+│   ├── summarizer.py        STT 텍스트 → LLM 구조화
+│   └── transcribe.py        음성 파일 → STT 변환 + SBAR 구조화
 └── data/                    (.gitignore로 저장소에는 안 올라감)
     └── voice_data/
         ├── origin_data/         원본 음성 파일 (직접 추가)
@@ -504,7 +505,7 @@ AIRookie/                     (.gitignore, CLAUDE.md, pull-all.sh는 브랜치 �
 - GPU 사용 시 NVIDIA CUDA 12.x 및 cuDNN 9 필요
 - `data/voice_data/` 하위 전 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음
 - 유튜브 콘텐츠 다운로드 시 저작권 및 유튜브 서비스 약관 준수 책임은 사용자에게 있음
-- 실시간 음성 필터링/구조화 관련 제약사항은 위 ["알려진 한계"](#실시간-음성-필터링) 참고
+- STT/구조화 관련 제약사항은 위 ["알려진 한계"](#stt-정확도-개선--sbar-구조화) 참고
 
 <details>
 <summary>call_capture.py / live_transcribe.py 관련 제약사항</summary>

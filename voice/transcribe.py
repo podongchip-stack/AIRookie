@@ -8,7 +8,6 @@ from pathlib import Path
 import requests
 from faster_whisper import WhisperModel
 
-from filtering import MedicalRelevanceFilter
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
 from summarizer import StructuringError, structure_call_summary
 
@@ -24,14 +23,22 @@ UNDIARIZED_SPEAKER_LABEL = "미분리"
 # 미리 흘려준다. Whisper의 initial_prompt는 문맥 힌트로만 작용해 강제 디코딩은
 # 아니지만, 등장 어휘의 사전 확률을 해당 도메인 쪽으로 기울여준다 (예: "심정지가
 # 왔었습니다" -> "심정도 너무 왔었습니다" 같은 오인식이 실제로 관찰됨, README
-# "알려진 한계" 참고). 문장 형태로 주면 실제 통화체 억양/어순 학습에도 더 잘
-# 맞는다는 whisper 커뮤니티 권장을 따라 단어 나열이 아닌 짧은 문장들로 구성했다.
+# "알려진 한계" 참고).
+#
+# 구체적인 상황(교통사고, 흉부 충격 등 특정 시나리오 어휘)은 일부러 안 넣었다 -
+# 테스트 오디오 하나의 실제 발화를 보고 그 답을 그대로 프롬프트에 끼워넣으면
+# "일반적으로 통하는 개선"이 아니라 그 샘플 하나에 대한 오버피팅이 되기 때문
+# (실제로 초기 버전은 이 실수를 했다가 되돌렸다). 대신 "이 통화가 어떤 종류의
+# 대화인가"(장르/구조)만 길게 서술하는 방식으로 바꿨더니, 구체 어휘 없이도
+# "진조"->"진료" 같은 오인식이 고쳐지는 게 실측으로 확인됐다 - 도메인을 넓게
+# 상기시키는 것만으로도 자연스러운 통화체 표현 패턴 쪽으로 확률이 쏠리는 것으로
+# 보인다. 다만 이 실험도 테스트 오디오 1개로만 확인한 결과라 일반화는 보장 못한다.
 STT_INITIAL_PROMPT = (
-    "환자는 의식이 저하되어 있습니다. 호흡 곤란을 호소하고 있습니다. "
-    "혈압과 맥박, 산소포화도를 측정했습니다. 심정지 상태로 심폐소생술을 시행 중입니다. "
-    "출혈이 지속되고 있어 압박 지혈 중입니다. 교통사고로 흉부에 충격을 입었습니다. "
-    "낙상으로 인한 골절이 의심됩니다. 구급대원입니다. 흉부외과, 신경외과, 정형외과, "
-    "응급의학과로 이송하겠습니다."
+    "이것은 119 구급대원이 환자를 이송하기 전에 병원 응급실로 미리 전화를 걸어 "
+    "환자 수용이 가능한지 확인하는 통화입니다. 구급대원은 환자의 상태와 증상, "
+    "측정한 활력 징후, 현재까지 시행한 처치 내용을 순서대로 설명하고, "
+    "병원 측에 해당 진료과에서 지금 환자를 받을 수 있는지, 응급실에 수용 가능한지를 "
+    "묻습니다. 병원 측은 이를 듣고 수용 가능 여부를 답합니다."
 )
 
 # beam_size가 클수록 후보 시퀀스를 더 넓게 탐색해 저확률(도메인 특화) 토큰을
@@ -146,7 +153,14 @@ def build_and_emit_call_summary(
     llm_model: str,
     audio_path: Path,
 ) -> None:
-    """실시간 음성 필터링(의료 관련 문장 분류) -> SBAR 구조화 -> JSON 조립까지 수행한다.
+    """STT 결과를 SBAR 구조화 -> JSON 조립까지 수행한다.
+
+    실시간 음성 필터링(MedicalRelevanceFilter, filtering.py) 단계는 뺐다. 필터링은
+    "이 문장을 요약에 넣을지"만 결정할 뿐 오인식 자체를 고치지 못하고, threshold가
+    검증 안 된 상태라 false negative(중요한 문장을 잘못 제외) 리스크가 있는 반면,
+    LLM 프롬프트(summarizer.py)가 이미 잡담/인사말을 스스로 걸러낼 정도로
+    구체적이라 얻는 이득이 불확실했다 (.docs/stt-accuracy-round2-*.md 참고). 원본
+    보존 원칙은 그대로 지킨다 - raw_text/turns에 전체 발화가 다 남는다.
 
     실제 통화 시작 시각 메타데이터가 없으므로(사전 녹음 파일 처리), 처리 시작
     시점에서 오디오 길이만큼 거슬러 올라간 시각을 통화 시작 시각으로 근사한다.
@@ -154,37 +168,15 @@ def build_and_emit_call_summary(
     """
     call_start = datetime.now(timezone.utc) - timedelta(seconds=duration_sec)
 
-    print("\n실시간 음성 필터링: 의료 관련 문장 분류 중...")
-    filter_start = time.perf_counter()
-    relevance_filter = MedicalRelevanceFilter()
-    classified = relevance_filter.classify_turns(turn_texts)
-    filter_elapsed = time.perf_counter() - filter_start
-    print(f"분류 완료 ({filter_elapsed:.2f}초, threshold={relevance_filter.threshold})")
-
-    turns: list[TranscriptTurn] = []
-    filtered_parts: list[str] = []
-    for text, offset, result in zip(turn_texts, turn_offsets, classified):
-        turn_time = (call_start + timedelta(seconds=offset)).strftime("%H:%M:%S")
-        print(f"  [{result.score:.3f}] {'유지' if result.is_relevant else '제외'}  {text}")
-        turns.append(
-            TranscriptTurn(
-                speaker=UNDIARIZED_SPEAKER_LABEL,
-                timestamp=turn_time,
-                text=text,
-                excludedFromSummary=None if result.is_relevant else True,
-            )
+    turns: list[TranscriptTurn] = [
+        TranscriptTurn(
+            speaker=UNDIARIZED_SPEAKER_LABEL,
+            timestamp=(call_start + timedelta(seconds=offset)).strftime("%H:%M:%S"),
+            text=text,
         )
-        if result.is_relevant:
-            filtered_parts.append(text)
-
-    filtered_text = " ".join(filtered_parts)
-
-    if not filtered_text.strip():
-        print(
-            "\n경고: 의료 관련으로 분류된 문장이 없습니다. 전체 텍스트를 대상으로 구조화를 시도합니다.",
-            file=sys.stderr,
-        )
-        filtered_text = full_text
+        for text, offset in zip(turn_texts, turn_offsets)
+    ]
+    filtered_text = full_text
 
     print(f"\nSBAR 구조화 중... ({llm_model})")
     structure_start = time.perf_counter()
@@ -241,7 +233,7 @@ def main() -> None:
     parser.add_argument(
         "--summarize",
         action="store_true",
-        help="실시간 음성 필터링 + SBAR 구조화를 수행해 feature/dashboard 전달용 JSON을 생성",
+        help="SBAR 구조화를 수행해 feature/dashboard 전달용 JSON을 생성",
     )
     parser.add_argument("--llm-model", default="qwen3:14b", help="구조화에 사용할 Ollama 모델 (기본: qwen3:14b)")
     parser.add_argument(
