@@ -37,7 +37,8 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 > 직접 통신하기 때문). 매칭 상태(`hospitals[].status`) 반영과, `final_approval` 시
 > feature/info로 병상 갱신을 알리는 처리("입출력 데이터 포맷"의 입력 스키마 3 /
 > 출력 스키마 5 참고)는 `HubEngine.apply_approval_action()`으로 **구현·테스트
-> 완료**했습니다 (`run_match.py` 참고). 실제 통신(Flask)만 아직 미연동입니다.
+> 완료**했습니다 (`run_match.py` 참고). dashboard와의 실제 WebSocket 통신, feature/info로의
+> 실제 HTTP 전송(`send_to_info()`) 모두 연동 완료됐습니다.
 
 ## 사용한 AI / 모델
 
@@ -223,12 +224,19 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 | `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 
-### 출력 스키마 5: feature/hub → feature/info (병상 갱신 알림, 신규)
+### 출력 스키마 5: feature/hub → feature/info (병상 갱신 알림)
 
 동시에 여러 구급차가 매칭 중일 때, `final_approval`이 확정된 병원의 병상 수가
 feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 병상에 다른 구급차가
 중복 매칭될 수 있다. 이걸 막기 위해 hub가 확정 즉시 info에 갱신된 병상 수를
 내려준다.
+
+**구현 완료.** `feature/info`의 `POST /hub/bed-update`(`info/app.py`, 기본
+포트 5003)로 전송한다. hub 쪽 대상 URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값
+`http://127.0.0.1:5003/hub/bed-update`)로 바꿀 수 있고, info가 잠깐 안 떠
+있어도 예외를 흡수하고 hub 프로세스는 계속 진행한다 — 그 경우엔 info의
+`send_to_hub.py`가 다음 주기적 재조회(기본 30분) 때 Supabase를 다시 읽어가며
+맞춰진다. 실제로 Supabase의 병상 수가 줄어드는 것까지 확인됐다.
 
 ```json
 {
@@ -266,9 +274,10 @@ feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 �
   `_send_to_dashboard()` 참고). `send_to_dashboard()` 자체는 로그만 남기는
   자리로 남아 있다.
 - **`feature/info`로 보내는 병상 갱신도 같은 패턴**: `deliver_bed_update()`가
-  `save_local_bed_update()`(로컬 저장) + `send_to_info()`(통신 자리)를 묶는다.
-  파일명은 사건 단위가 아니라 병원 단위라 `<hospitalId>_bed_update.json`으로
-  저장하고, 같은 병원이 다시 갱신되면 최신 상태로 덮어쓴다.
+  `save_local_bed_update()`(로컬 저장) + `send_to_info()`(실제 HTTP 전송,
+  위 "출력 스키마 5" 참고)를 묶는다. 파일명은 사건 단위가 아니라 병원 단위라
+  `<hospitalId>_bed_update.json`으로 저장하고, 같은 병원이 다시 갱신되면
+  최신 상태로 덮어쓴다.
 - 데모 단계에서는 통신을 붙인 뒤에도 로컬 저장을 계속 같이 한다 (감사·재현 목적).
   실제 사업화 단계에서는 이 부분을 재검토해야 한다.
 
