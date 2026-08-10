@@ -52,6 +52,7 @@ python call_capture.py
 | `--device` | `auto` | 연산 장치 (`auto` / `cuda` / `cpu`) |
 | `--compute-type` | `auto` | 연산 정밀도 |
 | `--llm-model` | `qwen3:14b` | 구조화에 사용할 Ollama 모델 |
+| `--beam-size` | `5` | Whisper 빔 서치 크기. 클수록 도메인 용어 인식 정확도↑, 속도↓ |
 
 ---
 
@@ -136,6 +137,7 @@ python transcribe.py data/origin_noise_data/파일명_noisy10db.wav --summarize
 | `--compute-type` | `auto` | 연산 정밀도 |
 | `--summarize` | (off) | 필터링 + SBAR 구조화까지 수행 |
 | `--llm-model` | `qwen3:14b` | 구조화에 사용할 Ollama 모델 |
+| `--beam-size` | `5` | Whisper 빔 서치 크기. 클수록 도메인 용어 인식 정확도↑, 속도↓ |
 
 <details>
 <summary>최초 실행 시 자동 다운로드되는 것들</summary>
@@ -284,6 +286,7 @@ Ctrl+C로 중지하면, 마지막 재변환 주기 이후 아직 STT를 거치�
 | `--stt-interval` | `5` | STT 재변환 주기(초) |
 | `--sbar-interval` | `20` | SBAR JSON 생성 주기(초, stt-interval의 배수 권장) |
 | `--llm-model` | `qwen3:14b` | 구조화에 사용할 Ollama 모델 |
+| `--beam-size` | `5` | Whisper 빔 서치 크기. 클수록 도메인 용어 인식 정확도↑, 속도↓ |
 
 **마이크 캡처 공통 특징**
 
@@ -369,6 +372,7 @@ ollama` → 서버 자동 기동 → `qwen2.5:0.5b`(스모크 테스트용 소�
 - 화자 분리(diarization)가 아직 없어 모든 턴의 `speaker`는 `"미분리"`로 고정
 - threshold 기반 분류기라 애매한 경계 문장은 오분류할 수 있음. 실제 통화 녹음으로 threshold 재조정하거나 KM-BERT로 교체하는 게 다음 단계
 - **필터링보다 그 앞 단계인 STT 정확도가 병목이다.** "산소포화도", "심정지" 같은 의료 용어를 Whisper가 오인식하는 경우가 실제로 관찰됨 (예: "심정지가 왔었습니다" → "심정도 너무 왔었습니다"). 소음 제거·정규화·고주파 강조 형태의 신호 전처리를 시도했으나 실제 통화 녹음 3건으로 검증한 결과 개선 효과가 없었고 일부는 오히려 오인식을 유발해(`구급대원`→`9급대원`) 제거함 — 근본 해결에는 응급실 도메인 데이터 파인튜닝 검토가 필요함
+  - 1차 완화 시도로 `transcribe()`/`live_transcribe()` 호출 시 Whisper `initial_prompt`에 응급이송 통화 도메인 문장(의식 저하, 산소포화도, 심정지·심폐소생술, 지혈, 흉부외과 등)을 흘려 어휘 사전 확률을 도메인 쪽으로 기울이고, `beam_size`를 CLI(`--beam-size`, 기본 5)로 노출해 정확도/속도를 실측 조정할 수 있게 함(`transcribe.py`의 `STT_INITIAL_PROMPT`/`DEFAULT_BEAM_SIZE`). 실제 통화 녹음으로 효과 검증은 아직 못 함 — 다음 단계에서 확인 필요
 - 통신(WebSocket으로 `feature/hub`에 실시간 전송)은 아직 미구현. 지금은 JSON을 터미널 출력 + 파일 저장까지만 한다
 - macOS + Homebrew가 아닌 환경에서는 Ollama 자동 설치가 동작하지 않음. [ollama.com](https://ollama.com)에서 직접 설치 필요
 

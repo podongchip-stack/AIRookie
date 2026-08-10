@@ -22,7 +22,12 @@ from faster_whisper import WhisperModel
 
 from filtering import MedicalRelevanceFilter
 from mic_recorder import MicRecorder
-from transcribe import build_and_emit_call_summary, format_timestamp
+from transcribe import (
+    DEFAULT_BEAM_SIZE,
+    STT_INITIAL_PROMPT,
+    build_and_emit_call_summary,
+    format_timestamp,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_VOICE_DIR = BASE_DIR / "data" / "voice_data"
@@ -39,6 +44,7 @@ def live_transcribe(
     stt_interval_sec: int = 5,
     sbar_interval_sec: int = 20,
     llm_model: str = "qwen3:14b",
+    beam_size: int = DEFAULT_BEAM_SIZE,
 ) -> None:
     print(f"모델 로딩 중... ({model_size}, device={device}, compute_type={compute_type})")
     load_start = time.perf_counter()
@@ -95,6 +101,8 @@ def live_transcribe(
                 buffer.flatten(),
                 language=language,
                 vad_filter=True,
+                beam_size=beam_size,
+                initial_prompt=STT_INITIAL_PROMPT,
             )
             transcribe_elapsed = time.perf_counter() - transcribe_start
 
@@ -153,7 +161,13 @@ def live_transcribe(
         final_elapsed = final_buffer.shape[0] / recorder.sample_rate if final_buffer.shape[0] else 0.0
         if final_elapsed > buffer_elapsed:
             print(f"\n[종료 전 마지막 구간 재변환 중... 누적 {final_elapsed:.1f}초]")
-            segments, info = model.transcribe(final_buffer.flatten(), language=language, vad_filter=True)
+            segments, info = model.transcribe(
+                final_buffer.flatten(),
+                language=language,
+                vad_filter=True,
+                beam_size=beam_size,
+                initial_prompt=STT_INITIAL_PROMPT,
+            )
             for seg in segments:
                 if seg.end <= printed_until:
                     continue
@@ -223,6 +237,12 @@ def main() -> None:
         help="SBAR JSON 생성 주기 (초, 기본: 20 - stt-interval의 배수로 지정)",
     )
     parser.add_argument("--llm-model", default="qwen3:14b", help="구조화에 사용할 Ollama 모델 (기본: qwen3:14b)")
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        default=DEFAULT_BEAM_SIZE,
+        help=f"Whisper 빔 서치 크기 (기본: {DEFAULT_BEAM_SIZE}. 클수록 정확도↑ 속도↓)",
+    )
     args = parser.parse_args()
 
     session = args.session or datetime.now().strftime("%Y_%m%d_%H%M")
@@ -238,6 +258,7 @@ def main() -> None:
         stt_interval_sec=args.stt_interval,
         sbar_interval_sec=args.sbar_interval,
         llm_model=args.llm_model,
+        beam_size=args.beam_size,
     )
 
 

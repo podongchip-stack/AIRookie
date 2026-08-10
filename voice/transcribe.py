@@ -20,6 +20,26 @@ HUB_VOICE_SUMMARY_URL = os.environ.get("HUB_VOICE_SUMMARY_URL", "http://127.0.0.
 # 모든 발화 턴에 동일한 placeholder를 채운다 (README "알려진 제약사항" 참고).
 UNDIARIZED_SPEAKER_LABEL = "미분리"
 
+# Whisper가 응급이송 통화에서 자주 놓치거나 오인식하는 의료 용어를 initial_prompt로
+# 미리 흘려준다. Whisper의 initial_prompt는 문맥 힌트로만 작용해 강제 디코딩은
+# 아니지만, 등장 어휘의 사전 확률을 해당 도메인 쪽으로 기울여준다 (예: "심정지가
+# 왔었습니다" -> "심정도 너무 왔었습니다" 같은 오인식이 실제로 관찰됨, README
+# "알려진 한계" 참고). 문장 형태로 주면 실제 통화체 억양/어순 학습에도 더 잘
+# 맞는다는 whisper 커뮤니티 권장을 따라 단어 나열이 아닌 짧은 문장들로 구성했다.
+STT_INITIAL_PROMPT = (
+    "환자는 의식이 저하되어 있습니다. 호흡 곤란을 호소하고 있습니다. "
+    "혈압과 맥박, 산소포화도를 측정했습니다. 심정지 상태로 심폐소생술을 시행 중입니다. "
+    "출혈이 지속되고 있어 압박 지혈 중입니다. 교통사고로 흉부에 충격을 입었습니다. "
+    "낙상으로 인한 골절이 의심됩니다. 구급대원입니다. 흉부외과, 신경외과, 정형외과, "
+    "응급의학과로 이송하겠습니다."
+)
+
+# beam_size가 클수록 후보 시퀀스를 더 넓게 탐색해 저확률(도메인 특화) 토큰을
+# 놓칠 확률이 줄어들지만, 그만큼 느려진다 (macOS는 CPU 전용이라 체감 영향이 큼).
+# faster-whisper 기본값(5)을 그대로 명시적 상수로 빼서, 나중에 실제 통화 녹음으로
+# 정확도/속도를 비교해가며 튜닝할 지점을 코드에서 바로 보이게 했다.
+DEFAULT_BEAM_SIZE = 5
+
 # 원본 음성/노이즈 합성 음성/STT 원문/구조화 결과를 용도별 폴더로 분리한다. 전부
 # .gitignore의 data/ 규칙에 걸려 저장소에는 올라가지 않는다 (README "폴더 구조" 참고).
 # origin_data·origin_noise_data 둘 다 입력 소스일 뿐이라, 어느 쪽 파일을 넣어도
@@ -66,6 +86,7 @@ def transcribe(
     compute_type: str,
     do_summarize: bool,
     llm_model: str,
+    beam_size: int = DEFAULT_BEAM_SIZE,
 ) -> None:
     print(f"모델 로딩 중... ({model_size}, device={device}, compute_type={compute_type})")
     load_start = time.perf_counter()
@@ -73,9 +94,15 @@ def transcribe(
     load_elapsed = time.perf_counter() - load_start
     print(f"모델 로딩 완료 ({load_elapsed:.2f}초)")
 
-    print(f"변환 중: {audio_path.name}")
+    print(f"변환 중: {audio_path.name} (beam_size={beam_size})")
     transcribe_start = time.perf_counter()
-    segments, info = model.transcribe(str(audio_path), language=language, vad_filter=True)
+    segments, info = model.transcribe(
+        str(audio_path),
+        language=language,
+        vad_filter=True,
+        beam_size=beam_size,
+        initial_prompt=STT_INITIAL_PROMPT,
+    )
 
     turn_texts: list[str] = []
     turn_offsets: list[float] = []
@@ -217,6 +244,12 @@ def main() -> None:
         help="실시간 음성 필터링 + SBAR 구조화를 수행해 feature/dashboard 전달용 JSON을 생성",
     )
     parser.add_argument("--llm-model", default="qwen3:14b", help="구조화에 사용할 Ollama 모델 (기본: qwen3:14b)")
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        default=DEFAULT_BEAM_SIZE,
+        help=f"Whisper 빔 서치 크기 (기본: {DEFAULT_BEAM_SIZE}. 클수록 정확도↑ 속도↓)",
+    )
     args = parser.parse_args()
 
     if not args.audio.exists():
@@ -231,6 +264,7 @@ def main() -> None:
         args.compute_type,
         args.summarize,
         args.llm_model,
+        args.beam_size,
     )
 
 
