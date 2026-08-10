@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 
 from mic_recorder import MicRecorder
-from transcribe import ORIGIN_DATA_DIR, transcribe
+from transcribe import DEFAULT_BEAM_SIZE, ORIGIN_DATA_DIR, transcribe
 
 
 def capture_call(
@@ -26,6 +26,7 @@ def capture_call(
     device: str,
     compute_type: str,
     llm_model: str,
+    beam_size: int = DEFAULT_BEAM_SIZE,
 ) -> None:
     audio_path = ORIGIN_DATA_DIR / f"{session}.wav"
 
@@ -59,6 +60,7 @@ def capture_call(
         compute_type=compute_type,
         do_summarize=True,
         llm_model=llm_model,
+        beam_size=beam_size,
     )
 
 
@@ -82,6 +84,12 @@ def main() -> None:
     )
     parser.add_argument("--compute-type", default="auto", help="연산 정밀도 (기본: auto)")
     parser.add_argument("--llm-model", default="qwen3:14b", help="구조화에 사용할 Ollama 모델 (기본: qwen3:14b)")
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        default=DEFAULT_BEAM_SIZE,
+        help=f"Whisper 빔 서치 크기 (기본: {DEFAULT_BEAM_SIZE}. 클수록 정확도↑ 속도↓)",
+    )
     args = parser.parse_args()
 
     session = args.session or datetime.now().strftime("%Y_%m%d_%H%M")
@@ -95,6 +103,7 @@ def main() -> None:
         device=args.device,
         compute_type=args.compute_type,
         llm_model=args.llm_model,
+        beam_size=args.beam_size,
     )
 
 
