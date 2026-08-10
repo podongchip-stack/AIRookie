@@ -36,7 +36,9 @@ create table if not exists hospitals (
                                                   --  hv1은 "전문의 보유 여부"가 아니라 전화번호 필드)
     hv2             integer,                     -- 내과 중환자실 병상
     hv3             integer,                     -- 외과 중환자실 병상
-    hv11            integer,                     -- 소아 관련 병상 (mapper.py: [추정] 필드)
+    hv11            integer,                     -- [명세 확인 후 정정] 소아 병상이 아니라 인큐베이터
+                                                  --  보유 여부(Y/N)다. 실제 소아 응급실 병상은 hv28이며
+                                                  --  이 테이블에는 없다. 매퍼는 이 컬럼을 읽지 않는다
     hvidate         timestamptz,                 -- 마지막 갱신 시각
 
     -- 중증질환 수용가능 여부 [플레이스홀더] — MKioskTy 코드별 의미가 아직

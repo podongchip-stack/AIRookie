@@ -191,16 +191,20 @@ class SupabaseEgenClient:
         return dt.strftime("%Y%m%d%H%M%S")
 
     def get_realtime_beds(self, stage1: str = "", stage2: str = "") -> list[dict]:
-        rows = self._select("hpid,duty_name,hvec,hvoc,hv11,hv2,hv3,hvidate")
+        # `hvicc`(일반 중환자실)는 매퍼가 ICU 코드를 만들 때 읽는 컬럼이다. 예전에는
+        # ICU를 hv2+hv3 합산으로 만들어서 조회하지 않았는데, 실 API 명세 확인 후
+        # 매퍼가 hvicc를 쓰도록 바뀌었으므로 여기서도 같이 가져와야 ICU가 안 빠진다.
+        # 이 테이블에는 hv28(소아)·hv29(응급실 음압격리)·hv34(심장내과 중환자실)
+        # 컬럼이 없어 해당 병상 종류는 이 경로에서 늘 미상이다 — 실 API(--http)를
+        # 쓰면 채워진다.
+        rows = self._select("hpid,duty_name,hvec,hvoc,hvicc,hvidate")
         return [
             {
                 "hpid": row["hpid"],
                 "dutyName": row["duty_name"],
                 "hvec": row.get("hvec"),
                 "hvoc": row.get("hvoc"),
-                "hv11": row.get("hv11"),
-                "hv2": row.get("hv2"),
-                "hv3": row.get("hv3"),
+                "hvicc": row.get("hvicc"),
                 "hvidate": self._format_hvidate(row.get("hvidate")),
             }
             for row in rows
