@@ -80,6 +80,14 @@ class EgenClient(Protocol):
         """응급의료기관 목록정보. 좌표(wgs84Lat/Lon)와 기관 분류가 여기서 나온다."""
         ...
 
+    def update_bed_count(self, hpid: str, hvec_value: int) -> None:
+        """가용 병상 수(ER_ADULT, `hvec`)를 갱신한다. feature/hub가 이송 확정
+        (final_approval)으로 병상이 줄었을 때 보내는 값을 반영하는 쓰기 경로다
+        (info/README.md "hub → info" 참고). 읽기 세 메서드와 반대 방향이라
+        여기 한 곳에만 추가한다 — 그 외 컬럼(위치, 목록정보 등)은 hub가 바꿀
+        이유가 없어 이 메서드의 대상이 아니다."""
+        ...
+
 
 class FixtureEgenClient:
     """미리 만들어둔 파일에서 읽는 구현.
@@ -109,6 +117,12 @@ class FixtureEgenClient:
 
     def get_list_info(self, q0: str = "경상남도", q1: str = "진주시") -> list[dict]:
         return self._load("list_info")
+
+    def update_bed_count(self, hpid: str, hvec_value: int) -> None:
+        """fixture는 파일 기반 읽기 전용이라 쓰기가 의미 없다 — 인터페이스만
+        맞추는 no-op. 로컬에서 hub↔info 통신을 파일 fixture로 테스트할 때
+        AttributeError 없이 조용히 넘어가게 하는 용도다."""
+        return None
 
 
 class SupabaseEgenClient:
@@ -202,6 +216,13 @@ class SupabaseEgenClient:
             for row in rows
         ]
 
+    def update_bed_count(self, hpid: str, hvec_value: int) -> None:
+        """`hospitals` 테이블의 `hvec`(응급실 성인 병상, get_realtime_beds()가
+        읽는 것과 같은 컬럼)을 갱신한다. `_select()`의 읽기 패턴과 맞춰
+        `.update().eq()`를 그대로 쓴다 — hpid로 행을 하나 특정해 그 컬럼만
+        바꾸고, 다른 컬럼(위치·중증질환 수용가능 등)은 건드리지 않는다."""
+        self._client.table(self.TABLE).update({"hvec": hvec_value}).eq("hpid", hpid).execute()
+
 
 class HttpEgenClient:
     """진짜 E-Gen API를 호출하는 구현.
@@ -236,3 +257,9 @@ class HttpEgenClient:
 
     def get_list_info(self, q0: str, q1: str) -> list[dict]:
         return self._call(OP_LIST_INFO, {"Q0": q0, "Q1": q1})
+
+    def update_bed_count(self, hpid: str, hvec_value: int) -> None:
+        raise NotImplementedError(
+            "E-Gen은 조회 전용 공개 API라 병상 갱신을 쓸 방법이 없다. "
+            "실제 API로 전환해도 이 메서드는 SupabaseEgenClient에서만 의미가 있다."
+        )
