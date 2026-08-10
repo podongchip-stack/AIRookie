@@ -1,19 +1,26 @@
 """병원 정보(HospitalInfo)를 feature/hub로 전송한다.
 
-E-Gen 공개 API 연동(Hospital_inform/info/)은 서비스키 승인 대기 중이라 아직
-실제 데이터를 받아올 수 없다 (Hospital_inform/README.md "미해결 항목" 참고).
-그래서 E-Gen 서비스키가 나오기 전까지, Hospital_inform/이 이미 갖춘 Supabase
-대체 DB 연동(SupabaseEgenClient + mapper.py)을 그대로 재사용해 실제 서울
-권역응급의료센터 데이터를 가져와 hub로 보낸다 (Hospital_inform/supabase/schema.sql,
-egen/client.py 참고). 매퍼 로직은 여기서 새로 만들지 않고 그대로 가져다 쓴다 —
-나중에 HttpEgenClient로 바꿀 때도 이 파일은 손댈 필요가 없다.
+E-Gen 서비스키가 승인(2026-08-10)되어 병원 목록·좌표·중증질환 수용가능정보는
+실제 E-Gen API(`HttpEgenClient`)에서 가져온다. 단, 실시간 병상 수(hvec)는
+지금도 Supabase 대체 DB(`SupabaseEgenClient`)에서 가져온다 — E-Gen은 조회
+전용 공개 API라 hub가 이송 확정(final_approval) 시 차감한 병상 수를 되돌려
+쓸 방법이 없다(`egen/client.py`의 `HttpEgenClient.update_bed_count()` 참고).
+병상까지 실 API로 읽으면 이 스크립트가 재조회할 때마다(기본 30분) hub가 이미
+차감해둔 값이 차감 안 된 원래 값으로 되돌아가버려(`hub_engine.py`의
+`update_hospital_info()`는 feature/info 전송 재시도 대기열에 걸린 경우만
+덮어쓰기를 막고 이 경우는 막지 않는다) 뺑뺑이 방지라는 목적과 정반대로 간다.
+그래서 병상만 우리가 직접 쓸 수 있는 Supabase에 남겨, hub의 차감이 다음
+재조회에도 그대로 유지되게 한다(`fetch_hospitals()` 참고). 매퍼 로직
+(`egen/mapper.py`)은 소스가 섞여도 hpid 기준으로 그대로 합쳐지므로 손대지
+않았다.
 
-Supabase의 병상 데이터는 계속 바뀌는데 hub는 한 번 받은 값을 메모리에 들고
-있을 뿐 스스로 재조회하지 않는다. 그래서 이 스크립트는 한 번 실행하고 끝나는
-게 아니라 REFETCH_INTERVAL_SEC마다 계속 재조회·재전송하는 상시 프로세스로
-돈다 (팀 논의 결과 — Supabase realtime 구독 대신 주기적 재조회 방식을 택함).
-그 주기 사이에 생기는 병상 변동은 hub가 이송 확정(final_approval) 시 보내는
-HospitalBedUpdate로 보정한다 (info/app.py, info/README.md "hub → info" 참고).
+Supabase/실 API 어느 쪽이든 병원 정보는 계속 바뀌는데 hub는 한 번 받은 값을
+메모리에 들고 있을 뿐 스스로 재조회하지 않는다. 그래서 이 스크립트는 한 번
+실행하고 끝나는 게 아니라 REFETCH_INTERVAL_SEC마다 계속 재조회·재전송하는
+상시 프로세스로 돈다 (팀 논의 결과 — Supabase realtime 구독 대신 주기적
+재조회 방식을 택함). 그 주기 사이에 생기는 병상 변동은 hub가 이송 확정
+(final_approval) 시 보내는 HospitalBedUpdate로 보정한다 (info/app.py,
+info/README.md "hub → info" 참고).
 
 같은 주기로 구급차 레지스트리(Supabase `ambulances` 테이블 — 병원용과는
 별도의 Supabase 프로젝트)도 읽어 hub에 보낸다. `AMBULANCE_SUPABASE_URL`/
@@ -33,7 +40,7 @@ import requests
 HOSPITAL_INFORM_INFO_DIR = Path(__file__).resolve().parent / "Hospital_inform" / "info"
 sys.path.insert(0, str(HOSPITAL_INFORM_INFO_DIR))
 
-from egen.client import SupabaseEgenClient  # noqa: E402
+from egen.client import HttpEgenClient, SupabaseEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
 from schema import AmbulanceInfo, HospitalInfo  # noqa: E402
 
@@ -58,16 +65,58 @@ AMBULANCE_TABLE = "ambulances"
 DEFAULT_REFETCH_INTERVAL_SEC = 30 * 60
 REFETCH_INTERVAL_SEC = int(os.environ.get("INFO_REFETCH_INTERVAL_SEC", DEFAULT_REFETCH_INTERVAL_SEC))
 
+# Supabase 대체 DB는 E-Gen 서비스키 승인 전에 만들어져 실제 hpid를 몰랐고,
+# 자체 식별자(S0000001~7)를 붙였다 — 실 API의 hpid(A11...)와 전혀 다른 값이라
+# 그대로는 hpid 기준으로 join(map_all)할 수 없다. 두 소스의 좌표를 대조해
+# (전부 최근접 병원까지 거리 1.2km 이내로 확인됨) 수기로 검증한 대응표.
+# 이 7개 병원 구성이 바뀌면(추가/교체) 같이 갱신해야 한다.
+SUPABASE_TO_EGEN_HPID = {
+    "S0000001": "A1100017",  # 서울대학교병원
+    "S0000002": "A1100008",  # 고려대학교안암병원 (실 API명: 학교법인고려중앙학원고려대학교의과대학부속병원(안암병원))
+    "S0000003": "A1100035",  # 서울의료원 (실 API명: 서울특별시서울의료원)
+    "S0000004": "A1100014",  # 고려대학교구로병원 (실 API명: 고려대학교의과대학부속구로병원)
+    "S0000005": "A1100005",  # 이화여자대학교목동병원 (실 API명: 이화여자대학교의과대학부속목동병원)
+    "S0000006": "A1100013",  # 한양대학교병원
+    "S0000007": "A1100043",  # 강동경희대학교병원
+}
+_EGEN_TO_SUPABASE_HPID = {egen: supabase for supabase, egen in SUPABASE_TO_EGEN_HPID.items()}
+
+
+def _remap_to_supabase_hpid(rows: list[dict]) -> list[dict]:
+    """실 API 응답의 hpid를 Supabase hpid로 바꿔 bed_rows와 join되게 한다.
+    대응표 밖의 기관(서울 전체 74곳 중 우리가 다루는 7곳이 아닌 나머지)은
+    이번 매칭 대상이 아니므로 제외한다."""
+    remapped = []
+    for row in rows:
+        supabase_hpid = _EGEN_TO_SUPABASE_HPID.get(row.get("hpid"))
+        if supabase_hpid is None:
+            continue
+        remapped.append({**row, "hpid": supabase_hpid})
+    return remapped
+
 
 def fetch_hospitals() -> list[HospitalInfo]:
-    """Supabase 대체 DB에서 병원 정보를 가져와 HospitalInfo로 변환한다."""
-    client = SupabaseEgenClient()
-    hospitals, report = map_all(
-        client.get_realtime_beds(),
-        client.get_list_info(),
-        client.get_severe_illness(),
-    )
-    print("=== Supabase에서 병원 정보 조회 ===")
+    """병상 수는 Supabase에서, 목록·좌표·중증질환 수용가능정보는 실 E-Gen API에서
+    가져와 합친다 (모듈 docstring의 이유 참고).
+
+    실 API 호출이 실패하면(서비스키 미설정, 일일 트래픽 한도 초과, 일시 장애 등)
+    이번 주기는 목록·중증질환 정보도 Supabase 값으로 대체해 계속 돈다 — 외부
+    API 장애가 상시 프로세스 전체를 멈추면 안 된다는 기존 방어 원칙과 동일하다.
+    """
+    supabase = SupabaseEgenClient()
+    bed_rows = supabase.get_realtime_beds()
+
+    try:
+        http = HttpEgenClient()
+        location_rows = _remap_to_supabase_hpid(http.get_list_info())
+        severe_rows = _remap_to_supabase_hpid(http.get_severe_illness())
+        print("=== E-Gen 실 API에서 목록·중증질환 정보 조회 (병상은 Supabase 유지) ===")
+    except Exception as e:  # noqa: BLE001 — 실 API 장애가 상시 프로세스를 죽이면 안 됨
+        print(f"  [E-Gen] 실 API 조회 실패, 이번 주기는 목록·중증질환도 Supabase 값으로 대체: {e}")
+        location_rows = supabase.get_list_info()
+        severe_rows = supabase.get_severe_illness()
+
+    hospitals, report = map_all(bed_rows, location_rows, severe_rows)
     print(report.summary())
     return hospitals
 
