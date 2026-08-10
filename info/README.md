@@ -198,6 +198,34 @@ optional 확장으로 덧붙여 내보낸다. 기존 필드는 하나도 바꾸�
 }
 ```
 
+### 1-B. feature/info → feature/hub (AmbulanceInfo — 구급차 레지스트리, 신규)
+
+여러 구급차가 동시에 사건을 진행하는 걸 지원하면서 추가됐다. 병원 정보와
+같은 주기(`send_to_hub.py`의 `sync_once()`)로, 병원용과는 **별도의 Supabase
+프로젝트**(`ambulances` 테이블)에서 읽어 `POST /info/ambulances`로 보낸다.
+`AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY` 환경변수가 없으면 이 부분만
+조용히 건너뛰고 병원 정보 동기화는 그대로 진행한다.
+
+```json
+{
+  "apid": "A0000001",
+  "name": "구급 1호차",
+  "gps": { "lat": 37.4979, "lng": 127.0276 },
+  "voicePort": 6000,
+  "source": "rule",
+  "updatedAt": "2026-08-11T00:00:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `apid` | string | 구급차 고유 식별자 |
+| `name` | string | 표시용 이름 |
+| `gps.lat` / `gps.lng` | number | 구급차 위치. 대회 데모 단계라 서울 랜드마크로 고정한 값(실시간 아님) |
+| `voicePort` | number | 이 구급차 voice 인스턴스가 뜰 포트. IP는 여기 없다 — voice가 뜰 때 자기 IP를 자동 탐지해 hub에 직접 자가등록한다(feature/hub README.md 참고) |
+| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+| `updatedAt` | string (ISO 8601) | 마지막 갱신 시각 |
+
 ### 2. feature/hub → feature/info (HospitalInfo 부분 갱신 — 병상 수만)
 
 > dashboard의 승인 액션은 feature/hub가 직접 받는다 (feature/info는 받지 않음).
@@ -209,10 +237,11 @@ optional 확장으로 덧붙여 내보낸다. 기존 필드는 하나도 바꾸�
 > hub가 바꿀 이유가 없어서 이 메시지엔 담지 않는다 — 받은 쪽(info)은
 > `hospitalId`로 기존 레코드를 찾아 `availableBedCount`만 덮어쓰면 된다.
 >
-> **구현 완료.** `info/app.py`가 `POST /hub/bed-update`(기본 포트 5003)로
-> 이 메시지를 받아 `SupabaseEgenClient.update_bed_count()`로 Supabase의
-> `hvec` 컬럼에 즉시 반영한다. hub 쪽 전송 URL은 `INFO_BED_UPDATE_URL`
-> 환경변수(기본값 `http://127.0.0.1:5003/hub/bed-update`)로 바꿀 수 있고,
+> **구현 완료.** `info/app.py`가 `POST /hub/bed-update`(기본 포트 5002 — 팀
+> 합의로 info 고정 포트, 2026-08-11)로 이 메시지를 받아
+> `SupabaseEgenClient.update_bed_count()`로 Supabase의 `hvec` 컬럼에 즉시
+> 반영한다. hub 쪽 전송 URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값
+> `http://127.0.0.1:5002/hub/bed-update`)로 바꿀 수 있고,
 > info 서버가 잠깐 안 떠 있어도 hub는 예외를 흡수하고 계속 진행한다 — 그
 > 경우엔 최대 재조회 주기(기본 30분) 뒤에 `send_to_hub.py`가 다시 맞춰준다.
 > 실제 Supabase 병상이 줄어드는 것까지 확인된 상태다.
@@ -482,9 +511,13 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
   좌표·실시간 병상 수는 건드리지 않고, E-Gen이 못 채우는 당직·인력만 덮어야 한다.
   어느 값이 어디서 왔는지(AI / 규칙) 표기하는 방식도 미정
 - **서버** — hub의 병상 갱신을 받는 `POST /hub/bed-update`(`app.py`, 기본 포트
-  5003)는 구현·검증 완료(실제 Supabase 병상이 줄어드는 것까지 확인). 다만
-  `requirements.txt`의 `Flask-SocketIO`는 이 엔드포인트가 순수 REST(Flask)라
-  실제로는 안 쓰인다 — 제거 검토 필요
+  5002 — 팀 합의로 고정)는 구현·검증 완료(실제 Supabase 병상이 줄어드는 것까지
+  확인). 다만 `requirements.txt`의 `Flask-SocketIO`는 이 엔드포인트가 순수
+  REST(Flask)라 실제로는 안 쓰인다 — 제거 검토 필요
+- 구급차 정보(`AmbulanceInfo`) 동기화는 구현·검증 완료(실제 Supabase
+  `ambulances` 테이블 3건 조회 확인). 다만 병원용과 별도 프로젝트라
+  `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY`를 각자 `.env`에 따로
+  받아 넣어야 한다
 - OCR 필드 값 누락 검사 — 워터마크 문서에서 라벨은 읽고 값을 비우는 사례에 대한
   스키마 기반 검사
 

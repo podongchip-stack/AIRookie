@@ -49,5 +49,6 @@ def bed_update():
 
 
 if __name__ == "__main__":
-    # hub=5001, voice=5002와 겹치지 않게 5003을 쓴다.
-    app.run(host="0.0.0.0", port=5003, debug=True)
+    # 포트 배정: hub=5001, info=5002(고정), 구급차 대시보드=3000대, 병원
+    # 대시보드=4000대, voice=구급차 장비마다 6000대(팀 합의, 2026-08-11).
+    app.run(host="0.0.0.0", port=5002, debug=True)

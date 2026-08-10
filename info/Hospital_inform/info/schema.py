@@ -226,3 +226,27 @@ class HospitalBedUpdate(Strict):
     @classmethod
     def _iso8601(cls, value: str) -> str:
         return _validate_iso8601(value)
+
+
+class AmbulanceInfo(Strict):
+    """feature/info → feature/hub : 구급차 레지스트리(Supabase `ambulances`
+    테이블 — 병원용과 별도 프로젝트 미러). hub의 `hub/schema.py`에 있는
+    `AmbulanceInfo`와 필드명·타입을 1:1로 맞췄다.
+
+    GPS는 대회 데모 단계라 서울 랜드마크로 고정한 값(실시간 아님)이고,
+    voicePort는 그 구급차 voice 인스턴스가 뜰 포트다. voice의 실제 IP는
+    여기 없다 — 노트북마다 네트워크가 달라 자주 바뀔 수 있어서, voice가 뜰
+    때 hub에 직접 자가등록하는 방식으로 따로 처리한다.
+    """
+
+    apid: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    gps: GpsPoint
+    voicePort: int = Field(gt=0, le=65535)
+    source: Literal["rule"] = "rule"
+    updatedAt: str
+
+    @field_validator("updatedAt")
+    @classmethod
+    def _iso8601(cls, value: str) -> str:
+        return _validate_iso8601(value)
