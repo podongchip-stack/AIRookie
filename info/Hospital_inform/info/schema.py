@@ -79,6 +79,17 @@ def label_ko(code: str) -> str:
     return LABELS_KO.get(code, code)
 
 
+def _validate_iso8601(value: str) -> str:
+    """ISO 8601로 읽히는지 확인한다. HospitalInfo/HospitalBedUpdate가 공유한다."""
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(
+            f"updatedAt이 ISO 8601 형식이 아니다: {value!r} (예: '2026-07-30T09:55:00Z')"
+        ) from None
+    return value
+
+
 # --- 모델 -------------------------------------------------------------------
 
 
@@ -150,13 +161,7 @@ class HospitalInfo(Strict):
         hub는 이 값을 그냥 문자열로 받지만, 형식이 깨져 있으면 나중에 시각 비교나
         보고서 작성 때 문제가 된다. 만드는 쪽에서 막는 편이 싸다.
         """
-        try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            raise ValueError(
-                f"updatedAt이 ISO 8601 형식이 아니다: {value!r} (예: '2026-07-30T09:55:00Z')"
-            ) from None
-        return value
+        return _validate_iso8601(value)
 
     @field_validator("bedsByType")
     @classmethod
@@ -198,3 +203,26 @@ class HospitalInfo(Strict):
         hub는 무시하지만, 사람이 결과 파일을 열어볼 때 지저분해진다.
         """
         return self.model_dump_json(exclude_none=True, indent=2)
+
+
+class HospitalBedUpdate(Strict):
+    """feature/hub → feature/info : 병상 갱신(부분 갱신, patch).
+
+    hub의 `hub/schema.py`에 있는 `HospitalBedUpdate`와 필드명·타입이 1:1로
+    대응한다 — 여기서 새로 스키마를 설계하지 않고 그대로 맞춘 것이다. 두
+    브랜치가 서로 다른 필드를 갖게 되면 develop 병합 후에도 파싱이 어긋난다.
+
+    final_approval로 병상이 실제로 줄었을 때만 오며, HospitalInfo 전체가
+    아니라 바뀐 필드(병상 수·상태)만 담는다(README.md "hub → info" 참고).
+    """
+
+    hospitalId: str = Field(min_length=1)
+    availableBedCount: int = Field(ge=0)
+    status: Literal["confirmed", "rejected"]
+    updatedAt: str
+    source: Literal["rule"] = "rule"
+
+    @field_validator("updatedAt")
+    @classmethod
+    def _iso8601(cls, value: str) -> str:
+        return _validate_iso8601(value)
