@@ -57,15 +57,22 @@ def main() -> None:
     print(f"\n  매칭 소요 시간: {elapsed:.2f}초 (병원 {len(result.hospitals)}곳, 배치 임베딩 1회 호출)")
     for h in result.hospitals:
         dept = h.specialtyMatch.department or "(매칭 실패, 거리만으로 순위 유지)"
+        beds = "미상" if h.bedCountUnknown else f"{h.availableBedCount}"
         print(
             f"  {h.hospitalId} {h.name} — 거리 {h.distanceKm}km, "
-            f"진료과 매칭: {dept} (score={h.specialtyMatch.score}), status={h.status}"
+            f"진료과 매칭: {dept} (score={h.specialtyMatch.score}), "
+            f"병상 {beds}, status={h.status}"
         )
 
     assert any(h.hospitalId == "H002" and h.specialtyMatch.department is None for h in result.hospitals), (
         "진료과 정보가 없는 병원(H002)이 후보에서 빠지면 안 된다"
     )
     print("\n  [확인] 진료과 정보가 없는 H002도 후보 리스트에서 제외되지 않음 (거리 기준으로만 순위)")
+
+    assert not any(h.hospitalId == "H002" and h.bedCountUnknown for h in result.hospitals), (
+        "H002는 bedsByType에 ER_ADULT=0을 명시한 '확인된 만실'이라 '미상'으로 잡히면 안 된다"
+    )
+    print("  [확인] H002의 병상 0은 '미상'이 아니라 '확인된 만실'로 구분됨")
 
     assert not any(h.hospitalId == "H003" for h in result.hospitals), (
         "zone=1 밖의 병원(H003)은 이 단계에서 후보에 들어오면 안 된다"

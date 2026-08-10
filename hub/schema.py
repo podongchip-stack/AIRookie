@@ -68,6 +68,11 @@ class HospitalInfo(BaseModel):
     specialties: list[Specialty] = Field(default_factory=list)
     source: Literal["rule"] = "rule"
     updatedAt: str
+    # feature/info는 병상 수가 미상일 때 availableBedCount에 0을 넣되, bedsByType에
+    # 해당 코드(ER_ADULT 등) 키를 넣지 않는 것으로 "미상"과 "확인된 만실"을 구분한다
+    # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
+    # 여기에 필드가 없으면 pydantic이 모르는 필드로 흘려버려서 그 구분이 사라진다.
+    bedsByType: Optional[dict[str, int]] = None
 
 
 # ── feature/hub → feature/dashboard (출력) ──────────────────────────────────
@@ -92,6 +97,10 @@ class HospitalMatch(BaseModel):
     distanceKm: float
     specialtyMatch: SpecialtyMatch
     availableBedCount: int
+    # availableBedCount가 0일 때 그게 "확인된 만실"인지 "미상"인지 구분한다.
+    # availableBedCount 자체를 Optional로 바꾸면 dashboard의 기존 타입이 깨지므로
+    # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
+    bedCountUnknown: bool = False
     status: HospitalStatus = "pending"
     etaMin: Optional[int] = None
 

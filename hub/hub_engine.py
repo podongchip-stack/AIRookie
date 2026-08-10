@@ -40,6 +40,23 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# feature/info는 성인 응급실 병상 수를 bedsByType["ER_ADULT"]로 보내고, 미상이면
+# 그 키 자체를 넣지 않는다 (availableBedCount에는 보수적으로 0이 들어간다).
+_ER_ADULT = "ER_ADULT"
+
+
+def _is_bed_count_unknown(info: HospitalInfo) -> bool:
+    """병상 수가 "확인된 만실"이 아니라 "미상"인지 판정한다.
+
+    이 구분을 살리지 않으면 미상인 병원이 대시보드에 "병상 0"으로 떠서, 시스템이
+    후보에서 빼지 않아도 구급대원이 보고 스스로 뺀다 — 뺑뺑이를 줄이려는 목적과
+    정반대 결과가 된다.
+    """
+    if info.availableBedCount > 0:
+        return False
+    return info.bedsByType is None or _ER_ADULT not in info.bedsByType
+
+
 class HubEngine:
     def __init__(self, specialty_matcher: SpecialtyMatcher | None = None) -> None:
         self._hospitals: dict[str, HospitalInfo] = {}
@@ -75,11 +92,23 @@ class HubEngine:
             return None
 
         info = self._hospitals.get(action.hospital_id)
-        if info is None or info.availableBedCount <= 0:
-            # 모르는 병원이거나 이미 병상이 없으면 더 깎지 않는다 (음수 방지)
+        # 병상을 깎지 않고 넘어가는 경우를 이유별로 남긴다. "미상"과 "확인된 만실"은
+        # 결과(차감 안 함)는 같아도 원인이 달라서, 로그에서 섞이면 사후에 데이터 품질
+        # 문제인지 실제로 자리가 없었던 건지 구분할 수 없다.
+        skip_reason = None
+        if info is None:
+            skip_reason = "unknown hospital"
+        elif _is_bed_count_unknown(info):
+            # 모르는 값은 깎을 수 없다. 다만 확정(status) 자체는 막지 않는다 —
+            # 미상을 이유로 이송을 막으면 뺑뺑이가 오히려 늘어난다.
+            skip_reason = "bed count unknown"
+        elif info.availableBedCount <= 0:
+            skip_reason = "no beds left"
+
+        if skip_reason is not None:
             decision_log.log_decision(
                 "approval_action_ignored_no_bed",
-                {"action": action.model_dump(), "reason": "unknown hospital or no beds left"},
+                {"action": action.model_dump(), "reason": skip_reason},
             )
             return None
 
@@ -170,6 +199,7 @@ class HubEngine:
                 distanceKm=item["distanceKm"],
                 specialtyMatch=item["specialtyMatch"],
                 availableBedCount=item["info"].availableBedCount,
+                bedCountUnknown=_is_bed_count_unknown(item["info"]),
                 status=self._approval_status.get(item["hospitalId"], "pending"),
             )
             for item in rank(scored)

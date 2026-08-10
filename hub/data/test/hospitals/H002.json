@@ -3,6 +3,7 @@
   "name": "중앙병원",
   "gps": { "lat": 35.1600, "lng": 128.1400 },
   "availableBedCount": 0,
+  "bedsByType": { "ER_ADULT": 0 },
   "nightDutyAvailable": false,
   "specialties": [],
   "source": "rule",

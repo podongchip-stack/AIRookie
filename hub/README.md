@@ -94,6 +94,7 @@ feature/hub는 `summary` 필드(부상 상태, 예상 병명, 중증도)는 매�
   "name": "○○병원",
   "gps": { "lat": 35.1795, "lng": 128.1076 },
   "availableBedCount": 12,
+  "bedsByType": { "ER_ADULT": 12, "ICU": 3 },
   "nightDutyAvailable": true,
   "specialties": [
     {
@@ -112,7 +113,8 @@ feature/hub는 `summary` 필드(부상 상태, 예상 병명, 중증도)는 매�
 | `hospitalId` | string | 병원 고유 식별자 |
 | `name` | string | 병원명 |
 | `gps.lat` / `gps.lng` | number | 병원 위치 좌표 (Hub의 거리 계산에 사용) |
-| `availableBedCount` | number | 현재 실시간 가용 응급실 병상 수 |
+| `availableBedCount` | number | 현재 실시간 가용 응급실 병상 수. **미상일 때도 0이 들어온다** — 아래 `bedsByType`으로 구분한다 |
+| `bedsByType` | object (optional) | 병상 종류별 가용 수(`ER_ADULT`·`ICU` 등). feature/info는 **미상인 종류의 키를 아예 넣지 않는 것**으로 "확인된 만실(`{"ER_ADULT": 0}`)"과 "미상(키 없음)"을 구분한다. hub는 `availableBedCount == 0`이면서 `ER_ADULT` 키가 없을 때만 미상으로 판정한다 |
 | `nightDutyAvailable` | boolean | 야간 당직 전문의 존재 여부 |
 | `specialties[].department` | string | 진료과명 |
 | `specialties[].doctorCount` | number | 해당 진료과 수술 가능 의사 수 |
@@ -193,6 +195,7 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
         "score": 0.82
       },
       "availableBedCount": 12,
+      "bedCountUnknown": false,
       "status": "confirmed",
       "etaMin": 6
     }
@@ -215,6 +218,7 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 | `hospitals[].specialtyMatch.department` | string | 예상 병명에 매칭된 진료과 |
 | `hospitals[].specialtyMatch.score` | number (0~1) | 해당 진료과의 수술 전문성 적합도 점수. `distanceKm`과 가중합되어 최종 순위 산출 |
 | `hospitals[].availableBedCount` | number | 실시간 가용 병상 수 |
+| `hospitals[].bedCountUnknown` | boolean | `availableBedCount`가 0일 때 그게 **"확인된 만실"(false)**인지 **"미상"(true)**인지. **dashboard는 true면 "0"이 아니라 "미상"으로 표시해야 한다** — 미상을 0으로 보여주면 구급대원이 멀쩡한 병원을 직접 후보에서 빼게 되어, 뺑뺑이를 줄이려는 목적과 정반대가 된다 |
 | `hospitals[].status` | `"pending"` \| `"approved"` \| `"rejected"` \| `"confirmed"` | 병원 응답 상태 |
 | `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
