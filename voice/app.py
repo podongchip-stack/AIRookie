@@ -48,6 +48,13 @@ HUB_BASE_URL = os.environ.get("HUB_BASE_URL", "http://127.0.0.1:5001")
 # 주기로 계속 재시도한다(info/send_to_hub.py와 동일한 재시도 철학).
 VOICE_REGISTER_RETRY_SEC = int(os.environ.get("VOICE_REGISTER_RETRY_SEC", 5))
 
+# 이 voice 인스턴스가 실제로 바인딩할 포트. 포트 배정표(hub=5001, info=5002
+# 고정, voice=구급차 장비마다 6000대, 팀 합의 2026-08-11)의 voice 몫 — 구급차
+# 레지스트리(AmbulanceInfo.voicePort)에 등록된 값과 맞춰서 실행해야 hub가
+# 자가등록 시 알려주는 IP와 조합해 이 인스턴스를 찾을 수 있다. 하드코딩하면
+# info(5002)와 포트가 겹쳐 같은 장비에서 동시에 못 띄우므로 환경변수로 뺐다.
+VOICE_PORT = int(os.environ.get("VOICE_PORT", 6000))
+
 _recorder: MicRecorder | None = None
 _session: str | None = None
 _case_id: str | None = None
@@ -168,4 +175,4 @@ if __name__ == "__main__":
     # hub가 살아있든 아니든 서버는 바로 뜨게, 자가등록은 별도 스레드에서
     # 재시도하며 진행한다 (hub/info가 이 voice보다 늦게 뜨는 순서도 흔할 것).
     threading.Thread(target=_register_with_hub, daemon=True).start()
-    app.run(host="0.0.0.0", port=5002, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=VOICE_PORT, debug=True, threaded=True)

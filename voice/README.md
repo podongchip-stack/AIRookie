@@ -301,12 +301,13 @@ Ctrl+C로 중지하면, 마지막 재변환 주기 이후 아직 STT를 거치�
 중계해주는 방식으로 이뤄진다(feature/hub README.md 참고).
 
 ```bash
-VOICE_APID=A0000001 python app.py
+VOICE_APID=A0000001 VOICE_PORT=6000 python app.py
 ```
 
 | 환경변수 | 기본값 | 설명 |
 | --- | --- | --- |
 | `VOICE_APID` | (없음) | 이 voice 인스턴스가 담당하는 구급차 식별자. hub의 구급차 레지스트리(apid)와 일치해야 하며, 없으면 hub 자가등록 자체를 건너뛴다(단독 CLI 테스트용) |
+| `VOICE_PORT` | `6000` | 이 인스턴스가 실제로 바인딩할 포트. 포트 배정표(hub=5001, info=5002 고정, voice=구급차마다 6000대)의 voice 몫 — 구급차 레지스트리의 `AmbulanceInfo.voicePort`와 같은 값으로 맞춰야 한다. 한 장비에서 여러 구급차를 흉내낼 땐 인스턴스마다 다르게 줘야 한다(안 그러면 포트 충돌) |
 | `HUB_BASE_URL` | `http://127.0.0.1:5001` | hub 주소. 자가등록 요청 및 자기 IP 자동 탐지(이 주소로 나가는 인터페이스 확인) 둘 다에 쓰인다 |
 | `VOICE_REGISTER_RETRY_SEC` | `5` | hub 자가등록 실패 시 재시도 간격(초) |
 | `VOICE_STT_MODEL` / `VOICE_LANGUAGE` / `VOICE_DEVICE` / `VOICE_COMPUTE_TYPE` / `VOICE_LLM_MODEL` | `call_capture.py`의 CLI 기본값과 동일 | STT/구조화 파라미터 |
