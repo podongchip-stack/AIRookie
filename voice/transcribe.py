@@ -94,6 +94,7 @@ def transcribe(
     do_summarize: bool,
     llm_model: str,
     beam_size: int = DEFAULT_BEAM_SIZE,
+    case_id: str | None = None,
 ) -> None:
     print(f"모델 로딩 중... ({model_size}, device={device}, compute_type={compute_type})")
     load_start = time.perf_counter()
@@ -140,6 +141,7 @@ def transcribe(
         model_size=model_size,
         llm_model=llm_model,
         audio_path=audio_path,
+        case_id=case_id,
     )
 
 
@@ -152,6 +154,7 @@ def build_and_emit_call_summary(
     model_size: str,
     llm_model: str,
     audio_path: Path,
+    case_id: str | None = None,
 ) -> None:
     """STT 결과를 SBAR 구조화 -> JSON 조립까지 수행한다.
 
@@ -167,6 +170,10 @@ def build_and_emit_call_summary(
     실시간 스트림 연동 시에는 실제 통화 시작 시각으로 교체하면 된다.
     """
     call_start = datetime.now(timezone.utc) - timedelta(seconds=duration_sec)
+    # voice/app.py(실제 파이프라인)는 hub가 중계한 caseId를 그대로 넘긴다.
+    # call_capture.py 등 CLI 단독 실행에는 caseId 개념이 없어 None이 들어오는데,
+    # hub의 스키마는 caseId를 필수로 요구하므로 파일명 기반으로 만들어 채운다.
+    resolved_case_id = case_id or f"case-{audio_path.stem}"
 
     turns: list[TranscriptTurn] = [
         TranscriptTurn(
@@ -189,6 +196,7 @@ def build_and_emit_call_summary(
     print(f"구조화 완료 ({structure_elapsed:.2f}초)")
 
     message = CallSummaryMessage(
+        caseId=resolved_case_id,
         transcript=Transcript(
             raw_text=full_text,
             filtered_text=filtered_text,
@@ -242,6 +250,12 @@ def main() -> None:
         default=DEFAULT_BEAM_SIZE,
         help=f"Whisper 빔 서치 크기 (기본: {DEFAULT_BEAM_SIZE}. 클수록 정확도↑ 속도↓)",
     )
+    parser.add_argument(
+        "--case-id",
+        type=str,
+        default=None,
+        help="hub에 보낼 caseId. 지정하지 않으면 오디오 파일명 기반으로 자동 생성",
+    )
     args = parser.parse_args()
 
     if not args.audio.exists():
@@ -257,6 +271,7 @@ def main() -> None:
         args.summarize,
         args.llm_model,
         args.beam_size,
+        args.case_id,
     )
 
 

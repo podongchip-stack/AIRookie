@@ -291,6 +291,39 @@ Ctrl+C로 중지하면, 마지막 재변환 주기 이후 아직 STT를 거치�
 - 마이크 권한, Ollama 자동 부트스트래핑 등은 배치 처리와 동일하게 자동 처리된다
 - 실제 구급대원 통화 시나리오를 시뮬레이션하려면 `.docs/voice-live-getting-started.md` 참고 (Step 1~5 상세 가이드)
 
+### 2-4. `app.py` — hub가 원격으로 트리거하는 실제 파이프라인
+
+`call_capture.py`의 "녹음만 하다가 종료 시 배치 파이프라인 실행" 흐름을 Ctrl+C
+대신 HTTP 요청(feature/hub가 중계하는 통화 시작/종료 신호)으로 트리거하도록
+감싼 게 실제 운영 경로다. 이 프로세스 자체는 구급차 1대 전용이다 — 마이크가
+그 구급차 장비 하나뿐이라 통화도 한 번에 하나만 가능하다. 여러 구급차를
+지원하는 건 hub가 여러 대의 voice 인스턴스를 구분해 각자에게 신호를
+중계해주는 방식으로 이뤄진다(feature/hub README.md 참고).
+
+```bash
+VOICE_APID=A0000001 python app.py
+```
+
+| 환경변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `VOICE_APID` | (없음) | 이 voice 인스턴스가 담당하는 구급차 식별자. hub의 구급차 레지스트리(apid)와 일치해야 하며, 없으면 hub 자가등록 자체를 건너뛴다(단독 CLI 테스트용) |
+| `HUB_BASE_URL` | `http://127.0.0.1:5001` | hub 주소. 자가등록 요청 및 자기 IP 자동 탐지(이 주소로 나가는 인터페이스 확인) 둘 다에 쓰인다 |
+| `VOICE_REGISTER_RETRY_SEC` | `5` | hub 자가등록 실패 시 재시도 간격(초) |
+| `VOICE_STT_MODEL` / `VOICE_LANGUAGE` / `VOICE_DEVICE` / `VOICE_COMPUTE_TYPE` / `VOICE_LLM_MODEL` | `call_capture.py`의 CLI 기본값과 동일 | STT/구조화 파라미터 |
+
+**동작 순서**
+1. 서버가 뜨자마자(별도 백그라운드 스레드) 자기 IP를 자동 탐지해 hub의
+   `POST /voice/register`로 자가등록한다. 구급차 노트북마다 와이파이/핫스팟 등
+   네트워크가 달라 IP가 고정돼 있지 않아, Supabase 등에 미리 저장해두지 않고
+   매번 실행 시점에 탐지한다(포트는 hub의 구급차 레지스트리에 이미 있음). hub가
+   이 apid를 아직 모르면(feature/info가 구급차 정보를 아직 안 보냈으면) 실패하는데,
+   `VOICE_REGISTER_RETRY_SEC`마다 계속 재시도하므로 순서를 엄격히 맞출 필요는 없다
+2. `POST /call/start`로 오는 `caseId`를 세션에 기억해둔다
+3. `POST /call/end`가 오면 녹음을 멈추고, 기억해둔 caseId를 그대로 실어
+   배치 파이프라인(STT→SBAR→hub 전송)을 백그라운드 스레드로 실행한다
+4. hub가 다시 정지된 경우를 대비해 caseId가 없어도(=CLI 단독 테스트 등)
+   `transcribe.py`가 파일명 기반으로 자동 생성한 값을 대신 채운다
+
 ---
 
 ## STT 정확도 개선 / SBAR 구조화
@@ -407,6 +440,7 @@ dashboard로는 직접 보내지 않는다. `feature/dashboard`의 `CallSummaryM
 
 ```json
 {
+  "caseId": "case-abc123",
   "transcript": {
     "raw_text": "여보세요, 안녕하세요. 환자 50대 남성이고 교통사고 흉부 충격입니다...",
     "filtered_text": "환자 50대 남성이고 교통사고 흉부 충격입니다. 의식 저하 있고 호흡 곤란...",
@@ -436,6 +470,7 @@ dashboard로는 직접 보내지 않는다. `feature/dashboard`의 `CallSummaryM
 
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
+| `caseId` | string | 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 요약을 어느 사건과 짝지을지 구분하는 값. `app.py`가 hub의 통화 시작 신호에서 받은 caseId를 세션에 들고 있다가 그대로 돌려준다. `transcribe.py`/`call_capture.py`를 CLI로 단독 실행하면(caseId 개념이 없음) 오디오 파일명 기반으로 자동 생성된다(`--case-id`로 직접 지정 가능) |
 | `transcript.raw_text` | string | STT 원본 전문. 전체 발화, 삭제하지 않고 보존 |
 | `transcript.filtered_text` | string | 요약(LLM)에 실제로 들어간 입력값. 필터링이 제거된 현재는 항상 `raw_text`와 동일 |
 | `transcript.language` | string | 언어 코드 |
