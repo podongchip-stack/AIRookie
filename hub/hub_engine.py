@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import decision_log
+import delivery
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
     ApprovalAction,
@@ -66,7 +67,17 @@ class HubEngine:
         self._approval_status: dict[str, HospitalStatus] = {}
 
     def update_hospital_info(self, info: HospitalInfo) -> None:
-        """feature/info로부터 받은 병원 정보를 hospitalId 기준으로 upsert한다."""
+        """feature/info로부터 받은 병원 정보를 hospitalId 기준으로 upsert한다.
+
+        단, 이 병원의 병상 갱신이 feature/info 전송 재시도 대기열
+        (delivery.has_pending_bed_update())에 아직 남아있으면 건너뛴다. hub가
+        승인 처리로 이미 깎아둔 값을, 그 차감을 아직 모르는 info의 낡은 값이
+        되돌려버리는 걸 막기 위해서다 — 재시도가 성공해 대기열에서 빠진
+        뒤에야 다음 갱신이 정상 반영된다.
+        """
+        if delivery.has_pending_bed_update(info.hospitalId):
+            print(f"  [병상 갱신 보류] {info.hospitalId}는 feature/info 전송 재시도 대기 중이라 이번 갱신을 건너뜀")
+            return
         self._hospitals[info.hospitalId] = info
 
     def apply_approval_action(self, action: ApprovalAction) -> HospitalBedUpdate | None:

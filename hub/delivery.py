@@ -34,6 +34,11 @@ BED_UPDATE_SUFFIX = "_bed_update.json"
 # 같은 방식의 환경변수 처리).
 INFO_BED_UPDATE_URL = os.environ.get("INFO_BED_UPDATE_URL", "http://127.0.0.1:5003/hub/bed-update")
 
+# feature/info 전송에 실패한 HospitalBedUpdate를 쌓아두는 재시도 대기열.
+# 한 줄에 하나씩 JSON(append-only가 아니라 매번 전체를 다시 씀 — 성공한
+# 항목을 지워야 하므로 decision_log.py의 append-only 로그와는 다른 용도다).
+PENDING_BED_UPDATES_PATH = BASE_DIR / "data" / "pending_bed_updates.jsonl"
+
 
 def result_filename(voice_summary_path: Path) -> str:
     """voice 요약 파일명에서 stem을 뽑아 결과 파일명을 만든다.
@@ -86,26 +91,82 @@ def save_local_bed_update(update: HospitalBedUpdate, output_dir: Path = OUTPUT_D
     return path
 
 
+def _load_pending_bed_updates(path: Path = PENDING_BED_UPDATES_PATH) -> list[HospitalBedUpdate]:
+    if not path.exists():
+        return []
+    updates: list[HospitalBedUpdate] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                updates.append(HospitalBedUpdate.model_validate_json(line))
+    return updates
+
+
+def _save_pending_bed_updates(updates: list[HospitalBedUpdate], path: Path = PENDING_BED_UPDATES_PATH) -> None:
+    """대기열을 통째로 다시 쓴다. 남은 게 없으면 파일 자체를 지운다 — "재시도
+    대기 중인 병원이 있는가"를 hub_engine.py가 파일 유무만으로도 확인할 수
+    있게 하기 위해서다(has_pending_bed_update() 참고)."""
+    if not updates:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for update in updates:
+            f.write(update.model_dump_json() + "\n")
+
+
+def has_pending_bed_update(hospital_id: str, path: Path = PENDING_BED_UPDATES_PATH) -> bool:
+    """hub_engine.py의 update_hospital_info()가, 이 병원의 병상 갱신이 아직
+    feature/info 전송 재시도 대기 중인 동안은 info발 새 정보로 덮어쓰지 않게
+    하려고 확인하는 용도다. 재시도가 성공해 대기열에서 빠진 뒤에야 다음
+    update_hospital_info() 호출이 정상 반영된다 — 그렇지 않으면 hub가 이미
+    깎은 값을, 아직 그 차감을 모르는 info의 낡은 값이 되돌려버린다."""
+    return any(u.hospitalId == hospital_id for u in _load_pending_bed_updates(path))
+
+
+def _post_bed_update(update: HospitalBedUpdate) -> bool:
+    """실제 HTTP POST 1회 시도. 성공하면 True."""
+    try:
+        response = requests.post(INFO_BED_UPDATE_URL, json=update.model_dump(), timeout=10)
+        response.raise_for_status()
+        print(f"  [통신] feature/info로 병상 갱신 전송 완료 -> {INFO_BED_UPDATE_URL} — {update.hospitalId}")
+        return True
+    except requests.RequestException as e:
+        print(f"  [통신] feature/info로 병상 갱신 전송 실패 — {update.hospitalId}: {e}")
+        return False
+
+
 def send_to_info(update: HospitalBedUpdate) -> None:
     """feature/info의 POST /hub/bed-update로 병상 갱신을 전달한다.
 
-    info가 잠깐 안 떠 있어도(재시작 등) hub 프로세스 전체가 죽으면 안 된다 —
-    info/send_to_hub.py가 "이번 주기 실패, 다음 주기에 재시도"로 예외를
-    흡수하는 것과 동일한 방어 패턴으로, 여기서도 실패를 삼키고 로그만
-    남긴다. 이 전송이 실패해도 info는 다음 주기적 재조회(기본 30분) 때
-    Supabase를 다시 읽어가므로 영구히 어긋나지는 않는다 — 다만 그 사이엔
-    낡은 값일 수 있다.
+    info가 잠깐 안 떠 있어도(재시작 등) hub 프로세스 전체가 죽으면 안 된다는
+    원칙은 그대로 지키되, 이제는 실패를 그냥 흘려버리지 않고
+    PENDING_BED_UPDATES_PATH에 쌓아 재시도한다. hub는 별도 백그라운드
+    루프·스케줄러가 없는 순수 요청-응답 구조라(voice/info와 달리 상시 폴링
+    프로세스를 안 둔다), 재시도 시점은 새 스레드를 만들지 않고 "다음
+    send_to_info() 호출 기회(=다음 승인 액션)"로 삼는 게 기존 구조에
+    자연스럽게 맞는다.
+
+    호출될 때마다: (1) 대기열에 쌓여있던 이전 실패 건을 먼저 전송 시도하고,
+    성공한 것만 대기열에서 지운다. (2) 그다음 이번 update를 시도하고,
+    실패하면 대기열 맨 뒤에 추가한다. 순서를 지키므로(오래된 것부터) 같은
+    병원에 대한 갱신이 여러 건 밀려 있어도 최종적으로 올바른 값에 수렴한다.
     """
-    try:
-        response = requests.post(
-            INFO_BED_UPDATE_URL,
-            json=update.model_dump(),
-            timeout=10,
+    pending = _load_pending_bed_updates()
+    if pending:
+        print(f"  [통신] 재시도 대기열 {len(pending)}건 먼저 전송 시도")
+    still_pending = [queued for queued in pending if not _post_bed_update(queued)]
+
+    if not _post_bed_update(update):
+        still_pending.append(update)
+
+    _save_pending_bed_updates(still_pending)
+    if still_pending:
+        print(
+            f"  [통신] 재시도 대기열에 {len(still_pending)}건 보류 "
+            f"(다음 병상 갱신 때 재시도) -> {PENDING_BED_UPDATES_PATH}"
         )
-        response.raise_for_status()
-        print(f"  [통신] feature/info로 병상 갱신 전송 완료 -> {INFO_BED_UPDATE_URL} — {update.hospitalId}")
-    except requests.RequestException as e:
-        print(f"  [통신] feature/info로 병상 갱신 전송 실패, 무시하고 계속 진행 — {update.hospitalId}: {e}")
 
 
 def deliver_bed_update(update: HospitalBedUpdate) -> Path:
