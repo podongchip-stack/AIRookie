@@ -177,6 +177,27 @@ optional 확장으로 덧붙여 내보낸다. 기존 필드는 하나도 바꾸�
 > `feature/hub` 신설에 따라 추가된 스키마. `feature/hub`가 실제로 받는
 > 입력 형태와 동일하다. 가안이며 팀 리뷰 후 확정 예정.
 
+> **상시 파이프라인의 데이터 출처 (2026-08-11 갱신)**: `send_to_hub.py`의
+> `fetch_hospitals()`가 목록·좌표·중증질환 수용가능정보는 실 E-Gen API
+> (`HttpEgenClient`)에서, 실시간 병상 수(hvec)는 여전히 Supabase 대체 DB
+> (`SupabaseEgenClient`)에서 읽어 합친다. 병상만 Supabase에 남긴 이유: E-Gen은
+> 조회 전용 공개 API라 hub가 이송 확정(`final_approval`) 시 차감한 병상 수를
+> 되돌려 쓸 방법이 없다(`egen/client.py`의 `HttpEgenClient.update_bed_count()`는
+> `NotImplementedError`). 병상까지 실 API로 읽으면 재조회 때마다(기본 30분) hub가
+> 이미 차감해둔 값이 되돌아가 뺑뺑이 방지 취지와 반대로 간다 — 자세한 근거는
+> `send_to_hub.py` 모듈 docstring 참고. 실 API 호출이 실패하면(서비스키 미설정,
+> 일일 트래픽 한도 초과 등) 이번 주기는 목록·중증질환도 Supabase 값으로 대체해
+> 계속 돈다.
+>
+> **hpid 불일치 주의**: Supabase 대체 DB는 서비스키 승인 전에 만들어져 실제
+> hpid를 몰랐고 자체 식별자(`S0000001`~`S0000007`)를 붙였다 — 실 API의
+> hpid(`A11...`)와 전혀 다른 값이다. 그대로는 두 소스를 hpid로 join할 수 없어서,
+> `send_to_hub.py`의 `SUPABASE_TO_EGEN_HPID`에 GPS 최근접 대조로 검증한(전부
+> 1.2km 이내) 7곳 수기 대응표를 두고 실 API 응답의 hpid를 Supabase hpid로
+> 되돌려 맞춘다. **`hospitalId`는 계속 `S0000001`~`S0000007` 체계를 유지한다**
+> (hub·dashboard가 이미 이 값을 식별자로 쓰고 있어 바꾸면 파급이 크다). 이 7개
+> 병원 구성이 바뀌면 대응표도 같이 갱신해야 한다.
+
 **출력** (위 HospitalInfo 표의 "1번" 열에 해당하는 필드 전부)
 
 ```json
@@ -501,6 +522,10 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 
 - ~~E-Gen 서비스키 미승인~~ → **2026-08-10 승인 완료.** 실 API 연동·매핑 확정까지
   끝났다. 개발계정이라 일일 트래픽 한도가 있어 폴링 주기를 여기에 맞춘다
+- ~~실 API가 `build_hospitals.py --http` CLI 도구에만 연결되고 상시 파이프라인
+  (`send_to_hub.py`)은 그대로 Supabase만 씀~~ → **2026-08-11 상시 파이프라인에도
+  연결 완료.** 병상 수만 Supabase 유지, 나머지는 실 API (위 "1. feature/info →
+  feature/hub" 절 참고)
 - ~~실측 전 가정 (`hv11`=소아 병상, `MKioskTy` 번호별 질환, 결측 표현)~~ →
   **활용가이드 V4 + 실응답으로 전부 확정.** `egen/mapper.py` 상단에 `[추정]`이 하나도
   남아 있지 않다
@@ -534,6 +559,12 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 
 ### 유지보수 주의
 
+- **`send_to_hub.py`의 `SUPABASE_TO_EGEN_HPID` 대응표는 수기 관리다.** Supabase
+  `hospitals` 테이블에 병원이 추가·교체되면 이 표도 같이 갱신해야 한다 (GPS
+  최근접 대조로 새 대응 쌍을 찾는 방법은 위 "1. feature/info → feature/hub" 절
+  참고). 안 맞으면 해당 병원은 목록·중증질환 정보 없이 병상 수만 있는 상태로
+  빠진다(`map_all()`이 `skipped_no_location`으로 건너뜀 — 조용히 사라지지 않고
+  `fetch_hospitals()` 로그의 리포트에 이름이 남는다)
 - **표준 역량·병상 코드 어휘가 두 벌 있다.** `Hospital_inform/info/schema.py`가
   원본이고 `ocr/src/goldenlink_extract/vocabulary.py`가 복사본이다. 두 경로의
   의존성을 갈라 두려고 일부러 복사했으며, 어긋났는지는 아래로 확인한다.
