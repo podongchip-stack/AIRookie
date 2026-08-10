@@ -41,6 +41,7 @@ class VoiceCallSummaryMessage(BaseModel):
     나머지 필드(model_used 등)는 여전히 모델링하지 않는다.
     """
 
+    caseId: str
     transcript: VoiceTranscript
     summary: VoiceSummary
     source: Literal["ai"] = "ai"
@@ -75,6 +76,36 @@ class HospitalInfo(BaseModel):
     bedsByType: Optional[dict[str, int]] = None
 
 
+class AmbulanceInfo(BaseModel):
+    """feature/info → feature/hub : 구급차 레지스트리(Supabase `ambulances`
+    테이블)의 부분 미러. HospitalInfo와 같은 upsert 패턴을 그대로 따른다.
+
+    GPS는 대회 데모 단계라 서울 랜드마크로 고정한 값이고(실시간 전송 아님),
+    voicePort는 그 구급차 voice 인스턴스가 뜰 포트(장비마다 미리 정해둔 값이라
+    안정적)다. voice의 실제 IP는 여기 없다 — 노트북마다 네트워크가 달라 자주
+    바뀔 수 있어서, VoiceRegistration으로 voice가 뜰 때 직접 hub에 등록한다.
+    """
+
+    apid: str
+    name: str
+    gps: GpsPoint
+    voicePort: int
+    source: Literal["rule"] = "rule"
+    updatedAt: str
+
+
+class VoiceRegistration(BaseModel):
+    """feature/voice → feature/hub : voice가 뜰 때 자기 IP를 자동 탐지해서
+    hub에 알려주는 자가 등록. 포트는 AmbulanceInfo.voicePort로 이미 알고
+    있으므로 IP만 받으면 된다. hub는 이걸 받아 (ip, voicePort)를 합쳐
+    apid별 voice 주소로 메모리에 저장해뒀다가, 통화 시작/종료 신호를
+    중계할 때(CallSignal) 그 주소로 보낸다.
+    """
+
+    apid: str
+    ip: str
+
+
 # ── feature/hub → feature/dashboard (출력) ──────────────────────────────────
 
 class PatientInfo(BaseModel):
@@ -106,6 +137,9 @@ class HospitalMatch(BaseModel):
 
 
 class HubMatchResult(BaseModel):
+    # 여러 사건(구급차)이 동시에 진행될 수 있어, dashboard가 이 결과를 어느
+    # 사건 것인지 구분해 자기 화면에 맞는 것만 골라 쓸 수 있게 한다.
+    caseId: str
     patientInfo: PatientInfo
     zoneActive: list[int]
     hospitals: list[HospitalMatch]
@@ -119,6 +153,10 @@ Actor = Literal["hospital", "paramedic"]
 
 
 class ApprovalAction(BaseModel):
+    # 여러 사건이 동시에 진행되면 hospital_id만으로는 "어느 사건에 대한
+    # 승인인지" 특정할 수 없다 — dashboard는 자기가 보고 있는 사건의 caseId를
+    # 이미 HubMatchResult로 받아 알고 있으므로 그대로 실어 보낸다.
+    caseId: str
     action: ApprovalActionType
     hospital_id: str
     actor: Actor
@@ -134,9 +172,16 @@ CallSignalType = Literal["call_started", "call_ended"]
 
 
 class CallSignal(BaseModel):
+    # apid로 "어느 구급차/voice인지"를, caseId로 "이번 통화가 어느 사건인지"를
+    # 구분한다. call_started 시점에 dashboard가 caseId를 새로 만들어 실어
+    # 보내고, hub는 이 apid로 등록된 voice 주소(VoiceRegistration 참고)를 찾아
+    # 신호를 중계하면서 caseId도 같이 넘긴다 — voice는 나중에 요약을 보낼 때
+    # 이 caseId를 그대로 돌려줘야 한다.
     type: Literal["call_signal"] = "call_signal"
     signal: CallSignalType
     timestamp: str
+    apid: str
+    caseId: str
 
 
 # ── feature/hub → feature/info (출력, HospitalInfo 부분 갱신) ───────────────

@@ -30,9 +30,9 @@ RESULT_SUFFIX = "_hub_match_result.json"
 BED_UPDATE_SUFFIX = "_bed_update.json"
 
 # feature/info의 병상 갱신 수신 서버(info/app.py) 주소. hub=5001, voice=5002와
-# 겹치지 않게 info는 5003을 쓴다 (info/send_to_hub.py의 HUB_HOSPITALS_URL과
+# 겹치지 않게 info는 5002를 쓴다 (info/send_to_hub.py의 HUB_HOSPITALS_URL과
 # 같은 방식의 환경변수 처리).
-INFO_BED_UPDATE_URL = os.environ.get("INFO_BED_UPDATE_URL", "http://127.0.0.1:5003/hub/bed-update")
+INFO_BED_UPDATE_URL = os.environ.get("INFO_BED_UPDATE_URL", "http://127.0.0.1:5002/hub/bed-update")
 
 # feature/info 전송에 실패한 HospitalBedUpdate를 쌓아두는 재시도 대기열.
 # 한 줄에 하나씩 JSON(append-only가 아니라 매번 전체를 다시 씀 — 성공한

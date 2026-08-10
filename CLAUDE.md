@@ -186,17 +186,23 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 ### 3. feature/dashboard → feature/hub → feature/voice : 통화 시작/종료 신호
 
 dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연결로 오며, hub는
-오디오 자체는 다루지 않고 이 신호만 feature/voice의 로컬 마이크 서버로 HTTP 중계한다.
-실제 STT 입력은 voice의 로컬 마이크로 확정했다 — dashboard가 브라우저 마이크로 캡처해
-보내는 오디오(`sendAudioChunk`)는 화면 시각화 용도로만 쓰고, hub는 그 프레임을 받기만
-하고 버린다 (voice와 dashboard/hub가 물리적으로 같은 공간에 있다고 가정하는 단독 처리
-단계의 임시 구성 — 여러 사건이 동시에 처리되는 경우와 함께 다음 단계에서 재검토한다).
+오디오 자체는 다루지 않고 이 신호만 **그 구급차(apid)의** feature/voice
+인스턴스로 HTTP 중계한다. 실제 STT 입력은 voice의 로컬 마이크로 확정했다 —
+dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioChunk`)는 화면
+시각화 용도로만 쓰고, hub는 그 프레임을 받기만 하고 버린다.
+
+**여러 사건(구급차) 동시 처리를 지원한다.** voice는 구급차마다 별도 장비에서
+뜨고, hub는 apid로 그 voice의 주소를 구분한다 (voice가 뜰 때 자기 IP를
+자동 탐지해 hub에 자가등록 — feature/hub README.md "입력 스키마 8" 참고).
+`caseId`로 사건을 구분해 승인 상태·매칭 결과가 서로 다른 구급차끼리 안 섞인다.
 
 ```json
 {
   "type": "call_signal",
   "signal": "call_started",
-  "timestamp": "2026-07-28T14:15:00Z"
+  "timestamp": "2026-07-28T14:15:00Z",
+  "apid": "A0000001",
+  "caseId": "case-abc123"
 }
 ```
 
@@ -205,6 +211,8 @@ dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연
 | `type` | `"call_signal"` | 고정값 |
 | `signal` | `"call_started"` \| `"call_ended"` | 통화 시작인지 종료인지 |
 | `timestamp` | string (ISO 8601) | 신호 발생 시각 |
+| `apid` | string | 어느 구급차인지 — hub가 중계할 voice 주소를 찾는 키 |
+| `caseId` | string | 이번 통화의 사건 식별자. dashboard가 통화 시작 시 새로 생성해 보낸다 |
 
 ---
 
@@ -247,8 +255,12 @@ dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연
 - dashboard와는 WebSocket으로 통신한다 (`new WebSocket()`, socket.io 아님 — flask-socketio 대신 순수 WebSocket 라이브러리를 쓴다). hospital_approve/hospital_reject/final_approval 액션의 수신 주체는 **이 브랜치로 확정**됐고, 매칭 상태(`hospitals[].status`) 반영까지 구현·테스트 완료했다
 - dashboard의 통화 시작/종료 신호(3번 포맷)를 같은 WebSocket으로 받아 feature/voice의 로컬 마이크 서버로 HTTP 중계한다 — 오디오 자체는 hub를 거치지 않는다
 - 병상 수가 미상인 병원과 확인된 만실은 후보에서 안 빼는 결과는 같아도 원인이 다르다 — 섞이면 사후에 데이터 품질 문제인지 실제 만실인지 구분할 수 없다. `HospitalMatch.bedCountUnknown`으로 구분해 내보내며, 미상이어도 `status`는 막지 않는다(미상을 이유로 이송을 막으면 뺑뺑이가 오히려 늘어난다). 승인 처리 시 병상을 안 깎는 이유도 "모르는 병원 / 병상 미상 / 진짜 만실" 세 가지로 나눠 로그에 남긴다
-- `delivery.py`의 `send_to_info()`는 더 이상 자리만 있는 TODO가 아니다 — feature/info의 `POST /hub/bed-update`를 실제로 호출한다. URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5003/hub/bed-update`)로 바꿀 수 있고, info가 잠깐 안 떠 있어도 예외를 흡수하고 hub 프로세스는 계속 진행한다(voice/info가 서로의 부재를 조용히 흡수하는 것과 같은 방어 패턴)
+- `delivery.py`의 `send_to_info()`는 더 이상 자리만 있는 TODO가 아니다 — feature/info의 `POST /hub/bed-update`를 실제로 호출한다. URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5002/hub/bed-update`, info 포트는 5002로 고정)로 바꿀 수 있고, info가 잠깐 안 떠 있어도 예외를 흡수하고 hub 프로세스는 계속 진행한다(voice/info가 서로의 부재를 조용히 흡수하는 것과 같은 방어 패턴)
 - 위 전송이 실패하면 그냥 버리지 않고 `hub/data/pending_bed_updates.jsonl`에 쌓아 **재시도 큐**로 관리한다. hub는 상시 백그라운드 루프가 없는 순수 요청-응답 구조라, 재시도 시점은 새 스레드 대신 "다음 `send_to_info()` 호출 기회(=다음 승인 액션)"로 삼았다. `HubEngine.update_hospital_info()`는 해당 병원이 이 대기열에 남아있는 동안은 info발 갱신을 건너뛴다 — 그렇지 않으면 info의 주기적 재조회가 hub가 이미 깎아둔 값을 낡은 값으로 되돌려버리기 때문이다(실제로 재현·복구까지 검증됨)
+- **여러 사건(구급차) 동시 처리를 지원한다.** `caseId`로 사건을, `apid`로 구급차(voice 인스턴스)를 구분한다. `HubEngine`은 승인 상태를 `(caseId, hospitalId)` 키로 분리 보관하고, 사건별 최신 매칭 결과를 캐시해뒀다가 승인 액션이 들어오면 재계산 없이 해당 병원 status만 패치해 재브로드캐스트한다(예전엔 이 재브로드캐스트 자체가 없어서 승인 버튼을 눌러도 화면에 반영이 안 됐다)
+- `_dashboard_ws` 전역 변수 하나였던 것을 소켓 **집합**으로 바꿔 연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다 — 예전엔 마지막에 연결한 탭만 갱신을 받는 버그가 있었다
+- voice는 구급차마다 별도 장비에서 뜬다. voice가 뜰 때 자기 IP를 자동 탐지해 `POST /voice/register`로 hub에 자가등록하면, hub는 `AmbulanceInfo.voicePort`(feature/info가 Supabase `ambulances` 테이블에서 읽어 보내줌)와 합쳐 주소를 기억해뒀다가 통화 시작/종료 신호를 그 구급차로 중계한다. 구급차 GPS도 하드코딩된 고정값 대신 이 `AmbulanceInfo` 조회로 대체했다
+- 실제 hub+info 실서버를 동시에 띄우고 소켓 2개(구급차 탭 + 병원 탭 흉내) 동시 연결, apid 기반 신호 중계, 승인 후 재브로드캐스트까지 전부 실제 HTTP/WebSocket으로 검증했다 (`run_match.py`에도 다중 사건 격리 검증 추가됨)
 
 ## feature/dashboard 담당자 참고사항
 

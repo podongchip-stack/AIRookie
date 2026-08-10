@@ -12,6 +12,7 @@ import decision_log
 import delivery
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
+    AmbulanceInfo,
     ApprovalAction,
     GpsPoint,
     HospitalBedUpdate,
@@ -62,9 +63,21 @@ class HubEngine:
     def __init__(self, specialty_matcher: SpecialtyMatcher | None = None) -> None:
         self._hospitals: dict[str, HospitalInfo] = {}
         self._matcher = specialty_matcher or SpecialtyMatcher()
-        # dashboard가 보낸 승인 액션 결과. hospitalId 기준으로 보관해뒀다가
-        # 다음 매칭 결과의 hospitals[].status에 반영한다.
-        self._approval_status: dict[str, HospitalStatus] = {}
+        # dashboard가 보낸 승인 액션 결과. 여러 사건이 동시에 진행될 수 있어
+        # (caseId, hospitalId) 조합을 키로 쓴다 — hospitalId만 쓰면 서로 다른
+        # 사건이 같은 병원을 후보로 둘 때 승인 상태가 섞인다.
+        self._approval_status: dict[tuple[str, str], HospitalStatus] = {}
+        # 구급차 레지스트리(feature/info가 Supabase ambulances 테이블에서
+        # 읽어 보내줌). GPS·voicePort 조회에 쓴다.
+        self._ambulances: dict[str, AmbulanceInfo] = {}
+        # 통화 시작 시점에 dashboard가 보낸 (caseId -> apid) 매핑. 나중에
+        # /voice/summary가 도착하면 voice.caseId로 이 apid를 찾아 그 구급차의
+        # GPS를 조회하는 데 쓴다 — VoiceCallSummaryMessage엔 apid가 없다
+        # (voice는 caseId만 그대로 돌려주면 되게 설계했다).
+        self._case_apid: dict[str, str] = {}
+        # 사건별 최신 매칭 결과 캐시. 승인 액션이 들어왔을 때 재계산 없이
+        # 해당 병원의 status만 패치해서 dashboard에 재브로드캐스트하는 데 쓴다.
+        self._case_results: dict[str, HubMatchResult] = {}
 
     def update_hospital_info(self, info: HospitalInfo) -> None:
         """feature/info로부터 받은 병원 정보를 hospitalId 기준으로 upsert한다.
@@ -80,6 +93,41 @@ class HubEngine:
             return
         self._hospitals[info.hospitalId] = info
 
+    def update_ambulance_info(self, info: AmbulanceInfo) -> None:
+        """feature/info로부터 받은 구급차 정보를 apid 기준으로 upsert한다.
+        병원과 달리 hub가 이 값을 직접 바꿀 일이 없어 재시도 대기열 같은
+        보정이 필요 없다."""
+        self._ambulances[info.apid] = info
+
+    def get_ambulance(self, apid: str) -> AmbulanceInfo | None:
+        return self._ambulances.get(apid)
+
+    def register_case(self, case_id: str, apid: str) -> None:
+        """통화 시작(CallSignal) 시점에 이 사건이 어느 구급차 것인지 기억해둔다."""
+        self._case_apid[case_id] = apid
+
+    def get_case_apid(self, case_id: str) -> str | None:
+        return self._case_apid.get(case_id)
+
+    def get_case_result(self, case_id: str) -> HubMatchResult | None:
+        """app.py가 승인 액션 처리 후 캐시된 최신 결과를 꺼내 dashboard에
+        재브로드캐스트할 때 쓴다."""
+        return self._case_results.get(case_id)
+
+    def _patch_case_result_status(self, case_id: str, hospital_id: str, status: HospitalStatus) -> None:
+        """캐시해둔 사건의 매칭 결과에서 해당 병원의 status만 바꿔 캐시를
+        갱신한다. 아직 process_voice_summary가 호출된 적 없는 caseId면
+        (캐시가 없으면) 조용히 넘어간다 — 나중에 캐시가 생길 때 최신
+        _approval_status가 반영되므로 문제없다."""
+        result = self._case_results.get(case_id)
+        if result is None:
+            return
+        updated_hospitals = [
+            h.model_copy(update={"status": status}) if h.hospitalId == hospital_id else h
+            for h in result.hospitals
+        ]
+        self._case_results[case_id] = result.model_copy(update={"hospitals": updated_hospitals})
+
     def apply_approval_action(self, action: ApprovalAction) -> HospitalBedUpdate | None:
         """dashboard가 보낸 승인 액션을 반영한다 (dashboard는 이 브랜치와만 직접
         통신하므로 수신은 여기서 한다). hospitals[].status에 반영될 내부 상태를
@@ -87,8 +135,10 @@ class HubEngine:
         보낼 HospitalBedUpdate를 만들어 반환한다 — 그 외에는 None을 반환한다.
         """
         # 멱등성: 이미 confirmed된 병원에 최종 승인이 중복 도착해도(버튼 중복
-        # 클릭, 네트워크 재시도 등) 병상을 두 번 깎지 않는다.
-        if action.action == "final_approval" and self._approval_status.get(action.hospital_id) == "confirmed":
+        # 클릭, 네트워크 재시도 등) 병상을 두 번 깎지 않는다. 여러 사건이
+        # 동시에 진행될 수 있어 (caseId, hospitalId) 조합으로 구분한다.
+        status_key = (action.caseId, action.hospital_id)
+        if action.action == "final_approval" and self._approval_status.get(status_key) == "confirmed":
             decision_log.log_decision(
                 "approval_action_ignored_duplicate",
                 {"action": action.model_dump(), "reason": "already confirmed"},
@@ -96,7 +146,8 @@ class HubEngine:
             return None
 
         new_status = _ACTION_TO_STATUS[action.action]
-        self._approval_status[action.hospital_id] = new_status
+        self._approval_status[status_key] = new_status
+        self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
 
         if action.action != "final_approval":
             decision_log.log_decision("approval_action_applied", {"action": action.model_dump(), "bedUpdate": None})
@@ -138,14 +189,14 @@ class HubEngine:
         )
         return bed_update
 
-    def reject_ratio(self, ambulance_gps: GpsPoint, max_zone: int) -> float:
+    def reject_ratio(self, case_id: str, ambulance_gps: GpsPoint, max_zone: int) -> float:
         """현재 존(1~max_zone) 안 병원들 중, 명시적으로 응답(approved/rejected/
         confirmed)한 병원 대비 거절(rejected)한 병원의 비율. 아직 아무도 응답하지
         않았으면(전부 pending) 0.0을 반환한다 — expand_if_needed()에 그대로 넘기면
         시간 기반이 아닌 거절 비율 기반 존 확장 판단에 쓸 수 있다.
         """
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
-        statuses = [self._approval_status.get(info.hospitalId, "pending") for info, _ in candidates]
+        statuses = [self._approval_status.get((case_id, info.hospitalId), "pending") for info, _ in candidates]
         responded = [s for s in statuses if s in ("approved", "rejected", "confirmed")]
         if not responded:
             return 0.0
@@ -211,12 +262,13 @@ class HubEngine:
                 specialtyMatch=item["specialtyMatch"],
                 availableBedCount=item["info"].availableBedCount,
                 bedCountUnknown=_is_bed_count_unknown(item["info"]),
-                status=self._approval_status.get(item["hospitalId"], "pending"),
+                status=self._approval_status.get((voice.caseId, item["hospitalId"]), "pending"),
             )
             for item in rank(scored)
         ]
 
         result = HubMatchResult(
+            caseId=voice.caseId,
             patientInfo=PatientInfo(
                 injuryStatus=injury_status,
                 expectedDiagnosis=expected_diagnosis,
@@ -228,6 +280,9 @@ class HubEngine:
             hospitals=hospital_matches,
             source="rule",
         )
+        # 승인 액션이 들어왔을 때 재계산 없이 패치·재브로드캐스트할 수 있게
+        # 사건 단위로 최신 결과를 캐시해둔다 (get_case_result() 참고).
+        self._case_results[voice.caseId] = result
         # CLAUDE.md "모든 의사결정 로그는 타임스탬프 + SHA-256 해시로 저장" 원칙.
         # "어떤 환자 정보로 어떤 병원 순위가 나왔는지"가 이 브랜치의 핵심 의사결정이다.
         decision_log.log_decision("hub_match_result", result.model_dump())

@@ -13,7 +13,7 @@ from pathlib import Path
 import decision_log
 import delivery
 from hub_engine import HubEngine
-from schema import ApprovalAction, GpsPoint, HospitalInfo, VoiceCallSummaryMessage
+from schema import AmbulanceInfo, ApprovalAction, GpsPoint, HospitalInfo, VoiceCallSummaryMessage
 
 BASE_DIR = Path(__file__).resolve().parent
 TEST_DIR = BASE_DIR / "data" / "test"
@@ -23,6 +23,9 @@ HOSPITALS_DIR = TEST_DIR / "hospitals"
 VOICE_SUMMARY_PATH = TEST_DIR / "DrRomantic3v3_call_summary.json"
 
 AMBULANCE_GPS = GpsPoint(lat=35.1800, lng=128.1080)
+# 이 테스트는 사건(구급차) 1건만 다룬다 — 픽스처(DrRomantic3v3_call_summary.json)의
+# caseId와 맞춰둔다.
+CASE_ID = "case-DrRomantic3v3"
 
 
 def load_hospitals(engine: HubEngine) -> None:
@@ -87,7 +90,7 @@ def main() -> None:
     print(f"\n  결과 저장: {saved_path}")
 
     print("\n=== 거절 비율 계산: 아직 아무도 응답 안 했을 때는 0.0이어야 함 ===")
-    ratio_before = engine.reject_ratio(AMBULANCE_GPS, max_zone=1)
+    ratio_before = engine.reject_ratio(CASE_ID, AMBULANCE_GPS, max_zone=1)
     assert ratio_before == 0.0, "아무도 응답 안 했는데 거절 비율이 0이 아니면 안 된다"
     print(f"  거절 비율(응답 전): {ratio_before:.0%}")
 
@@ -95,11 +98,15 @@ def main() -> None:
     for hospital_id in ("H001", "H002"):
         engine.apply_approval_action(
             ApprovalAction(
-                action="hospital_reject", hospital_id=hospital_id, actor="hospital", timestamp="2026-07-30T14:15:00Z"
+                caseId=CASE_ID,
+                action="hospital_reject",
+                hospital_id=hospital_id,
+                actor="hospital",
+                timestamp="2026-07-30T14:15:00Z",
             )
         )
     max_zone = 1
-    ratio_after = engine.reject_ratio(AMBULANCE_GPS, max_zone)
+    ratio_after = engine.reject_ratio(CASE_ID, AMBULANCE_GPS, max_zone)
     new_max_zone = engine.expand_if_needed(max_zone, ratio_after)
     print(f"  H001, H002 거절 → 거절 비율 {ratio_after:.0%} (임계값 넘으면 확장)")
     print(f"  존 확장 {'O' if new_max_zone != max_zone else 'X'} (zone 1~{new_max_zone})")
@@ -117,6 +124,7 @@ def main() -> None:
     # 이 테스트가 검증하는 로직 자체는 병합 후에도 안 바뀐다.
     top_hospital_id = result.hospitals[0].hospitalId
     action = ApprovalAction(
+        caseId=CASE_ID,
         action="final_approval",
         hospital_id=top_hospital_id,
         actor="paramedic",
@@ -157,6 +165,48 @@ def main() -> None:
     ok, checked = decision_log.verify_log()
     print(f"  {checked}건 검증, 위변조 {'없음' if ok else '발견됨'} — {decision_log.LOG_PATH}")
     assert ok, "의사결정 로그 해시가 안 맞으면 위변조 검증 실패"
+
+    print("\n=== 다중 사건 격리 확인: 같은 병원 후보를 다른 사건 두 개가 동시에 씀 ===")
+    other_case_id = "case-other-ambulance"
+    voice_other = voice.model_copy(update={"caseId": other_case_id})
+    result_other = engine.process_voice_summary(voice_other, AMBULANCE_GPS, max_zone=1)
+    other_top_hospital_id = result_other.hospitals[0].hospitalId
+    assert result_other.caseId == other_case_id, "HubMatchResult.caseId가 요청한 caseId와 달라선 안 된다"
+    print(f"  case={CASE_ID}: {top_hospital_id} 확정 상태 유지 / case={other_case_id}: 아직 응답 없음(전부 pending)")
+    assert all(h.status == "pending" for h in result_other.hospitals), (
+        f"{other_case_id}는 아직 아무 승인도 안 받았는데 {CASE_ID}의 confirmed/rejected 상태가 새어 들어왔다"
+    )
+    print(f"  [확인] {other_case_id}의 병원 상태가 전부 pending — {CASE_ID}의 승인 상태와 안 섞임")
+
+    engine.apply_approval_action(
+        ApprovalAction(
+            caseId=other_case_id,
+            action="final_approval",
+            hospital_id=other_top_hospital_id,
+            actor="paramedic",
+            timestamp="2026-07-30T14:25:00Z",
+        )
+    )
+    case_a_cached = engine.get_case_result(CASE_ID)
+    case_a_top = next(h for h in case_a_cached.hospitals if h.hospitalId == top_hospital_id)
+    assert case_a_top.status == "confirmed", f"{CASE_ID}의 캐시된 결과가 다른 사건 승인 처리로 바뀌면 안 된다"
+    print(f"  [확인] {other_case_id}에 승인 액션을 보내도 {CASE_ID}의 캐시(get_case_result)는 그대로 confirmed")
+
+    print("\n=== 구급차 레지스트리 + 자가등록 매핑 확인 ===")
+    ambulance = AmbulanceInfo(
+        apid="A0000099",
+        name="테스트 구급차",
+        gps=AMBULANCE_GPS,
+        voicePort=6099,
+        updatedAt="2026-08-11T00:00:00Z",
+    )
+    engine.update_ambulance_info(ambulance)
+    assert engine.get_ambulance("A0000099") is not None, "update_ambulance_info로 등록한 구급차를 못 찾으면 안 된다"
+    engine.register_case("case-A0000099-001", "A0000099")
+    assert engine.get_case_apid("case-A0000099-001") == "A0000099", (
+        "register_case()로 등록한 (caseId -> apid)가 get_case_apid()로 그대로 조회돼야 한다"
+    )
+    print("  [확인] AmbulanceInfo 등록·조회, (caseId -> apid) 매핑 모두 정상 동작")
 
 
 if __name__ == "__main__":
