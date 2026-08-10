@@ -96,7 +96,7 @@
 
 | 파일 | 내용 | 언제 필요한가 |
 |---|---|---|
-| `requirements.txt` | Flask, Flask-SocketIO, requests, python-dotenv | 서버·E-Gen API 호출. **서버는 아직 미구현**(의존성만 선언) |
+| `requirements.txt` | Flask, Flask-SocketIO, requests, python-dotenv | 서버·E-Gen API 호출. `send_to_hub.py`(주기적 재조회)와 `app.py`(hub의 병상 갱신 수신)가 이 의존성을 쓴다 |
 | `ocr/requirements.txt` | torch, transformers, onnxruntime, opencv 등 | 서류 이미지 → 텍스트. **NVIDIA GPU 필요** |
 | `ocr/requirements-extract.txt` | pydantic | 텍스트 → 필드. GPU 불필요, Ollama 서버만 있으면 됨 |
 | `simulation/requirements.txt` | tkinterdnd2, pypdfium2 | 처리 과정을 보는 GUI. 위 두 개 위에 창만 얹는다 |
@@ -182,18 +182,26 @@ optional 확장으로 덧붙여 내보낸다. 기존 필드는 하나도 바꾸�
 }
 ```
 
-### 2. feature/hub → feature/info (HospitalInfo 부분 갱신 — 병상 수만, 신규)
+### 2. feature/hub → feature/info (HospitalInfo 부분 갱신 — 병상 수만)
 
 > dashboard의 승인 액션은 feature/hub가 직접 받는다 (feature/info는 받지 않음).
 > 대신 `final_approval`로 이송이 확정되면, 같은 병상에 다른 구급차가 중복
 > 매칭되는 걸 막기 위해 hub가 이 브랜치에 갱신된 병상 수를 알려준다. 동시에
-> 여러 구급차가 매칭 중일 수 있어서 필요한 흐름이다 — 외부 API의 갱신 주기만으로는
-> 확정 시점에 바로 반영이 안 될 수 있기 때문. 위 HospitalInfo의 다른 필드
-> (name/gps/nightDutyAvailable/specialties)는 hub가 바꿀 이유가 없어서 이 메시지엔
-> 담지 않는다 — 받은 쪽(info)은 `hospitalId`로 기존 레코드를 찾아
-> `availableBedCount`만 덮어쓰면 된다.
+> 여러 구급차가 매칭 중일 수 있어서 필요한 흐름이다 — `send_to_hub.py`의
+> 주기적 재조회(기본 30분)만으로는 확정 시점에 바로 반영이 안 될 수 있기
+> 때문. 위 HospitalInfo의 다른 필드(name/gps/nightDutyAvailable/specialties)는
+> hub가 바꿀 이유가 없어서 이 메시지엔 담지 않는다 — 받은 쪽(info)은
+> `hospitalId`로 기존 레코드를 찾아 `availableBedCount`만 덮어쓰면 된다.
+>
+> **구현 완료.** `info/app.py`가 `POST /hub/bed-update`(기본 포트 5003)로
+> 이 메시지를 받아 `SupabaseEgenClient.update_bed_count()`로 Supabase의
+> `hvec` 컬럼에 즉시 반영한다. hub 쪽 전송 URL은 `INFO_BED_UPDATE_URL`
+> 환경변수(기본값 `http://127.0.0.1:5003/hub/bed-update`)로 바꿀 수 있고,
+> info 서버가 잠깐 안 떠 있어도 hub는 예외를 흡수하고 계속 진행한다 — 그
+> 경우엔 최대 재조회 주기(기본 30분) 뒤에 `send_to_hub.py`가 다시 맞춰준다.
+> 실제 Supabase 병상이 줄어드는 것까지 확인된 상태다.
 
-**입력** (위 HospitalInfo 표의 "2번" 열에 해당하는 필드만)
+**입력** (위 HospitalInfo 표의 "2번" 열에 해당하는 필드만) — 엔드포인트: `POST /hub/bed-update`
 
 ```json
 {
@@ -346,7 +354,9 @@ Ollama가 꺼져 있으면 시작할 때 확인창이 떠서 **켤지 Stub으로
 info/                              (저장소 루트의 .gitignore, CLAUDE.md, pull-all.sh는 브랜치 공통이라 여기 포함 안 됨)
 ├── README.md                      이 문서
 ├── DEVELOPMENT.md                 브랜치 전략
-├── requirements.txt               서버 의존성 (Flask·WebSocket) — 서버는 미구현
+├── requirements.txt               서버 의존성 (Flask 등)
+├── app.py                         hub의 병상 갱신 수신 서버 (POST /hub/bed-update)
+├── send_to_hub.py                 Supabase → hub 주기적 재조회 상시 프로세스 (기본 30분)
 │
 ├── Hospital_inform/               [경로 A] E-Gen 공개 API → HospitalInfo   (규칙 기반)
 │   ├── README.md                  이 경로의 상세 문서
@@ -433,8 +443,10 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 - **두 경로의 합류 지점** — `DocumentFields` → `HospitalInfo` 병합. 서류는 정적이라
   좌표·실시간 병상 수는 건드리지 않고, E-Gen이 못 채우는 당직·인력만 덮어야 한다.
   어느 값이 어디서 왔는지(AI / 규칙) 표기하는 방식도 미정
-- **서버** — `requirements.txt`에 Flask·Flask-SocketIO가 선언돼 있지만 실제 서버
-  코드는 아직 없다. hub와의 실제 송수신은 미구현
+- **서버** — hub의 병상 갱신을 받는 `POST /hub/bed-update`(`app.py`, 기본 포트
+  5003)는 구현·검증 완료(실제 Supabase 병상이 줄어드는 것까지 확인). 다만
+  `requirements.txt`의 `Flask-SocketIO`는 이 엔드포인트가 순수 REST(Flask)라
+  실제로는 안 쓰인다 — 제거 검토 필요
 - OCR 필드 값 누락 검사 — 워터마크 문서에서 라벨은 읽고 값을 비우는 사례에 대한
   스키마 기반 검사
 

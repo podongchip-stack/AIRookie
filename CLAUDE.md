@@ -103,7 +103,13 @@ feature/info ──(병원 정보 JSON)─────────────�
 feature/hub ──(통합 매칭 결과 JSON, WebSocket)───────→ feature/dashboard
 feature/dashboard ──(승인 액션 JSON, WebSocket)──────→ feature/hub
 feature/dashboard ──(통화 시작/종료 신호, WebSocket)─→ feature/hub ──(HTTP 중계)──→ feature/voice
+feature/hub ──(병상 갱신 JSON, HTTP)─────────────────→ feature/info
 ```
+
+병상 갱신(hub→info)은 이송 확정(`final_approval`) 시점에만 발생하는 부분
+갱신이다 — feature/info의 `send_to_hub.py`가 주기적으로(기본 30분) 다시
+가져가는 것과는 별개로, 그 사이에 확정된 병상만 즉시 반영해 중복 매칭을
+막는다. 스키마·엔드포인트는 feature/info README.md의 "hub → info" 참고.
 
 아래 포맷은 voice를 제외하고는 아직 약식이다. 병원 매칭 결과 스키마는 feature/hub
 README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에는 구 스키마를 남기지 않는다.
@@ -225,7 +231,8 @@ dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷)은 feature/hub가 수신하므로 이 브랜치는 별도 구현이 필요 없다
 - 병상 수가 미상인 병상 종류는 `bedsByType`에 그 키(`ER_ADULT` 등)를 아예 넣지 않는 방식으로 표시한다(`egen/mapper.py`의 `build_beds_by_type`). `availableBedCount`엔 보수적으로 0을 넣지만, hub가 `bedsByType`의 키 유무로 "미상"과 "확인된 만실"(`{"ER_ADULT": 0}`)을 구분해 재해석한다
-- `send_to_hub.py`는 1회성 스크립트가 아니라 **상시 프로세스**다 — hub는 한 번 받은 병원 정보를 메모리에 들고 있을 뿐 스스로 재조회하지 않으므로, 이 스크립트가 주기적으로(기본 30분, `INFO_REFETCH_INTERVAL_SEC` 환경변수로 조절) Supabase를 다시 조회해 재전송한다. Supabase realtime 구독 대신 주기적 재조회 방식을 택했다. hub가 잠깐 안 떠 있어도 죽지 않고 다음 주기에 재시도한다. 그 주기 사이의 병상 변동은 hub가 이송 확정 시 보내는 병상 갱신으로 보정하기로 설계돼 있으나 그 경로(hub→info)는 아직 미구현이다
+- `send_to_hub.py`는 1회성 스크립트가 아니라 **상시 프로세스**다 — hub는 한 번 받은 병원 정보를 메모리에 들고 있을 뿐 스스로 재조회하지 않으므로, 이 스크립트가 주기적으로(기본 30분, `INFO_REFETCH_INTERVAL_SEC` 환경변수로 조절) Supabase를 다시 조회해 재전송한다. Supabase realtime 구독 대신 주기적 재조회 방식을 택했다. hub가 잠깐 안 떠 있어도 죽지 않고 다음 주기에 재시도한다
+- hub→info 방향(병상 갱신 쓰기)도 **구현 완료**됐다. `app.py`가 `POST /hub/bed-update`(기본 포트 5003)로 hub의 병상 갱신을 받아 `SupabaseEgenClient.update_bed_count()`로 Supabase의 `hvec` 컬럼에 즉시 반영한다 — 위 주기적 재조회의 최대 30분 지연을 이송 확정 시점만큼은 보정해준다. 실제 Supabase 병상이 줄어드는 것까지 확인됐다(info/README.md "hub → info" 참고)
 
 ## feature/hub 담당자 참고사항
 
@@ -240,6 +247,7 @@ dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연
 - dashboard와는 WebSocket으로 통신한다 (`new WebSocket()`, socket.io 아님 — flask-socketio 대신 순수 WebSocket 라이브러리를 쓴다). hospital_approve/hospital_reject/final_approval 액션의 수신 주체는 **이 브랜치로 확정**됐고, 매칭 상태(`hospitals[].status`) 반영까지 구현·테스트 완료했다
 - dashboard의 통화 시작/종료 신호(3번 포맷)를 같은 WebSocket으로 받아 feature/voice의 로컬 마이크 서버로 HTTP 중계한다 — 오디오 자체는 hub를 거치지 않는다
 - 병상 수가 미상인 병원과 확인된 만실은 후보에서 안 빼는 결과는 같아도 원인이 다르다 — 섞이면 사후에 데이터 품질 문제인지 실제 만실인지 구분할 수 없다. `HospitalMatch.bedCountUnknown`으로 구분해 내보내며, 미상이어도 `status`는 막지 않는다(미상을 이유로 이송을 막으면 뺑뺑이가 오히려 늘어난다). 승인 처리 시 병상을 안 깎는 이유도 "모르는 병원 / 병상 미상 / 진짜 만실" 세 가지로 나눠 로그에 남긴다
+- `delivery.py`의 `send_to_info()`는 더 이상 자리만 있는 TODO가 아니다 — feature/info의 `POST /hub/bed-update`를 실제로 호출한다. URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5003/hub/bed-update`)로 바꿀 수 있고, info가 잠깐 안 떠 있어도 예외를 흡수하고 hub 프로세스는 계속 진행한다(voice/info가 서로의 부재를 조용히 흡수하는 것과 같은 방어 패턴)
 
 ## feature/dashboard 담당자 참고사항
 
