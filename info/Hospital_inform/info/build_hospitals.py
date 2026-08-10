@@ -7,8 +7,13 @@
 `data/test/hospitals/*.json`을 그대로 파싱하므로, 여기서 나온 파일을 그 폴더에
 복사하면 바로 연동 검증을 할 수 있다.
 
-지금은 fixture(가상 데이터)를 읽는다. 서비스키가 승인되면 `--http` 옵션으로
-실제 API를 쓰도록 `HttpEgenClient`를 채우면 되고, 이 파일과 매퍼는 바뀌지 않는다.
+데이터 출처는 셋 중 하나를 고른다. 기본은 fixture(가상 데이터)이고, `--http`가
+실제 E-Gen API다.
+
+    python info/build_hospitals.py                      # fixture
+    python info/build_hospitals.py --supabase           # Supabase 대체 DB
+    python info/build_hospitals.py --http               # 실제 API (서울 전체)
+    python info/build_hospitals.py --http --stage2 강남구  # 실제 API (시군구 한정)
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
-from egen.client import FixtureEgenClient, SupabaseEgenClient  # noqa: E402
+from egen.client import FixtureEgenClient, HttpEgenClient, SupabaseEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
 
 OUTPUT_DIR = BASE_DIR / "data" / "output"
@@ -28,20 +33,36 @@ OUTPUT_DIR = BASE_DIR / "data" / "output"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="E-Gen 데이터를 HospitalInfo JSON으로 변환한다")
-    parser.add_argument("--region", default="jinju", help="fixture 지역 이름 (기본: jinju, --supabase와 무관)")
-    parser.add_argument(
+    parser.add_argument("--region", default="jinju", help="fixture 지역 이름 (기본: jinju, 다른 출처와 무관)")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--supabase",
         action="store_true",
-        help="fixture 대신 Supabase 대체 DB를 읽는다 (SUPABASE_URL, SUPABASE_KEY 환경변수 필요)",
+        help="fixture 대신 Supabase 대체 DB를 읽는다 (SUPABASE_URL, SUPABASE_KEY 필요)",
     )
+    source.add_argument(
+        "--http",
+        action="store_true",
+        help="fixture 대신 실제 E-Gen API를 호출한다 (EGEN_SERVICE_KEY 필요)",
+    )
+    parser.add_argument("--stage1", default="서울특별시", help="--http 전용. 시도 (기본: 서울특별시)")
+    parser.add_argument("--stage2", default="", help="--http 전용. 시군구 (기본: 비움 = 시도 전체)")
     parser.add_argument("--out", type=Path, default=OUTPUT_DIR, help="출력 폴더")
     args = parser.parse_args()
 
-    client = SupabaseEgenClient() if args.supabase else FixtureEgenClient(region=args.region)
+    if args.http:
+        client = HttpEgenClient()
+    elif args.supabase:
+        client = SupabaseEgenClient()
+    else:
+        client = FixtureEgenClient(region=args.region)
+
+    # 세 구현 모두 (시도, 시군구) 두 인자를 같은 자리에서 받는다. fixture와 Supabase는
+    # 무시하고, HttpEgenClient만 실제 질의 조건으로 쓴다
     hospitals, report = map_all(
-        client.get_realtime_beds(),
-        client.get_list_info(),
-        client.get_severe_illness(),
+        client.get_realtime_beds(args.stage1, args.stage2),
+        client.get_list_info(args.stage1, args.stage2),
+        client.get_severe_illness(args.stage1, args.stage2),
     )
 
     print("=== 변환 결과 ===")
