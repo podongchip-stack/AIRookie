@@ -44,6 +44,12 @@ export interface HospitalCandidate {
 }
 
 export interface HubMatchResult {
+  // 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 결과를 어느 사건
+  // 것인지 구분하는 값. dashboard는 이 값을 키로 여러 사건을 동시에 들고
+  // 있는다(DashboardState.matchResults 참고) — 구급차 대시보드는 자기
+  // caseId로 걸러 하나만 쓰고, 병원 대시보드는 자기 hospitalId가 있는
+  // 사건 전부를 카드로 나열한다.
+  caseId: string;
   patientInfo: PatientInfo;
   zoneActive: number[];
   hospitals: HospitalCandidate[];
@@ -59,6 +65,10 @@ export type Actor = "hospital" | "paramedic";
 
 // dashboard → feature/hub. 이 스키마만 CLAUDE.md/hub README 모두 snake_case로 확정돼 있다.
 export interface ApprovalAction {
+  // 여러 사건이 동시에 진행되면 hospital_id만으로는 "어느 사건에 대한
+  // 승인인지" 특정할 수 없다 — 자기가 보고 있는 사건의 caseId(hub가 보낸
+  // HubMatchResult.caseId)를 그대로 실어 보낸다.
+  caseId: string;
   action: ApprovalActionType;
   hospital_id: string;
   actor: Actor;
@@ -66,21 +76,28 @@ export interface ApprovalAction {
 }
 
 // 통화 시연 컴포넌트(구급차 대시보드)가 hub에 보내는 통화 시작/종료 신호.
-// hub가 이 신호를 받아 feature/voice의 로컬 마이크(mic_recorder.py)에
-// 시작/종료를 중계한다(확정) — sendAudioChunk()로 보내는 브라우저 오디오는
-// 화면 시각화용으로만 남고, 실제 STT 입력으로는 쓰지 않는다.
+// hub가 이 신호를 받아 그 구급차(apid)의 feature/voice 인스턴스에 시작/종료를
+// 중계한다 — sendAudioChunk()로 보내는 브라우저 오디오는 화면 시각화용으로만
+// 남고, 실제 STT 입력으로는 쓰지 않는다.
 export type CallSignalType = "call_started" | "call_ended";
 
 export interface CallSignal {
   type: "call_signal";
   signal: CallSignalType;
   timestamp: string;
+  // 어느 구급차인지 — hub가 중계할 voice 주소를 찾는 키.
+  apid: string;
+  // 이번 통화의 사건 식별자. 구급차 대시보드가 통화 시작 시 새로 생성해 보낸다.
+  caseId: string;
 }
 
 export type DashboardRole = "ambulance" | "hospital";
 
 export interface DashboardState {
-  matchResult: HubMatchResult | null;
+  // caseId를 키로 하는 맵 — 여러 구급차의 사건을 동시에 들고 있을 수 있다.
+  // 구급차 대시보드는 자기 caseId 하나만 꺼내 쓰고, 병원 대시보드는 자기
+  // hospitalId가 후보로 들어있는 사건을 전부 걸러 카드로 나열한다.
+  matchResults: Record<string, HubMatchResult>;
   // hub 메시지 자체엔 타임스탬프가 없어서, "정보 수신 후 경과" 표시를 위해
   // 대시보드가 최초 수신 시각을 로컬에서 기록해 둔다.
   receivedAt: string | null;
