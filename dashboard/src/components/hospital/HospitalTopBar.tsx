@@ -1,22 +1,17 @@
 "use client";
 
 import { css } from "styled-system/css";
-import type { HospitalStatus } from "@/types/dashboard";
 import { formatElapsed, useElapsedSeconds } from "@/hooks/use-elapsed-time";
 
-const STATUS_LABEL: Record<HospitalStatus, string> = {
-  pending: "수용 판단 대기",
-  approved: "후보 등록됨 · 이송 승인 대기",
-  rejected: "수용 불가 처리됨",
-  confirmed: "이송 확정",
-};
-
 export function HospitalTopBar({
-  status,
+  caseCount,
   connectionMode,
   since,
 }: {
-  status: HospitalStatus | null;
+  // 여러 구급차가 동시에 본원을 후보로 걸 수 있어(다중 사건 지원), 사건 하나의
+  // status 대신 "본원이 후보로 걸린 사건이 몇 건인지"를 보여준다 — 개별 사건의
+  // 상태는 각 카드(CaseMatchPanel)에 이미 표시된다.
+  caseCount: number;
   connectionMode: "live" | "mock";
   since: string | null;
 }) {
@@ -96,7 +91,7 @@ export function HospitalTopBar({
               animation: "beat 1.8s ease-in-out infinite",
             })}
           />
-          {status ? STATUS_LABEL[status] : "수신 대기 중"}
+          {caseCount > 0 ? `진행 중인 사건 ${caseCount}건` : "수신 대기 중"}
         </span>
         <span
           className={css({

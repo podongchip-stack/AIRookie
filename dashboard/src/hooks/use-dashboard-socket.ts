@@ -11,14 +11,15 @@ import type {
 } from "@/types/dashboard";
 
 const INITIAL_STATE: DashboardState = {
-  matchResult: null,
+  matchResults: {},
   receivedAt: null,
 };
 
 // feature/hub가 dashboard와 직접 통신하는 유일한 브랜치다 (CLAUDE.md). voice/info는
 // hub를 거쳐서만 도착하므로, dashboard가 실제로 받는 건 hub의 통합 매칭 결과 메시지
-// 하나뿐이다. NEXT_PUBLIC_DASHBOARD_WS_URL이 설정되지 않으면 목데이터를 흘려보내
-// 화면 작업을 진행할 수 있게 한다.
+// 뿐이다. 여러 구급차가 동시에 사건을 진행할 수 있어 caseId를 키로 맵에 담아둔다
+// (예전엔 단일 값이라 나중에 온 사건이 이전 사건을 덮어썼다). NEXT_PUBLIC_DASHBOARD_WS_URL이
+// 설정되지 않으면 목데이터를 흘려보내 화면 작업을 진행할 수 있게 한다.
 export function useDashboardSocket() {
   const [state, setState] = useState<DashboardState>(INITIAL_STATE);
   const [connectionMode, setConnectionMode] = useState<"live" | "mock">(
@@ -28,7 +29,7 @@ export function useDashboardSocket() {
 
   const applyMatchResult = useCallback((matchResult: HubMatchResult) => {
     setState((prev) => ({
-      matchResult,
+      matchResults: { ...prev.matchResults, [matchResult.caseId]: matchResult },
       receivedAt: prev.receivedAt ?? new Date().toISOString(),
     }));
   }, []);
@@ -68,10 +69,17 @@ export function useDashboardSocket() {
     }
   }, []);
 
-  // 통화 시연(CallDemoPanel)이 통화 시작/종료를 hub에 알리는 신호. hub README에
-  // 아직 정의되지 않은 가안 스키마라 그대로 JSON 문자열 프레임으로 보낸다.
-  const sendCallSignal = useCallback((signal: CallSignalType) => {
-    const payload: CallSignal = { type: "call_signal", signal, timestamp: new Date().toISOString() };
+  // 통화 시연(CallDemoPanel)이 통화 시작/종료를 hub에 알리는 신호. apid로 hub가
+  // 중계할 voice 인스턴스를 찾고, caseId로 이번 통화의 사건을 식별한다 —
+  // call_started 시점에 구급차 대시보드가 새로 생성해 넘긴다.
+  const sendCallSignal = useCallback((signal: CallSignalType, apid: string, caseId: string) => {
+    const payload: CallSignal = {
+      type: "call_signal",
+      signal,
+      timestamp: new Date().toISOString(),
+      apid,
+      caseId,
+    };
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(payload));

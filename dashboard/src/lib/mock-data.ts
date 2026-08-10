@@ -3,6 +3,7 @@ import type { HubMatchResult } from "@/types/dashboard";
 // feature/hub의 실시간 통신(Flask)이 아직 붙지 않았을 때 대시보드 UI를 확인하기 위한 목데이터.
 // feature/hub README.md "출력 스키마 4" 예시 JSON을 그대로 옮긴 것이다.
 export const mockHubMatchResult: HubMatchResult = {
+  caseId: "case-mock-demo",
   patientInfo: {
     injuryStatus: ["의식 저하", "호흡 곤란"],
     expectedDiagnosis: "흉부 손상",

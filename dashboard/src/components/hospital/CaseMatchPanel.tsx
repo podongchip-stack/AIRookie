@@ -27,19 +27,22 @@ const chipStyle = css({
 // hub가 하나의 사건(voice의 patientInfo + 이 병원의 후보 정보)으로 묶어 보내는 데이터를
 // "진료과 매칭 근거"와 "수용 판단"으로 화면만 쪼개 보여주던 걸 하나로 합쳤다 — 같은
 // 사건 정보인데 패널 두 개로 나뉘어 있는 게 오히려 불편하다는 판단(2026-08-09).
-// 참고: hub 스키마 자체가 아직 사건(case) 하나만 모델링하고 있어서(hospitals[]가
-// 병원 후보 리스트일 뿐 사건 목록은 아님), 여러 구급차의 사건을 동시에 다루려면
-// hub 쪽에 caseId 스키마가 먼저 확정돼야 한다 — 그 전까지는 이 병원 대시보드도
-// "사건 하나" 기준으로 둔다.
+// 이 컴포넌트 자체는 "사건 하나"만 그린다 — 여러 사건(구급차)을 동시에 보여주는 건
+// hospital/page.tsx가 이 패널을 사건 수만큼 나열하는 방식으로 처리한다(2026-08-11,
+// hub의 caseId 도입에 맞춰 다중 사건 지원).
 export function CaseMatchPanel({
   patientInfo,
   hospital,
   hospitalId,
+  caseId,
   onAction,
 }: {
   patientInfo: PatientInfo | null;
   hospital: HospitalCandidate | null;
   hospitalId: string;
+  // 여러 사건을 카드로 동시에 나열할 수 있어(hospital/page.tsx 참고), 이 카드가
+  // 어느 사건 것인지 승인 액션에 실어 보내야 한다.
+  caseId: string;
   onAction: (action: ApprovalAction) => void;
 }) {
   if (!patientInfo) {
@@ -71,7 +74,7 @@ export function CaseMatchPanel({
 
       {hospital ? (
         <div className={css({ marginTop: "auto" })}>
-          <ApprovalActions role="hospital" hospitalId={hospitalId} onAction={onAction} />
+          <ApprovalActions role="hospital" hospitalId={hospitalId} caseId={caseId} onAction={onAction} />
           <p className={css({ marginTop: "2", fontSize: "xs", color: "ink", textAlign: "center" })}>
             이송 여부는 구급대원이 최종 결정합니다
           </p>

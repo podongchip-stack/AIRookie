@@ -259,6 +259,20 @@ dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연
 - **feature/hub와만 직접 통신한다.** voice·info와는 직접 연결하지 않으며, voice의 의료 정보·예상 병명·통화 전문과 info의 병원 정보는 모두 feature/hub가 재가공한 통합 결과로만 받는다. 승인 액션(수신처는 feature/hub로 확정)과 통화 시작/종료 신호는 위 "데이터 포맷 및 흐름" 2·3번 참고
 - 통화 시작/종료 버튼은 WebSocket으로 hub에 신호를 보낸다. 브라우저 마이크로 캡처한 오디오(`sendAudioChunk`)도 같은 연결로 보낼 수 있지만, 실제 STT 입력은 feature/voice의 로컬 마이크로 확정되어 이 오디오는 화면 시각화(파형, 로컬 자막) 용도로만 쓰인다
 - hub가 보내는 `hospitals[].bedCountUnknown`이 true면 병상 수를 "0"이나 "병상 없음"이 아니라 **"미상"**으로 표시해야 한다 — 미상을 만실처럼 보여주면 구급대원이 실제로는 자리가 있을 수도 있는 병원을 스스로 후보에서 빼게 되어, 뺑뺑이를 줄이려는 목적과 정반대가 된다
+- **다중 사건(multi-case) 지원 (2026-08-11)**: hub가 `caseId`(구급차 1건의 이송
+  이벤트 식별자)·`apid`(구급차 식별자)를 도입함에 따라, dashboard의 상태도 사건
+  하나가 아니라 `matchResults: Record<caseId, HubMatchResult>` 맵으로 관리한다.
+  - 구급차 대시보드(`/ambulance?id=<apid>`)는 URL의 `?id=`를 자신의 apid로 쓰고,
+    "통화 시작" 버튼을 누를 때마다 `crypto.randomUUID()`로 새 `caseId`를 만들어
+    통화 시작 신호·승인 액션에 실어 보낸다. 구급차 1대는 항상 자기 사건 하나만
+    다루므로 화면에는 그 `caseId` 하나만 `matchResults`에서 꺼내 보여준다.
+  - 병원 대시보드(`/hospital?id=<hpid>`)는 자기 hpid가 `hospitals[]`에 들어있는
+    **모든** 사건을 `matchResults`에서 걸러 카드 리스트로 나열한다 — 여러 구급차가
+    동시에 같은 병원을 후보로 걸 수 있기 때문에, 사건 하나만 보여주던 이전 구조로는
+    다른 구급차의 요청이 화면에서 사라져 보이는 문제가 있었다. 카드를 선택하면 그
+    사건 기준으로 지도가 갱신된다.
+  - apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
+    값인지 서버 사이드 검증은 하지 않는다(다음 단계 TODO, dashboard README 참고).
 
 ---
 
