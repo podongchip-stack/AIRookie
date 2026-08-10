@@ -231,12 +231,31 @@ feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 �
 중복 매칭될 수 있다. 이걸 막기 위해 hub가 확정 즉시 info에 갱신된 병상 수를
 내려준다.
 
-**구현 완료.** `feature/info`의 `POST /hub/bed-update`(`info/app.py`, 기본
-포트 5003)로 전송한다. hub 쪽 대상 URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값
-`http://127.0.0.1:5003/hub/bed-update`)로 바꿀 수 있고, info가 잠깐 안 떠
-있어도 예외를 흡수하고 hub 프로세스는 계속 진행한다 — 그 경우엔 info의
-`send_to_hub.py`가 다음 주기적 재조회(기본 30분) 때 Supabase를 다시 읽어가며
-맞춰진다. 실제로 Supabase의 병상 수가 줄어드는 것까지 확인됐다.
+**구현 완료 (+ 재시도 큐).** `feature/info`의 `POST /hub/bed-update`
+(`info/app.py`, 기본 포트 5003)로 전송한다. hub 쪽 대상 URL은
+`INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5003/hub/bed-update`)로
+바꿀 수 있다.
+
+전송이 실패하면(info가 잠깐 안 떠 있는 등) 그냥 버리지 않고
+`hub/data/pending_bed_updates.jsonl`(한 줄에 `HospitalBedUpdate` JSON 하나)에
+쌓아둔다. hub는 voice/info와 달리 별도 백그라운드 루프·스케줄러가 없는 순수
+요청-응답 구조라, 재시도 시점은 새 스레드를 만드는 대신 **"다음
+`send_to_info()` 호출 기회(=다음 승인 액션이 들어왔을 때, 병원이 달라도
+상관없다)"**로 삼았다 — `send_to_info()`가 호출될 때마다 대기열에 쌓인
+이전 실패 건부터 먼저 재전송을 시도하고, 성공한 것만 대기열에서 지운다.
+
+이 대기열이 없으면 생기던 문제: info의 `send_to_hub.py`가 주기적으로(기본
+30분) Supabase를 다시 읽어 hub에 재전송(`update_hospital_info()`)하는데,
+이게 병원 정보 전체를 **덮어쓰는** 방식이라, hub가 승인 처리로 이미 깎아둔
+값을 아직 그 차감을 모르는 info의 낡은 값이 되돌려버릴 수 있었다(hub가
+직접 처리한 승인 기록이 조용히 사라지는 셈). 이를 막기 위해
+`HubEngine.update_hospital_info()`는 해당 병원의 병상 갱신이 아직 재시도
+대기 중이면(`delivery.has_pending_bed_update()`) info발 갱신을 건너뛴다 —
+재시도가 성공해 대기열에서 빠진 뒤에야 다음 갱신이 정상 반영된다.
+
+실제로 **info를 끈 채 승인 → 대기열에 기록되는 것 → info를 켜고 그 사이
+info의 낡은 재조회가 와도 hub 메모리가 안 되돌아가는 것 → 이후 다른 승인이
+들어오며 대기열이 비워지고 Supabase에 반영되는 것**까지 전부 확인했다.
 
 ```json
 {
@@ -326,9 +345,10 @@ hub/                        (저장소 루트의 .gitignore, CLAUDE.md는 브랜
 ├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
 ├── hub_engine.py         2단계 매칭 오케스트레이션 + 승인 액션 반영(상태 보관 + 재처리)
 ├── decision_log.py       의사결정 로그 (타임스탬프 + SHA-256 해시, 위변조 검증 가능)
-├── delivery.py           결과 저장(+ 자리만 준비된 통신) — 파일명을 voice 입력에서 이어받음
+├── delivery.py           결과 저장 + dashboard·info로의 실제 통신 — 파일명을 voice 입력에서 이어받음
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
 └── data/
+    ├── pending_bed_updates.jsonl   feature/info 전송 실패 재시도 대기열 (delivery.py가 생성·삭제, 없으면 대기 중인 게 없다는 뜻)
     ├── test/
     │   ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
     │   ├── DrRomantic3v3_call_summary.json    voice 요약 샘플 (feature/voice 역할)
