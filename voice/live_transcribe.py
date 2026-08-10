@@ -20,7 +20,6 @@ from pathlib import Path
 
 from faster_whisper import WhisperModel
 
-from audio_preprocess import preprocess_for_stt
 from filtering import MedicalRelevanceFilter
 from mic_recorder import MicRecorder
 from transcribe import build_and_emit_call_summary, format_timestamp
@@ -92,9 +91,8 @@ def live_transcribe(
             print(f"\n[{iteration}차] 재변환 중... 누적 {buffer_elapsed:.1f}초")
 
             transcribe_start = time.perf_counter()
-            clean_audio = preprocess_for_stt(buffer.flatten(), recorder.sample_rate)
             segments, info = model.transcribe(
-                clean_audio,
+                buffer.flatten(),
                 language=language,
                 vad_filter=True,
             )
@@ -155,8 +153,7 @@ def live_transcribe(
         final_elapsed = final_buffer.shape[0] / recorder.sample_rate if final_buffer.shape[0] else 0.0
         if final_elapsed > buffer_elapsed:
             print(f"\n[종료 전 마지막 구간 재변환 중... 누적 {final_elapsed:.1f}초]")
-            clean_audio = preprocess_for_stt(final_buffer.flatten(), recorder.sample_rate)
-            segments, info = model.transcribe(clean_audio, language=language, vad_filter=True)
+            segments, info = model.transcribe(final_buffer.flatten(), language=language, vad_filter=True)
             for seg in segments:
                 if seg.end <= printed_until:
                     continue

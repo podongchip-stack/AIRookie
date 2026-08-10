@@ -6,10 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
-import soundfile as sf
 from faster_whisper import WhisperModel
 
-from audio_preprocess import preprocess_for_stt
 from filtering import MedicalRelevanceFilter
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
 from summarizer import StructuringError, structure_call_summary
@@ -77,11 +75,7 @@ def transcribe(
 
     print(f"변환 중: {audio_path.name}")
     transcribe_start = time.perf_counter()
-    audio_data, sample_rate = sf.read(str(audio_path), dtype="float32")
-    if audio_data.ndim > 1:
-        audio_data = audio_data.mean(axis=1)  # 스테레오 -> 모노
-    clean_audio = preprocess_for_stt(audio_data, sample_rate)
-    segments, info = model.transcribe(clean_audio, language=language, vad_filter=True)
+    segments, info = model.transcribe(str(audio_path), language=language, vad_filter=True)
 
     turn_texts: list[str] = []
     turn_offsets: list[float] = []
