@@ -248,6 +248,7 @@ dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연
 - dashboard의 통화 시작/종료 신호(3번 포맷)를 같은 WebSocket으로 받아 feature/voice의 로컬 마이크 서버로 HTTP 중계한다 — 오디오 자체는 hub를 거치지 않는다
 - 병상 수가 미상인 병원과 확인된 만실은 후보에서 안 빼는 결과는 같아도 원인이 다르다 — 섞이면 사후에 데이터 품질 문제인지 실제 만실인지 구분할 수 없다. `HospitalMatch.bedCountUnknown`으로 구분해 내보내며, 미상이어도 `status`는 막지 않는다(미상을 이유로 이송을 막으면 뺑뺑이가 오히려 늘어난다). 승인 처리 시 병상을 안 깎는 이유도 "모르는 병원 / 병상 미상 / 진짜 만실" 세 가지로 나눠 로그에 남긴다
 - `delivery.py`의 `send_to_info()`는 더 이상 자리만 있는 TODO가 아니다 — feature/info의 `POST /hub/bed-update`를 실제로 호출한다. URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5003/hub/bed-update`)로 바꿀 수 있고, info가 잠깐 안 떠 있어도 예외를 흡수하고 hub 프로세스는 계속 진행한다(voice/info가 서로의 부재를 조용히 흡수하는 것과 같은 방어 패턴)
+- 위 전송이 실패하면 그냥 버리지 않고 `hub/data/pending_bed_updates.jsonl`에 쌓아 **재시도 큐**로 관리한다. hub는 상시 백그라운드 루프가 없는 순수 요청-응답 구조라, 재시도 시점은 새 스레드 대신 "다음 `send_to_info()` 호출 기회(=다음 승인 액션)"로 삼았다. `HubEngine.update_hospital_info()`는 해당 병원이 이 대기열에 남아있는 동안은 info발 갱신을 건너뛴다 — 그렇지 않으면 info의 주기적 재조회가 hub가 이미 깎아둔 값을 낡은 값으로 되돌려버리기 때문이다(실제로 재현·복구까지 검증됨)
 
 ## feature/dashboard 담당자 참고사항
 
