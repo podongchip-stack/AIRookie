@@ -47,6 +47,20 @@ const bedChipEmptyStyle = css({
   borderRadius: "chip",
 });
 
+// "확인된 만실"(coral)과는 색을 다르게 둔다 — 미상은 병원에 자리가 없다고 확정된
+// 게 아니라 데이터가 아직 없는 것뿐이라, 만실과 같은 경고색으로 보이면 구급대원이
+// 실제로는 받아줄 수도 있는 병원을 스스로 후보에서 빼게 된다(CLAUDE.md 참고).
+const bedChipUnknownStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "2xs",
+  fontWeight: "medium",
+  color: "ink2",
+  backgroundColor: "surfaceSub",
+  paddingX: "1.5",
+  borderRadius: "chip",
+});
+
 // 병원이 "승인"(후보 등록) 응답을 보내야만 버튼이 활성화된다. 버튼을 누르면 그 자리에서
 // 바로 이송 승인(final_approval)이 전송된다 — 별도의 "선택 → 하단에서 최종 승인" 2단계가 아니다.
 export function HospitalCandidateListPanel({
@@ -112,8 +126,20 @@ export function HospitalCandidateListPanel({
                   <span className={deptChipStyle}>
                     {hospital.specialtyMatch.department} · 적합도 {Math.round(hospital.specialtyMatch.score * 100)}%
                   </span>
-                  <span className={hospital.availableBedCount > 0 ? bedChipAvailableStyle : bedChipEmptyStyle}>
-                    {hospital.availableBedCount > 0 ? `병상 ${hospital.availableBedCount}석` : "병상 없음"}
+                  <span
+                    className={
+                      hospital.bedCountUnknown
+                        ? bedChipUnknownStyle
+                        : hospital.availableBedCount > 0
+                          ? bedChipAvailableStyle
+                          : bedChipEmptyStyle
+                    }
+                  >
+                    {hospital.bedCountUnknown
+                      ? "병상 미상"
+                      : hospital.availableBedCount > 0
+                        ? `병상 ${hospital.availableBedCount}석`
+                        : "병상 없음"}
                   </span>
                 </div>
               </div>

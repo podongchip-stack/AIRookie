@@ -33,6 +33,12 @@ export interface HospitalCandidate {
   distanceKm: number;
   specialtyMatch: SpecialtyMatch;
   availableBedCount: number;
+  // availableBedCount가 0일 때 그게 "확인된 만실"인지 "미상"인지 구분한다. hub가
+  // feature/info의 bedsByType(병상 종류별 키 유무)으로 판정해 내보낸다 (hub README
+  // "입출력 데이터 포맷" 참고). true면 화면엔 "0"이 아니라 "미상"으로 표시해야
+  // 한다 — 미상을 만실처럼 보여주면 구급대원이 실제로 자리가 있을 수도 있는
+  // 병원을 스스로 후보에서 빼게 되어 뺑뺑이 방지 목적과 어긋난다.
+  bedCountUnknown: boolean;
   status: HospitalStatus;
   etaMin?: number;
 }
