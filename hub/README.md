@@ -71,6 +71,15 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 >    뒤에도 이걸 부르면 새 거절이 하나도 없는데 계속 확장되는 문제가 있어서
 >    (실제로 재현·수정됨) 거절 액션에만 배선했다.
 
+> **승인 후 캐시된 병상 수가 안 바뀌던 문제 수정(2026-08-11).** `final_approval`로
+> `apply_approval_action()`이 `self._hospitals`의 병상 수를 실제로 깎아도,
+> dashboard로 나가는 캐시(`_case_results`)의 `HospitalMatch.availableBedCount`는
+> 별도 스냅샷이라 반영이 안 됐다 — "이송 확정" 상태는 바뀌는데 병상 배지는 옛날
+> 값 그대로 보이는 문제가 실제로 재현됐다(Supabase 자체는 정상 차감돼서 더
+> 헷갈렸음). `_patch_case_result_status()`가 status와 함께 `self._hospitals`의
+> 최신 병상 수·`bedCountUnknown`도 같이 다시 읽어오도록 고쳤고, 호출 시점도
+> 병상 차감 **이후**로 옮겼다.
+
 ## 사용한 AI / 모델
 
 거리·병상·존(Zone) 분류는 규칙 기반이지만, "예상 병명 ↔ 병원 진료과" 매칭만은
