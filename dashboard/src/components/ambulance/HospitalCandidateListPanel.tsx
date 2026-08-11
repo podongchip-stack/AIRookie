@@ -71,6 +71,17 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
   confirmed: "이송 확정",
 };
 
+// 1순위 승인(+확정) → 2순위 판단 대기 → 3순위 거절, 같은 우선순위 안에서는
+// 거리순. 거절해도 목록에서 없애지 않는다 — 병원이 "불가"였다가 병상이 나서
+// 다시 받아주는 경우가 있어서, 매번 이 우선순위로 다시 정렬해두면 승인으로
+// 바뀌는 순간 자동으로 위로 올라온다(2026-08-11 논의).
+const STATUS_PRIORITY: Record<HospitalStatus, number> = {
+  confirmed: 0,
+  approved: 1,
+  pending: 2,
+  rejected: 3,
+};
+
 const deptChipStyle = css({
   display: "inline-flex",
   alignItems: "center",
@@ -137,6 +148,25 @@ export function HospitalCandidateListPanel({
     );
   }
 
+  // displayStatus까지 미리 계산해서 정렬 키로 쓴다 — 렌더링 때 또 계산하지 않고
+  // 그대로 재사용한다.
+  const sortedHospitals = data.hospitals
+    .map((hospital) => {
+      const confirmed = hospital.hospitalId === confirmedHospitalId;
+      // "이송 확정"은 실제로 이 구급차 세션에서 승인 버튼을 눌렀을 때만 보여준다.
+      // 데이터상 이미 confirmed여도, 로컬에서 아직 안 눌렀으면 "후보 등록"으로 표시한다.
+      const displayStatus: HospitalStatus = confirmed
+        ? "confirmed"
+        : hospital.status === "confirmed"
+          ? "approved"
+          : hospital.status;
+      return { hospital, confirmed, displayStatus };
+    })
+    .sort((a, b) => {
+      const priorityDiff = STATUS_PRIORITY[a.displayStatus] - STATUS_PRIORITY[b.displayStatus];
+      return priorityDiff !== 0 ? priorityDiff : a.hospital.distanceKm - b.hospital.distanceKm;
+    });
+
   return (
     <ListPanelShell subtitle={`Zone ${data.zoneActive.join(", ")} 내 후보`}>
       {/* 병원이 몇 곳이든(거리·우선순위로 이미 정렬돼 오므로) 패널 자체가 늘어나지
@@ -171,16 +201,8 @@ export function HospitalCandidateListPanel({
           },
         })}
       >
-        {data.hospitals.map((hospital) => {
-          const confirmed = hospital.hospitalId === confirmedHospitalId;
+        {sortedHospitals.map(({ hospital, confirmed, displayStatus }) => {
           const approvable = hospital.status === "approved" || hospital.status === "confirmed";
-          // "이송 확정"은 실제로 이 구급차 세션에서 승인 버튼을 눌렀을 때만 보여준다.
-          // 데이터상 이미 confirmed여도, 로컬에서 아직 안 눌렀으면 "후보 등록"으로 표시한다.
-          const displayStatus: HospitalStatus = confirmed
-            ? "confirmed"
-            : hospital.status === "confirmed"
-              ? "approved"
-              : hospital.status;
 
           return (
             <li
