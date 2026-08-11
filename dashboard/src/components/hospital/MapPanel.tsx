@@ -116,34 +116,34 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
               paddingY: "3",
             })}
           >
-            <div className={css({ fontSize: "xs", color: confirmed ? "#0A7351" : "ink" })}>
+            <div className={css({ fontSize: "sm", fontWeight: "medium", color: confirmed ? "#0A7351" : "ink" })}>
               본원 도착 예상
             </div>
             <div
               className={css({
-                fontSize: "xl",
-                fontWeight: "semibold",
+                fontSize: "2xl",
+                fontWeight: "bold",
                 letterSpacing: "-0.02em",
                 color: confirmed ? "#0A7351" : "ink",
               })}
             >
               {hospital?.etaMin != null ? `${hospital.etaMin}분` : "-"}
             </div>
-            <div className={css({ fontSize: "2xs", color: "ink", marginTop: "0.5" })}>
+            <div className={css({ fontSize: "xs", color: "ink", marginTop: "0.5" })}>
               실시간 교통 반영
             </div>
           </div>
 
           <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "xs", color: "ink" })}>직선 거리</div>
-            <div className={css({ fontSize: "xl", fontWeight: "semibold", letterSpacing: "-0.02em" })}>
+            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>직선 거리</div>
+            <div className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}>
               {hospital ? `${hospital.distanceKm}km` : "-"}
             </div>
           </div>
 
           <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "xs", color: "ink" })}>현재 상태</div>
-            <div className={css({ fontSize: "md", fontWeight: "semibold" })}>
+            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>현재 상태</div>
+            <div className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}>
               {hospital ? STATUS_LABEL[hospital.status] : "-"}
             </div>
           </div>

@@ -100,52 +100,78 @@ function HospitalDashboardContent() {
         })}
       >
         {/* 왼쪽: 본원이 후보로 걸린 사건을 전부 카드로 나열한다. 카드를 누르면
-            선택되어 오른쪽 지도에 그 사건 기준 거리/ETA가 표시된다. */}
+            선택되어 오른쪽 지도에 그 사건 기준 거리/ETA가 표시된다.
+            바깥 div가 그리드 셀 높이를 정확히 지키고(height:100% + minHeight:0
+            + overflow:hidden), 안쪽 div만 스크롤한다 — 구급차 쪽 병원 후보
+            리스트에서 겪은 것과 같은 문제(overflowY:auto 하나만으론 페이지
+            전체가 늘어남)를 겪지 않으려고 처음부터 이 구조로 짰다(2026-08-11). */}
+        <div
+          className={css({
+            display: "flex",
+            flexDirection: "column",
+            height: "100%",
+            minHeight: "0",
+            overflow: "hidden",
+          })}
+        >
         <div
           className={css({
             display: "flex",
             flexDirection: "column",
             gap: "3.5",
+            flex: "1",
             minHeight: "0",
             overflowY: "auto",
+            paddingRight: "1",
+            scrollbarWidth: "thin",
+            scrollbarColor: "rgba(203, 213, 225, 0.5) transparent",
+            "&::-webkit-scrollbar": { width: "6px" },
+            "&::-webkit-scrollbar-track": { backgroundColor: "transparent" },
+            "&::-webkit-scrollbar-thumb": { backgroundColor: "rgba(203, 213, 225, 0.5)", borderRadius: "full" },
+            "&::-webkit-scrollbar-thumb:hover": { backgroundColor: "rgba(203, 213, 225, 0.8)" },
           })}
         >
           {myCases.length === 0 ? (
             <CaseMatchPanel patientInfo={null} hospital={null} hospitalId={MY_HOSPITAL_ID} caseId="" onAction={sendAction} />
           ) : (
-            myCases.map(({ result, hospital }) => (
-              // CaseMatchPanel 안에 승인/거절 버튼이 이미 있어서 이 카드 자체를
-              // <button>으로 감싸면 button-in-button이 되어 유효하지 않은 HTML이
-              // 된다 — 대신 role="button"을 준 <div>로 카드 선택만 처리한다.
-              <div
-                key={result.caseId}
-                role="button"
-                tabIndex={0}
-                onClick={() => setSelectedCaseId(result.caseId)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") setSelectedCaseId(result.caseId);
-                }}
-                className={css({
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  borderRadius: "panel",
-                  cursor: "pointer",
-                  outline: "none",
-                  borderWidth: "2px",
-                  borderColor: selected?.result.caseId === result.caseId ? "navy" : "transparent",
-                })}
-              >
-                <CaseMatchPanel
-                  patientInfo={result.patientInfo}
-                  hospital={hospital}
-                  hospitalId={MY_HOSPITAL_ID}
-                  caseId={result.caseId}
-                  onAction={sendAction}
-                />
-              </div>
-            ))
+            myCases.map(({ result, hospital }) => {
+              const isSelected = selected?.result.caseId === result.caseId;
+              return (
+                // CaseMatchPanel 안에 승인/거절 버튼이 이미 있어서 이 카드 자체를
+                // <button>으로 감싸면 button-in-button이 되어 유효하지 않은 HTML이
+                // 된다 — 대신 role="button"을 준 <div>로 카드 선택만 처리한다.
+                <div
+                  key={result.caseId}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedCaseId(result.caseId)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") setSelectedCaseId(result.caseId);
+                  }}
+                  className={css({
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    borderRadius: "panel",
+                    cursor: "pointer",
+                    outline: "none",
+                    borderWidth: "2px",
+                    borderColor: isSelected ? "navy" : "transparent",
+                  })}
+                >
+                  <CaseMatchPanel
+                    patientInfo={result.patientInfo}
+                    hospital={hospital}
+                    hospitalId={MY_HOSPITAL_ID}
+                    caseId={result.caseId}
+                    ambulanceName={result.ambulanceName}
+                    onAction={sendAction}
+                  />
+                </div>
+              );
+            })
           )}
+        </div>
         </div>
 
         <MapPanel hospital={selected?.hospital ?? null} />

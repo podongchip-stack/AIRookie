@@ -85,33 +85,36 @@ const STATUS_PRIORITY: Record<HospitalStatus, number> = {
 const deptChipStyle = css({
   display: "inline-flex",
   alignItems: "center",
-  fontSize: "2xs",
-  fontWeight: "medium",
+  fontSize: "xs",
+  fontWeight: "semibold",
   color: "navy",
   backgroundColor: "navySoft",
-  paddingX: "1.5",
+  paddingX: "2",
+  paddingY: "0.5",
   borderRadius: "chip",
 });
 
 const bedChipAvailableStyle = css({
   display: "inline-flex",
   alignItems: "center",
-  fontSize: "2xs",
-  fontWeight: "medium",
+  fontSize: "xs",
+  fontWeight: "semibold",
   color: "mint",
   backgroundColor: "mintSoft",
-  paddingX: "1.5",
+  paddingX: "2",
+  paddingY: "0.5",
   borderRadius: "chip",
 });
 
 const bedChipEmptyStyle = css({
   display: "inline-flex",
   alignItems: "center",
-  fontSize: "2xs",
-  fontWeight: "medium",
+  fontSize: "xs",
+  fontWeight: "semibold",
   color: "coral",
   backgroundColor: "coralSoft",
-  paddingX: "1.5",
+  paddingX: "2",
+  paddingY: "0.5",
   borderRadius: "chip",
 });
 
@@ -121,11 +124,12 @@ const bedChipEmptyStyle = css({
 const bedChipUnknownStyle = css({
   display: "inline-flex",
   alignItems: "center",
-  fontSize: "2xs",
-  fontWeight: "medium",
+  fontSize: "xs",
+  fontWeight: "semibold",
   color: "ink2",
   backgroundColor: "surfaceSub",
-  paddingX: "1.5",
+  paddingX: "2",
+  paddingY: "0.5",
   borderRadius: "chip",
 });
 
@@ -224,7 +228,7 @@ export function HospitalCandidateListPanel({
                 <span className={css({ fontWeight: "semibold", fontSize: "sm", color: "ink" })}>
                   {hospital.name}
                 </span>
-                <span className={css({ fontSize: "xs", color: "ink2" })}>
+                <span className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>
                   {hospital.distanceKm}km
                   {hospital.etaMin != null ? ` · ETA ${hospital.etaMin}분` : ""}
                 </span>
