@@ -26,6 +26,7 @@ from schema import (
     AmbulanceInfo,
     ApprovalAction,
     CallSignal,
+    DashboardIdentify,
     GpsPoint,
     HospitalInfo,
     VoiceCallSummaryMessage,
@@ -188,6 +189,28 @@ def _relay_call_signal(signal: CallSignal) -> None:
         print(f"  [통신] {signal.apid}의 feature/voice로 통화 신호 중계 실패 ({path}): {e}")
 
 
+def _send_catchup(ws, identify: DashboardIdentify) -> None:
+    """소켓이 연결 직후 보낸 자기소개(DashboardIdentify)에 답한다. hub는
+    보통 새 매칭 결과가 생길 때만 그 순간 연결된 소켓들에 브로드캐스트하는데,
+    이미 진행 중인 사건이 있는 상태에서 새 탭이 뒤늦게 연결되면 그 브로드캐스트를
+    놓쳐서 화면에 아무것도 안 뜨는 문제가 있었다(schema.py의 DashboardIdentify
+    문서 참고, 2026-08-11 실제 재현됨). 이 소켓과 관련된 사건들만 골라 지금
+    즉시 이 소켓에만 한 번씩 보내준다 — 형식은 평소 브로드캐스트와 같은
+    HubMatchResult라 dashboard는 "따라잡기 메시지"인지 구분할 필요 없이
+    받은 대로 처리하면 된다."""
+    cases = (
+        engine.get_cases_for_hospital(identify.id)
+        if identify.role == "hospital"
+        else engine.get_cases_for_apid(identify.id)
+    )
+    print(f"  [통신] {identify.role} {identify.id} 연결 — 진행 중인 사건 {len(cases)}건 따라잡기 전송")
+    for result in cases:
+        try:
+            ws.send(json.dumps(result.model_dump(), ensure_ascii=False))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [통신] 따라잡기 전송 실패: {e}")
+
+
 def _handle_dashboard_action(payload: dict) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
     구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
@@ -221,10 +244,13 @@ def _handle_dashboard_action(payload: dict) -> None:
 @sock.route("/ws/dashboard")
 def dashboard_socket(ws):
     """dashboard와의 WebSocket 연결. 구급차 대시보드 여러 개 + 병원 대시보드
-    여러 개가 동시에 붙을 수 있어 연결마다 집합에 추가/제거한다. 승인
-    액션(JSON)과 통화 시작/종료 신호(JSON)를 받고, 매칭 결과는 /voice/summary
-    처리 후 전체 연결에 밀어준다. 브라우저 마이크 오디오(바이너리 프레임)는
-    화면 시각화 용도로만 쓰기로 했으므로 여기서는 받기만 하고 버린다.
+    여러 개가 동시에 붙을 수 있어 연결마다 집합에 추가/제거한다. 연결 직후
+    자기소개(DashboardIdentify)를 보내면 그 소켓과 관련된 진행 중인 사건을
+    즉시 따라잡기로 보내주고(_send_catchup — 새 탭이 뒤늦게 연결돼서
+    이전 브로드캐스트를 놓치는 문제 보정), 승인 액션(JSON)과 통화 시작/종료
+    신호(JSON)도 받는다. 매칭 결과는 /voice/summary 처리 후 전체 연결에
+    밀어준다. 브라우저 마이크 오디오(바이너리 프레임)는 화면 시각화 용도로만
+    쓰기로 했으므로 여기서는 받기만 하고 버린다.
     """
     _dashboard_sockets.add(ws)
     try:
@@ -247,6 +273,13 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 CallSignal 수신: {exc.errors()}")
                     continue
                 _relay_call_signal(signal)
+            elif payload.get("type") == "identify":
+                try:
+                    identify = DashboardIdentify.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 DashboardIdentify 수신: {exc.errors()}")
+                    continue
+                _send_catchup(ws, identify)
             elif "action" in payload:
                 _handle_dashboard_action(payload)
     finally:

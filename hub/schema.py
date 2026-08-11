@@ -184,6 +184,27 @@ class CallSignal(BaseModel):
     caseId: str
 
 
+# ── feature/dashboard → feature/hub (입력, 소켓 연결 시 자기소개) ───────────
+# hub는 그동안 dashboard 연결을 완전히 익명으로 취급해서, 연결된 소켓
+# 전체에 그냥 브로드캐스트만 했다. 그러면 이미 진행 중인 사건이 있는
+# 상태에서 새 대시보드 탭이 뒤늦게 열리면, 그 탭은 연결 전에 이미 끝난
+# 브로드캐스트를 놓쳐서 화면에 아무 사건도 안 뜨는 문제가 있었다
+# (2026-08-11 실제 재현됨 — 구급1호차·서울대병원 탭이 연결된 상태에서 이미
+# 매칭이 끝난 뒤, 한양대병원 탭을 새로 열면 그 사건이 안 보였음). 이
+# 메시지로 자기가 병원인지 구급차인지, 어느 hpid/apid인지 알려주면 hub가
+# 연결 시점에 관련된 사건들을 즉시 찾아 그 소켓에만 돌려준다(app.py의
+# `_send_catchup()` 참고).
+
+DashboardRole = Literal["hospital", "ambulance"]
+
+
+class DashboardIdentify(BaseModel):
+    type: Literal["identify"] = "identify"
+    role: DashboardRole
+    # role="hospital"이면 hpid, role="ambulance"면 apid.
+    id: str
+
+
 # ── feature/hub → feature/info (출력, HospitalInfo 부분 갱신) ───────────────
 
 class HospitalBedUpdate(BaseModel):
