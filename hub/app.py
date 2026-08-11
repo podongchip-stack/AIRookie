@@ -54,11 +54,27 @@ _voice_addresses: dict[str, str] = {}
 # /voice/summary가 오는 경우) 도착하면 이 좌표로 대체한다. 병원이 전부
 # 서울이라 존(zone) 밖으로 걸러지지 않게 서울시청 부근으로 맞춰뒀다.
 FALLBACK_AMBULANCE_GPS = GpsPoint(lat=37.5665, lng=126.9780)
-MAX_ZONE = 1
+# 시작 zone(1)과 거절 비율 기반 확장은 HubEngine이 사건별로 관리한다
+# (resolve_start_zone()/maybe_expand_zone() 참고) — 여기 고정 상수로
+# MAX_ZONE=1을 박아두면 서울 전역에 흩어진 실제 병원 데이터에서 zone 1 안에
+# 후보가 하나도 없는 사건은 영원히 0건으로 남는다(2026-08-11 실제로 재현됨).
 
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _resolve_ambulance_gps(case_id: str) -> GpsPoint:
+    """caseId로 그 사건의 구급차를 찾아 GPS를 돌려준다. apid를 모르거나(통화
+    시작 신호 없이 직접 테스트) 아직 AmbulanceInfo가 안 왔으면 폴백 좌표를
+    쓴다. /voice/summary와 승인 액션 처리(존 확장 재계산) 양쪽에서 같은
+    구급차의 GPS가 필요해 공통 헬퍼로 뺐다."""
+    apid = engine.get_case_apid(case_id)
+    ambulance = engine.get_ambulance(apid) if apid else None
+    if ambulance is None:
+        print(f"  [통신] caseId={case_id}의 구급차 GPS를 못 찾아 기본 좌표로 대체")
+        return FALLBACK_AMBULANCE_GPS
+    return ambulance.gps
 
 
 @app.post("/info/hospitals")
@@ -117,13 +133,9 @@ def receive_voice_summary():
     except ValidationError as exc:
         return jsonify({"error": "invalid VoiceCallSummaryMessage", "detail": exc.errors()}), 400
 
-    apid = engine.get_case_apid(voice.caseId)
-    ambulance = engine.get_ambulance(apid) if apid else None
-    ambulance_gps = ambulance.gps if ambulance is not None else FALLBACK_AMBULANCE_GPS
-    if ambulance is None:
-        print(f"  [통신] caseId={voice.caseId}의 구급차 GPS를 못 찾아 기본 좌표로 대체")
-
-    result = engine.process_voice_summary(voice, ambulance_gps, max_zone=MAX_ZONE)
+    ambulance_gps = _resolve_ambulance_gps(voice.caseId)
+    start_zone = engine.resolve_start_zone(ambulance_gps)
+    result = engine.process_voice_summary(voice, ambulance_gps, max_zone=start_zone)
 
     # run_match.py와 동일하게 로컬 저장(감사용 사본)도 같이 남긴다. 실제
     # voice 요약 파일명이 없는 HTTP 경로라 타임스탬프로 이름을 대신한다.
@@ -178,9 +190,11 @@ def _relay_call_signal(signal: CallSignal) -> None:
 
 def _handle_dashboard_action(payload: dict) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
-    구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 캐시된 최신
-    사건 결과를 꺼내 전체 dashboard에 재브로드캐스트한다 — 예전엔 이 단계가
-    없어서 승인 버튼을 눌러도 화면에 반영이 안 됐다."""
+    구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
+    확인하고(maybe_expand_zone — 후보 0개 사각지대 보정 + 거절 비율 기반
+    확장), 최신 사건 결과를 꺼내 전체 dashboard에 재브로드캐스트한다 —
+    예전엔 재브로드캐스트 자체가 없어서 승인 버튼을 눌러도 화면에 반영이
+    안 됐다."""
     try:
         action = ApprovalAction.model_validate(payload)
     except ValidationError as exc:
@@ -191,7 +205,15 @@ def _handle_dashboard_action(payload: dict) -> None:
     if bed_update is not None:
         deliver_bed_update(bed_update)
 
-    updated_result = engine.get_case_result(action.caseId)
+    # maybe_expand_zone()은 거절 액션에만 부른다 — reject_ratio가 누적 계산이라
+    # 승인/최종승인 뒤에도 부르면 새 거절이 없는데도 계속 확장돼버린다
+    # (HubEngine.maybe_expand_zone 문서 참고, 실제로 재현·검증됨).
+    expanded_result = None
+    if action.action == "hospital_reject":
+        ambulance_gps = _resolve_ambulance_gps(action.caseId)
+        expanded_result = engine.maybe_expand_zone(action.caseId, ambulance_gps)
+
+    updated_result = expanded_result or engine.get_case_result(action.caseId)
     if updated_result is not None:
         _send_to_dashboard(updated_result.model_dump())
 
