@@ -93,6 +93,18 @@ export interface CallSignal {
 
 export type DashboardRole = "ambulance" | "hospital";
 
+// dashboard → feature/hub. 소켓 연결 직후 보내는 자기소개. hub는 그동안 연결을
+// 완전히 익명으로 취급해서, 새 탭이 이미 진행 중인 사건이 있는 상태로 뒤늦게
+// 열리면 그 사건의 이전 브로드캐스트를 놓쳐 화면에 아무것도 안 뜨는 문제가
+// 있었다(2026-08-11 실제 재현됨). 이걸로 자기가 병원인지 구급차인지, 어느
+// hpid/apid인지 알려주면 hub가 관련된 사건들을 연결 시점에 바로 되돌려준다.
+export interface DashboardIdentify {
+  type: "identify";
+  role: DashboardRole;
+  // role="hospital"이면 hpid, role="ambulance"면 apid.
+  id: string;
+}
+
 export interface DashboardState {
   // caseId를 키로 하는 맵 — 여러 구급차의 사건을 동시에 들고 있을 수 있다.
   // 구급차 대시보드는 자기 caseId 하나만 꺼내 쓰고, 병원 대시보드는 자기
