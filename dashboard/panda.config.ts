@@ -75,7 +75,7 @@ const sourceBadgeRecipe = defineRecipe({
 
 const severityBadgeRecipe = defineRecipe({
   className: "severityBadge",
-  base: { ...badgeBase, fontWeight: "bold" },
+  base: { ...badgeBase, fontSize: "sm", fontWeight: "bold" },
   variants: {
     severity: {
       high: { color: "severity.high", backgroundColor: "severity.high.subtle" },

@@ -1,6 +1,11 @@
+"use client";
+
+import { useEffect, useRef } from "react";
 import { css } from "styled-system/css";
 import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
+import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
+import { createColoredMarkerImage, createLabelOverlay } from "@/lib/kakao-map-markers";
 import type { HospitalCandidate, HospitalStatus } from "@/types/dashboard";
 
 const STATUS_LABEL: Record<HospitalStatus, string> = {
@@ -9,22 +14,6 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
   rejected: "수용 불가",
   confirmed: "이송 확정",
 };
-
-const mapLabelStyle = css({
-  position: "absolute",
-  top: "4",
-  left: "50%",
-  transform: "translateX(-50%)",
-  fontSize: "2xs",
-  fontWeight: "semibold",
-  whiteSpace: "nowrap",
-  backgroundColor: "surface",
-  borderWidth: "1px",
-  borderColor: "line",
-  paddingX: "1.5",
-  borderRadius: "chip",
-  color: "ink",
-});
 
 const sideBoxStyle = css({
   flex: "1",
@@ -35,19 +24,79 @@ const sideBoxStyle = css({
   paddingY: "3",
 });
 
-const markerDotStyle = css({
-  display: "block",
-  width: "3.5",
-  height: "3.5",
-  borderRadius: "full",
-  border: "2.5px solid #FFFFFF",
-  boxShadow: "0 0 0 1px #CBD5E1",
-});
+// 구급차 자신의 GPS는 아직 hub 스키마에 없다(ISSUE_카카오맵연동.md 참고, hub팀에
+// 필드 추가 요청해둔 상태). 그 전까지는 병원 좌표에서 살짝 떨어진 자리를 임시
+// 표시 위치로 쓴다 — hub가 실제 GPS를 내려주기 시작하면 이 오프셋을 걷어내고
+// 그 값으로 바꾸면 된다.
+const PLACEHOLDER_AMBULANCE_OFFSET = { lat: 0.012, lng: -0.01 };
 
 // 구급차 대시보드의 CandidateMapPanel과 같은 구조(지도가 위, 정보 박스 3개가 그 아래
 // 한 줄)로 맞췄다 — 이전엔 지도 옆에 세로 사이드바를 두는 다른 레이아웃이었다(2026-08-09).
+// 2026-08-11: CSS 격자로 그리던 가짜 지도를 실제 카카오맵으로 교체.
 export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
   const confirmed = hospital?.status === "confirmed";
+  const { ready, error } = useKakaoMapScript();
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<kakao.maps.Map | null>(null);
+  const hospitalMarkerRef = useRef<kakao.maps.Marker | null>(null);
+  const hospitalLabelRef = useRef<kakao.maps.CustomOverlay | null>(null);
+  const ambulanceMarkerRef = useRef<kakao.maps.Marker | null>(null);
+  const ambulanceLabelRef = useRef<kakao.maps.CustomOverlay | null>(null);
+  const polylineRef = useRef<kakao.maps.Polyline | null>(null);
+
+  useEffect(() => {
+    if (!ready || !containerRef.current || !hospital) return;
+
+    const { kakao } = window;
+    const hospitalPos = new kakao.maps.LatLng(hospital.gps.lat, hospital.gps.lng);
+    const ambulancePos = new kakao.maps.LatLng(
+      hospital.gps.lat + PLACEHOLDER_AMBULANCE_OFFSET.lat,
+      hospital.gps.lng + PLACEHOLDER_AMBULANCE_OFFSET.lng,
+    );
+
+    if (!mapRef.current) {
+      mapRef.current = new kakao.maps.Map(containerRef.current, { center: hospitalPos, level: 6 });
+    }
+    const map = mapRef.current;
+
+    hospitalMarkerRef.current?.setMap(null);
+    hospitalMarkerRef.current = new kakao.maps.Marker({
+      position: hospitalPos,
+      map,
+      title: hospital.name,
+      image: createColoredMarkerImage(confirmed ? "#0E9F6E" : "#1E5FA8"),
+    });
+    hospitalLabelRef.current?.setMap(null);
+    hospitalLabelRef.current = createLabelOverlay(hospitalPos, hospital.name);
+    hospitalLabelRef.current.setMap(map);
+
+    ambulanceMarkerRef.current?.setMap(null);
+    ambulanceMarkerRef.current = new kakao.maps.Marker({
+      position: ambulancePos,
+      map,
+      title: "구급차 현재 위치(임시 표시)",
+      image: createColoredMarkerImage("#1E5FA8"),
+    });
+    ambulanceLabelRef.current?.setMap(null);
+    ambulanceLabelRef.current = createLabelOverlay(ambulancePos, "구급차 현재 위치");
+    ambulanceLabelRef.current.setMap(map);
+
+    polylineRef.current?.setMap(null);
+    polylineRef.current = new kakao.maps.Polyline({
+      path: [ambulancePos, hospitalPos],
+      strokeWeight: 3,
+      strokeColor: "#1E5FA8",
+      strokeOpacity: 0.85,
+      strokeStyle: "shortdash",
+    });
+    polylineRef.current.setMap(map);
+
+    const bounds = new kakao.maps.LatLngBounds();
+    bounds.extend(hospitalPos);
+    bounds.extend(ambulancePos);
+    map.setBounds(bounds);
+  }, [ready, hospital, confirmed]);
 
   return (
     <Panel
@@ -57,8 +106,6 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
     >
       <div className={css({ display: "flex", flexDirection: "column", gap: "3.5", flex: "1", minHeight: "0" })}>
         <div
-          role="img"
-          aria-label="구급차 현재 위치와 본원까지의 경로를 표시한 지도"
           className={css({
             position: "relative",
             flex: "1",
@@ -68,40 +115,36 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
             borderColor: "line",
             borderRadius: "field",
             backgroundColor: "#EDF2F7",
-            backgroundImage:
-              "linear-gradient(#E2E8EF 1px, transparent 1px), linear-gradient(90deg, #E2E8EF 1px, transparent 1px)",
-            backgroundSize: "26px 26px",
             overflow: "hidden",
           })}
         >
-          <div className={css({ position: "absolute", backgroundColor: "surface", height: "3px", left: "0", right: "0", top: "40%" })} />
-          <div className={css({ position: "absolute", backgroundColor: "surface", height: "3px", left: "0", right: "0", top: "78%" })} />
-          <div className={css({ position: "absolute", backgroundColor: "surface", width: "3px", top: "0", bottom: "0", left: "30%" })} />
-          <div className={css({ position: "absolute", backgroundColor: "surface", width: "3px", top: "0", bottom: "0", left: "72%" })} />
-
+          {/* 카카오맵이 이 div 안쪽 DOM을 직접 그리므로, React가 관리하는 자식은
+              여기 안 두고 아래 오버레이 div를 형제로 절대배치한다 — 같이 두면
+              리렌더 시 React와 SDK가 서로 다른 DOM을 지우려다 충돌한다. */}
           <div
-            className={css({
-              position: "absolute",
-              height: "3px",
-              borderRadius: "sm",
-              top: "40%",
-              left: "18%",
-              width: "56%",
-              backgroundImage:
-                "repeating-linear-gradient(90deg, #1E5FA8 0 9px, transparent 9px 16px)",
-            })}
+            ref={containerRef}
+            role="img"
+            aria-label="구급차 현재 위치와 본원까지의 경로를 표시한 지도"
+            className={css({ position: "absolute", inset: "0" })}
           />
-
-          <div className={css({ position: "absolute", top: "40%", left: "18%", transform: "translate(-50%, -50%)" })}>
-            <span
-              className={`${markerDotStyle} ${css({ backgroundColor: "navy", animation: "nudge 2.6s ease-in-out infinite" })}`}
-            />
-            <span className={mapLabelStyle}>구급차 현재 위치</span>
-          </div>
-          <div className={css({ position: "absolute", top: "40%", left: "74%", transform: "translate(-50%, -50%)" })}>
-            <span className={`${markerDotStyle} ${css({ backgroundColor: "mint" })}`} />
-            <span className={mapLabelStyle}>본원</span>
-          </div>
+          {(!ready || error || !hospital) && (
+            <div
+              className={css({
+                position: "absolute",
+                inset: "0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                paddingX: "4",
+                fontSize: "xs",
+                color: error ? "coral" : "ink3",
+                backgroundColor: "#EDF2F7",
+              })}
+            >
+              {error ?? (!hospital ? "표시할 사건이 없습니다" : "지도를 불러오는 중...")}
+            </div>
+          )}
         </div>
 
         <div className={css({ width: "100%", display: "flex", flexDirection: "row", gap: "2.5" })}>
@@ -116,34 +159,34 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
               paddingY: "3",
             })}
           >
-            <div className={css({ fontSize: "xs", color: confirmed ? "#0A7351" : "ink" })}>
+            <div className={css({ fontSize: "sm", fontWeight: "medium", color: confirmed ? "#0A7351" : "ink" })}>
               본원 도착 예상
             </div>
             <div
               className={css({
-                fontSize: "xl",
-                fontWeight: "semibold",
+                fontSize: "2xl",
+                fontWeight: "bold",
                 letterSpacing: "-0.02em",
                 color: confirmed ? "#0A7351" : "ink",
               })}
             >
               {hospital?.etaMin != null ? `${hospital.etaMin}분` : "-"}
             </div>
-            <div className={css({ fontSize: "2xs", color: "ink", marginTop: "0.5" })}>
+            <div className={css({ fontSize: "xs", color: "ink", marginTop: "0.5" })}>
               실시간 교통 반영
             </div>
           </div>
 
           <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "xs", color: "ink" })}>직선 거리</div>
-            <div className={css({ fontSize: "xl", fontWeight: "semibold", letterSpacing: "-0.02em" })}>
+            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>직선 거리</div>
+            <div className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}>
               {hospital ? `${hospital.distanceKm}km` : "-"}
             </div>
           </div>
 
           <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "xs", color: "ink" })}>현재 상태</div>
-            <div className={css({ fontSize: "md", fontWeight: "semibold" })}>
+            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>현재 상태</div>
+            <div className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}>
               {hospital ? STATUS_LABEL[hospital.status] : "-"}
             </div>
           </div>

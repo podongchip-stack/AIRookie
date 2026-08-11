@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { mockHubMatchResult, mockHubMatchResultOngoing } from "@/lib/mock-data";
+import {
+  mockHubMatchResult,
+  mockHubMatchResultAmbulance2,
+  mockHubMatchResultAmbulance3,
+  mockHubMatchResultOngoing,
+} from "@/lib/mock-data";
 import type {
   ApprovalAction,
   ApprovalActionType,
@@ -73,6 +78,13 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
       // known=false(접근 불가) 화면이 떠서 UI 작업이 막히면 안 되므로, identity가
       // 있으면 항상 known=true로 간주하고 간단한 표시용 이름을 채운다 — 실제 이름
       // 규칙(Supabase 데이터)과는 무관하다.
+      //
+      // 사건 소개 이후 사건 4개를 순차로 흘려보낸다 — 하나(mockHubMatchResult)는
+      // C병원이 이미 confirmed라 "다른 병원으로 확정된 사건 숨기기" 규칙을 확인할
+      // 수 있고, 나머지 셋(Ongoing/Ambulance2/Ambulance3)은 실제 구급차
+      // 레지스트리의 3대(구급 1~3호차)가 동시에 A병원을 후보로 걸고 있는 상황을
+      // 재현한다 — 병원 하나가 여러 구급차 사건을 동시에 카드로 받는지 확인용
+      // (2026-08-11 요청).
       const timers = [
         ...(identity
           ? [
@@ -89,12 +101,10 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
               ),
             ]
           : []),
-        // 사건 2개를 순차로 흘려보낸다 — 하나(mockHubMatchResult)는 C병원이 이미
-        // confirmed라 "다른 병원으로 확정된 사건 숨기기" 규칙을 확인할 수 있고,
-        // 다른 하나(mockHubMatchResultOngoing)는 아직 아무도 확정 전이라 병원
-        // 쪽 상태 배지·번복 가능한 승인/불가 버튼을 확인할 수 있다.
         setTimeout(() => applyMatchResult(mockHubMatchResult), 900),
         setTimeout(() => applyMatchResult(mockHubMatchResultOngoing), 1400),
+        setTimeout(() => applyMatchResult(mockHubMatchResultAmbulance2), 1900),
+        setTimeout(() => applyMatchResult(mockHubMatchResultAmbulance3), 2400),
       ];
       return () => timers.forEach(clearTimeout);
     }

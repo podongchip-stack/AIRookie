@@ -44,8 +44,8 @@ export function Panel({
             <span
               className={css({
                 display: "block",
-                fontSize: "xs",
-                fontWeight: "normal",
+                fontSize: "sm",
+                fontWeight: "medium",
                 color: "ink",
                 marginTop: "0.5",
               })}

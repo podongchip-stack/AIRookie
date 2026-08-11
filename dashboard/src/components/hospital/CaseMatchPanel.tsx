@@ -23,7 +23,8 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
 const chipStyle = css({
   display: "inline-flex",
   alignItems: "center",
-  fontSize: "xs",
+  fontSize: "sm",
+  fontWeight: "medium",
   color: "ink",
   backgroundColor: "surfaceSub",
   borderWidth: "1px",
@@ -44,6 +45,7 @@ export function CaseMatchPanel({
   hospital,
   hospitalId,
   caseId,
+  ambulanceName,
   onAction,
 }: {
   patientInfo: PatientInfo | null;
@@ -52,6 +54,9 @@ export function CaseMatchPanel({
   // 여러 사건을 카드로 동시에 나열할 수 있어(hospital/page.tsx 참고), 이 카드가
   // 어느 사건 것인지 승인 액션에 실어 보내야 한다.
   caseId: string;
+  // 카드가 여러 개 동시에 나열되므로(사건마다 하나씩), 어느 구급차가 보낸
+  // 요청인지 카드 자체에서 구분할 수 있어야 한다(2026-08-11 요청).
+  ambulanceName?: string;
   onAction: (action: ApprovalAction) => void;
 }) {
   if (!patientInfo) {
@@ -65,7 +70,7 @@ export function CaseMatchPanel({
   return (
     <Panel
       title="구급차 수용 요청 리스트"
-      subtitle="실시간 환자 정보 요약"
+      subtitle={ambulanceName ? `${ambulanceName} · 실시간 환자 정보 요약` : "실시간 환자 정보 요약"}
       badge={<Tag source="ai">임베딩 매칭</Tag>}
     >
       <div className={css({ display: "flex", flexDirection: "column", gap: "1.5" })}>
