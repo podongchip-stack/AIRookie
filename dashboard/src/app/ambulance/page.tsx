@@ -73,6 +73,27 @@ function AmbulanceDashboardContent() {
     );
   }
 
+  // hub가 identify 응답으로 known=false를 준 경우 — 이 apid가 구급차
+  // 레지스트리(Supabase ambulances 테이블)에 아예 없다는 뜻이라 접근을 막는다.
+  // known===null(아직 응답 전)일 땐 확정된 게 아니므로 막지 않고 그대로 진행한다.
+  if (state.identity.known === false) {
+    return (
+      <div
+        className={css({
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "full",
+          padding: "8",
+        })}
+      >
+        <p className={css({ color: "coral", fontSize: "sm" })}>
+          존재하지 않는 구급차 코드입니다(apid: {apid}). 코드를 다시 확인해주세요.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       className={css({
@@ -88,7 +109,7 @@ function AmbulanceDashboardContent() {
         connectionMode={connectionMode}
         since={state.receivedAt}
         ambulanceId={apid}
-        ambulanceName={myResult?.ambulanceName ?? null}
+        ambulanceName={state.identity.name ?? myResult?.ambulanceName ?? null}
       />
       <Legend />
 

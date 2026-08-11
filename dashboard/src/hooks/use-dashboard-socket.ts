@@ -8,10 +8,12 @@ import type {
   CallSignal,
   CallSignalType,
   DashboardIdentify,
+  DashboardIdentityInfo,
   DashboardRole,
   DashboardState,
   HospitalStatus,
   HubMatchResult,
+  InboundMessage,
 } from "@/types/dashboard";
 
 // hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
@@ -25,6 +27,7 @@ const MOCK_ACTION_TO_STATUS: Record<ApprovalActionType, HospitalStatus> = {
 const INITIAL_STATE: DashboardState = {
   matchResults: {},
   receivedAt: null,
+  identity: { name: null, known: null },
 };
 
 // feature/hub가 dashboard와 직접 통신하는 유일한 브랜치다 (CLAUDE.md). voice/info는
@@ -38,9 +41,10 @@ const INITIAL_STATE: DashboardState = {
 // 있는 상태로 새 탭이 뒤늦게 열리면 그 사건의 이전 브로드캐스트를 놓쳐 화면에
 // 아무것도 안 뜨는 문제가 있었다(2026-08-11 실제 재현됨 — 구급1호차·서울대병원
 // 탭이 연결된 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로 열면 그 사건이 안
-// 보였음). hub가 자기소개에 대한 응답으로 관련 사건들을 즉시 보내주므로, 응답
-// 메시지도 평소 브로드캐스트와 같은 형식이라 onmessage에서 별도 분기 없이 그대로
-// applyMatchResult()로 처리하면 된다.
+// 보였음). hub는 이 자기소개에 두 종류로 응답한다 — (1) 사건 유무와 무관한
+// 즉시 신원 확인(identity_info, hub README "출력 스키마 6"), (2) 관련된 진행
+// 중인 사건 따라잡기(평소 브로드캐스트와 같은 HubMatchResult). onmessage가
+// `type` 필드로 둘을 구분해 각자 다른 상태로 저장한다.
 export function useDashboardSocket(identity: { role: DashboardRole; id: string } | null) {
   const [state, setState] = useState<DashboardState>(INITIAL_STATE);
   const [connectionMode, setConnectionMode] = useState<"live" | "mock">(
@@ -50,20 +54,45 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
 
   const applyMatchResult = useCallback((matchResult: HubMatchResult) => {
     setState((prev) => ({
+      ...prev,
       matchResults: { ...prev.matchResults, [matchResult.caseId]: matchResult },
       receivedAt: prev.receivedAt ?? new Date().toISOString(),
     }));
+  }, []);
+
+  const applyIdentityInfo = useCallback((info: DashboardIdentityInfo) => {
+    setState((prev) => ({ ...prev, identity: { name: info.name, known: info.known } }));
   }, []);
 
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_DASHBOARD_WS_URL;
 
     if (!wsUrl) {
-      // 사건 2개를 순차로 흘려보낸다 — 하나(mockHubMatchResult)는 C병원이 이미
-      // confirmed라 "다른 병원으로 확정된 사건 숨기기" 규칙을 확인할 수 있고,
-      // 다른 하나(mockHubMatchResultOngoing)는 아직 아무도 확정 전이라 병원
-      // 쪽 상태 배지·번복 가능한 승인/불가 버튼을 확인할 수 있다.
+      // 이펙트 본문에서 setState를 동기 호출하면 안 되므로(react-hooks/set-state-in-effect),
+      // mock 응답들도 전부 타이머로 미룬다. hub가 없는 mock 모드에서는
+      // known=false(접근 불가) 화면이 떠서 UI 작업이 막히면 안 되므로, identity가
+      // 있으면 항상 known=true로 간주하고 간단한 표시용 이름을 채운다 — 실제 이름
+      // 규칙(Supabase 데이터)과는 무관하다.
       const timers = [
+        ...(identity
+          ? [
+              setTimeout(
+                () =>
+                  applyIdentityInfo({
+                    type: "identity_info",
+                    role: identity.role,
+                    id: identity.id,
+                    name: identity.role === "hospital" ? `${identity.id}(mock)` : `구급 ${identity.id}호차(mock)`,
+                    known: true,
+                  }),
+                0,
+              ),
+            ]
+          : []),
+        // 사건 2개를 순차로 흘려보낸다 — 하나(mockHubMatchResult)는 C병원이 이미
+        // confirmed라 "다른 병원으로 확정된 사건 숨기기" 규칙을 확인할 수 있고,
+        // 다른 하나(mockHubMatchResultOngoing)는 아직 아무도 확정 전이라 병원
+        // 쪽 상태 배지·번복 가능한 승인/불가 버튼을 확인할 수 있다.
         setTimeout(() => applyMatchResult(mockHubMatchResult), 900),
         setTimeout(() => applyMatchResult(mockHubMatchResultOngoing), 1400),
       ];
@@ -84,8 +113,14 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     socket.onerror = () => setConnectionMode("mock");
     socket.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as HubMatchResult;
-        applyMatchResult(parsed);
+        const parsed = JSON.parse(event.data) as InboundMessage;
+        // HubMatchResult엔 type 필드 자체가 없어서 "type" in parsed로 구분한다
+        // (parsed.type만 비교하면 두 타입 모두에 type이 있어야 좁혀지지 않는다).
+        if ("type" in parsed && parsed.type === "identity_info") {
+          applyIdentityInfo(parsed);
+        } else {
+          applyMatchResult(parsed as HubMatchResult);
+        }
       } catch {
         // 파싱 불가능한 메시지는 무시
       }
@@ -95,7 +130,7 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyIdentityInfo, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
