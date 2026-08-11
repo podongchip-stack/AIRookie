@@ -296,17 +296,16 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
     사건 기준으로 지도가 갱신된다.
   - ~~apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
     값인지 서버 사이드 검증은 하지 않는다~~ → **2026-08-11 해결.** dashboard가
-    Supabase에 직접 붙지 않고, hub의 `identity_info` 응답(`known` 필드)으로
-    검증한다 — 존재하지 않는 코드면 "존재하지 않는 접근 코드입니다" 화면으로
-    막는다. 아래 "이름 표시" 항목과 같은 메커니즘.
+    Supabase에 직접 붙지 않고, hub의 신원 확인 응답으로 검증한다. 아래 "이름
+    표시" 항목과 같은 메커니즘.
 - **접근 코드(hpid/apid) 기반 이름 표시 + 존재 검증 (2026-08-11)**: 상단바가
   "구급 A0000001호차", "병원 ID: S0000001"처럼 ID로만 뜨던 걸 "구급 1호차",
   "서울대학교병원"처럼 실명으로 표시하고 싶었는데, `hospitals[].name`/
   `ambulanceName`은 둘 다 사건(매칭 결과)에 등장해야만 값이 와서 통화 전엔
   이름이 안 떴다. hub가 `identify` 자기소개에 대해 사건 유무와 무관하게 즉시
-  이름/존재 여부를 알려주는 응답(`identity_info`)을 추가로 보내주는 방식으로
-  해결했다 — `useDashboardSocket`의 `state.identity`(`{name, known}`)가 이
-  결과를 담고, `matchResults`(사건 데이터)와는 완전히 분리된 상태다. 이
+  이름/존재 여부를 알려주는 응답(WebSocket `identity_info`)을 추가로 보내주는
+  방식으로 해결했다 — `useDashboardSocket`의 `state.identity`(`{name, known}`)가
+  이 결과를 담고, `matchResults`(사건 데이터)와는 완전히 분리된 상태다. 이
   과정에서 "dashboard가 병원/구급차 Supabase에 직접 붙어서 해결하자"는 대안도
   검토했지만 기각했다 — hub가 이미 info를 통해 두 Supabase 데이터를 인메모리로
   갖고 있어서, dashboard가 Supabase 자격증명을 새로 들고 있을 필요가 없고
@@ -314,6 +313,17 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   `package.json`의 `@supabase/supabase-js`는 애초에 한 번도 안 쓰여서 이번에
   제거함), "dashboard는 feature/hub와만 직접 통신한다"는 원칙도 그대로
   유지된다.
+  - **존재하지 않는 코드 처리 위치를 랜딩 페이지로 이동(2026-08-11 후속)**:
+    처음엔 `/hospital`, `/ambulance` 페이지가 열린 뒤(`identity_info`로
+    `known=false` 확인 후) 전체 화면을 "존재하지 않는 접근 코드입니다"로
+    막는 방식이었는데, 코드 입력하는 첫 페이지(`src/app/page.tsx`)에서
+    라우팅하기 전에 바로 알려주고 싶다는 요청으로 바뀌었다. hub에
+    `GET /identity?role=&id=`(HTTP, CORS 허용) 엔드포인트를 새로 추가해
+    "입장" 버튼을 누르면 라우팅 전에 먼저 조회하고, 존재하지 않으면 입력칸과
+    버튼 사이에 빨간 글씨로 안내한다. `/hospital`, `/ambulance` 페이지
+    자체의 전체 화면 차단은 제거했다 — 직접 URL로 들어온 경우엔 상단바
+    이름이 ID 폴백으로 남는 정도로만 티가 난다(랜딩 페이지 우회는 이번
+    범위에서 막지 않기로 함).
 
 ---
 
