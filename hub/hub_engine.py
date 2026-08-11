@@ -124,6 +124,21 @@ class HubEngine:
         재브로드캐스트할 때 쓴다."""
         return self._case_results.get(case_id)
 
+    def get_cases_for_hospital(self, hospital_id: str) -> list[HubMatchResult]:
+        """이 hospitalId가 후보로 들어있는 사건 전부를 돌려준다. 병원
+        대시보드 소켓이 연결 시점에 자기소개(DashboardIdentify)를 보내면,
+        연결 전에 이미 방송된 사건들을 놓치지 않도록 따라잡기 용도로 쓴다
+        (app.py의 `_send_catchup()` 참고)."""
+        return [result for result in self._case_results.values() if any(h.hospitalId == hospital_id for h in result.hospitals)]
+
+    def get_cases_for_apid(self, apid: str) -> list[HubMatchResult]:
+        """이 apid(구급차)가 등록한 사건 전부를 돌려준다. 구급차는 실제로는
+        한 번에 사건 하나만 진행하지만(voice 마이크가 한 대뿐이라), 같은
+        방식으로 여러 건이 나와도 안전하게 동작하도록 리스트로 반환한다."""
+        case_ids = [cid for cid, registered_apid in self._case_apid.items() if registered_apid == apid]
+        results = [self._case_results.get(cid) for cid in case_ids]
+        return [result for result in results if result is not None]
+
     def _patch_case_result_status(self, case_id: str, hospital_id: str, status: HospitalStatus) -> None:
         """캐시해둔 사건의 매칭 결과에서 해당 병원의 status와 병상 정보를
         최신 self._hospitals 값으로 다시 맞춰 캐시를 갱신한다.

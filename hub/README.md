@@ -271,6 +271,37 @@ voice가 뜰 때 자기 IP를 자동 탐지해 이 엔드포인트로 hub에 알
 `409`를 반환하고 등록을 보류한다 — feature/info가 구급차 정보를 먼저 보낸
 뒤에 voice가 자가등록하는 순서를 전제로 한다.
 
+### 입력 스키마 9: feature/dashboard로부터 (소켓 연결 시 자기소개, 2026-08-11 신설)
+
+hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 매칭 결과를
+"그 순간 연결된 소켓"에만 브로드캐스트했다. 그래서 진행 중인 사건이 있는
+상태로 새 대시보드 탭이 뒤늦게 열리면, 그 탭은 이전 브로드캐스트를 놓쳐
+화면에 아무것도 안 뜨는 문제가 실제로 있었다(구급1호차·서울대병원 탭이
+연결된 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로 열면 그 사건이 안
+보임). 이 메시지로 자기가 병원인지 구급차인지, 어느 hpid/apid인지
+알려주면 hub가 연결 시점에 관련된 사건들을 즉시 그 소켓에만 돌려준다.
+
+```json
+{
+  "type": "identify",
+  "role": "hospital",
+  "id": "S0000001"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `type` | `"identify"` | 고정값 |
+| `role` | `"hospital"` \| `"ambulance"` | 이 소켓이 병원 대시보드인지 구급차 대시보드인지 |
+| `id` | string | `role="hospital"`이면 hpid, `role="ambulance"`면 apid |
+
+응답은 관련된 사건 각각에 대해, 평소 브로드캐스트와 동일한 형식의
+"출력 스키마 4"(`HubMatchResult`)를 그 소켓에만 개별 전송한다 — 새 메시지
+포맷을 따로 안 만들어서 dashboard 쪽은 별도 분기 없이 `onmessage`가 받은
+대로 처리하면 된다. `role="hospital"`이면 `HubEngine.get_cases_for_hospital()`로
+그 hpid가 `hospitals[]`에 들어있는 사건 전부를, `role="ambulance"`면
+`HubEngine.get_cases_for_apid()`로 그 apid가 등록한 사건을 찾아 돌려준다.
+
 ### 출력 스키마 4: feature/hub → feature/dashboard (통합 매칭 결과)
 
 ```json
