@@ -7,6 +7,14 @@
 # STT: 음성 → 텍스트 변환 (AI 처리)
 faster-whisper==1.2.1
 
+# STT GPU 가속용 CUDA 런타임. ctranslate2가 cublas64_12.dll / cudnn을 찾지 못하면
+# GPU 실행이 RuntimeError로 죽는데, 이 패키지들이 그 DLL을 제공한다.
+# DLL이 site-packages 안에만 들어가고 PATH에는 안 올라가므로 cuda_setup.py가
+# 실행 시점에 검색 경로로 등록해준다 (Windows 전용 — 맥은 CTranslate2가
+# Metal/MPS 미지원이라 항상 CPU고, 애초에 이 패키지들의 휠도 없다).
+nvidia-cublas-cu12==12.9.2.10 ; platform_system == "Windows"
+nvidia-cudnn-cu12==9.24.0.43 ; platform_system == "Windows"
+
 # 실시간 음성 필터링: 의료 관련 문장 분류(경량 분류기 / KM-BERT) + sLLM SBAR 구조화용 (AI 처리)
 torch==2.8.0
 transformers==4.57.6

@@ -39,8 +39,13 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+# 오인식 사전의 기본 위치. 이 모듈 옆에 두고 손으로 편집한다 — data/ 아래에 두면
+# .gitignore의 data/ 규칙에 걸려 저장소에 안 올라간다(사전은 코드처럼 관리해야 함).
+CORRECTIONS_PATH = Path(__file__).resolve().parent / "corrections.json"
 
 # 한 용어가 여러 어절로 쪼개져 인식되는 경우("번지 회")까지 잡으려고 구간을 묶는다.
 DEFAULT_MAX_NGRAM = 3
@@ -315,7 +320,7 @@ _SELFCHECK_CLEAN_TEXT = (
 
 def _self_check() -> None:
     """사전과 교정 동작을 점검한다. 사전을 고친 뒤 반드시 돌릴 것."""
-    dict_path = Path(__file__).resolve().parent / "corrections.json"
+    dict_path = CORRECTIONS_PATH
 
     def section(title: str) -> None:
         print(f"\n{'=' * 10} {title} {'=' * 10}")
@@ -362,4 +367,9 @@ def _self_check() -> None:
 
 
 if __name__ == "__main__":
+    # Windows 기본 콘솔은 cp949라 점검 출력의 em dash에서 UnicodeEncodeError로
+    # 죽는다. 라이브러리로 import될 때는 전역 stdout을 건드리면 안 되므로
+    # 직접 실행하는 이 경로에서만 UTF-8로 바꾼다.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     _self_check()

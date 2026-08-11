@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -34,34 +33,18 @@ from pathlib import Path
 from typing import Callable
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+# 교정 필터·사전과 CUDA DLL 등록은 voice/로 옮겨 실운영 파이프라인(transcribe.py)과
+# 공유한다. 여기에 사본을 두면 GUI로 실험하며 늘린 사전 항목이 실운영에 반영되지
+# 않고 갈라지고, DLL 등록 로직도 한쪽만 고치는 사고가 난다.
+sys.path.insert(0, str(SCRIPT_DIR.parent))
 
-
-def _register_nvidia_dlls() -> None:
-    """pip로 설치한 nvidia cublas/cudnn DLL 경로를 등록한다 (Windows GPU 가속용).
-
-    ctranslate2가 cublas64_12.dll / cudnn 계열 DLL을 시스템에서 찾지 못하면
-    GPU 실행이 실패하므로, nvidia-cublas-cu12 / nvidia-cudnn-cu12 패키지의
-    bin 폴더를 DLL 검색 경로에 추가한다. 패키지가 없으면 조용히 넘어간다
-    (그 경우 CPU 폴백으로 동작).
-    """
-    base = Path(sys.executable).parent / "Lib" / "site-packages" / "nvidia"
-    for sub in ("cublas", "cudnn"):
-        bin_dir = base / sub / "bin"
-        if bin_dir.is_dir():
-            os.add_dll_directory(str(bin_dir))
-            os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
-
-
-_register_nvidia_dlls()
-
+import cuda_setup  # noqa: E402, F401  — faster_whisper보다 먼저 import돼야 한다
 from text_postprocess import (  # noqa: E402
+    CORRECTIONS_PATH,
     DEFAULT_MAX_NGRAM,
     TextPostprocessResult,
     postprocess_text,
 )
-
-# 오인식 교정 사전 (손으로 편집. 고친 뒤 python text_postprocess.py로 점검할 것)
-CORRECTIONS_PATH = SCRIPT_DIR / "corrections.json"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
