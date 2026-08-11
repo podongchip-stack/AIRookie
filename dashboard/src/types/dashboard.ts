@@ -54,6 +54,10 @@ export interface HubMatchResult {
   zoneActive: number[];
   hospitals: HospitalCandidate[];
   source: "rule";
+  // 아직 hub 스키마에 확정된 필드는 아니다 — 구급차 레지스트리(Supabase
+  // ambulances 테이블)가 hub 쪽에 연동되면 이 필드로 실명("구급 1호차")이
+  // 오도록 준비만 해둔다. 안 오면 대시보드가 URL의 ?id=만으로 표시를 대신한다.
+  ambulanceName?: string;
 }
 
 export type ApprovalActionType =

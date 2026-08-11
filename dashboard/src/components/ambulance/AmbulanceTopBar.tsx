@@ -7,10 +7,17 @@ export function AmbulanceTopBar({
   confirmed,
   connectionMode,
   since,
+  ambulanceId,
+  ambulanceName,
 }: {
   confirmed: boolean;
   connectionMode: "live" | "mock";
   since: string | null;
+  ambulanceId: string;
+  // hub가 구급차 레지스트리(Supabase ambulances 테이블)를 연동하면 이 값으로
+  // 실명("구급 1호차")이 온다. 아직 안 오면 URL의 ?id=만으로 대신 표시한다 —
+  // 병원 쪽(hospitalName ?? "병원 ID: ...")과 동일한 패턴.
+  ambulanceName: string | null;
 }) {
   const elapsed = useElapsedSeconds(since);
 
@@ -54,6 +61,19 @@ export function AmbulanceTopBar({
           })}
         >
           v2.0
+        </span>
+        <span
+          className={css({
+            fontSize: "xs",
+            fontWeight: "semibold",
+            color: "mint",
+            backgroundColor: "mintSoft",
+            paddingX: "1.5",
+            paddingY: "0.5",
+            borderRadius: "chip",
+          })}
+        >
+          {ambulanceName ?? `구급 ${ambulanceId}호차`}
         </span>
         <span
           className={css({

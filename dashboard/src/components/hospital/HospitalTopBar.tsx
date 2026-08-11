@@ -7,6 +7,8 @@ export function HospitalTopBar({
   caseCount,
   connectionMode,
   since,
+  hospitalId,
+  hospitalName,
 }: {
   // 여러 구급차가 동시에 본원을 후보로 걸 수 있어(다중 사건 지원), 사건 하나의
   // status 대신 "본원이 후보로 걸린 사건이 몇 건인지"를 보여준다 — 개별 사건의
@@ -14,6 +16,10 @@ export function HospitalTopBar({
   caseCount: number;
   connectionMode: "live" | "mock";
   since: string | null;
+  hospitalId: string;
+  // hub가 이번 사건의 병원 후보 목록에서 준 실제 병원명(E-Gen/Supabase 기반).
+  // 아직 매칭된 사건이 없으면 null이라, 그동안은 ID로 대체 표시한다.
+  hospitalName: string | null;
 }) {
   const elapsed = useElapsedSeconds(since);
 
@@ -57,6 +63,19 @@ export function HospitalTopBar({
           })}
         >
           v2.0
+        </span>
+        <span
+          className={css({
+            fontSize: "xs",
+            fontWeight: "semibold",
+            color: "mint",
+            backgroundColor: "mintSoft",
+            paddingX: "1.5",
+            paddingY: "0.5",
+            borderRadius: "chip",
+          })}
+        >
+          {hospitalName ?? `병원 ID: ${hospitalId}`}
         </span>
         <span
           className={css({

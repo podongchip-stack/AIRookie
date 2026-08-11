@@ -83,6 +83,8 @@ function AmbulanceDashboardContent() {
         confirmed={confirmedHospitalId != null}
         connectionMode={connectionMode}
         since={state.receivedAt}
+        ambulanceId={apid}
+        ambulanceName={myResult?.ambulanceName ?? null}
       />
       <Legend />
 
