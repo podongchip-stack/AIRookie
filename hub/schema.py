@@ -144,6 +144,11 @@ class HubMatchResult(BaseModel):
     zoneActive: list[int]
     hospitals: list[HospitalMatch]
     source: Literal["rule"] = "rule"
+    # 구급차 대시보드 상단바 표시용(2026-08-11 신설). 병원명(hospitals[].name)과
+    # 같은 패턴 — case_apid로 이 사건의 apid를 찾아 AmbulanceInfo.name을 채운다.
+    # apid를 못 찾으면(register_case 전에 process_voice_summary가 불린 등 예외
+    # 상황) None으로 두고, dashboard는 URL의 apid로 대체 표시한다.
+    ambulanceName: Optional[str] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
