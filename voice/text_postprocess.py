@@ -207,7 +207,7 @@ class TextPostprocessResult:
     raw_text: str  # 교정 전 원본 (감사 추적용, 항상 보존)
     corrected_text: str  # 교정 반영된 최종 텍스트 (LLM 입력용)
     corrections: list[Correction]
-    llm_notice: str  # 교정 내역을 사람이 읽을 수 있게 요약한 안내문
+    correction_notice: str  # 교정 내역을 사람이 읽을 수 있게 요약한 안내문 (표시용)
 
 
 def find_corrections(
@@ -255,8 +255,14 @@ def apply_corrections(text: str, corrections: list[Correction]) -> str:
     return "".join(out)
 
 
-def build_llm_notice(corrections: list[Correction]) -> str:
-    """corrected_text와 함께 LLM 프롬프트에 덧붙일 참고 안내문을 만든다."""
+def build_correction_notice(corrections: list[Correction]) -> str:
+    """교정 내역을 사람이 읽을 수 있게 정리한다 (화면/로그 표시용).
+
+    **LLM 프롬프트에는 넣지 않는다.** 예전에는 corrected_text 뒤에 덧붙여
+    같이 넘겼는데, SBAR 시스템 프롬프트에 "이 메모는 무시하라"는 규칙이 없어
+    안내문이 symptoms/treatment에 섞일 위험이 있었고, 실가동(transcribe.py)은
+    붙이지 않는데 시뮬레이터만 붙이면 같은 음성에서 결과가 갈렸다.
+    """
     if not corrections:
         return ""
     lines = [
@@ -289,7 +295,7 @@ def postprocess_text(
         raw_text=text,
         corrected_text=apply_corrections(text, found),
         corrections=found,
-        llm_notice=build_llm_notice(found),
+        correction_notice=build_correction_notice(found),
     )
 
 

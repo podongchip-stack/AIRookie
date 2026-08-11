@@ -140,35 +140,97 @@ RTX 5080 · `medium` + `qwen3:14b` · CUDA. Whisper 모델 로딩(약 4초)은 �
 
 ---
 
-## 파일 구성
+## 폴더 구조
 
-| 파일 | 역할 |
+```
+voice/
+├── transcribe.py          ┐
+├── summarizer.py          │ 실운영 모듈 — simulation3가 그대로 import해서 쓴다
+├── text_postprocess.py    │ (사본을 두지 않으므로 처리 내용이 갈릴 수 없다)
+├── corrections.json       │
+├── cuda_setup.py          ┘
+│
+└── simulation3/
+    ├── README.md              이 문서
+    ├── pipeline.py            STT → 교정 → LLM. GUI가 쓰기 좋은 형태로 감싼 것
+    └── stt_summary_gui.py     tkinter GUI (화면·스레드만)
+```
+
+이 폴더에는 **파일이 2개뿐이다.** 처리 로직은 전부 `voice/`에 있고, 여기 있는
+건 그걸 화면에 띄우는 껍데기다.
+
+### `pipeline.py`
+
+`run_pipeline()` 하나가 음성 파일을 끝까지 처리해 dict로 돌려준다.
+
+| 반환 키 | 내용 |
 |---|---|
-| `stt_summary_gui.py` | tkinter GUI. 화면과 스레드만 담당하고 처리는 `pipeline.py`에 맡긴다 |
-| `pipeline.py` | STT → 교정 → LLM 2회 호출. CLI 포함 |
+| `call_summary_message` | `voice/schema.py`의 `CallSummaryMessage`와 같은 모양 (전송은 안 함) |
+| `patient_brief` | 환자 상태 1~2문장. 전송 포맷에 없는 값이라 **message 밖**에 둔다 |
+| `text_postprocess` | 교정 내역(`corrections`/`correction_notice`/`max_ngram`) |
+| `segments` | STT 세그먼트 원본 `[{start, end, text}]` — GUI의 "STT 원문" 탭용 |
+| `timings` | 단계별 소요 시간(초) |
 
-교정 필터(`text_postprocess.py`)와 사전(`corrections.json`)은 `voice/`에 있다.
+`voice/`에서 가져다 쓰는 것:
+
+```python
+from transcribe import STT_INITIAL_PROMPT, DEFAULT_BEAM_SIZE, UNDIARIZED_SPEAKER_LABEL
+from summarizer import STRUCTURE_SYSTEM_PROMPT, structure_call_summary, summarize_patient_state
+from text_postprocess import postprocess_text, CORRECTIONS_PATH, DEFAULT_MAX_NGRAM
+import cuda_setup
+```
+
+자체적으로 갖고 있는 것은 `transcribe_audio()`(장치 폴백 + 모델 캐시)와
+`run_pipeline()`(진행 콜백·시간 측정·결과 조립)뿐이다.
+
+### `stt_summary_gui.py`
+
+화면과 스레드만 담당한다. 처리는 `run_pipeline(progress=...)`에 넘기고,
+콜백으로 오는 진행 메시지를 `queue`에 쌓아 `after(150ms)` 폴링으로 위젯에
+반영한다 (tkinter는 워커 스레드에서 위젯을 직접 못 건드린다).
+
+| 구성 요소 | 하는 일 |
+|---|---|
+| 통화 드롭다운 | `voice/data/origin_data/`와 마이크 녹음 폴더를 자동으로 훑어 목록화 |
+| 단계 표시등 | 진행 메시지를 키워드로 판정해 `○ 대기 → ◐ 진행 → ● 완료` 표시 |
+| 환자 상태 / SBAR 카드 | `patient_brief`와 `summary`를 큰 글씨·칩·색상 배지로 |
+| 교정 전후 대비 | 교정 구간에 색을 칠하고(전=빨강, 후=초록) 첫 교정 위치로 자동 스크롤 |
+| 전송 포맷 탭 | `call_summary_message`를 고정폭 폰트로 — hub가 받는 JSON 원형 |
+| 개발자 옵션 | 모델·장치·LLM·교정 on/off·n-gram, 진행 로그, 시스템 프롬프트 편집 |
+
+교정 하이라이트 위치는 교정 후 텍스트에서 길이가 달라지므로, 앞선 교정들의
+길이 변화를 누적해 다시 계산한다(`_correction_spans`).
 
 ---
 
 ## 실운영 파이프라인과 다른 점
 
-`pipeline.py`는 `voice/transcribe.py` + `voice/summarizer.py`를 시뮬레이션용으로
-재구성한 것이다. **`transcribe.py`를 이걸로 대체할 수는 없다.**
+**처리 내용은 같다.** STT 프롬프트·디코딩 옵션, 교정 필터와 사전, SBAR·환자상태
+프롬프트, LLM 호출, JSON 파싱, GPU 폴백 순서, CUDA DLL 등록을 전부 `voice/`에서
+import해서 쓴다. 같은 오디오를 양쪽에 넣어 `raw_text`·`filtered_text`·전송 포맷이
+글자 단위로 일치하는 것까지 확인했다.
 
-| | 이유 |
-|---|---|
-| hub 전송·파일 저장·`caseId`·스키마 검증 **없음** | 결과를 화면에 띄우고 끝내는 게 목적이라 통신 계층을 뺐다 |
-| **GPU 폴백 있음** | `device="auto"`를 cuda 시도 → 실패 시 cpu 재시도로 직접 해석하고, pip으로 깐 nvidia DLL 경로를 등록한다 (RTX 5080 + ctranslate2 대응). `transcribe.py`에는 없다 |
-| **모델 캐시 있음** | 같은 세션에서 반복 실행할 때 Whisper 모델을 재사용 |
-| **환자 상태 요약** | SBAR와 별개로 LLM을 한 번 더 불러 1~2문장 요약을 만든다. 팀 스키마에 없는 필드라 JSON 밖(`patient_brief`)에 둔다 |
-| **프롬프트 편집 가능** | GUI에서 SBAR 시스템 프롬프트를 고쳐 그 실행에만 반영 |
-| **`llm_notice`를 LLM에 붙임** | 교정 내역을 프롬프트에 덧붙인다. 실운영(`transcribe.py`)은 붙이지 않는다 — `STRUCTURE_SYSTEM_PROMPT`에 "이 메모는 무시하라"는 규칙이 없어 요약에 섞일 수 있어서다 |
+다른 것은 **주변 장치**뿐이다.
+
+| | `voice/` (실운영) | `simulation3/` |
+|---|---|---|
+| hub 전송·파일 저장·pydantic 검증 | 있음 | **없음** (dict 반환만) |
+| `caseId` | hub가 내려준 값 | 파일명 기반 자동 생성 (CLI 단독 실행과 같은 규칙) |
+| 진행 콜백·단계별 소요 시간 | 없음 | **있음** (GUI 단계 표시등용) |
+| Whisper 모델 캐시 | 없음 (프로세스당 1회) | **있음** (반복 실행용) |
+| SBAR 프롬프트 실행 중 교체 | 없음 | **있음** (GUI 편집) |
+| 환자 상태 1~2문장 요약 | 없음 | **있음** — 정해진 전송 포맷에 없는 값이라 `call_summary_message` **밖**에 담는다 |
+| `language` / `compute_type` 조절 | CLI 인자 | `ko` / `auto` 고정 |
+
+> 전송 포맷(`CallSummaryMessage`)은 hub·dashboard와의 **고정 계약**이다. 시뮬레이터가
+> 임의로 필드를 늘리지 않는다 — 화면에 보이는 JSON이 실제로 hub가 받는 것과
+> 달라지면 시연이 거짓말이 된다.
 
 ### 알려진 문제
 
-- `pipeline.py`의 `STT_INITIAL_PROMPT`는 팀이 오버피팅으로 판단해 롤백한 **구버전**이
-  남아 있다 (`transcribe.py` 것과 다름). 위 "교정 효과" 수치도 그 프롬프트로 측정한
-  값이므로, 팀 기준으로 다시 재려면 이걸 먼저 맞춰야 한다
-- SBAR 프롬프트와 JSON 파싱·정규화 로직이 `voice/summarizer.py`와 **중복 복제**돼
-  있다. 한쪽을 고치면 다른 쪽도 같이 고쳐야 한다
+- `summary` 값(증상 표현 등)은 같은 입력에도 실행마다 조금씩 달라진다. LLM 샘플링이
+  비결정적이라 시뮬을 두 번 돌려도 마찬가지다. 판정에 쓰이는 `severity_tag`·
+  `required_department`는 실측에서 일치했다. 완전히 고정하려면 Ollama 호출에
+  `temperature: 0`을 줘야 하는데 실운영 동작이 바뀌는 일이라 별도 결정이 필요하다
+- 위 "교정 효과" 수치는 `STT_INITIAL_PROMPT`가 팀 것으로 통일되기 전에 측정한
+  값이다. 지금 기준으로 다시 재야 한다

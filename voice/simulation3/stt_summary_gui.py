@@ -236,9 +236,14 @@ class App:
         self.card.columnconfigure(3, weight=1)
         self._clear_card()
 
-        # --- 교정 전후 대비 -------------------------------------------------
-        compare = ttk.Frame(self.root, padding=(12, 0, 12, 6))
-        compare.pack(fill="both", expand=True)
+        # --- 본문 탭: 교정 전후 대비 / hub 전송 포맷 --------------------------
+        # 전송 포맷은 개발자 옵션에 묻어두지 않고 시연 화면 본문에 올린다 - "AI가
+        # 뽑은 걸 어떤 모양으로 hub에 넘기는가"가 시연에서 보여줄 마지막 단계다.
+        self.main_notebook = ttk.Notebook(self.root)
+        self.main_notebook.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+
+        compare = ttk.Frame(self.main_notebook, padding=6)
+        self.main_notebook.add(compare, text="  STT 원문 → 교정  ")
         self.correction_count = tk.StringVar(value="")
 
         left = ttk.LabelFrame(compare, text="STT 원문 (교정 전)", padding=4)
@@ -257,10 +262,21 @@ class App:
         self.after_text.tag_configure("hit", background=COLOR_AFTER)
         self.after_text.configure(state="disabled")
 
+        payload = ttk.Frame(self.main_notebook, padding=6)
+        self.main_notebook.add(payload, text="  feature/hub 전송 포맷  ")
+        ttk.Label(
+            payload,
+            text="voice/schema.py의 CallSummaryMessage — 실제로 hub에 POST되는 JSON과 같은 모양이다.",
+            font=FONT_SMALL, foreground="#555",
+        ).pack(anchor="w", pady=(0, 4))
+        self.payload_text = ScrolledText(payload, wrap="none", font=("Consolas", 11), height=10)
+        self.payload_text.pack(fill="both", expand=True)
+        self.payload_text.configure(state="disabled")
+
         # --- 개발자 탭 (접힘) -------------------------------------------------
         self.dev_notebook = ttk.Notebook(self.root)
         self.tabs: dict[str, ScrolledText] = {}
-        for name in ["진행 로그", "결과 JSON"]:
+        for name in ["진행 로그"]:
             frame = ttk.Frame(self.dev_notebook)
             self.dev_notebook.add(frame, text=name)
             widget = ScrolledText(frame, wrap="word", font=FONT_SMALL, height=10)
@@ -447,6 +463,10 @@ class App:
         self.correction_count.set("")
         self._clear_card()
         self._set_compare("", "", [])
+        self.payload_text.configure(state="normal")
+        self.payload_text.delete("1.0", "end")
+        self.payload_text.configure(state="disabled")
+        self.main_notebook.select(0)
         self._render_stages("audio")
 
         params = {
@@ -518,7 +538,10 @@ class App:
             self.correction_count.set("교정 비활성화됨")
             self._set_compare(message["transcript"]["raw_text"], "(오인식 교정이 꺼져 있습니다)", [])
 
-        self._set_tab("결과 JSON", json.dumps(message, ensure_ascii=False, indent=2))
+        self.payload_text.configure(state="normal")
+        self.payload_text.delete("1.0", "end")
+        self.payload_text.insert("end", json.dumps(message, ensure_ascii=False, indent=2))
+        self.payload_text.configure(state="disabled")
 
     def _on_error(self, error: str) -> None:
         self.running = False

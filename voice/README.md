@@ -17,6 +17,7 @@
 - [빠른 시작](#빠른-시작)
 - [이 브랜치가 하는 일](#이-브랜치가-하는-일)
 - [실행 방법](#실행-방법)
+- [실가동 파이프라인 상세](#실가동-파이프라인-상세)
 - [STT 정확도 개선 / SBAR 구조화](#stt-정확도-개선--sbar-구조화)
 - [오인식 사전 관리](#오인식-사전-관리)
 - [사용한 AI / 모델](#사용한-ai--모델)
@@ -236,6 +237,133 @@ VOICE_APID=A0000001 VOICE_PORT=6000 python app.py
    배치 파이프라인(STT→SBAR→hub 전송)을 백그라운드 스레드로 실행한다
 4. hub가 다시 정지된 경우를 대비해 caseId가 없어도(=CLI 단독 테스트 등)
    `transcribe.py`가 파일명 기반으로 자동 생성한 값을 대신 채운다
+
+---
+
+## 실가동 파이프라인 상세
+
+진입점이 무엇이든 `transcribe.transcribe()` 하나로 수렴한다. 아래는 `app.py`가
+hub 신호를 받은 시점부터 hub로 결과를 돌려주기까지 실제로 일어나는 일이다.
+
+```
+POST /call/start  (hub 중계)
+   │  app.py — caseId를 세션에 기억, MicRecorder.start()
+   │           ※ 즉시 200 응답. 통화 중에는 녹음만 하고 STT를 돌리지 않는다
+   ▼
+POST /call/end    (hub 중계)
+   │  app.py — save_wav() → stop() → 200 응답 후 백그라운드 스레드로 파이프라인 실행
+   │           ※ STT가 수십 초라 응답을 막으면 hub가 타임아웃된다
+   ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ transcribe.transcribe(audio_path, ..., case_id)                  │
+│                                                                  │
+│  ① run_stt()                        faster-whisper              │
+│     device="auto" → 실패 시 "cpu"    vad_filter=True             │
+│     세그먼트를 list로 소진           beam_size=5                  │
+│                                     initial_prompt=도메인 힌트   │
+│         ↓ 세그먼트 목록                                          │
+│     origin_text/<파일명>.txt 로 저장 (STT 원문, 감사 추적용)      │
+│                                                                  │
+│  ② build_and_emit_call_summary()                                 │
+│                                                                  │
+│     correct_transcript()            corrections.json 정확 일치   │
+│         raw_text ──────────────────▶ filtered_text               │
+│         ※ 사전 로딩 실패해도 교정만 건너뛰고 계속                 │
+│                                                                  │
+│     structure_call_summary()        Ollama qwen3:14b             │
+│         filtered_text ─────────────▶ summary{6필드}              │
+│         ※ 실패하면 여기서 중단 (원문 .txt는 이미 저장됨)          │
+│                                                                  │
+│     CallSummaryMessage 조립          pydantic 검증               │
+│         summary_text/<파일명>_call_summary.json 로 저장          │
+│                                                                  │
+│     send_to_hub()                   POST /voice/summary          │
+│         ※ hub가 죽어 있어도 예외를 올리지 않고 콘솔에만 알림      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 단계별로 실제 무슨 일이 일어나나
+
+**① STT — `run_stt()`**
+
+`device="auto"`를 ctranslate2에 그대로 넘겨 먼저 시도하고, 실패하면 `"cpu"`로
+재시도한다. 후보가 `["cuda","cpu"]`가 아닌 `["auto","cpu"]`인 이유는 GPU가 없는
+환경(맥)에서 `cuda`를 명시하면 매번 실패 시도를 한 번 낭비하기 때문이다.
+
+세그먼트 제너레이터를 함수 안에서 `list()`로 소진하는 것도 폴백 때문이다. CUDA
+실패는 모델 로드가 아니라 **세그먼트를 실제로 순회하는 시점**(DLL 로드)에 터지는
+경우가 있어서, 그 지점이 `try` 밖에 있으면 폴백이 걸리지 않는다. 대신 세그먼트
+출력이 변환 완료 후 한꺼번에 나온다.
+
+**② 교정 — `correct_transcript()`**
+
+`corrections.json`과 **정확히 일치**하는 구간만 치환한다. 등록하지 않은 말은
+건드리지 않으므로 오교정이 구조적으로 발생할 수 없다 ([오인식 사전
+관리](#오인식-사전-관리) 참고). 사전 파일이 없거나 JSON이 깨져 있으면 교정만
+건너뛰고 STT 원문을 그대로 넘긴다 — `app.py`는 상시 서버라 여기서 예외가
+올라가면 그 통화를 통째로 잃는데, 교정은 정확도 보조 단계일 뿐이다.
+
+**③ 구조화 — `summarizer.structure_call_summary()`**
+
+Ollama `/api/generate`를 호출하는 유일한 곳이다. 호출 직전
+`ensure_ollama_ready()`가 바이너리·서버·모델을 자동으로 준비한다.
+
+응답 파싱은 2단 방어다. `<think>...</think>`(qwen3 같은 추론형 모델의 사고 과정)를
+먼저 지우고, 통짜 `json.loads`를 시도한 뒤 실패하면 정규식으로 가장 바깥
+`{...}`만 뽑아 재시도한다. 마지막으로 `_normalize()`가 `severity_tag`가
+`high/medium/low`가 아니면 `medium`으로 낙착시켜 스키마가 깨지지 않게 한다.
+
+여기서 실패하면 파이프라인이 중단된다. STT 원문 `.txt`는 이미 저장된 뒤라
+데이터 손실은 없다.
+
+**④ 조립·전송**
+
+`schema.py`의 pydantic 모델로 검증해 JSON을 만들고, 파일로 저장한 뒤
+`send_to_hub()`로 POST한다. hub가 안 떠 있어도 예외를 올리지 않고 stderr에만
+알린다 — 결과 파일은 이미 남아 있으므로 프로세스를 죽일 이유가 없다.
+
+### 데이터가 어떻게 변형되나
+
+같은 통화 한 건이 단계마다 이렇게 바뀐다 (`1.m4a` 실측).
+
+| 단계 | 산출물 | 예시 |
+| --- | --- | --- |
+| STT | `transcript.raw_text` | `...짐근경색을 의심하고... 재세동 제거기도...` |
+| 교정 | `transcript.filtered_text` | `...심근경색을 의심하고... 제세동 제거기도...` |
+| 원본 보존 | `transcript.turns[]` | **교정 전** 발화가 턴 단위로 그대로 남는다 |
+| 구조화 | `summary` | `{patient:"60대 남성", severity_tag:"high", ...}` |
+| 전송 | `CallSummaryMessage` | 위 전부 + `caseId`·`source`·`model_used` |
+
+`raw_text`/`turns`에 교정 전 원문을 남기는 것은 사후 검증(audit trail) 원칙이다.
+교정 결과는 `filtered_text`에만 반영된다.
+
+### 실측 소요 시간
+
+RTX 5080 · `medium` + `qwen3:14b` · CUDA · 108.6초 통화 기준.
+
+| 단계 | 소요 |
+| --- | --- |
+| Whisper 모델 로딩 | 3.7초 *(프로세스당 1회)* |
+| ① STT | 14.6초 |
+| ② 교정 | 0.0초 *(사전 조회라 연산량 없음)* |
+| ③ 구조화 | 9.7초 |
+| **합계** | **약 28초** |
+
+맥은 CTranslate2가 Metal/MPS를 지원하지 않아 항상 CPU이므로 훨씬 느리다.
+
+### 실패해도 죽지 않는 지점 / 죽는 지점
+
+| 상황 | 동작 |
+| --- | --- |
+| CUDA DLL 없음·GPU 없음 | **계속** — cpu로 폴백 |
+| `corrections.json` 없음·손상 | **계속** — 교정만 건너뜀 |
+| hub 미기동 | **계속** — 파일 저장까지 완료, stderr에만 알림 |
+| Ollama 미기동 | 자동 기동 시도 → 그래도 안 되면 **중단** (원문 `.txt`는 남음) |
+| LLM 응답에서 JSON 추출 실패 | **중단** (원문 `.txt`는 남음) |
+
+> `app.py`는 파이프라인을 백그라운드 스레드로 돌리고 `/call/end`에 이미 200을
+> 응답한 뒤다. 위 "중단"에 해당하면 **스레드만 조용히 죽고 hub는 계속
+> 기다린다** — 실패를 hub로 알리는 경로가 아직 없다 (알려진 제약사항 참고).
 
 ---
 
@@ -526,59 +654,86 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 ### 호출 관계
 
 ```
-app.py ─────────┐
-call_capture.py ┼──→ transcribe.transcribe()
-transcribe.py ──┘         │
-   (main)                 ├─ faster-whisper ──────────────→ 세그먼트
-   ↑                      │
-mic_recorder.py           └─→ build_and_emit_call_summary()
- (앞 둘이 녹음에 사용)              │
-                                   ├─ correct_transcript() ─→ text_postprocess ─ corrections.json
-                                   ├─ summarizer ───────────→ ollama_bootstrap ─ Ollama
-                                   └─ schema ───────────────→ 파일 저장 + hub POST
+      app.py            call_capture.py         transcribe.py
+   (HTTP 트리거)          (Ctrl+C 트리거)          (CLI main)
+        │                      │                      │
+        ├──── mic_recorder ────┤                      │       ← 녹음만 담당
+        │                      │                      │
+        └──────────────┬───────┴──────────────────────┘
+                       ▼
+            transcribe.transcribe()
+                       │
+        ┌──────────────┴───────────────┐
+        ▼                              ▼
+   run_stt()                 build_and_emit_call_summary()
+        │                              │
+  cuda_setup ─ faster-whisper    ┌─────┼──────────────┬──────────────┐
+  (DLL 등록)   (auto→cpu 폴백)    ▼     ▼              ▼              ▼
+                          correct_      summarizer   schema      send_to_hub()
+                          transcript()      │      (pydantic)         │
+                                │           │                     hub POST
+                        text_postprocess  ollama_bootstrap
+                                │           │
+                        corrections.json  Ollama (qwen3:14b)
 ```
+
+화살표가 한 방향뿐이고 순환이 없다. 아래층(`schema`·`text_postprocess`·
+`mic_recorder`)은 로컬 의존이 0이라, 모델이나 백엔드를 바꿔도 영향 범위가
+그 파일 하나로 묶인다.
 
 ### 파일별 역할
 
 | 계층 | 파일 | 역할 |
 | --- | --- | --- |
-| **진입점** | `app.py` | 실운영 경로. hub가 중계한 `POST /call/start`·`/call/end`로 녹음을 제어하고, 종료 시 파이프라인을 백그라운드 스레드로 실행(STT가 수십 초라 응답을 막지 않으려고). 부팅 시 자기 IP를 탐지해 hub에 자가등록하고(`VOICE_APID`), 통화 시작 신호의 `caseId`를 세션에 들고 있다가 요약에 실어 돌려준다 |
-| | `call_capture.py` | `app.py`의 CLI 버전. 트리거가 HTTP 대신 Ctrl+C인 것만 다르다. STT 로직을 새로 짜지 않고 `transcribe()`를 그대로 재사용 |
-| | `transcribe.py` | 녹음 파일을 직접 처리하는 CLI인 **동시에 파이프라인 본체**다. `transcribe()`(STT)와 `build_and_emit_call_summary()`(교정→구조화→전송)로 나뉘어 있고, 데이터 경로 상수와 `STT_INITIAL_PROMPT`도 여기 모여 있다 |
-| **녹음** | `mic_recorder.py` | 마이크 입력을 백그라운드 스레드에서 numpy 버퍼에 누적. 16kHz 모노 고정(Whisper 기대값이라 리샘플링 회피). `snapshot()`이 락을 걸고 복사본을 돌려줘 녹음 중에도 비파괴적으로 읽을 수 있다. 단독 실행 시 `--seconds` 스모크 테스트 |
-| **교정** | `text_postprocess.py` | STT 텍스트를 사전과 **정확 일치** 대조해 치환. 조사·종결어미 분리 후 재부착, 공백 정규화, 긴 구간 우선. 직접 실행하면 사전 자체 점검이 돈다 |
+| **진입점** | `app.py` | **실운영 경로.** hub가 중계한 `POST /call/start`·`/call/end`로 녹음을 제어하고, 종료 시 파이프라인을 백그라운드 스레드로 실행한다(STT가 수십 초라 응답을 막으면 hub가 타임아웃). 부팅 시 UDP 소켓으로 자기 IP를 탐지해 hub에 자가등록하고(`VOICE_APID`, 실패하면 5초마다 재시도), 통화 시작 신호의 `caseId`를 세션에 들고 있다가 요약에 실어 돌려준다. 전역 상태(`_recorder`/`_session`/`_case_id`)는 `threading.Lock`으로 보호 |
+| | `call_capture.py` | `app.py`의 CLI 버전. 트리거가 HTTP 대신 Ctrl+C인 것만 다르다. `finally`에서 저장하므로 예외로 죽어도 녹음은 남는다. STT 로직을 새로 짜지 않고 `transcribe()`를 그대로 재사용 |
+| | `transcribe.py` | 녹음 파일을 직접 처리하는 CLI인 **동시에 파이프라인 본체**다. `run_stt()`(STT+장치 폴백) → `transcribe()`(오케스트레이션) → `correct_transcript()`(교정) → `build_and_emit_call_summary()`(구조화·조립·전송)로 나뉜다. 데이터 경로 상수, `STT_INITIAL_PROMPT`, `DEFAULT_BEAM_SIZE`, `HUB_VOICE_SUMMARY_URL`도 여기 모여 있다 |
+| **녹음** | `mic_recorder.py` | 마이크 입력을 백그라운드 스레드에서 numpy 버퍼에 누적. 16kHz 모노 고정(Whisper 기대값이라 리샘플링 회피). `snapshot()`이 락을 걸고 **복사본**을 돌려줘 녹음 중에도 비파괴적으로 읽을 수 있다. 단독 실행 시 `--seconds` 스모크 테스트 |
+| **교정** | `text_postprocess.py` | STT 텍스트를 사전과 **정확 일치** 대조해 치환. 조사·종결어미 분리 후 재부착, 공백 정규화, 긴 구간 우선. `build_correction_notice()`는 교정 내역을 사람이 읽게 정리하는 **표시용**이며 LLM 프롬프트에는 넣지 않는다. 직접 실행하면 사전 자체 점검이 돈다 |
 | | `corrections.json` | 오인식 사전. **손으로 편집하는 데이터 파일** — 편집 규칙과 점검 방법은 [오인식 사전 관리](#오인식-사전-관리) 참고 |
-| **구조화** | `summarizer.py` | Ollama `/api/generate` 호출부를 독점한다. `<think>` 태그 제거 → JSON 관대 추출 → 필드 정규화(`severity_tag`가 이상하면 `medium`으로 낙착). LLM 백엔드를 바꿔도 이 파일만 교체하면 된다 |
+| **구조화** | `summarizer.py` | Ollama `/api/generate` 호출부를 독점한다(`_ollama_generate`). `structure_call_summary()`가 SBAR JSON을, `summarize_patient_state()`가 환자 상태 1~2문장을 만든다 — 후자는 정해진 전송 포맷에 없어 **실운영은 호출하지 않고 simulation3만 쓴다**. `<think>` 태그 제거 → JSON 관대 추출 → 필드 정규화(`severity_tag`가 이상하면 `medium`으로 낙착). LLM 백엔드를 바꿔도 이 파일만 교체하면 된다 |
 | | `ollama_bootstrap.py` | LLM 호출 직전에 바이너리·서버·모델을 자동 준비. 자동 **설치**는 macOS+Homebrew만 지원하지만, 서버 기동과 모델 pull은 OS 무관하게 동작한다 |
-| | `schema.py` | 출력 JSON pydantic 스키마. dashboard의 `CallSummaryMessage` 타입과 1:1 대응이라 필드 변경 시 양쪽을 같이 고쳐야 한다 |
-| **환경** | `cuda_setup.py` | pip으로 깐 `nvidia-cublas-cu12`/`nvidia-cudnn-cu12`의 DLL 폴더를 Windows 검색 경로에 등록한다. `faster_whisper`보다 **먼저** import돼야 해서 별도 모듈로 뺐고(알파벳순이라 import 정렬에도 순서가 유지됨), 맥·리눅스에서는 아무것도 하지 않는다 |
+| | `schema.py` | 출력 JSON pydantic 스키마. **hub·dashboard와의 고정 계약**이라 임의로 필드를 늘리지 않는다 — 바꾸려면 세 브랜치가 같이 움직여야 한다 |
+| **환경** | `cuda_setup.py` | pip으로 깐 `nvidia-cublas-cu12`/`nvidia-cudnn-cu12`의 DLL 폴더를 Windows 검색 경로에 등록한다. 이게 없으면 GPU 실행이 `cublas64_12.dll is not found`로 죽는다. `faster_whisper`보다 **먼저** import돼야 해서 별도 모듈로 뺐고(알파벳순이라 import 정렬에도 순서 유지), 패키지 위치는 venv/conda 레이아웃 차이를 피하려고 `find_spec`으로 찾는다. 맥·리눅스에서는 아무것도 하지 않는다 |
 
-### `simulation3/` — 사전 튜닝용 실험 하네스
+### `simulation3/` — 시연 화면 겸 사전 튜닝 하네스
 
-**실운영 경로가 아니다.** `corrections.json`을 늘려가며 STT 모델·LLM·프롬프트를
-바꿔 결과를 눈으로 비교하는 용도다. 교정 필터와 사전은 `voice/` 것을 그대로
-import해 **공유**하므로, 여기서 실험하며 추가한 항목이 곧 실운영에 반영된다
-(사본을 두면 갈라지므로 일부러 하나로 유지).
+**실운영 경로가 아니다.** 팀 시연에서 파이프라인을 눈으로 보여주고,
+`corrections.json`을 늘려가며 모델·프롬프트를 바꿔 결과를 비교하는 용도다.
 
 | 파일 | 역할 |
 | --- | --- |
-| `pipeline.py` | STT → 교정 → LLM **2회** 호출(SBAR 구조화 + 환자 상태 1~2문장 요약). CLI 포함 |
+| `pipeline.py` | STT → 교정 → LLM 호출을 GUI가 쓰기 좋은 형태로 감싼 것. 진행 콜백·단계별 시간·세그먼트 원본을 같이 돌려준다. CLI 포함 |
 | `stt_summary_gui.py` | tkinter GUI. 화면과 스레드만 담당하고 처리는 전부 `pipeline.py`에 맡긴다 |
-| `README.md` | 시뮬레이터 사용법과 실측 결과 |
+| `README.md` | 시뮬레이터 사용법, 실측 속도, 교정 효과 |
 
-본 파이프라인과 의도적으로 다른 점:
+**처리 내용은 실운영과 같다.** STT 프롬프트·디코딩 옵션, 교정 필터와 사전,
+SBAR 프롬프트, LLM 호출, JSON 파싱, 장치 폴백 순서, CUDA DLL 등록을 전부
+`voice/`에서 import해서 쓴다. 사본이 없으니 손으로 맞출 필요도, 갈릴 일도 없다.
 
-| | 이유 |
-| --- | --- |
-| hub 전송·파일 저장·`caseId`·스키마 검증 **없음** | 시뮬레이터라 결과를 화면에 띄우고 끝낸다. 그래서 `transcribe.py`를 이걸로 대체할 수는 없다 |
-| **GPU 폴백 있음** | `device="auto"`를 cuda 시도 → 실패 시 cpu 재시도로 직접 해석하고, pip으로 깐 nvidia DLL 경로를 등록한다 (RTX 5080 + ctranslate2 대응). `transcribe.py`에는 없다 |
-| **모델 캐시 있음** | 같은 파일을 반복 실행할 때 Whisper 모델을 재사용 |
-| **환자 상태 요약** | SBAR와 별개로 1~2문장 요약을 추가 생성 (팀 스키마에 없는 필드라 JSON 밖에 둔다) |
-| **프롬프트 편집 가능** | GUI에서 SBAR 시스템 프롬프트를 고쳐 그 실행에만 반영 |
+```
+simulation3/pipeline.py
+    ├─ from transcribe import STT_INITIAL_PROMPT, DEFAULT_BEAM_SIZE, ...
+    ├─ from summarizer import STRUCTURE_SYSTEM_PROMPT, structure_call_summary, ...
+    ├─ from text_postprocess import postprocess_text, CORRECTIONS_PATH
+    └─ import cuda_setup
+```
 
-> ⚠️ `pipeline.py`의 `STT_INITIAL_PROMPT`는 팀이 오버피팅으로 판단해 롤백한
-> **구버전이 남아 있다** (`transcribe.py` 것과 다름). simulation3 README의 실측
-> 수치도 그 프롬프트로 측정한 값이므로, 팀 기준으로 다시 재려면 이걸 먼저 맞춰야 한다.
+같은 오디오를 양쪽에 넣어 `raw_text`·`filtered_text`·전송 포맷이 글자 단위로
+일치하는 것까지 확인했다. 다른 것은 **주변 장치**뿐이다.
+
+| | `voice/` (실운영) | `simulation3/` |
+| --- | --- | --- |
+| hub 전송·파일 저장·pydantic 검증 | 있음 | 없음 (dict 반환만) |
+| `caseId` | hub가 내려준 값 | 파일명 기반 자동 생성 |
+| 진행 콜백·단계별 시간 | 없음 | 있음 (GUI 단계 표시등) |
+| Whisper 모델 캐시 | 없음 | 있음 (반복 실행용) |
+| SBAR 프롬프트 실행 중 교체 | 없음 | 있음 (GUI 편집) |
+| 환자 상태 1~2문장 요약 | 없음 | 있음 (전송 포맷 **밖**) |
+
+> 전송 포맷(`CallSummaryMessage`)은 hub·dashboard와의 고정 계약이다. 시뮬레이터가
+> 임의로 필드를 늘리지 않는다 — 화면에 보이는 JSON이 실제로 hub가 받는 것과
+> 달라지면 시연이 거짓말이 된다.
 
 ### 경로 규칙
 

@@ -1,7 +1,13 @@
-"""필터링된 통화 텍스트를 SBAR 형태의 구조화된 요약으로 변환한다 (AI 처리, sLLM).
+"""교정된 통화 텍스트를 LLM으로 요약한다 (AI 처리, sLLM).
 
-모델/API 호출부를 여기에 모아두고, transcribe.py는 이 함수만 호출한다.
-나중에 Ollama 대신 다른 LLM 백엔드로 바꾸더라도 이 파일만 교체하면 된다.
+두 가지를 만든다.
+    structure_call_summary()   - SBAR 구조화 JSON. hub의 매칭 스코어링 입력이다.
+    summarize_patient_state()  - 환자 상태 1~2문장. 사람이 한눈에 읽는 용도.
+
+모델/API 호출부를 여기에 모아두고 transcribe.py는 이 함수들만 호출한다. 나중에
+Ollama 대신 다른 LLM 백엔드로 바꾸더라도 이 파일만 교체하면 된다.
+simulation3의 시뮬레이터도 자기 사본을 두지 않고 이 모듈을 그대로 쓴다 - 프롬프트가
+갈리면 시연 화면과 실제 결과가 달라지기 때문이다.
 """
 
 from __future__ import annotations
@@ -100,31 +106,45 @@ STRUCTURE_SYSTEM_PROMPT = """\
 """
 
 
+BRIEF_SYSTEM_PROMPT = """\
+당신은 응급이송 통화를 듣고 병원 응급실이 환자를 한눈에 파악하도록 돕는 의료 정보 전문가입니다.
+
+아래 구급대원의 통화 내용을 읽고, 환자 상태를 1~2문장으로 요약하세요.
+
+규칙:
+- 요약 문장만 출력합니다. 제목·머리기호·JSON·부연 설명을 붙이지 마세요.
+- 통화에 나온 내용만 씁니다. 나이·성별·질환을 추측해서 채우지 마세요.
+- "[STT 후처리 참고 정보]" 아래는 통화 내용이 아니라 후처리 메모입니다. 요약에 넣지 마세요.
+- 담는 순서: 환자 인적사항 -> 발병/사고 기전 -> 활력징후·의식 -> 시행한 처치.
+
+예시:
+60대 남성, 자택에서 갑자기 발생한 흉통으로 심근경색 의심. 혈압 100/68, 맥박 104회 빈맥이며 \
+산소요법과 정맥로 확보 후 이송 중.
+"""
+
+
 class StructuringError(RuntimeError):
     pass
 
 
-def structure_call_summary(filtered_text: str, llm_model: str, timeout: int = 300) -> dict:
-    """filtered_text -> {patient, mechanism, symptoms, treatment, severity_tag, required_department}
+def _ollama_generate(prompt: str, system: str, llm_model: str, timeout: int) -> str:
+    """Ollama /api/generate를 한 번 호출하고 응답 문자열을 돌려준다.
 
-    오디오 파일만 있으면 이 함수 호출만으로 끝까지 처리되도록, Ollama 설치/서버
-    실행/모델 pull이 안 되어 있으면 ensure_ollama_ready()가 전부 자동으로 준비한다.
+    오디오 파일만 있으면 끝까지 처리되도록, Ollama 설치/서버 실행/모델 pull이 안
+    되어 있으면 ensure_ollama_ready()가 전부 자동으로 준비한다.
+
+    format:"json"(문법 강제 디코딩)은 쓰지 않는다. qwen3 같은 추론형 모델과 충돌해
+    빈 응답({})만 뱉는 문제가 있었다 - thinking 과정을 거치지 못하고 바로
+    포기해버린다. 대신 프롬프트로만 JSON을 요청하고 응답 텍스트에서 관대하게
+    추출한다 (_extract_json).
     """
     try:
         ensure_ollama_ready(llm_model)
     except OllamaBootstrapError as e:
         raise StructuringError(str(e)) from e
 
-    # format:"json"(문법 강제 디코딩)은 qwen3 같은 추론형 모델과 충돌해서 빈 응답({})만
-    # 뱉는 문제가 있었다 (thinking 과정을 거치지 못하고 바로 포기해버림). 대신 프롬프트로만
-    # JSON을 요청하고, 응답 텍스트에서 JSON 부분만 관대하게 추출하는 방식으로 바꿨다.
     payload = json.dumps(
-        {
-            "model": llm_model,
-            "system": STRUCTURE_SYSTEM_PROMPT,
-            "prompt": filtered_text,
-            "stream": False,
-        }
+        {"model": llm_model, "system": system, "prompt": prompt, "stream": False}
     ).encode("utf-8")
     request = urllib.request.Request(
         OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"}
@@ -135,8 +155,35 @@ def structure_call_summary(filtered_text: str, llm_model: str, timeout: int = 30
     except (urllib.error.URLError, TimeoutError) as e:
         raise StructuringError(f"Ollama 호출 실패: {e}") from e
 
-    structured = _extract_json(result.get("response", ""))
-    return _normalize(structured)
+    return result.get("response", "")
+
+
+def structure_call_summary(
+    filtered_text: str, llm_model: str, timeout: int = 300, system_prompt: str | None = None
+) -> dict:
+    """filtered_text -> {patient, mechanism, symptoms, treatment, severity_tag, required_department}
+
+    system_prompt를 주면 그것으로 대체한다 (simulation3 GUI가 프롬프트를 고쳐가며
+    실험하는 용도). 실운영은 항상 기본값 STRUCTURE_SYSTEM_PROMPT를 쓴다.
+    """
+    raw = _ollama_generate(
+        filtered_text, system_prompt or STRUCTURE_SYSTEM_PROMPT, llm_model, timeout
+    )
+    return _normalize(_extract_json(raw))
+
+
+def summarize_patient_state(
+    text: str, llm_model: str, timeout: int = 300, system_prompt: str | None = None
+) -> str:
+    """통화 텍스트 -> 환자 상태 1~2문장 요약 (SBAR 구조화와는 별개 호출).
+
+    SBAR는 hub가 스코어링에 쓰는 기계용 구조이고, 이쪽은 사람이 한눈에 읽는
+    문장이다. 한 번의 호출로 둘 다 만들게 하면 JSON 안에 산문을 끼워넣어야 해서
+    파싱이 불안정해지므로 호출을 나눴다.
+    """
+    raw = _ollama_generate(text, system_prompt or BRIEF_SYSTEM_PROMPT, llm_model, timeout)
+    brief = _THINK_TAG_RE.sub("", raw).strip()
+    return " ".join(brief.split())  # 줄바꿈 제거 - 한두 줄로 붙여서 표시
 
 
 def _extract_json(response_text: str) -> dict:
