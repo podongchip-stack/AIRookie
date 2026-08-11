@@ -444,6 +444,43 @@ info의 낡은 재조회가 와도 hub 메모리가 안 되돌아가는 것 → 
 | `name` | string \| null | hub가 아는 실제 이름. 모르면(레지스트리에 없으면) `null` |
 | `known` | boolean | hub의 레지스트리에 이 hpid/apid가 등록돼 있는지. `false`면 dashboard가 "존재하지 않는 접근 코드"로 판단해 접근을 막는 근거로 쓸 수 있다 |
 
+### `GET /identity` (HTTP, 랜딩 페이지 사전 확인용, 2026-08-11 신설)
+
+처음엔 `/hospital`, `/ambulance` 페이지가 열린 뒤(WebSocket `identify` 이후)에만
+존재 여부를 알 수 있어서, 존재하지 않는 코드로 들어가면 그 페이지 전체가
+"존재하지 않는 접근 코드입니다" 화면으로 막히는 방식이었다. 코드를 입력하는
+**첫 페이지에서, 넘어가기 전에** 바로 확인하고 싶다는 요청에 따라 REST
+엔드포인트로 별도 노출했다 — 랜딩 페이지는 아직 어느 사건에도 속하지 않은
+1회성 확인만 하면 되니, 지속 연결(WebSocket)을 열었다 바로 닫는 것보다 단순
+요청-응답이 더 잘 맞는다. `_resolve_identity()`로 위 `identity_info`와 완전히
+같은 조회 로직을 재사용한다.
+
+```
+GET /identity?role=hospital&id=S0000001
+```
+
+응답(200):
+```json
+{
+  "role": "hospital",
+  "id": "S0000001",
+  "name": "서울대학교병원",
+  "known": true
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `role` | `"hospital"` \| `"ambulance"` | 요청 그대로 |
+| `id` | string | 요청 그대로 |
+| `name` | string \| null | hub가 아는 실제 이름. 모르면 `null` |
+| `known` | boolean | hub의 레지스트리에 등록돼 있는지 |
+
+`role`이 `hospital`/`ambulance`가 아니거나 `id`가 없으면 `400`. dashboard(포트
+3000)와 hub(포트 5001)는 다른 origin이라 브라우저 `fetch`가 CORS로 막히므로,
+이 엔드포인트만 `Access-Control-Allow-Origin: *`을 붙인다 — 인증이 없는 단순
+조회라 전체 허용해도 안전하다고 판단했다.
+
 ## 결과 저장 및 전송 방식 (`delivery.py`)
 
 로컬 파일 저장은 항상 하고, 실시간 dashboard 전송은 `app.py`가 처리한다.
