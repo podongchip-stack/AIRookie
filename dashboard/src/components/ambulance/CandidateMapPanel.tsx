@@ -50,7 +50,26 @@ export function CandidateMapPanel({
   const polylineRef = useRef<kakao.maps.Polyline | null>(null);
 
   useEffect(() => {
-    if (!ready || !containerRef.current || hospitals.length === 0) return;
+    if (!ready || !containerRef.current) return;
+
+    // 후보가 없어지면(hospitals가 빈 배열) 예전엔 여기서 그냥 return해버려서
+    // 마지막으로 그려둔 마커·경로가 지도에 그대로 남아있었다(병원 대시보드
+    // MapPanel에서 2026-08-12 먼저 발견된 것과 같은 종류의 문제 — 후보가 없어졌으면
+    // 지도도 같이 비워야 한다).
+    if (hospitals.length === 0) {
+      hospitalMarkersRef.current.forEach(({ marker, label }) => {
+        marker.setMap(null);
+        label.setMap(null);
+      });
+      hospitalMarkersRef.current = [];
+      ambulanceMarkerRef.current?.setMap(null);
+      ambulanceMarkerRef.current = null;
+      ambulanceLabelRef.current?.setMap(null);
+      ambulanceLabelRef.current = null;
+      polylineRef.current?.setMap(null);
+      polylineRef.current = null;
+      return;
+    }
 
     const { kakao } = window;
 
@@ -152,13 +171,17 @@ export function CandidateMapPanel({
             ref={containerRef}
             role="img"
             aria-label="구급차 현재 위치와 데이터를 보낸 병원들의 위치를 표시한 지도"
-            className={css({ position: "absolute", inset: "0" })}
+            // zIndex:0으로 별도 쌓임 맥락을 만들어 카카오맵 내부 z-index가 형제인
+            // 오버레이 위로 새어나가지 않게 한다(병원 대시보드 MapPanel과 동일한
+            // 이유, 2026-08-12).
+            className={css({ position: "absolute", inset: "0", zIndex: "0" })}
           />
           {(!ready || error || hospitals.length === 0) && (
             <div
               className={css({
                 position: "absolute",
                 inset: "0",
+                zIndex: "1",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",

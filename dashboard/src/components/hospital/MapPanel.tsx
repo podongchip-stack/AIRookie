@@ -46,7 +46,25 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
   const polylineRef = useRef<kakao.maps.Polyline | null>(null);
 
   useEffect(() => {
-    if (!ready || !containerRef.current || !hospital) return;
+    if (!ready || !containerRef.current) return;
+
+    // 다른 병원으로 이송이 확정돼 이 사건이 목록에서 사라지면 hospital이 null로
+    // 넘어온다. 예전엔 여기서 그냥 return해버려서 마지막으로 그려둔 마커·경로가
+    // 지도에 그대로 남아있었다(2026-08-12 실제로 재현됨) — 사건이 없어졌으면
+    // 지도도 같이 비워야 한다.
+    if (!hospital) {
+      hospitalMarkerRef.current?.setMap(null);
+      hospitalMarkerRef.current = null;
+      hospitalLabelRef.current?.setMap(null);
+      hospitalLabelRef.current = null;
+      ambulanceMarkerRef.current?.setMap(null);
+      ambulanceMarkerRef.current = null;
+      ambulanceLabelRef.current?.setMap(null);
+      ambulanceLabelRef.current = null;
+      polylineRef.current?.setMap(null);
+      polylineRef.current = null;
+      return;
+    }
 
     const { kakao } = window;
     const hospitalPos = new kakao.maps.LatLng(hospital.gps.lat, hospital.gps.lng);
@@ -125,13 +143,18 @@ export function MapPanel({ hospital }: { hospital: HospitalCandidate | null }) {
             ref={containerRef}
             role="img"
             aria-label="구급차 현재 위치와 본원까지의 경로를 표시한 지도"
-            className={css({ position: "absolute", inset: "0" })}
+            // zIndex:0으로 이 div 스스로 별도 쌓임 맥락(stacking context)을 만들어야
+            // 카카오맵이 내부적으로 쓰는 z-index들이 바깥으로 새어나가 형제인 오버레이
+            // 위를 덮어버리는 걸 막을 수 있다(2026-08-12, 사건이 사라졌는데 지도가
+            // 안 지워지던 문제의 원인 중 하나 — 정리 로직 누락과 별개로 겪음).
+            className={css({ position: "absolute", inset: "0", zIndex: "0" })}
           />
           {(!ready || error || !hospital) && (
             <div
               className={css({
                 position: "absolute",
                 inset: "0",
+                zIndex: "1",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
