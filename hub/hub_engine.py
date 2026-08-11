@@ -103,6 +103,9 @@ class HubEngine:
             return
         self._hospitals[info.hospitalId] = info
 
+    def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
+        return self._hospitals.get(hospital_id)
+
     def update_ambulance_info(self, info: AmbulanceInfo) -> None:
         """feature/info로부터 받은 구급차 정보를 apid 기준으로 upsert한다.
         병원과 달리 hub가 이 값을 직접 바꿀 일이 없어 재시도 대기열 같은

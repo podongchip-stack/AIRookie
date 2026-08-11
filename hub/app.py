@@ -27,6 +27,7 @@ from schema import (
     ApprovalAction,
     CallSignal,
     DashboardIdentify,
+    DashboardIdentityInfo,
     GpsPoint,
     HospitalInfo,
     VoiceCallSummaryMessage,
@@ -211,6 +212,31 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
             print(f"  [통신] 따라잡기 전송 실패: {e}")
 
 
+def _send_identity_info(ws, identify: DashboardIdentify) -> None:
+    """자기소개(DashboardIdentify)에 대해, 사건 유무와 무관하게 그 hpid/apid의
+    실제 이름을 즉시 알려준다. _send_catchup()은 "진행 중인 사건"이 있어야만
+    뭔가를 보내는데, 사건이 하나도 없는 상태(대시보드를 막 열어서 아직 통화가
+    없는 상태)에서도 상단바에 실명이 뜨게 하려면 이 응답이 따로 필요하다
+    (2026-08-11 — 병원/구급차 대시보드가 항상 이름으로 뜨길 원한다는 요청).
+    hub가 그 hpid/apid를 아예 모르면(`known=False`) dashboard는 이걸
+    "존재하지 않는 접근 코드"로 판단해 접근을 막는 데 쓸 수 있다."""
+    if identify.role == "hospital":
+        hospital = engine.get_hospital(identify.id)
+        name = hospital.name if hospital is not None else None
+        known = hospital is not None
+    else:
+        ambulance = engine.get_ambulance(identify.id)
+        name = ambulance.name if ambulance is not None else None
+        known = ambulance is not None
+
+    info = DashboardIdentityInfo(role=identify.role, id=identify.id, name=name, known=known)
+    print(f"  [통신] {identify.role} {identify.id} 신원 확인 응답 — known={known}, name={name}")
+    try:
+        ws.send(json.dumps(info.model_dump(), ensure_ascii=False))
+    except Exception as e:  # noqa: BLE001
+        print(f"  [통신] identity_info 전송 실패: {e}")
+
+
 def _handle_dashboard_action(payload: dict) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
     구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
@@ -245,12 +271,14 @@ def _handle_dashboard_action(payload: dict) -> None:
 def dashboard_socket(ws):
     """dashboard와의 WebSocket 연결. 구급차 대시보드 여러 개 + 병원 대시보드
     여러 개가 동시에 붙을 수 있어 연결마다 집합에 추가/제거한다. 연결 직후
-    자기소개(DashboardIdentify)를 보내면 그 소켓과 관련된 진행 중인 사건을
-    즉시 따라잡기로 보내주고(_send_catchup — 새 탭이 뒤늦게 연결돼서
-    이전 브로드캐스트를 놓치는 문제 보정), 승인 액션(JSON)과 통화 시작/종료
-    신호(JSON)도 받는다. 매칭 결과는 /voice/summary 처리 후 전체 연결에
-    밀어준다. 브라우저 마이크 오디오(바이너리 프레임)는 화면 시각화 용도로만
-    쓰기로 했으므로 여기서는 받기만 하고 버린다.
+    자기소개(DashboardIdentify)를 보내면 두 가지를 순서대로 응답한다:
+    (1) 사건 유무와 무관한 즉시 신원 확인(_send_identity_info — 실명·존재
+    여부), (2) 그 소켓과 관련된 진행 중인 사건 따라잡기(_send_catchup — 새
+    탭이 뒤늦게 연결돼서 이전 브로드캐스트를 놓치는 문제 보정). 승인
+    액션(JSON)과 통화 시작/종료 신호(JSON)도 받는다. 매칭 결과는
+    /voice/summary 처리 후 전체 연결에 밀어준다. 브라우저 마이크 오디오
+    (바이너리 프레임)는 화면 시각화 용도로만 쓰기로 했으므로 여기서는
+    받기만 하고 버린다.
     """
     _dashboard_sockets.add(ws)
     try:
@@ -279,6 +307,7 @@ def dashboard_socket(ws):
                 except ValidationError as exc:
                     print(f"  [통신] 잘못된 DashboardIdentify 수신: {exc.errors()}")
                     continue
+                _send_identity_info(ws, identify)
                 _send_catchup(ws, identify)
             elif "action" in payload:
                 _handle_dashboard_action(payload)

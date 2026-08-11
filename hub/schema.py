@@ -210,6 +210,21 @@ class DashboardIdentify(BaseModel):
     id: str
 
 
+# ── feature/hub → feature/dashboard (출력, 자기소개에 대한 즉시 응답) ───────
+# DashboardIdentify에 대한 응답. _send_catchup()(사건 기반)과는 별개로, hub가
+# 이미 인메모리로 갖고 있는 병원/구급차 레지스트리(update_hospital_info()/
+# update_ambulance_info())에서 이름을 즉시 찾아 돌려준다 — 사건이 하나도
+# 없어도(통화 전이라도) 상단바에 실명이 뜨게 하기 위해서다. `known`이
+# false면 hub가 그 hpid/apid를 아예 모른다는 뜻이라, dashboard는 이걸
+# "접근 불가"(존재하지 않는 코드) 판단 근거로 쓴다.
+class DashboardIdentityInfo(BaseModel):
+    type: Literal["identity_info"] = "identity_info"
+    role: DashboardRole
+    id: str
+    name: Optional[str] = None
+    known: bool
+
+
 # ── feature/hub → feature/info (출력, HospitalInfo 부분 갱신) ───────────────
 
 class HospitalBedUpdate(BaseModel):
