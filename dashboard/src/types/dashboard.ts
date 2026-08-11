@@ -109,6 +109,27 @@ export interface DashboardIdentify {
   id: string;
 }
 
+// feature/hub → dashboard. DashboardIdentify에 대한 첫 번째 응답(2026-08-11
+// 신설). hospitals[].name/HubMatchResult.ambulanceName은 둘 다 "사건이 있어야만"
+// 이름이 오는 한계가 있었다 — 이건 사건 유무와 무관하게, hub가 이미 아는
+// 병원/구급차 레지스트리에서 즉시 이름을 조회해 돌려준다. known이 false면
+// hub가 그 hpid/apid를 아예 모른다는 뜻이라 "존재하지 않는 접근 코드"로
+// 판단할 수 있다(hub README "출력 스키마 6" 참고).
+export interface DashboardIdentityInfo {
+  type: "identity_info";
+  role: DashboardRole;
+  id: string;
+  name: string | null;
+  known: boolean;
+}
+
+// 신원 확인 결과. known=null은 "아직 hub 응답을 못 받음(확인 중)" —
+// 접근 불가로 단정하면 안 되고, false와는 구분해서 다뤄야 한다.
+export interface IdentityState {
+  name: string | null;
+  known: boolean | null;
+}
+
 export interface DashboardState {
   // caseId를 키로 하는 맵 — 여러 구급차의 사건을 동시에 들고 있을 수 있다.
   // 구급차 대시보드는 자기 caseId 하나만 꺼내 쓰고, 병원 대시보드는 자기
@@ -117,6 +138,9 @@ export interface DashboardState {
   // hub 메시지 자체엔 타임스탬프가 없어서, "정보 수신 후 경과" 표시를 위해
   // 대시보드가 최초 수신 시각을 로컬에서 기록해 둔다.
   receivedAt: string | null;
+  // 이 소켓(=이 apid/hpid)의 신원 확인 결과. matchResults와 분리해서 관리하는
+  // 이유는 사건과 무관하게 항상 표시돼야 하기 때문이다.
+  identity: IdentityState;
 }
 
-export type InboundMessage = HubMatchResult;
+export type InboundMessage = HubMatchResult | DashboardIdentityInfo;

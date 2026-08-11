@@ -293,8 +293,26 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
     동시에 같은 병원을 후보로 걸 수 있기 때문에, 사건 하나만 보여주던 이전 구조로는
     다른 구급차의 요청이 화면에서 사라져 보이는 문제가 있었다. 카드를 선택하면 그
     사건 기준으로 지도가 갱신된다.
-  - apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
-    값인지 서버 사이드 검증은 하지 않는다(다음 단계 TODO, dashboard README 참고).
+  - ~~apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
+    값인지 서버 사이드 검증은 하지 않는다~~ → **2026-08-11 해결.** dashboard가
+    Supabase에 직접 붙지 않고, hub의 `identity_info` 응답(`known` 필드)으로
+    검증한다 — 존재하지 않는 코드면 "존재하지 않는 접근 코드입니다" 화면으로
+    막는다. 아래 "이름 표시" 항목과 같은 메커니즘.
+- **접근 코드(hpid/apid) 기반 이름 표시 + 존재 검증 (2026-08-11)**: 상단바가
+  "구급 A0000001호차", "병원 ID: S0000001"처럼 ID로만 뜨던 걸 "구급 1호차",
+  "서울대학교병원"처럼 실명으로 표시하고 싶었는데, `hospitals[].name`/
+  `ambulanceName`은 둘 다 사건(매칭 결과)에 등장해야만 값이 와서 통화 전엔
+  이름이 안 떴다. hub가 `identify` 자기소개에 대해 사건 유무와 무관하게 즉시
+  이름/존재 여부를 알려주는 응답(`identity_info`)을 추가로 보내주는 방식으로
+  해결했다 — `useDashboardSocket`의 `state.identity`(`{name, known}`)가 이
+  결과를 담고, `matchResults`(사건 데이터)와는 완전히 분리된 상태다. 이
+  과정에서 "dashboard가 병원/구급차 Supabase에 직접 붙어서 해결하자"는 대안도
+  검토했지만 기각했다 — hub가 이미 info를 통해 두 Supabase 데이터를 인메모리로
+  갖고 있어서, dashboard가 Supabase 자격증명을 새로 들고 있을 필요가 없고
+  (`dashboard/.env.local`의 `AMBULANCE_SUPABASE_URL`/`KEY`와
+  `package.json`의 `@supabase/supabase-js`는 애초에 한 번도 안 쓰여서 이번에
+  제거함), "dashboard는 feature/hub와만 직접 통신한다"는 원칙도 그대로
+  유지된다.
 
 ---
 

@@ -25,6 +25,10 @@ function HospitalDashboardContent() {
   // 본원이 후보로 들어있는 사건만 걸러 카드로 나열한다 — 하나의 병원이 여러
   // 구급차의 후보 목록에 동시에 들어갈 수 있어서, 사건 하나만 보던 예전
   // 구조로는 다른 구급차의 요청이 화면에서 사라져 보였다.
+  //
+  // 본원 자신의 승인/불가는 번복 가능한 후보 등록일 뿐이라 카드를 지우지 않지만
+  // (CaseMatchPanel 참고), 그 사건이 "다른" 병원으로 이미 최종 확정됐다면 본원
+  // 입장에서는 더 이상 의미가 없는 사건이라 목록에서 뺀다(2026-08-11 논의).
   const myCases = MY_HOSPITAL_ID
     ? Object.values(state.matchResults)
         .map((result) => ({
@@ -33,6 +37,11 @@ function HospitalDashboardContent() {
         }))
         .filter((entry): entry is { result: typeof entry.result; hospital: NonNullable<typeof entry.hospital> } =>
           entry.hospital !== null,
+        )
+        .filter(
+          ({ result, hospital }) =>
+            hospital.status === "confirmed" ||
+            !result.hospitals.some((h) => h.hospitalId !== MY_HOSPITAL_ID && h.status === "confirmed"),
         )
     : [];
 
@@ -56,6 +65,27 @@ function HospitalDashboardContent() {
     );
   }
 
+  // hub가 identify 응답으로 known=false를 준 경우 — 이 hpid가 병원
+  // 레지스트리(Supabase hospitals 테이블)에 아예 없다는 뜻이라 접근을 막는다.
+  // known===null(아직 응답 전)일 땐 확정된 게 아니므로 막지 않고 그대로 진행한다.
+  if (state.identity.known === false) {
+    return (
+      <div
+        className={css({
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "full",
+          padding: "8",
+        })}
+      >
+        <p className={css({ color: "coral", fontSize: "sm" })}>
+          존재하지 않는 병원 코드입니다(hpid: {MY_HOSPITAL_ID}). 코드를 다시 확인해주세요.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       className={css({
@@ -71,7 +101,7 @@ function HospitalDashboardContent() {
         connectionMode={connectionMode}
         since={state.receivedAt}
         hospitalId={MY_HOSPITAL_ID}
-        hospitalName={selected?.hospital.name ?? null}
+        hospitalName={state.identity.name ?? selected?.hospital.name ?? null}
       />
       <Legend />
 

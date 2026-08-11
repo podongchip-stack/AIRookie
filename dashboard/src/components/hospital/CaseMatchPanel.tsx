@@ -1,14 +1,23 @@
 import { css } from "styled-system/css";
-import { severityBadge } from "styled-system/recipes";
+import { hospitalStatusBadge, severityBadge } from "styled-system/recipes";
 import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
 import { ApprovalActions } from "@/components/panels/ApprovalActions";
-import type { ApprovalAction, HospitalCandidate, PatientInfo, Severity } from "@/types/dashboard";
+import type { ApprovalAction, HospitalCandidate, HospitalStatus, PatientInfo, Severity } from "@/types/dashboard";
 
 const SEVERITY_RISK_LABEL: Record<Severity, string> = {
   high: "중증 의심",
   medium: "중등도 의심",
   low: "경증 의심",
+};
+
+// 본원 관점에서의 상태 — 구급차 쪽 라벨과 문구만 다르다(예: "approved"는
+// 구급차 쪽엔 "후보 등록"이지만 병원 자신에겐 "본원 승인함"이 더 명확하다).
+const STATUS_LABEL: Record<HospitalStatus, string> = {
+  pending: "판단 대기 중",
+  approved: "본원 승인함",
+  rejected: "본원 불가 처리함",
+  confirmed: "이송 확정됨",
 };
 
 const chipStyle = css({
@@ -74,10 +83,28 @@ export function CaseMatchPanel({
 
       {hospital ? (
         <div className={css({ marginTop: "auto" })}>
-          <ApprovalActions role="hospital" hospitalId={hospitalId} caseId={caseId} onAction={onAction} />
-          <p className={css({ marginTop: "2", fontSize: "xs", color: "ink", textAlign: "center" })}>
-            이송 여부는 구급대원이 최종 결정합니다
-          </p>
+          <div className={css({ display: "flex", justifyContent: "flex-end", marginBottom: "2" })}>
+            <span className={hospitalStatusBadge({ status: hospital.status })}>
+              {STATUS_LABEL[hospital.status]}
+            </span>
+          </div>
+          {hospital.status === "confirmed" ? (
+            // 구급대원이 이미 이 병원으로 이송을 최종 승인한 상태다 — 병원 쪽에서
+            // 뒤집을 수 있는 결정이 아니라서 버튼 대신 확정 안내만 보여준다.
+            <p className={css({ fontSize: "sm", color: "mint", textAlign: "center", fontWeight: "semibold" })}>
+              이 사건은 본원으로 이송이 확정됐습니다
+            </p>
+          ) : (
+            <>
+              {/* 병원의 승인/불가는 최종 결정이 아니라 후보 등록일 뿐이라(CLAUDE.md),
+                  한 번 눌렀다고 버튼을 잠그지 않는다 — 병상 상황이 바뀌면 다시 눌러
+                  번복할 수 있어야 한다(2026-08-11 논의). */}
+              <ApprovalActions role="hospital" hospitalId={hospitalId} caseId={caseId} onAction={onAction} />
+              <p className={css({ marginTop: "2", fontSize: "xs", color: "ink", textAlign: "center" })}>
+                이송 여부는 구급대원이 최종 결정합니다
+              </p>
+            </>
+          )}
         </div>
       ) : (
         // hospitalId가 이번 매칭 결과의 hospitals[] 안에 없는 경우다 — 승인 버튼을

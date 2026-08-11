@@ -134,7 +134,7 @@ export function CallSummaryEditablePanel({ data }: { data: HubMatchResult | null
           </>
         ) : (
           <button type="button" className={secondaryButtonStyle} onClick={() => setEditing(true)}>
-            수정 (Override)
+            수정
           </button>
         )}
       </div>

@@ -2,16 +2,84 @@
 
 import { css } from "styled-system/css";
 import { hospitalStatusBadge } from "styled-system/recipes";
-import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
 import { mintButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
 import type { HospitalStatus, HubMatchResult } from "@/types/dashboard";
+
+// 공용 Panel은 height:100%만 두고 minHeight/overflow는 안 잡아서, 그리드 셀이
+// 콘텐츠(병원 몇 개)만큼 계속 늘어나는 걸 막지 못했다 — maxHeight를 목록에
+// 고정값으로 줘봤지만 이번엔 그 값이 실제 셀 높이보다 작아서 패널 하단에
+// 빈 공간이 남았다(2026-08-11 두 번 다 확인됨). Panel을 공용으로 고치면 다른
+// 패널에도 영향이 갈 수 있어서, 이 컴포넌트만 자체 마크업(같은 시각 스타일 +
+// minHeight:0 + overflow:hidden)으로 바꿔 셀 높이에 정확히 맞추고, 넘치는 건
+// 안쪽 <ul>이 스크롤로 흡수하게 한다.
+function ListPanelShell({
+  subtitle,
+  children,
+}: {
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      className={css({
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: "0",
+        overflow: "hidden",
+        borderWidth: "1px",
+        borderColor: "line",
+        borderRadius: "panel",
+        backgroundColor: "surface",
+        padding: "4",
+        minWidth: "0",
+      })}
+    >
+      <header
+        className={css({
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "2.5",
+          paddingBottom: "3",
+          marginBottom: "3",
+          borderBottomWidth: "1px",
+          borderColor: "line",
+          flexShrink: "0",
+        })}
+      >
+        <h2 className={css({ fontSize: "sm", fontWeight: "semibold", letterSpacing: "-0.01em", color: "ink" })}>
+          병원 후보 리스트
+          {subtitle && (
+            <span className={css({ display: "block", fontSize: "xs", fontWeight: "normal", color: "ink", marginTop: "0.5" })}>
+              {subtitle}
+            </span>
+          )}
+        </h2>
+        <Tag source="rule">hv1 · hvec · hv2</Tag>
+      </header>
+      {children}
+    </section>
+  );
+}
 
 const STATUS_LABEL: Record<HospitalStatus, string> = {
   pending: "판단 대기",
   approved: "후보 등록",
   rejected: "수용 불가",
   confirmed: "이송 확정",
+};
+
+// 1순위 승인(+확정) → 2순위 판단 대기 → 3순위 거절, 같은 우선순위 안에서는
+// 거리순. 거절해도 목록에서 없애지 않는다 — 병원이 "불가"였다가 병상이 나서
+// 다시 받아주는 경우가 있어서, 매번 이 우선순위로 다시 정렬해두면 승인으로
+// 바뀌는 순간 자동으로 위로 올라온다(2026-08-11 논의).
+const STATUS_PRIORITY: Record<HospitalStatus, number> = {
+  confirmed: 0,
+  approved: 1,
+  pending: 2,
+  rejected: 3,
 };
 
 const deptChipStyle = css({
@@ -74,29 +142,67 @@ export function HospitalCandidateListPanel({
 }) {
   if (!data) {
     return (
-      <Panel title="병원 후보 리스트" badge={<Tag source="rule">hv1 · hvec · hv2</Tag>}>
+      <ListPanelShell>
         <p className={css({ color: "ink3", fontSize: "sm" })}>수신 대기 중...</p>
-      </Panel>
+      </ListPanelShell>
     );
   }
 
+  // displayStatus까지 미리 계산해서 정렬 키로 쓴다 — 렌더링 때 또 계산하지 않고
+  // 그대로 재사용한다.
+  const sortedHospitals = data.hospitals
+    .map((hospital) => {
+      const confirmed = hospital.hospitalId === confirmedHospitalId;
+      // "이송 확정"은 실제로 이 구급차 세션에서 승인 버튼을 눌렀을 때만 보여준다.
+      // 데이터상 이미 confirmed여도, 로컬에서 아직 안 눌렀으면 "후보 등록"으로 표시한다.
+      const displayStatus: HospitalStatus = confirmed
+        ? "confirmed"
+        : hospital.status === "confirmed"
+          ? "approved"
+          : hospital.status;
+      return { hospital, confirmed, displayStatus };
+    })
+    .sort((a, b) => {
+      const priorityDiff = STATUS_PRIORITY[a.displayStatus] - STATUS_PRIORITY[b.displayStatus];
+      return priorityDiff !== 0 ? priorityDiff : a.hospital.distanceKm - b.hospital.distanceKm;
+    });
+
   return (
-    <Panel
-      title="병원 후보 리스트"
-      subtitle={`Zone ${data.zoneActive.join(", ")} 내 후보`}
-      badge={<Tag source="rule">hv1 · hvec · hv2</Tag>}
-    >
-      <ul className={css({ display: "flex", flexDirection: "column", gap: "2" })}>
-        {data.hospitals.map((hospital) => {
-          const confirmed = hospital.hospitalId === confirmedHospitalId;
+    <ListPanelShell subtitle={`Zone ${data.zoneActive.join(", ")} 내 후보`}>
+      {/* 병원이 몇 곳이든(거리·우선순위로 이미 정렬돼 오므로) 패널 자체가 늘어나지
+          않고 이 목록 안에서만 스크롤되게 한다 — ListPanelShell이 셀 높이를 정확히
+          지키므로(minHeight:0 + overflow:hidden), 여기는 남는 공간을 그대로
+          차지하다가(flex:1) 넘칠 때만 스스로 스크롤하면 된다(고정 maxHeight 불필요). */}
+      <ul
+        className={css({
+          display: "flex",
+          flexDirection: "column",
+          gap: "2",
+          flex: "1",
+          minHeight: "0",
+          overflowY: "auto",
+          // 기본 스크롤바가 진한 회색/검정이라 전체 톤(연한 파스텔)과 안 어울려서
+          // 옅고 투명하게 맞춘다. scrollbarWidth/scrollbarColor는 Firefox용,
+          // ::-webkit-scrollbar*는 Chrome/Edge용 — 둘 다 있어야 브라우저 상관없이 적용된다.
+          scrollbarWidth: "thin",
+          scrollbarColor: "rgba(203, 213, 225, 0.5) transparent",
+          "&::-webkit-scrollbar": {
+            width: "6px",
+          },
+          "&::-webkit-scrollbar-track": {
+            backgroundColor: "transparent",
+          },
+          "&::-webkit-scrollbar-thumb": {
+            backgroundColor: "rgba(203, 213, 225, 0.5)",
+            borderRadius: "full",
+          },
+          "&::-webkit-scrollbar-thumb:hover": {
+            backgroundColor: "rgba(203, 213, 225, 0.8)",
+          },
+        })}
+      >
+        {sortedHospitals.map(({ hospital, confirmed, displayStatus }) => {
           const approvable = hospital.status === "approved" || hospital.status === "confirmed";
-          // "이송 확정"은 실제로 이 구급차 세션에서 승인 버튼을 눌렀을 때만 보여준다.
-          // 데이터상 이미 confirmed여도, 로컬에서 아직 안 눌렀으면 "후보 등록"으로 표시한다.
-          const displayStatus: HospitalStatus = confirmed
-            ? "confirmed"
-            : hospital.status === "confirmed"
-              ? "approved"
-              : hospital.status;
 
           return (
             <li
@@ -161,6 +267,6 @@ export function HospitalCandidateListPanel({
           );
         })}
       </ul>
-    </Panel>
+    </ListPanelShell>
   );
 }

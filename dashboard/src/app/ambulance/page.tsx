@@ -30,7 +30,11 @@ function AmbulanceDashboardContent() {
   function handleCallSignal(signal: CallSignalType) {
     if (!apid) return;
     if (signal === "call_started") {
-      const caseId = crypto.randomUUID();
+      // mock 모드에선 고정 caseId를 써야 mock-data.ts의 mockHubMatchResult
+      // (caseId: "case-mock-demo")와 실제로 매칭된다 — crypto.randomUUID()로
+      // 만들면 mock 데이터의 고정 ID와 절대 일치하지 않아 "통화 시작"을 눌러도
+      // 영원히 수신 대기 중으로 남는다(2026-08-11 실제로 재현됨).
+      const caseId = connectionMode === "mock" ? "case-mock-demo" : crypto.randomUUID();
       setMyCaseId(caseId);
       setConfirmedHospitalId(null);
       sendCallSignal(signal, apid, caseId);
@@ -69,6 +73,27 @@ function AmbulanceDashboardContent() {
     );
   }
 
+  // hub가 identify 응답으로 known=false를 준 경우 — 이 apid가 구급차
+  // 레지스트리(Supabase ambulances 테이블)에 아예 없다는 뜻이라 접근을 막는다.
+  // known===null(아직 응답 전)일 땐 확정된 게 아니므로 막지 않고 그대로 진행한다.
+  if (state.identity.known === false) {
+    return (
+      <div
+        className={css({
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "full",
+          padding: "8",
+        })}
+      >
+        <p className={css({ color: "coral", fontSize: "sm" })}>
+          존재하지 않는 구급차 코드입니다(apid: {apid}). 코드를 다시 확인해주세요.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       className={css({
@@ -84,7 +109,7 @@ function AmbulanceDashboardContent() {
         connectionMode={connectionMode}
         since={state.receivedAt}
         ambulanceId={apid}
-        ambulanceName={myResult?.ambulanceName ?? null}
+        ambulanceName={state.identity.name ?? myResult?.ambulanceName ?? null}
       />
       <Legend />
 

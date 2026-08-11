@@ -113,10 +113,32 @@
 > 서울대병원 탭이 연결된 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로
 > 열면 그 사건이 안 보였음). `useDashboardSocket`이 소켓이 열리자마자
 > 이 메시지를 자동으로 보내면, hub가 자기가 병원(hpid)인지 구급차
-> (apid)인지 보고 관련된 진행 중인 사건들을 즉시 그 소켓에만 돌려준다
-> (feature/hub README.md "입력 스키마 9" 참고). 응답 형식은 평소
-> 브로드캐스트와 같은 `HubMatchResult`라 dashboard 쪽엔 별도 분기가
-> 필요 없다 — `onmessage`가 받은 대로 처리하면 된다.
+> (apid)인지 보고 두 가지를 순서대로 돌려준다: (1) 사건 유무와 무관한
+> 즉시 신원 확인(아래 `identity_info`), (2) 관련된 진행 중인 사건
+> 따라잡기 — 이건 평소 브로드캐스트와 같은 `HubMatchResult` 형식이라
+> `onmessage`에서 별도 분기가 필요 없다(feature/hub README.md "입력
+> 스키마 9" 참고).
+
+**수신** — 신원 확인 응답 (2026-08-11 신설, "자기소개"에 대한 첫 응답)
+```json
+{
+  "type": "identity_info",
+  "role": "hospital",
+  "id": "S0000001",
+  "name": "서울대학교병원",
+  "known": true
+}
+```
+> `hospitals[].name`/`HubMatchResult.ambulanceName`은 둘 다 "그 병원/구급차가
+> 실제 매칭 사건에 등장해야만" 이름이 왔다 — 통화 전에는 상단바에
+> `병원 ID: S0000001`, `구급 A0000001호차` 같은 ID 폴백만 보였다. 이 응답은
+> 사건 유무와 무관하게, hub가 이미 아는 병원/구급차 레지스트리에서 즉시
+> 이름을 조회해 돌려준다. `known`이 `false`면 hub가 그 hpid/apid를 아예
+> 모른다는 뜻이라 — `/hospital`, `/ambulance` 페이지는 이 경우 "존재하지
+> 않는 접근 코드입니다" 안내로 화면을 막는다(`known === null`은 아직
+> 응답 전이라는 뜻이므로 막지 않는다). `useDashboardSocket`의 반환값 중
+> `state.identity`(`{ name, known }`)에 저장되며, `matchResults`와는 완전히
+> 분리된 상태다(feature/hub README.md "출력 스키마 6" 참고).
 
 ## AI 처리 여부 표시 규칙
 
@@ -138,12 +160,20 @@
 
 ## 알려진 제약사항 / TODO
 
-- apid/hpid는 현재 URL 쿼리(`?id=`)만으로 구분하며, Supabase 구급차/병원
-  레지스트리에 실제로 존재하는 값인지 서버 사이드로 검증하지 않는다 (오타나
-  존재하지 않는 ID로 들어와도 화면은 그냥 "수신 대기 중"으로만 보임). 다음
-  단계에서 Next.js Route Handler로 존재 여부를 확인하는 방안 검토 필요.
-- 병원 대시보드의 다중 사건 카드 리스트·구급차 대시보드의 `caseId` 흐름은
-  `tsc`/`eslint`/`next build`와 로컬 WebSocket smoke test로만 검증했고, 실제
-  브라우저 인터랙션(다중 탭·다중 사건 동시 진행) 테스트는 아직 안 함.
+- ~~apid/hpid는 URL 쿼리(`?id=`)만으로 구분하며, Supabase 구급차/병원
+  레지스트리에 실제로 존재하는 값인지 서버 사이드로 검증하지 않는다~~ →
+  **2026-08-11 해결.** dashboard가 Supabase에 직접 붙는 대신, hub가
+  `identify`에 대한 응답(`identity_info`)으로 `known`을 알려주는 방식으로
+  구현했다 — `known === false`면 `/hospital`, `/ambulance` 페이지가
+  "존재하지 않는 접근 코드입니다" 화면으로 막는다. 이 결정 과정에서
+  `dashboard/.env.local`의 `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY`
+  (한 번도 실제로 쓰인 적 없었음)와 `package.json`의
+  `@supabase/supabase-js` 의존성을 제거했다 — dashboard는 여전히
+  feature/hub와만 직접 통신한다(CLAUDE.md 원칙 유지).
+- 병원 대시보드의 다중 사건 카드 리스트·구급차 대시보드의 `caseId` 흐름,
+  그리고 이번 `identity_info` 흐름은 `tsc`/`eslint`/`next build`와 로컬
+  WebSocket smoke test로만 검증했고, 실제 브라우저 인터랙션(다중 탭·다중
+  사건 동시 진행, 접근 불가 화면 실제 렌더링 등) 테스트는 아직 안 함 — 이
+  환경엔 브라우저 도구가 없어 직접 확인이 어려웠다.
 
 ## 추가사항
