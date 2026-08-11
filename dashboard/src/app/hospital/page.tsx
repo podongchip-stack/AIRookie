@@ -17,7 +17,9 @@ import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 function HospitalDashboardContent() {
   const searchParams = useSearchParams();
   const MY_HOSPITAL_ID = searchParams.get("id");
-  const { state, connectionMode, sendAction } = useDashboardSocket();
+  const { state, connectionMode, sendAction } = useDashboardSocket(
+    MY_HOSPITAL_ID ? { role: "hospital", id: MY_HOSPITAL_ID } : null,
+  );
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
   // 본원이 후보로 들어있는 사건만 걸러 카드로 나열한다 — 하나의 병원이 여러

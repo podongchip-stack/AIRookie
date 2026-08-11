@@ -19,7 +19,9 @@ import type { CallSignalType } from "@/types/dashboard";
 function AmbulanceDashboardContent() {
   const searchParams = useSearchParams();
   const apid = searchParams.get("id");
-  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk } = useDashboardSocket();
+  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk } = useDashboardSocket(
+    apid ? { role: "ambulance", id: apid } : null,
+  );
   const [confirmedHospitalId, setConfirmedHospitalId] = useState<string | null>(null);
   const [myCaseId, setMyCaseId] = useState<string | null>(null);
 

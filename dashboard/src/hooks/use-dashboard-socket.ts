@@ -6,6 +6,8 @@ import type {
   ApprovalAction,
   CallSignal,
   CallSignalType,
+  DashboardIdentify,
+  DashboardRole,
   DashboardState,
   HubMatchResult,
 } from "@/types/dashboard";
@@ -20,7 +22,16 @@ const INITIAL_STATE: DashboardState = {
 // 뿐이다. 여러 구급차가 동시에 사건을 진행할 수 있어 caseId를 키로 맵에 담아둔다
 // (예전엔 단일 값이라 나중에 온 사건이 이전 사건을 덮어썼다). NEXT_PUBLIC_DASHBOARD_WS_URL이
 // 설정되지 않으면 목데이터를 흘려보내 화면 작업을 진행할 수 있게 한다.
-export function useDashboardSocket() {
+//
+// identity(role/id)를 넘기면 소켓이 열리자마자 hub에 자기소개(DashboardIdentify)를
+// 보낸다 — hub는 그동안 연결을 완전히 익명으로 취급해서, 이미 진행 중인 사건이
+// 있는 상태로 새 탭이 뒤늦게 열리면 그 사건의 이전 브로드캐스트를 놓쳐 화면에
+// 아무것도 안 뜨는 문제가 있었다(2026-08-11 실제 재현됨 — 구급1호차·서울대병원
+// 탭이 연결된 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로 열면 그 사건이 안
+// 보였음). hub가 자기소개에 대한 응답으로 관련 사건들을 즉시 보내주므로, 응답
+// 메시지도 평소 브로드캐스트와 같은 형식이라 onmessage에서 별도 분기 없이 그대로
+// applyMatchResult()로 처리하면 된다.
+export function useDashboardSocket(identity: { role: DashboardRole; id: string } | null) {
   const [state, setState] = useState<DashboardState>(INITIAL_STATE);
   const [connectionMode, setConnectionMode] = useState<"live" | "mock">(
     "mock",
@@ -45,7 +56,13 @@ export function useDashboardSocket() {
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
-    socket.onopen = () => setConnectionMode("live");
+    socket.onopen = () => {
+      setConnectionMode("live");
+      if (identity) {
+        const message: DashboardIdentify = { type: "identify", role: identity.role, id: identity.id };
+        socket.send(JSON.stringify(message));
+      }
+    };
     socket.onclose = () => setConnectionMode("mock");
     socket.onerror = () => setConnectionMode("mock");
     socket.onmessage = (event) => {
@@ -58,7 +75,10 @@ export function useDashboardSocket() {
     };
 
     return () => socket.close();
-  }, [applyMatchResult]);
+    // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
+    // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyMatchResult, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
