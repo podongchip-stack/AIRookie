@@ -25,6 +25,10 @@ function HospitalDashboardContent() {
   // 본원이 후보로 들어있는 사건만 걸러 카드로 나열한다 — 하나의 병원이 여러
   // 구급차의 후보 목록에 동시에 들어갈 수 있어서, 사건 하나만 보던 예전
   // 구조로는 다른 구급차의 요청이 화면에서 사라져 보였다.
+  //
+  // 본원 자신의 승인/불가는 번복 가능한 후보 등록일 뿐이라 카드를 지우지 않지만
+  // (CaseMatchPanel 참고), 그 사건이 "다른" 병원으로 이미 최종 확정됐다면 본원
+  // 입장에서는 더 이상 의미가 없는 사건이라 목록에서 뺀다(2026-08-11 논의).
   const myCases = MY_HOSPITAL_ID
     ? Object.values(state.matchResults)
         .map((result) => ({
@@ -33,6 +37,11 @@ function HospitalDashboardContent() {
         }))
         .filter((entry): entry is { result: typeof entry.result; hospital: NonNullable<typeof entry.hospital> } =>
           entry.hospital !== null,
+        )
+        .filter(
+          ({ result, hospital }) =>
+            hospital.status === "confirmed" ||
+            !result.hospitals.some((h) => h.hospitalId !== MY_HOSPITAL_ID && h.status === "confirmed"),
         )
     : [];
 

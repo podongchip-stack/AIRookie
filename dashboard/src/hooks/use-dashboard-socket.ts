@@ -1,16 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { mockHubMatchResult } from "@/lib/mock-data";
+import { mockHubMatchResult, mockHubMatchResultOngoing } from "@/lib/mock-data";
 import type {
   ApprovalAction,
+  ApprovalActionType,
   CallSignal,
   CallSignalType,
   DashboardIdentify,
   DashboardRole,
   DashboardState,
+  HospitalStatus,
   HubMatchResult,
 } from "@/types/dashboard";
+
+// hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
+// 액션을 로컬로 흉내낼 때 hub가 실제로 반영할 상태와 같게 맞춘다.
+const MOCK_ACTION_TO_STATUS: Record<ApprovalActionType, HospitalStatus> = {
+  hospital_approve: "approved",
+  hospital_reject: "rejected",
+  final_approval: "confirmed",
+};
 
 const INITIAL_STATE: DashboardState = {
   matchResults: {},
@@ -49,8 +59,15 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     const wsUrl = process.env.NEXT_PUBLIC_DASHBOARD_WS_URL;
 
     if (!wsUrl) {
-      const timer = setTimeout(() => applyMatchResult(mockHubMatchResult), 900);
-      return () => clearTimeout(timer);
+      // 사건 2개를 순차로 흘려보낸다 — 하나(mockHubMatchResult)는 C병원이 이미
+      // confirmed라 "다른 병원으로 확정된 사건 숨기기" 규칙을 확인할 수 있고,
+      // 다른 하나(mockHubMatchResultOngoing)는 아직 아무도 확정 전이라 병원
+      // 쪽 상태 배지·번복 가능한 승인/불가 버튼을 확인할 수 있다.
+      const timers = [
+        setTimeout(() => applyMatchResult(mockHubMatchResult), 900),
+        setTimeout(() => applyMatchResult(mockHubMatchResultOngoing), 1400),
+      ];
+      return () => timers.forEach(clearTimeout);
     }
 
     const socket = new WebSocket(wsUrl);
@@ -84,9 +101,23 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(action));
-    } else {
-      console.info("[mock] 승인 액션 전송(WS 미연결):", action);
+      return;
     }
+    console.info("[mock] 승인 액션 전송(WS 미연결) — 로컬에서 hub 반응을 흉내냄:", action);
+    // 실제 hub는 승인 액션을 처리한 뒤 갱신된 사건 결과를 재broadcast한다
+    // (hub/app.py의 _handle_dashboard_action 참고). mock 모드엔 그 hub가
+    // 없어서, 버튼을 눌러도 배지가 하나도 안 바뀌는 문제가 있었다(2026-08-11
+    // 실제로 확인됨) — 같은 상태 전이를 로컬에서 재현해 화면으로 모든
+    // 경우의수(판단 대기→승인/불가→이송 확정)를 직접 눌러볼 수 있게 한다.
+    setState((prev) => {
+      const result = prev.matchResults[action.caseId];
+      if (!result) return prev;
+      const nextStatus = MOCK_ACTION_TO_STATUS[action.action];
+      const hospitals = result.hospitals.map((h) =>
+        h.hospitalId === action.hospital_id ? { ...h, status: nextStatus } : h,
+      );
+      return { ...prev, matchResults: { ...prev.matchResults, [action.caseId]: { ...result, hospitals } } };
+    });
   }, []);
 
   // 통화 시연(CallDemoPanel)이 통화 시작/종료를 hub에 알리는 신호. apid로 hub가

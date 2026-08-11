@@ -30,7 +30,11 @@ function AmbulanceDashboardContent() {
   function handleCallSignal(signal: CallSignalType) {
     if (!apid) return;
     if (signal === "call_started") {
-      const caseId = crypto.randomUUID();
+      // mock 모드에선 고정 caseId를 써야 mock-data.ts의 mockHubMatchResult
+      // (caseId: "case-mock-demo")와 실제로 매칭된다 — crypto.randomUUID()로
+      // 만들면 mock 데이터의 고정 ID와 절대 일치하지 않아 "통화 시작"을 눌러도
+      // 영원히 수신 대기 중으로 남는다(2026-08-11 실제로 재현됨).
+      const caseId = connectionMode === "mock" ? "case-mock-demo" : crypto.randomUUID();
       setMyCaseId(caseId);
       setConfirmedHospitalId(null);
       sendCallSignal(signal, apid, caseId);

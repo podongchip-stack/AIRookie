@@ -71,3 +71,31 @@ export const mockHubMatchResult: HubMatchResult = {
   ],
   source: "rule",
 };
+
+// 위 사건은 C병원이 이미 confirmed라, 병원 대시보드에서 A/B/D/E로 들어가면
+// "다른 병원으로 확정된 사건은 숨긴다" 규칙에 걸려 카드가 안 보인다(의도된
+// 동작). 아직 아무도 확정 안 된 사건도 mock으로 흘려보내야 병원 쪽에서
+// 승인/불가 배지·번복 가능한 버튼을 확인할 수 있어서 하나 더 둔다.
+export const mockHubMatchResultOngoing: HubMatchResult = {
+  caseId: "case-mock-demo-2",
+  patientInfo: {
+    injuryStatus: ["복통", "오심"],
+    expectedDiagnosis: "급성 복부 손상 의심",
+    severityTag: "medium",
+    rawTranscript: "구급대원: 환자 30대 여성, 복부 통증 호소 중입니다...",
+    filteredTranscript: "30대 여성, 복부 통증. 오심 동반.",
+  },
+  zoneActive: [1],
+  hospitals: [
+    { hospitalId: "A", name: "A병원", gps: { lat: 35.1791, lng: 128.1058 }, distanceKm: 1.1,
+      specialtyMatch: { department: "외과", score: 0.55 }, availableBedCount: 2, bedCountUnknown: false,
+      status: "pending" },
+    { hospitalId: "B", name: "B병원", gps: { lat: 35.1802, lng: 128.1101 }, distanceKm: 2.3,
+      specialtyMatch: { department: "외과", score: 0.7 }, availableBedCount: 3, bedCountUnknown: false,
+      status: "approved" },
+    { hospitalId: "D", name: "D병원", gps: { lat: 35.1768, lng: 128.1122 }, distanceKm: 2.9,
+      specialtyMatch: { department: "정형외과", score: 0.3 }, availableBedCount: 1, bedCountUnknown: false,
+      status: "rejected" },
+  ],
+  source: "rule",
+};
