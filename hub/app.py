@@ -149,6 +149,30 @@ def receive_voice_summary():
     return jsonify(result.model_dump()), 200
 
 
+@app.get("/identity")
+def get_identity():
+    """dashboard 랜딩 페이지(코드 입력 화면)가 `/hospital`, `/ambulance`로
+    넘어가기 **전에** 그 hpid/apid가 실제로 존재하는지 미리 확인하는 용도
+    (2026-08-11). WebSocket `identify`와 같은 조회 로직(_resolve_identity)을
+    그대로 쓴다 — REST로 따로 노출한 이유는, 랜딩 페이지는 아직 어느 사건에도
+    속하지 않은 "1회성 확인"만 하면 되니 지속 연결(WebSocket)을 열었다 바로
+    닫는 것보다 단순 요청-응답이 더 잘 맞기 때문이다.
+
+    dashboard(포트 3000)와 hub(포트 5001)는 다른 origin이라 브라우저 fetch가
+    CORS로 막힌다 — 이 엔드포인트는 인증 없는 단순 조회라 전체 허용해도
+    안전하므로 `Access-Control-Allow-Origin: *`을 직접 붙인다.
+    """
+    role = request.args.get("role")
+    id_ = request.args.get("id")
+    if role not in ("hospital", "ambulance") or not id_:
+        return jsonify({"error": "role(hospital|ambulance)과 id 쿼리 파라미터가 필요하다"}), 400
+
+    name, known = _resolve_identity(role, id_)
+    response = jsonify({"role": role, "id": id_, "name": name, "known": known})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, 200
+
+
 def _send_to_dashboard(payload: dict) -> None:
     """연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다.
     delivery.py의 send_to_dashboard()는 로컬 저장 스텁 그대로 두고, 실제
@@ -212,6 +236,17 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
             print(f"  [통신] 따라잡기 전송 실패: {e}")
 
 
+def _resolve_identity(role: str, id_: str) -> tuple[str | None, bool]:
+    """role(hospital/ambulance)과 id(hpid/apid)로 hub가 아는 실제 이름과
+    존재 여부를 찾는다. WebSocket의 identify 응답과 HTTP `GET /identity`
+    양쪽이 같은 로직을 쓴다."""
+    if role == "hospital":
+        hospital = engine.get_hospital(id_)
+        return (hospital.name if hospital is not None else None), hospital is not None
+    ambulance = engine.get_ambulance(id_)
+    return (ambulance.name if ambulance is not None else None), ambulance is not None
+
+
 def _send_identity_info(ws, identify: DashboardIdentify) -> None:
     """자기소개(DashboardIdentify)에 대해, 사건 유무와 무관하게 그 hpid/apid의
     실제 이름을 즉시 알려준다. _send_catchup()은 "진행 중인 사건"이 있어야만
@@ -219,16 +254,10 @@ def _send_identity_info(ws, identify: DashboardIdentify) -> None:
     없는 상태)에서도 상단바에 실명이 뜨게 하려면 이 응답이 따로 필요하다
     (2026-08-11 — 병원/구급차 대시보드가 항상 이름으로 뜨길 원한다는 요청).
     hub가 그 hpid/apid를 아예 모르면(`known=False`) dashboard는 이걸
-    "존재하지 않는 접근 코드"로 판단해 접근을 막는 데 쓸 수 있다."""
-    if identify.role == "hospital":
-        hospital = engine.get_hospital(identify.id)
-        name = hospital.name if hospital is not None else None
-        known = hospital is not None
-    else:
-        ambulance = engine.get_ambulance(identify.id)
-        name = ambulance.name if ambulance is not None else None
-        known = ambulance is not None
-
+    "존재하지 않는 접근 코드"로 판단하는 데 쓸 수 있다 — 다만 랜딩
+    페이지에서 미리 걸러지므로(GET /identity), 이 소켓 경로는 직접 URL로
+    들어온 경우의 이름 표시용으로만 주로 쓰인다."""
+    name, known = _resolve_identity(identify.role, identify.id)
     info = DashboardIdentityInfo(role=identify.role, id=identify.id, name=name, known=known)
     print(f"  [통신] {identify.role} {identify.id} 신원 확인 응답 — known={known}, name={name}")
     try:
