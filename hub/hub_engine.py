@@ -125,17 +125,32 @@ class HubEngine:
         return self._case_results.get(case_id)
 
     def _patch_case_result_status(self, case_id: str, hospital_id: str, status: HospitalStatus) -> None:
-        """캐시해둔 사건의 매칭 결과에서 해당 병원의 status만 바꿔 캐시를
-        갱신한다. 아직 process_voice_summary가 호출된 적 없는 caseId면
-        (캐시가 없으면) 조용히 넘어간다 — 나중에 캐시가 생길 때 최신
-        _approval_status가 반영되므로 문제없다."""
+        """캐시해둔 사건의 매칭 결과에서 해당 병원의 status와 병상 정보를
+        최신 self._hospitals 값으로 다시 맞춰 캐시를 갱신한다.
+
+        예전엔 status만 패치했는데, final_approval로 `apply_approval_action()`이
+        `self._hospitals`의 병상 수를 실제로 깎아도 dashboard로 나가는 이
+        캐시된 스냅샷(HospitalMatch)엔 반영이 안 됐다 — 승인 상태는
+        "이송 확정"으로 바뀌는데 병상 배지는 깎이기 전 값 그대로 보이는
+        문제가 실제로 재현됐다. 그래서 호출 시점의 `self._hospitals` 값으로
+        병상 필드도 같이 다시 읽어온다. 아직 process_voice_summary가 호출된
+        적 없는 caseId면(캐시가 없으면) 조용히 넘어간다.
+        """
         result = self._case_results.get(case_id)
         if result is None:
             return
-        updated_hospitals = [
-            h.model_copy(update={"status": status}) if h.hospitalId == hospital_id else h
-            for h in result.hospitals
-        ]
+
+        def _patch(h: HospitalMatch) -> HospitalMatch:
+            if h.hospitalId != hospital_id:
+                return h
+            update: dict = {"status": status}
+            info = self._hospitals.get(hospital_id)
+            if info is not None:
+                update["availableBedCount"] = info.availableBedCount
+                update["bedCountUnknown"] = _is_bed_count_unknown(info)
+            return h.model_copy(update=update)
+
+        updated_hospitals = [_patch(h) for h in result.hospitals]
         self._case_results[case_id] = result.model_copy(update={"hospitals": updated_hospitals})
 
     def apply_approval_action(self, action: ApprovalAction) -> HospitalBedUpdate | None:
@@ -157,9 +172,10 @@ class HubEngine:
 
         new_status = _ACTION_TO_STATUS[action.action]
         self._approval_status[status_key] = new_status
-        self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
 
         if action.action != "final_approval":
+            # 병상은 안 건드리는 액션이라 지금 self._hospitals 값 그대로 패치해도 된다.
+            self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
             decision_log.log_decision("approval_action_applied", {"action": action.model_dump(), "bedUpdate": None})
             return None
 
@@ -178,6 +194,8 @@ class HubEngine:
             skip_reason = "no beds left"
 
         if skip_reason is not None:
+            # 병상은 안 깎였지만 status는 confirmed로 바뀌었으니 캐시에도 반영한다.
+            self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
             decision_log.log_decision(
                 "approval_action_ignored_no_bed",
                 {"action": action.model_dump(), "reason": skip_reason},
@@ -186,6 +204,10 @@ class HubEngine:
 
         info.availableBedCount -= 1
         info.updatedAt = _utcnow_iso()
+        # 병상이 실제로 줄어든 뒤에 패치해야 dashboard 캐시에도 새 병상 수가
+        # 반영된다 — 감소 전에 패치하면 status만 바뀌고 병상 배지는 옛날 값
+        # 그대로 남는다(실제로 재현됐던 문제).
+        self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
 
         bed_update = HospitalBedUpdate(
             hospitalId=info.hospitalId,
