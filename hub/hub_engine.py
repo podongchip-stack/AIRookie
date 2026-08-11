@@ -317,6 +317,12 @@ class HubEngine:
             for item in rank(scored)
         ]
 
+        # 구급차 대시보드 상단바 표시용. 이 사건의 apid를 register_case()로
+        # 기억해둔 값에서 찾아, 구급차 레지스트리(self._ambulances)의 이름을
+        # 그대로 붙인다 — app.py의 _resolve_ambulance_gps()와 동일한 조회 패턴.
+        apid = self._case_apid.get(voice.caseId)
+        ambulance = self._ambulances.get(apid) if apid else None
+
         result = HubMatchResult(
             caseId=voice.caseId,
             patientInfo=PatientInfo(
@@ -329,6 +335,7 @@ class HubEngine:
             zoneActive=active_zones(max_zone),
             hospitals=hospital_matches,
             source="rule",
+            ambulanceName=ambulance.name if ambulance is not None else None,
         )
         # 승인 액션이 들어왔을 때 재계산 없이 패치·재브로드캐스트할 수 있게
         # 사건 단위로 최신 결과를 캐시해둔다 (get_case_result() 참고).

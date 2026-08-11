@@ -331,7 +331,8 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
       "etaMin": 6
     }
   ],
-  "source": "rule"
+  "source": "rule",
+  "ambulanceName": "구급 1호차"
 }
 ```
 
@@ -354,6 +355,7 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `hospitals[].status` | `"pending"` \| `"approved"` \| `"rejected"` \| `"confirmed"` | 병원 응답 상태 |
 | `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+| `ambulanceName` | string \| null (2026-08-11 신설) | 구급차 대시보드 상단바 표시용. `hospitals[].name`(병원명)과 같은 패턴 — 이 사건의 apid를 `register_case()`로 기억해둔 값에서 찾아 구급차 레지스트리(`AmbulanceInfo.name`)를 그대로 채운다. apid를 못 찾으면(통화 시작 신호 없이 직접 `/voice/summary`를 부른 테스트 등) `null`이고, dashboard는 URL의 apid로 대체 표시한다. **병원명과 마찬가지로 그 구급차가 실제로 사건에 등장해야만 채워진다** — 사건이 아예 없는 상태(대시보드를 열었지만 아직 통화가 없음)에서는 아직 이 필드 자체를 못 받으므로 ID 폴백이 계속 보인다 |
 
 ### 출력 스키마 5: feature/hub → feature/info (병상 갱신 알림)
 
