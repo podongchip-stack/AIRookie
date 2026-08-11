@@ -118,6 +118,7 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 
 ```json
 {
+  "caseId": "case-abc123",
   "transcript": {
     "raw_text": "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다... A병원: 네 잠시만요...",
     "filtered_text": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란.",
@@ -142,6 +143,7 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
+| `caseId` | string | 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 요약을 어느 사건과 짝지을지 구분하는 값. voice가 hub의 통화 시작 신호(3번 포맷)에서 받은 caseId를 그대로 돌려준다 |
 | `transcript.raw_text` | string | STT 원본 전문. 필터링 전 전체 발화, 삭제하지 않고 보존 |
 | `transcript.filtered_text` | string | 실시간 음성 필터링 처리 후 남은 텍스트. 요약의 실제 입력값 |
 | `transcript.language` | string | 언어 코드 |
@@ -220,11 +222,12 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 
 - 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
 - STT 모델: Whisper 또는 Qwen3-ASR (스트리밍 지원)
-- 실시간 음성 필터링 처리: STT 결과를 문장/발화 턴 단위로 분리 → 의료 관련 여부 분류(경량 분류기 또는 KM-BERT) → 관련 문장만 sLLM(Llama3 Korean 8B)에 전달해 SBAR 형태로 구조화
-- 잡담·인사말·통화 연결 관련 발화는 필터링 대상이며, 필터링된 문장도 원본 로그에는 남겨두고 "요약 제외" 표시만 한다 (완전 삭제 금지 — 사후 검증 및 audit trail 때문)
+- **"실시간 음성 필터링"(`filtering.py`, 의료 관련 여부 분류) 단계는 파이프라인에서 뺐다.** threshold가 검증 안 된 상태라 false negative(중요 문장 오제외) 리스크가 있었고, SBAR 구조화 LLM 프롬프트가 이미 잡담·인사말을 스스로 걸러낼 정도로 구체적이라 얻는 이득이 불확실했다(실측 후 결정, `voice/README.md` 참고). 대신 STT 자체의 오인식을 줄이려고 `initial_prompt`로 "이 통화가 어떤 종류의 대화인지"(장르·구조)를 서술해 넘긴다 — 구체 시나리오 어휘를 넣으면 그 샘플에만 맞는 오버피팅이 되므로 일부러 뺐다. `filtering.py` 파일 자체는 참고용으로 남아있다
+- 원본 로그 보존 원칙(완전 삭제 금지, 사후 검증·audit trail용)은 유지된다 — `transcript.raw_text`/`turns`에 전체 발화가 그대로 남는다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
-- hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 통화 시작 시 로컬 마이크 녹음을 시작하고, 종료 시 기존 배치 파이프라인(STT→필터링→SBAR)을 그대로 실행한다 — 동시 통화 여러 건 처리는 다음 단계
+- hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 통화 시작 시 로컬 마이크 녹음을 시작하고, 종료 시 기존 배치 파이프라인(STT→SBAR)을 그대로 실행한다
+- **여러 구급차 동시 처리를 지원한다.** 이 프로세스 자체는 구급차 1대 전용(마이크가 그 장비 하나뿐)이지만, `VOICE_APID` 환경변수로 자신을 식별해 서버 시작 시 자기 IP를 자동 탐지한 뒤 hub의 `POST /voice/register`로 자가등록한다(구급차 노트북마다 네트워크가 달라 IP를 고정 저장하지 않고 매번 탐지). `POST /call/start`로 받은 `caseId`를 세션에 기억해뒀다가, 통화 종료 후 hub로 보내는 `CallSummaryMessage`에 그대로 실어 돌려준다 — hub는 이 caseId로 사건을 구분한다
 
 ## feature/info 담당자 참고사항
 
@@ -253,7 +256,8 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   1. GPS와 feature/info의 병원 정보로 먼저 존(Zone) 기반 병원 후보 리스트를 만들어 보관한다
   2. feature/voice의 의료 정보(예상 병명·중증도)가 도착하면, 보관해둔 리스트를 voice의 예상 병명과 info의 진료과를 임베딩 유사도로 매칭한 점수 + 거리 점수를 가중합해 재처리한다
 - 진료과 매칭이 실패해도(유사도가 낮거나 병원에 진료과 정보가 없어도) 병원을 후보에서 제외하지 않는다 — 거리 기준만으로 순위에 남긴다 (뺑뺑이 방지가 목적이므로 잘못 걸러내는 게 더 위험함)
-- 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준
+- 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준. **`app.py`(실서버)에도 배선 완료(2026-08-11)** — 그 전까지는 `MAX_ZONE=1`(0~5km)이 상수로 고정돼 있어서, 서울 전역에 흩어진 실제 병원 데이터로는 zone 1 안에 후보가 하나도 없어 매칭 0건이 나오는 문제가 실제로 재현됐다. `HubEngine.resolve_start_zone()`(첫 매칭 시 후보가 하나라도 잡힐 때까지 zone을 넓힘 — 거절 비율 기반 확장은 "후보가 있는데 다 거절당함"만 감지해서 후보 0개인 사각지대는 못 잡기 때문에 별도로 필요)과 `HubEngine.maybe_expand_zone()`(거절 액션 처리 후에만 호출 — `reject_ratio`가 누적 계산이라 승인 뒤에도 부르면 새 거절 없이 계속 확장되는 문제가 있어 `hospital_reject`에만 gating)로 나눠 구현했다
+- **승인 후 캐시된 병상 수가 안 바뀌던 문제 수정(2026-08-11)**: `final_approval`로 실제 병상은 깎이는데, dashboard로 나가는 캐시(`_case_results`)의 병상 수는 별도 스냅샷이라 반영이 안 되던 문제(Supabase 자체는 정상 차감돼서 더 헷갈렸음)를 고쳤다. `_patch_case_result_status()`가 status와 함께 최신 병상 수·`bedCountUnknown`도 다시 읽어오고, 호출 시점도 병상 차감 이후로 옮김
 - 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON — 의료 정보·예상 병명·통화 전문·병원 정보·병원 리스트를 모두 포함한다 (feature/hub README.md의 "입출력 데이터 포맷" 참고)
 - dashboard와는 WebSocket으로 통신한다 (`new WebSocket()`, socket.io 아님 — flask-socketio 대신 순수 WebSocket 라이브러리를 쓴다). hospital_approve/hospital_reject/final_approval 액션의 수신 주체는 **이 브랜치로 확정**됐고, 매칭 상태(`hospitals[].status`) 반영까지 구현·테스트 완료했다
 - dashboard의 통화 시작/종료 신호(3번 포맷)를 같은 WebSocket으로 받아 feature/voice의 로컬 마이크 서버로 HTTP 중계한다 — 오디오 자체는 hub를 거치지 않는다
@@ -274,6 +278,20 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 - **feature/hub와만 직접 통신한다.** voice·info와는 직접 연결하지 않으며, voice의 의료 정보·예상 병명·통화 전문과 info의 병원 정보는 모두 feature/hub가 재가공한 통합 결과로만 받는다. 승인 액션(수신처는 feature/hub로 확정)과 통화 시작/종료 신호는 위 "데이터 포맷 및 흐름" 2·3번 참고
 - 통화 시작/종료 버튼은 WebSocket으로 hub에 신호를 보낸다. 브라우저 마이크로 캡처한 오디오(`sendAudioChunk`)도 같은 연결로 보낼 수 있지만, 실제 STT 입력은 feature/voice의 로컬 마이크로 확정되어 이 오디오는 화면 시각화(파형, 로컬 자막) 용도로만 쓰인다
 - hub가 보내는 `hospitals[].bedCountUnknown`이 true면 병상 수를 "0"이나 "병상 없음"이 아니라 **"미상"**으로 표시해야 한다 — 미상을 만실처럼 보여주면 구급대원이 실제로는 자리가 있을 수도 있는 병원을 스스로 후보에서 빼게 되어, 뺑뺑이를 줄이려는 목적과 정반대가 된다
+- **다중 사건(multi-case) 지원 (2026-08-11)**: hub가 `caseId`(구급차 1건의 이송
+  이벤트 식별자)·`apid`(구급차 식별자)를 도입함에 따라, dashboard의 상태도 사건
+  하나가 아니라 `matchResults: Record<caseId, HubMatchResult>` 맵으로 관리한다.
+  - 구급차 대시보드(`/ambulance?id=<apid>`)는 URL의 `?id=`를 자신의 apid로 쓰고,
+    "통화 시작" 버튼을 누를 때마다 `crypto.randomUUID()`로 새 `caseId`를 만들어
+    통화 시작 신호·승인 액션에 실어 보낸다. 구급차 1대는 항상 자기 사건 하나만
+    다루므로 화면에는 그 `caseId` 하나만 `matchResults`에서 꺼내 보여준다.
+  - 병원 대시보드(`/hospital?id=<hpid>`)는 자기 hpid가 `hospitals[]`에 들어있는
+    **모든** 사건을 `matchResults`에서 걸러 카드 리스트로 나열한다 — 여러 구급차가
+    동시에 같은 병원을 후보로 걸 수 있기 때문에, 사건 하나만 보여주던 이전 구조로는
+    다른 구급차의 요청이 화면에서 사라져 보이는 문제가 있었다. 카드를 선택하면 그
+    사건 기준으로 지도가 갱신된다.
+  - apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
+    값인지 서버 사이드 검증은 하지 않는다(다음 단계 TODO, dashboard README 참고).
 
 ---
 
