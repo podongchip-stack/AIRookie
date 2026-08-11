@@ -250,7 +250,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   1. GPS와 feature/info의 병원 정보로 먼저 존(Zone) 기반 병원 후보 리스트를 만들어 보관한다
   2. feature/voice의 의료 정보(예상 병명·중증도)가 도착하면, 보관해둔 리스트를 voice의 예상 병명과 info의 진료과를 임베딩 유사도로 매칭한 점수 + 거리 점수를 가중합해 재처리한다
 - 진료과 매칭이 실패해도(유사도가 낮거나 병원에 진료과 정보가 없어도) 병원을 후보에서 제외하지 않는다 — 거리 기준만으로 순위에 남긴다 (뺑뺑이 방지가 목적이므로 잘못 걸러내는 게 더 위험함)
-- 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준
+- 존 확장은 시간 기반이 아닌 명시적 거절 비율 기준. **`app.py`(실서버)에도 배선 완료(2026-08-11)** — 그 전까지는 `MAX_ZONE=1`(0~5km)이 상수로 고정돼 있어서, 서울 전역에 흩어진 실제 병원 데이터로는 zone 1 안에 후보가 하나도 없어 매칭 0건이 나오는 문제가 실제로 재현됐다. `HubEngine.resolve_start_zone()`(첫 매칭 시 후보가 하나라도 잡힐 때까지 zone을 넓힘 — 거절 비율 기반 확장은 "후보가 있는데 다 거절당함"만 감지해서 후보 0개인 사각지대는 못 잡기 때문에 별도로 필요)과 `HubEngine.maybe_expand_zone()`(거절 액션 처리 후에만 호출 — `reject_ratio`가 누적 계산이라 승인 뒤에도 부르면 새 거절 없이 계속 확장되는 문제가 있어 `hospital_reject`에만 gating)로 나눠 구현했다
 - 출력은 feature/dashboard로 전송하는 통합 매칭 결과 JSON — 의료 정보·예상 병명·통화 전문·병원 정보·병원 리스트를 모두 포함한다 (feature/hub README.md의 "입출력 데이터 포맷" 참고)
 - dashboard와는 WebSocket으로 통신한다 (`new WebSocket()`, socket.io 아님 — flask-socketio 대신 순수 WebSocket 라이브러리를 쓴다). hospital_approve/hospital_reject/final_approval 액션의 수신 주체는 **이 브랜치로 확정**됐고, 매칭 상태(`hospitals[].status`) 반영까지 구현·테스트 완료했다
 - dashboard의 통화 시작/종료 신호(3번 포맷)를 같은 WebSocket으로 받아 feature/voice의 로컬 마이크 서버로 HTTP 중계한다 — 오디오 자체는 hub를 거치지 않는다

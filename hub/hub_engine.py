@@ -78,6 +78,16 @@ class HubEngine:
         # 사건별 최신 매칭 결과 캐시. 승인 액션이 들어왔을 때 재계산 없이
         # 해당 병원의 status만 패치해서 dashboard에 재브로드캐스트하는 데 쓴다.
         self._case_results: dict[str, HubMatchResult] = {}
+        # 사건별 현재 max_zone. 존 확장(reject_ratio 기반)이 어디까지 넓혔는지
+        # 기억해둔다 — 다음 승인 액션이 왔을 때 "지금 어느 zone에서 시작해야
+        # 하는지"의 기준점이 된다.
+        self._case_max_zone: dict[str, int] = {}
+        # 사건별 마지막 VoiceCallSummaryMessage. 존이 확장되면 같은 환자
+        # 정보로 매칭을 다시 계산해야 하는데(process_voice_summary는 voice
+        # 요약이 있어야 호출 가능), 확장은 dashboard의 승인 액션이 트리거라
+        # 그 시점엔 voice 데이터가 다시 오지 않는다 — 그래서 마지막 값을
+        # 들고 있다가 재사용한다.
+        self._case_voice: dict[str, VoiceCallSummaryMessage] = {}
 
     def update_hospital_info(self, info: HospitalInfo) -> None:
         """feature/info로부터 받은 병원 정보를 hospitalId 기준으로 upsert한다.
@@ -233,6 +243,9 @@ class HubEngine:
         """2단계: voice의 의료 정보가 도착하면, 보관해둔 병원 정보와 결합해
         진료과 매칭 + 거리를 가중합한 최종 매칭 결과를 만든다.
         """
+        self._case_voice[voice.caseId] = voice
+        self._case_max_zone[voice.caseId] = max_zone
+
         expected_diagnosis = voice.summary.mechanism
         injury_status = voice.summary.symptoms
         severity_tag = voice.summary.severity_tag
@@ -293,3 +306,64 @@ class HubEngine:
         (시간 기반 타임아웃이 아닌 거절 비율 기반 — CLAUDE.md 원칙).
         """
         return max_zone + 1 if should_expand_zone(reject_ratio) else max_zone
+
+    def _expand_until_nonempty(self, ambulance_gps: GpsPoint, start_zone: int, cap: int = 10) -> int:
+        """start_zone부터 시작해 후보가 하나라도 잡힐 때까지 zone을 넓힌다.
+
+        reject_ratio 기반 확장(expand_if_needed)은 "후보가 있는데 다
+        거절당했다"만 감지한다 — 거절할 대상 자체가 없으면(zone 안에 병원이
+        0개) reject_ratio가 항상 0.0으로 나와 영원히 확장되지 않는 사각지대가
+        생긴다. 병원 7곳이 서울 전역에 흩어져 있는 지금 데이터에서 실제로
+        재현된 문제라, 후보 0개는 거절 비율과 별개로 무조건 확장한다.
+        cap은 병원 데이터가 거의 없는 등 극단적인 경우 무한 루프를 막는
+        안전장치다(병원 수가 늘어 zone 10 안에도 후보가 없을 일은 없다고
+        본다).
+        """
+        zone = start_zone
+        while zone < cap and not self._candidates_in_zone(ambulance_gps, zone):
+            zone += 1
+        return zone
+
+    def resolve_start_zone(self, ambulance_gps: GpsPoint) -> int:
+        """새 사건의 매칭을 시작할 때 쓸 zone을 정한다. zone 1부터 시작해
+        후보가 하나라도 잡힐 때까지 넓힌다(_expand_until_nonempty 참고)."""
+        return self._expand_until_nonempty(ambulance_gps, start_zone=1)
+
+    def get_case_max_zone(self, case_id: str) -> int:
+        return self._case_max_zone.get(case_id, 1)
+
+    def maybe_expand_zone(self, case_id: str, ambulance_gps: GpsPoint) -> HubMatchResult | None:
+        """거절(hospital_reject) 액션 처리 후에만 호출해야 한다. 지금 zone에
+        후보가 아예 없거나(사각지대 보정), 명시적 거절 비율이 임계값을
+        넘으면 zone을 확장해 후보를 다시 계산한다. 확장이 실제로 일어났을
+        때만 재계산된 HubMatchResult를 반환하고, 안 바뀌었으면 None을
+        반환한다(호출자가 굳이 재브로드캐스트 안 하도록).
+
+        reject_ratio는 현재 zone 안에서 "응답한" 병원 전체 대비 거절 비율을
+        누적으로 계산한다 — 한 번 거절이 쌓여 비율이 임계값을 넘으면, 그
+        뒤에 다른 병원이 승인만 해도 비율이 여전히 임계값 이상으로 남는다.
+        그래서 승인(hospital_approve)이나 최종 승인(final_approval) 뒤에도
+        이 메서드를 부르면, 새로 거절이 하나도 없었는데도 계속 확장되는
+        문제가 생긴다(실제로 재현·검증됨). 그래서 caller(app.py)가
+        action.action == "hospital_reject"일 때만 불러야 한다.
+        """
+        current_max_zone = self._case_max_zone.get(case_id, 1)
+        candidates = self._candidates_in_zone(ambulance_gps, current_max_zone)
+        if not candidates:
+            new_max_zone = self._expand_until_nonempty(ambulance_gps, current_max_zone)
+        else:
+            ratio = self.reject_ratio(case_id, ambulance_gps, current_max_zone)
+            new_max_zone = self.expand_if_needed(current_max_zone, ratio)
+
+        if new_max_zone == current_max_zone:
+            return None
+
+        voice = self._case_voice.get(case_id)
+        if voice is None:
+            # process_voice_summary가 한 번도 호출된 적 없는 사건 — 승인 액션이
+            # 오려면 후보가 먼저 있어야 하므로 이론상 없는 상태지만, 방어적으로
+            # 넘어간다.
+            return None
+
+        print(f"  [존 확장] case={case_id} zone 1~{current_max_zone} -> 1~{new_max_zone}")
+        return self.process_voice_summary(voice, ambulance_gps, max_zone=new_max_zone)
