@@ -70,6 +70,8 @@ function HospitalDashboardContent() {
         caseCount={myCases.length}
         connectionMode={connectionMode}
         since={state.receivedAt}
+        hospitalId={MY_HOSPITAL_ID}
+        hospitalName={selected?.hospital.name ?? null}
       />
       <Legend />
 
