@@ -295,12 +295,19 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `role` | `"hospital"` \| `"ambulance"` | 이 소켓이 병원 대시보드인지 구급차 대시보드인지 |
 | `id` | string | `role="hospital"`이면 hpid, `role="ambulance"`면 apid |
 
-응답은 관련된 사건 각각에 대해, 평소 브로드캐스트와 동일한 형식의
-"출력 스키마 4"(`HubMatchResult`)를 그 소켓에만 개별 전송한다 — 새 메시지
-포맷을 따로 안 만들어서 dashboard 쪽은 별도 분기 없이 `onmessage`가 받은
-대로 처리하면 된다. `role="hospital"`이면 `HubEngine.get_cases_for_hospital()`로
-그 hpid가 `hospitals[]`에 들어있는 사건 전부를, `role="ambulance"`면
-`HubEngine.get_cases_for_apid()`로 그 apid가 등록한 사건을 찾아 돌려준다.
+**응답은 두 가지다(2026-08-11, 순서대로 전송):**
+1. **"출력 스키마 6"(`DashboardIdentityInfo`)** — 사건 유무와 무관하게
+   즉시 보내는 신원 확인. hub가 이미 인메모리로 갖고 있는 병원/구급차
+   레지스트리에서 이름을 바로 조회해 돌려준다(사건이 하나도 없어도, 즉
+   통화 전이라도 상단바에 실명이 뜬다). `known=false`면 hub가 그
+   hpid/apid를 모른다는 뜻이라 dashboard가 "존재하지 않는 접근 코드"로
+   판단할 수 있다.
+2. 관련된 사건 각각에 대해, 평소 브로드캐스트와 동일한 형식의
+   "출력 스키마 4"(`HubMatchResult`)를 그 소켓에만 개별 전송(따라잡기) —
+   새 메시지 포맷을 따로 안 만들어서 dashboard 쪽은 이 부분에 별도 분기가
+   필요 없다. `role="hospital"`이면 `HubEngine.get_cases_for_hospital()`로
+   그 hpid가 `hospitals[]`에 들어있는 사건 전부를, `role="ambulance"`면
+   `HubEngine.get_cases_for_apid()`로 그 apid가 등록한 사건을 찾아 돌려준다.
 
 ### 출력 스키마 4: feature/hub → feature/dashboard (통합 매칭 결과)
 
@@ -408,6 +415,34 @@ info의 낡은 재조회가 와도 hub 메모리가 안 되돌아가는 것 → 
 | `status` | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유 (확정으로 병상이 줄었는지, 거절이라 변동 없는지) |
 | `updatedAt` | string (ISO 8601) | 이 갱신이 발생한 시각 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+
+### 출력 스키마 6: feature/hub → feature/dashboard (신원 확인 응답, 2026-08-11 신설)
+
+"입력 스키마 9"(자기소개)에 대한 첫 번째 응답. `_send_catchup()`(사건
+기반 따라잡기)과 달리, 사건이 하나도 없어도(대시보드를 막 열어서 아직
+통화 전인 상태라도) hub가 이미 인메모리로 갖고 있는 병원/구급차
+레지스트리(`HubEngine._hospitals`/`_ambulances` — feature/info가 Supabase에서
+읽어 보내준 것)에서 이름을 즉시 찾아 돌려준다. "병원 ID: S0000001",
+"구급 A0000001호차"처럼 사건 발생 전까지 ID로만 표시되던 문제를 없애기
+위해 추가됐다(`app.py`의 `_send_identity_info()`).
+
+```json
+{
+  "type": "identity_info",
+  "role": "hospital",
+  "id": "S0000001",
+  "name": "서울대학교병원",
+  "known": true
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `type` | `"identity_info"` | 고정값 |
+| `role` | `"hospital"` \| `"ambulance"` | 요청받은 `DashboardIdentify.role` 그대로 |
+| `id` | string | 요청받은 `DashboardIdentify.id` 그대로 |
+| `name` | string \| null | hub가 아는 실제 이름. 모르면(레지스트리에 없으면) `null` |
+| `known` | boolean | hub의 레지스트리에 이 hpid/apid가 등록돼 있는지. `false`면 dashboard가 "존재하지 않는 접근 코드"로 판단해 접근을 막는 근거로 쓸 수 있다 |
 
 ## 결과 저장 및 전송 방식 (`delivery.py`)
 
