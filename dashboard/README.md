@@ -133,12 +133,37 @@
 > 실제 매칭 사건에 등장해야만" 이름이 왔다 — 통화 전에는 상단바에
 > `병원 ID: S0000001`, `구급 A0000001호차` 같은 ID 폴백만 보였다. 이 응답은
 > 사건 유무와 무관하게, hub가 이미 아는 병원/구급차 레지스트리에서 즉시
-> 이름을 조회해 돌려준다. `known`이 `false`면 hub가 그 hpid/apid를 아예
-> 모른다는 뜻이라 — `/hospital`, `/ambulance` 페이지는 이 경우 "존재하지
-> 않는 접근 코드입니다" 안내로 화면을 막는다(`known === null`은 아직
-> 응답 전이라는 뜻이므로 막지 않는다). `useDashboardSocket`의 반환값 중
+> 이름을 조회해 돌려준다. `useDashboardSocket`의 반환값 중
 > `state.identity`(`{ name, known }`)에 저장되며, `matchResults`와는 완전히
-> 분리된 상태다(feature/hub README.md "출력 스키마 6" 참고).
+> 분리된 상태다(feature/hub README.md "출력 스키마 6" 참고). `known`이
+> `false`인 경우의 "존재하지 않는 접근 코드" 처리는 아래 "랜딩 페이지 사전
+> 검증" 항목 참고 — 처음엔 이 소켓 응답을 받은 뒤(즉 `/hospital`,
+> `/ambulance` 페이지가 열린 뒤) 전체 화면을 막는 방식이었는데, 2026-08-11에
+> 랜딩 페이지에서 넘어가기 전에 미리 막는 방식으로 옮겼다(`/hospital`,
+> `/ambulance` 페이지 자체엔 더 이상 이 차단이 없다 — 직접 URL로 들어온
+> 경우엔 상단바 이름이 ID 폴백으로 남는 정도로만 티가 난다).
+
+**랜딩 페이지 사전 검증** (2026-08-11 신설, `src/app/page.tsx`)
+
+코드를 입력하고 "입장"을 누르면, `/hospital`·`/ambulance`로 라우팅하기 **전에**
+hub의 `GET /identity`(HTTP, WebSocket 아님)로 그 hpid/apid가 실제로 존재하는지
+먼저 확인한다. 존재하지 않으면 입력칸과 입장 버튼 사이에 빨간 글씨로
+"존재하지 않는 코드입니다"를 띄우고 라우팅하지 않는다 — 예전엔 목적지
+페이지로 넘어간 뒤 전체 화면이 "존재하지 않는 접근 코드입니다"로 막히는
+방식이었다.
+
+```
+GET {NEXT_PUBLIC_HUB_HTTP_URL}/identity?role=hospital&id=S0000001
+→ { "role": "hospital", "id": "S0000001", "name": "서울대학교병원", "known": true }
+```
+
+`NEXT_PUBLIC_HUB_HTTP_URL`(신규 환경변수, 예: `http://127.0.0.1:5001`)이
+설정돼 있지 않거나 요청이 실패하면(hub가 안 떠 있는 개발 환경 등) 검증 없이
+통과시킨다 — 그 경우엔 목적지 페이지의 WebSocket `identify`가 이름 표시
+용도로 한 번 더 조회하므로 완전히 무방비는 아니다. dashboard(포트 3000)와
+hub(포트 5001)는 다른 origin이라 브라우저 `fetch`가 CORS로 막히는데, hub의
+`GET /identity`만 `Access-Control-Allow-Origin: *`을 붙여 이 요청을 허용한다
+(feature/hub README.md "`GET /identity`" 참고).
 
 ## AI 처리 여부 표시 규칙
 
