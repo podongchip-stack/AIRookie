@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 import time
@@ -6,10 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
-from faster_whisper import WhisperModel
 
+import cuda_setup  # noqa: F401  — faster_whisper보다 먼저 import돼야 한다 (DLL 경로 등록)
+from faster_whisper import WhisperModel
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
 from summarizer import StructuringError, structure_call_summary
+from text_postprocess import CORRECTIONS_PATH, postprocess_text
 
 # feature/hub의 voice 요약 수신 엔드포인트. dashboard로는 직접 보내지 않고
 # 이 브랜치를 거쳐 전달된다 (CLAUDE.md "데이터 포맷 및 흐름" 참고).
@@ -85,6 +88,56 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
 
 
+def run_stt(
+    audio_path: Path,
+    model_size: str,
+    language: str,
+    device: str,
+    compute_type: str,
+    beam_size: int,
+) -> tuple[list, object, float]:
+    """Whisper로 오디오를 변환해 (세그먼트 목록, info, 소요 시간)을 돌려준다.
+
+    device="auto"면 ctranslate2가 고른 장치로 먼저 시도하고, 실패하면 cpu로
+    되돌린다. 후보를 ["cuda", "cpu"]가 아니라 ["auto", "cpu"]로 두는 이유는
+    GPU가 없는 환경(맥 등)에서 cuda를 명시하면 매번 실패 시도를 한 번씩
+    낭비하기 때문이다 - "auto"는 ctranslate2가 알아서 cpu를 고른다.
+
+    세그먼트 제너레이터를 여기서 list로 소진하는 것도 폴백 때문이다. CUDA 실패는
+    모델 로드가 아니라 세그먼트를 실제로 순회하는 시점(DLL 로드)에 터지는 경우가
+    있어서, 그 지점이 try 밖에 있으면 폴백이 걸리지 않는다. 그래서 세그먼트
+    출력도 변환이 다 끝난 뒤에 한꺼번에 나온다.
+    """
+    attempts = ["auto", "cpu"] if device == "auto" else [device]
+    last_error: Exception | None = None
+
+    for attempt in attempts:
+        try:
+            print(f"모델 로딩 중... ({model_size}, device={attempt}, compute_type={compute_type})")
+            load_start = time.perf_counter()
+            model = WhisperModel(model_size, device=attempt, compute_type=compute_type)
+            print(f"모델 로딩 완료 ({time.perf_counter() - load_start:.2f}초)")
+
+            print(f"변환 중: {audio_path.name} (beam_size={beam_size})")
+            transcribe_start = time.perf_counter()
+            segments, info = model.transcribe(
+                str(audio_path),
+                language=language,
+                vad_filter=True,
+                beam_size=beam_size,
+                initial_prompt=STT_INITIAL_PROMPT,
+            )
+            materialized = list(segments)  # 실제 연산이 여기서 일어난다
+            return materialized, info, time.perf_counter() - transcribe_start
+        except Exception as e:  # ctranslate2가 던지는 예외 타입이 다양하다
+            last_error = e
+            print(f"\ndevice={attempt} 실패: {e}", file=sys.stderr)
+            if attempt != attempts[-1]:
+                print("cpu로 재시도합니다...", file=sys.stderr)
+
+    raise RuntimeError(f"음성 변환에 실패했습니다: {last_error}")
+
+
 def transcribe(
     audio_path: Path,
     model_size: str,
@@ -95,21 +148,10 @@ def transcribe(
     llm_model: str,
     beam_size: int = DEFAULT_BEAM_SIZE,
     case_id: str | None = None,
+    use_correction: bool = True,
 ) -> None:
-    print(f"모델 로딩 중... ({model_size}, device={device}, compute_type={compute_type})")
-    load_start = time.perf_counter()
-    model = WhisperModel(model_size, device=device, compute_type=compute_type)
-    load_elapsed = time.perf_counter() - load_start
-    print(f"모델 로딩 완료 ({load_elapsed:.2f}초)")
-
-    print(f"변환 중: {audio_path.name} (beam_size={beam_size})")
-    transcribe_start = time.perf_counter()
-    segments, info = model.transcribe(
-        str(audio_path),
-        language=language,
-        vad_filter=True,
-        beam_size=beam_size,
-        initial_prompt=STT_INITIAL_PROMPT,
+    segments, info, transcribe_elapsed = run_stt(
+        audio_path, model_size, language, device, compute_type, beam_size
     )
 
     turn_texts: list[str] = []
@@ -120,7 +162,6 @@ def transcribe(
         print(f"{ts} {text}")
         turn_texts.append(text)
         turn_offsets.append(segment.start)
-    transcribe_elapsed = time.perf_counter() - transcribe_start
 
     full_text = " ".join(turn_texts)
     ORIGIN_TEXT_DIR.mkdir(parents=True, exist_ok=True)
@@ -142,7 +183,35 @@ def transcribe(
         llm_model=llm_model,
         audio_path=audio_path,
         case_id=case_id,
+        use_correction=use_correction,
     )
+
+
+def correct_transcript(full_text: str) -> str:
+    """STT 원문을 오인식 사전으로 교정해 LLM 입력용 텍스트를 만든다.
+
+    corrections.json에 등록된 표기와 정확히 일치하는 구간만 치환하므로, 등록하지
+    않은 말은 절대 건드리지 않는다 (text_postprocess.py 참고).
+
+    사전 파일이 없거나 JSON이 깨져 있어도 교정만 건너뛰고 원문을 그대로 돌려준다.
+    app.py는 상시 서버라 여기서 예외가 올라가면 그 통화를 통째로 잃는데, 교정은
+    정확도 보조 단계일 뿐이라 통화 처리를 막을 이유가 없다 (hub/info가 서로의
+    부재를 조용히 흡수하는 것과 같은 방어 패턴).
+    """
+    try:
+        result = postprocess_text(full_text, CORRECTIONS_PATH)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"\n[교정] 사전을 읽지 못해 건너뜁니다 ({CORRECTIONS_PATH}): {e}", file=sys.stderr)
+        return full_text
+
+    if not result.corrections:
+        print("\n[교정] 사전에 걸린 오인식 없음")
+        return result.corrected_text
+
+    print(f"\n[교정] {len(result.corrections)}건")
+    for c in result.corrections:
+        print(f'  "{c.original}" -> "{c.corrected}"')
+    return result.corrected_text
 
 
 def build_and_emit_call_summary(
@@ -155,15 +224,18 @@ def build_and_emit_call_summary(
     llm_model: str,
     audio_path: Path,
     case_id: str | None = None,
+    use_correction: bool = True,
 ) -> None:
-    """STT 결과를 SBAR 구조화 -> JSON 조립까지 수행한다.
+    """STT 결과를 오인식 교정 -> SBAR 구조화 -> JSON 조립까지 수행한다.
 
-    실시간 음성 필터링(MedicalRelevanceFilter, filtering.py) 단계는 뺐다. 필터링은
-    "이 문장을 요약에 넣을지"만 결정할 뿐 오인식 자체를 고치지 못하고, threshold가
-    검증 안 된 상태라 false negative(중요한 문장을 잘못 제외) 리스크가 있는 반면,
-    LLM 프롬프트(summarizer.py)가 이미 잡담/인사말을 스스로 걸러낼 정도로
-    구체적이라 얻는 이득이 불확실했다 (.docs/stt-accuracy-round2-*.md 참고). 원본
-    보존 원칙은 그대로 지킨다 - raw_text/turns에 전체 발화가 다 남는다.
+    STT와 LLM 사이에 오인식 교정(correct_transcript)이 들어간다. 예전에 이 자리에
+    있던 실시간 음성 필터링(MedicalRelevanceFilter)은 "이 문장을 요약에 넣을지"만
+    고를 뿐 단어 오인식 자체를 고치지 못했고 threshold도 검증된 적이 없어
+    걷어냈다. 대신 사전과 정확히 일치하는 구간만 치환하는 방식으로 바꿨다 -
+    등록한 만큼만 잡히지만 오교정이 구조적으로 발생하지 않는다.
+
+    원본 보존 원칙은 그대로다 - raw_text/turns에는 교정 전 전체 발화가 남고,
+    filtered_text(=LLM에 실제로 들어간 입력)에만 교정 결과가 들어간다.
 
     실제 통화 시작 시각 메타데이터가 없으므로(사전 녹음 파일 처리), 처리 시작
     시점에서 오디오 길이만큼 거슬러 올라간 시각을 통화 시작 시각으로 근사한다.
@@ -183,7 +255,7 @@ def build_and_emit_call_summary(
         )
         for text, offset in zip(turn_texts, turn_offsets)
     ]
-    filtered_text = full_text
+    filtered_text = correct_transcript(full_text) if use_correction else full_text
 
     print(f"\nSBAR 구조화 중... ({llm_model})")
     structure_start = time.perf_counter()
@@ -256,6 +328,11 @@ def main() -> None:
         default=None,
         help="hub에 보낼 caseId. 지정하지 않으면 오디오 파일명 기반으로 자동 생성",
     )
+    parser.add_argument(
+        "--no-correction",
+        action="store_true",
+        help="오인식 교정(corrections.json)을 건너뛰고 STT 원문을 그대로 요약에 넘김 (교정 효과 비교용)",
+    )
     args = parser.parse_args()
 
     if not args.audio.exists():
@@ -272,6 +349,7 @@ def main() -> None:
         args.llm_model,
         args.beam_size,
         args.case_id,
+        not args.no_correction,
     )
 
 
