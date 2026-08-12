@@ -60,6 +60,49 @@ class Specialty(BaseModel):
     recentProcedureTags: list[str] = Field(default_factory=list)
 
 
+class AssessmentConditions(BaseModel):
+    """info의 hospital_score.scoring.Conditions를 그대로 옮긴 것. 환자와 무관한
+    병원 여건(병상 가동률·과밀·피드 방치 여부)이라 스코어링에는 안 쓰고 그대로
+    dashboard에 노출한다(HospitalMatch.reliability가 아니라 여기 남겨두는 이유는
+    질환군과 무관해 사건별 매칭 대상이 아니기 때문)."""
+
+    availableBeds: Optional[int] = None
+    totalBeds: Optional[int] = None
+    bedOccupancy: Optional[float] = None
+    overcrowded: bool = False
+    bedCountUnknown: bool = False
+    feedAgeMinutes: Optional[float] = None
+    stale: bool = False
+    missingFromFeed: bool = False
+
+
+class AssessmentGroup(BaseModel):
+    """info의 hospital_score.scoring.GroupScore 1건 — 중증질환군 하나에 대한
+    신뢰도 계층 판정. tier는 문자열 라벨(declared_yes 등), score/confidence는
+    끝까지 곱하지 않는다(hospital_score/README.md "점수 설계" 원칙)."""
+
+    status: str
+    tier: str
+    score: float
+    confidence: str
+    basis: list[str] = Field(default_factory=list)
+    items: dict = Field(default_factory=dict)
+
+
+class Assessment(BaseModel):
+    """info-v2(hospital_score.scoring.build_payload)가 HospitalInfo에 얹어
+    보내는 추가 필드. Optional이라 이 필드 없이 보내는 구 feature/info 데이터도
+    그대로 통과한다 — hub는 이 데이터를 finalScore 계산에는 쓰지 않고,
+    "왜 이 순위인지" 설명 근거로만 dashboard에 전달한다(HospitalMatch.reliability
+    참고, process_voice_summary()가 15개 질환군 중 하나를 골라 채운다)."""
+
+    assessedAt: str
+    source: Literal["rule"] = "rule"
+    conditions: AssessmentConditions
+    evidence: dict = Field(default_factory=dict)
+    groups: dict[str, AssessmentGroup] = Field(default_factory=dict)
+
+
 class HospitalInfo(BaseModel):
     hospitalId: str
     name: str
@@ -74,6 +117,12 @@ class HospitalInfo(BaseModel):
     # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
     # 여기에 필드가 없으면 pydantic이 모르는 필드로 흘려버려서 그 구분이 사라진다.
     bedsByType: Optional[dict[str, int]] = None
+    # info-v2(hospital_score)가 보내는 신뢰도 진단 결과. 참고: 이 필드가 없어도
+    # (즉 Optional 미지정 값으로 와도) 예전처럼 조용히 무시되지 않는다 — pydantic
+    # BaseModel 기본값이 extra="ignore"라 애초에 이 필드가 없어도 검증 자체는
+    # 깨지지 않는다. Optional로 명시한 이유는 "받으면 실제로 타입 검증까지
+    # 하고 싶어서"이지 "안 받으면 깨져서"가 아니다.
+    assessment: Optional[Assessment] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -121,6 +170,24 @@ class SpecialtyMatch(BaseModel):
     score: float = 0.0
 
 
+class ReliabilityInfo(BaseModel):
+    """이 병원의 순위가 왜 이렇게 나왔는지 설명하는 부가 정보(2026-08-13 신설).
+
+    finalScore 계산에는 관여하지 않는다 — 순위는 지금과 똑같이 specialtyMatch
+    (진료과 임베딩 유사도)와 distanceKm만으로 정해진다. 이 필드는 그 순위 옆에
+    "info-v2가 심평원 대조로 판단한 신뢰도는 이렇다"를 추가로 보여주기 위한
+    설명용 데이터일 뿐이다. `group`은 15개 중증질환군 중 예상 병명과 가장 가까운
+    하나를 hub가 골라 채운 것(process_voice_summary() 참고). 해당 병원에
+    `HospitalInfo.assessment`가 없거나 그 질환군 데이터가 없으면 필드 자체가
+    None이다 — 구 feature/info 데이터(심평원 미연동)와 섞여 있어도 안전하다.
+    """
+
+    group: str
+    score: float
+    confidence: str
+    basis: list[str] = Field(default_factory=list)
+
+
 class HospitalMatch(BaseModel):
     hospitalId: str
     name: str
@@ -134,6 +201,7 @@ class HospitalMatch(BaseModel):
     bedCountUnknown: bool = False
     status: HospitalStatus = "pending"
     etaMin: Optional[int] = None
+    reliability: Optional[ReliabilityInfo] = None
 
 
 class HubMatchResult(BaseModel):

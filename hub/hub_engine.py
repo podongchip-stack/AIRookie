@@ -21,6 +21,7 @@ from schema import (
     HospitalStatus,
     HubMatchResult,
     PatientInfo,
+    ReliabilityInfo,
     SpecialtyMatch,
     VoiceCallSummaryMessage,
 )
@@ -57,6 +58,53 @@ def _is_bed_count_unknown(info: HospitalInfo) -> bool:
     if info.availableBedCount > 0:
         return False
     return info.bedsByType is None or _ER_ADULT not in info.bedsByType
+
+
+# info-v2(hospital_score.vocabulary.GROUPS)의 15개 중증질환군 이름을 그대로
+# 옮겨온 것. hub는 별도 브랜치라 info/ 폴더를 import할 수 없어(모노레포
+# 브랜치별 폴더 원칙) 값을 복사해서 쓴다 — egen/mapper.py의 CAPABILITY_TO_
+# DEPARTMENT를 각 브랜치가 따로 들고 있는 것과 같은 패턴. 바뀌면 양쪽을 같이
+# 고쳐야 한다(info의 vocabulary.py 참고).
+_ASSESSMENT_GROUPS = [
+    "재관류중재술",
+    "뇌출혈수술",
+    "대동맥응급",
+    "담낭담관질환",
+    "복부응급수술",
+    "장중첩/폐색",
+    "응급내시경",
+    "저체중출생아",
+    "산부인과응급",
+    "중증화상",
+    "사지접합",
+    "응급투석",
+    "정신과적응급",
+    "안과적수술",
+    "영상의학혈관중재",
+]
+
+
+def _reliability_for(info: HospitalInfo, group: str) -> ReliabilityInfo | None:
+    """이 병원의 assessment(info-v2 신뢰도 진단)에서 group에 해당하는 판정을
+    꺼내 dashboard 설명용 ReliabilityInfo로 옮긴다.
+
+    finalScore 계산에는 전혀 관여하지 않는다 — 순위는 지금처럼 specialtyMatch
+    (진료과 임베딩)와 distanceKm만으로 정해지고, 이건 "왜 이 순위인지"를
+    dashboard에 보여주기 위한 부가 설명일 뿐이다. assessment 자체가 없는
+    병원(심평원 미연동 구 데이터)이나 그 질환군 판정이 없으면 None을 돌려주고,
+    dashboard는 이 경우 설명 섹션을 안 보여주면 된다.
+    """
+    if info.assessment is None:
+        return None
+    group_score = info.assessment.groups.get(group)
+    if group_score is None:
+        return None
+    return ReliabilityInfo(
+        group=group,
+        score=group_score.score,
+        confidence=group_score.confidence,
+        basis=group_score.basis,
+    )
 
 
 class HubEngine:
@@ -294,6 +342,15 @@ class HubEngine:
         department_lists = [[s.department for s in info.specialties] for info, _ in candidates]
         specialty_results = self._matcher.match_many(expected_diagnosis, department_lists)
 
+        # info-v2(hospital_score)의 15개 질환군 중 예상 병명과 가장 가까운 것
+        # 하나를 고른다 — 병원마다 다른 게 아니라 이번 사건 전체에 하나뿐이라
+        # 후보 루프 밖에서 한 번만 매칭한다(위 department_lists 매칭과 같은
+        # SpecialtyMatcher를 재사용, 대상 어휘만 다름). 이 결과는 finalScore에
+        # 안 들어가고 오직 _reliability_for()의 조회 키로만 쓰인다.
+        best_assessment_group, _ = self._matcher.match_many(
+            expected_diagnosis, [_ASSESSMENT_GROUPS]
+        )[0]
+
         scored = []
         for (info, distance), (best_dept, similarity) in zip(candidates, specialty_results):
             scored.append(
@@ -316,6 +373,11 @@ class HubEngine:
                 availableBedCount=item["info"].availableBedCount,
                 bedCountUnknown=_is_bed_count_unknown(item["info"]),
                 status=self._approval_status.get((voice.caseId, item["hospitalId"]), "pending"),
+                reliability=(
+                    _reliability_for(item["info"], best_assessment_group)
+                    if best_assessment_group is not None
+                    else None
+                ),
             )
             for item in rank(scored)
         ]
