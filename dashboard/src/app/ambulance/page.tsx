@@ -108,12 +108,14 @@ function AmbulanceDashboardContent() {
         })}
       >
         <div className={css({ display: "flex", flexDirection: "column", gap: "6", minHeight: "0" })}>
-          {/* 통화 요약보다 통화 시연(실시간 텍스트 변환) 쪽에 더 넓은 공간을 준다 — flex-basis를
-              0으로 고정해서 내용 크기가 아니라 비율(2:3)로만 나뉘게 한다. */}
-          <div className={css({ flex: "2 1 0", minHeight: "0" })}>
+          {/* 통화 요약은 내용(예상 병명·증상)이 길어지면 스크롤 대신 카드 자체가
+              늘어나도록 높이를 내용에 맡긴다(flex-basis:auto, flex-grow:0) —
+              대신 통화 시연 쪽이 flex:1로 남는 공간을 전부 흡수한다(2026-08-12,
+              고정 비율(2:3)로 나누던 이전 방식에서 전환). */}
+          <div className={css({ flex: "0 0 auto" })}>
             <CallSummaryEditablePanel data={myResult} />
           </div>
-          <div className={css({ flex: "3 1 0", minHeight: "0" })}>
+          <div className={css({ flex: "1", minHeight: "0" })}>
             <CallDemoPanel onCallSignal={handleCallSignal} onAudioChunk={sendAudioChunk} />
           </div>
         </div>

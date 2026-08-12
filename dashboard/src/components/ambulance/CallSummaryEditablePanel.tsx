@@ -1,9 +1,9 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { css } from "styled-system/css";
 import { severityBadge } from "styled-system/recipes";
-import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
 import {
   inputStyle,
@@ -20,6 +20,55 @@ const SEVERITY_RISK_LABEL: Record<Severity, string> = {
 
 const kvDt = css({ color: "ink2", fontSize: "sm" });
 const kvValue = css({ fontWeight: "medium", fontSize: "md", color: "ink" });
+
+// 공용 <Panel>은 height:100%로 슬롯 높이를 꽉 채우게 고정하는데, 그러면 내용
+// (증상 등)이 길어질 때 "수정" 버튼이 카드 테두리 밖으로 밀려나가는 문제가
+// 있었다(2026-08-12). 내부 스크롤로 감싸는 방법도 있지만 통화 요약처럼 짧은
+// 카드에는 스크롤이 과해 보여서, 대신 카드 높이를 내용 크기에 맞춰 자연스럽게
+// 늘어나게(height:auto) 했다 — 옆 카드(통화 시연)가 남는 공간을 흡수하도록
+// ambulance/page.tsx 쪽 flex 비율도 같이 바꿨다.
+function CardShell({ subtitle, badge, children }: { subtitle?: string; badge?: ReactNode; children: ReactNode }) {
+  return (
+    <section
+      className={css({
+        display: "flex",
+        flexDirection: "column",
+        height: "auto",
+        borderWidth: "1px",
+        borderColor: "line",
+        borderRadius: "panel",
+        backgroundColor: "surface",
+        padding: "4",
+        minWidth: "0",
+      })}
+    >
+      <header
+        className={css({
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "2.5",
+          paddingBottom: "3",
+          marginBottom: "3",
+          borderBottomWidth: "1px",
+          borderColor: "line",
+          flexShrink: "0",
+        })}
+      >
+        <h2 className={css({ fontSize: "sm", fontWeight: "semibold", letterSpacing: "-0.01em", color: "ink" })}>
+          통화 요약 · 구조화
+          {subtitle && (
+            <span className={css({ display: "block", fontSize: "sm", fontWeight: "medium", color: "ink", marginTop: "0.5" })}>
+              {subtitle}
+            </span>
+          )}
+        </h2>
+        {badge}
+      </header>
+      {children}
+    </section>
+  );
+}
 
 function toListInput(values: string[]) {
   return values.join(", ");
@@ -52,23 +101,19 @@ export function CallSummaryEditablePanel({ data }: { data: HubMatchResult | null
 
   if (!patientInfo || !draft) {
     return (
-      <Panel title="통화 요약 · 구조화" badge={<Tag source="ai">sLLM · KM-BERT</Tag>}>
+      <CardShell badge={<Tag source="ai">sLLM · KM-BERT</Tag>}>
         <p className={css({ color: "ink3", fontSize: "sm" })}>수신 대기 중...</p>
-      </Panel>
+      </CardShell>
     );
   }
 
   return (
-    <Panel
-      title="통화 요약 · 구조화"
-      subtitle="실시간 음성 필터링 → 항목 추출"
-      badge={<Tag source="ai">sLLM · KM-BERT</Tag>}
-    >
+    <CardShell subtitle="실시간 음성 필터링 → 항목 추출" badge={<Tag source="ai">sLLM · KM-BERT</Tag>}>
       <dl
         className={css({
           display: "grid",
           gridTemplateColumns: "74px 1fr",
-          gap: "30 10",
+          gap: "1.5 3",
           alignItems: "center",
         })}
       >
@@ -104,7 +149,7 @@ export function CallSummaryEditablePanel({ data }: { data: HubMatchResult | null
         </span>
       </div>
 
-      <div className={css({ display: "flex", gap: "2", justifyContent: "flex-end", marginTop: "auto" })}>
+      <div className={css({ display: "flex", gap: "2", justifyContent: "flex-end", marginTop: "3" })}>
         {editing ? (
           <>
             <button
@@ -138,6 +183,6 @@ export function CallSummaryEditablePanel({ data }: { data: HubMatchResult | null
           </button>
         )}
       </div>
-    </Panel>
+    </CardShell>
   );
 }

@@ -2,11 +2,12 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { css } from "styled-system/css";
+import { css, cx } from "styled-system/css";
 import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
 import { Legend } from "@/components/hospital/Legend";
 import { CaseMatchPanel } from "@/components/hospital/CaseMatchPanel";
 import { MapPanel } from "@/components/hospital/MapPanel";
+import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 
 // 병원 대시보드는 병원 1곳 전용 화면이라 자신의 병원 ID(hpid)가 고정된다.
@@ -115,21 +116,18 @@ function HospitalDashboardContent() {
           })}
         >
         <div
-          className={css({
-            display: "flex",
-            flexDirection: "column",
-            gap: "3.5",
-            flex: "1",
-            minHeight: "0",
-            overflowY: "auto",
-            paddingRight: "1",
-            scrollbarWidth: "thin",
-            scrollbarColor: "rgba(203, 213, 225, 0.5) transparent",
-            "&::-webkit-scrollbar": { width: "6px" },
-            "&::-webkit-scrollbar-track": { backgroundColor: "transparent" },
-            "&::-webkit-scrollbar-thumb": { backgroundColor: "rgba(203, 213, 225, 0.5)", borderRadius: "full" },
-            "&::-webkit-scrollbar-thumb:hover": { backgroundColor: "rgba(203, 213, 225, 0.8)" },
-          })}
+          className={cx(
+            css({
+              display: "flex",
+              flexDirection: "column",
+              gap: "3.5",
+              flex: "1",
+              minHeight: "0",
+              overflowY: "auto",
+              paddingRight: "1",
+            }),
+            thinScrollbarStyle,
+          )}
         >
           {myCases.length === 0 ? (
             <CaseMatchPanel patientInfo={null} hospital={null} hospitalId={MY_HOSPITAL_ID} caseId="" onAction={sendAction} />
