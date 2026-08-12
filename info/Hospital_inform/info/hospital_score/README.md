@@ -266,15 +266,36 @@ python -m hospital_score.report
 python -m hospital_score.report --day 2026-08-12
 python -m hospital_score.report --seoul-only
 
-# 전문병원 지정 현황 받아 캐시 (리포트 6절이 이걸 읽는다). API 호출 2회
-python -m hospital_score.hira_files --fetch
+# 점수 산출
+python -m hospital_score.scoring --check          # 불변식 검사
+python -m hospital_score.scoring --validate       # 전문병원 홀드아웃 검증
+python -m hospital_score.scoring --sample 한강성심  # 병원 하나 들여다보기
+python -m hospital_score.scoring --out scores.json
 
-# 막힌 경로가 뚫렸을 때 — 응답 필드부터 찍는다
-python -m hospital_score.hira --probe
+# 거절 로그
+python -m hospital_score.rejection --vocab        # 이유 코드 어휘 (dashboard 선택지용)
+python -m hospital_score.rejection --summary      # 축별 집계
+python -m hospital_score.ingest                   # 수신 서버 단독 실행 (포트 5003)
+
+# 심평원 수집
+python -m hospital_score.hira_files --fetch       # 전문병원 지정 현황 (API 2회)
+python -m hospital_score.hira --probe --ykiho <암호화요양기호>   # 응답 필드 확인
 ```
 
-`hira_files.py`가 받은 파일은 `data/hira/`에 캐시된다. `report.py`는 캐시가 없으면
-6절만 건너뛰고 나머지는 그대로 출력한다 — 리포트는 네트워크 없이 돌아야 한다.
+### 무엇이 없어도 도는가
+
+외부 재료가 빠져도 죽지 않고, 대신 **판단의 근거가 약해질 뿐**이다. 재료가 없다고
+멈추면 운영 중에 한 조각이 빠졌을 때 전체가 서기 때문이다.
+
+| 빠진 것 | 결과 |
+|---|---|
+| 거절 로그 | **점수 산정에 아무 영향 없다.** `scoring.py`는 `rejection.py`를 아예 읽지 않는다 (현재 0건 상태로 검증 완료) |
+| 심평원 캐시 | 533곳 그대로 산출되나 전부 신고값만으로 판단 — 미상은 `unknown_bare`로 떨어진다 |
+| 전문병원 지정 캐시 | `report.py` 6절과 `--validate`만 건너뛴다 |
+| 네트워크 | `report`·`scoring`은 전부 로컬 파일만 읽는다 |
+
+거절 로그는 **아직 점수에 반영되지 않는다.** 지금은 쌓기만 한다 — 구조적 거절이
+반복되는 병원의 역량 벡터를 고치는 재보정은 로그가 의미 있는 규모로 모인 뒤의 일이다.
 
 데이터 출처는 `snapshot.py`가 쌓는 원본 스냅샷이다.
 
@@ -285,6 +306,128 @@ python -m hospital_score.hira --probe
 
 전국이 서울을 포함하므로 서울만 보려면 `hpid` 접두어 `A11`로 거른다.
 `.gitignore`의 `data/`가 경로 무관으로 걸려 있어 스냅샷은 커밋되지 않는다.
+
+---
+
+## 점수 설계
+
+### 왜 "최적값"을 찾지 않나
+
+최적화하려면 정답이 있어야 하는데, **"이 병원이 이 환자를 실제로 받았는가"의 정답이 없다.**
+그건 시스템이 운영되며 거절 로그가 쌓여야 나온다. 대용 정답도 전부 부족하다 — 병원의
+`불가능` 신고는 전체의 1.2%인 데다 그건 우리 **입력**이지 정답이 아니고, 전문병원 지정은
+5개 분야뿐이다. 여기서 억지로 최적화하면 없는 정답을 지어내는 것이 된다.
+
+그래서 셋으로 대신한다.
+
+**① 불변식** — 점수가 반드시 지켜야 할 순서를 코드로 못박고 검사한다
+(`scoring.INVARIANTS`, `--check`). 라벨 없이 검증되고, 가중치를 어떻게 잡든 이게
+안 깨지면 된다. 실제로 대부분의 파라미터 논쟁이 여기서 사라졌다.
+
+```
+불가능 신고 < 근거 없는 미상 < 전문의 있는 미상 < 전문병원 지정 미상 < 가능 신고
+미상이 어떤 경우에도 '불가능' 이하로 평가되지 않는다
+score는 오직 계층에서만 나온다 (다른 요인이 섞이면 순서가 깨진다)
+근거(basis)가 비어 있는 항목이 없다
+신뢰도가 점수에 섞여 들어가지 않는다
+```
+
+**② 실패 비용의 비대칭** — 받을 수 있는 병원을 후보에서 빼는 것(골든타임 손실)이 못 받는
+병원을 올리는 것(전화 한 번 더)보다 훨씬 비싸다. 애매하면 남긴다. 그룹 안에서 항목별
+계층이 다를 때 **최대값**을 택하는 이유도 이것이다.
+
+**③ 계층** — 근거 강도의 순서만 정한다. 근거 없이 `0.73` 같은 값을 두면 임의값에
+정밀함의 외양만 입히는 것이다.
+
+| 계층 | 조건 | score | confidence |
+|---|---|---|---|
+| `declared_yes` | 병원이 가능하다고 신고 | 1.0 | high (stale이면 medium) |
+| `unknown_designated` | 미상 + 그 분야 전문병원 지정 | 0.8 | medium |
+| `unknown_specialist` | 미상 + 해당 진료과 전문의 보유 | 0.6 | low |
+| `unknown_bare` | 미상 + 근거 없음 | 0.4 | low |
+| `declared_no` | 병원이 불가능하다고 신고 | 0.2 | high |
+
+전문의 유무를 **한 칸만** 올린 것은 의도적이다. 심평원 진료과가 대분류(`순환기내과` 없이
+`내과`)까지만 와서 특정성이 낮고, 실제로 `불가능`이라 신고한 칸의 **91.2%도 해당 과
+전문의를 보유**하고 있었다. 그래서 전문의는 점수를 **올리는** 근거가 아니라 "역량 없음으로
+단정하지 못하게 막는" 하한으로만 쓴다.
+
+`score`와 `confidence`는 끝까지 곱하지 않는다. 섞으면 "확실히 낮음"과 "모르겠음"이
+구분되지 않는다 — 미상과 확인된 만실을 구분해온 원칙과 같다.
+
+### 검증 — 전문병원 지정 홀드아웃
+
+`--validate`. 표본이 작지만(분야당 1~6곳) 방향은 확실히 검증된다.
+
+| 분야 | 지정·매칭 | 신고만 볼 때 | 새 점수 |
+|---|---|---|---|
+| **화상** | 4 | **0** | **4** |
+| 수지접합 | 5 | 2 | 5 |
+| 뇌혈관 | 4 | 3 | 4 |
+| 산부인과 | 2 | 0 | 2 |
+| 심장 | 1 | 1 | 1 |
+
+**화상 전문병원은 기존 파이프라인에서 한 곳도 후보에 오르지 못한다.** 전부 "정보미제공"이라
+존재하지 않는 것처럼 취급되기 때문이다.
+
+---
+
+## hub로 내보내는 형태 (제안)
+
+> **현재 hub로 전송하지 않는다.** `send_to_hub.py`는 오늘도 E-Gen 신고만 보낸다.
+> 아래는 검증이 끝난 뒤 붙이자는 제안이며, 붙일지는 팀이 정한다.
+
+병원마다 **여건(스칼라) + 역량(15그룹 벡터)** 두 부분이다.
+
+```jsonc
+{
+  "hospitalId": "A1100038",
+  "name": "한림대학교한강성심병원",
+  "emcls": "응급실운영신고기관",
+
+  "conditions": {              // 환자와 무관
+    "availableBeds": 30,
+    "totalBeds": 146,
+    "bedOccupancy": 0.795,
+    "overcrowded": false,
+    "bedCountUnknown": false,
+    "feedAgeMinutes": 3539915,
+    "stale": true,             // 하루 넘게 갱신 없음
+    "missingFromFeed": false   // 명부엔 있는데 응답에 없음 (병상 0과 다르다)
+  },
+
+  "capabilities": {            // 환자에 따라 달라지는 15그룹
+    "중증화상": {
+      "status": "unknown",             // available / unavailable / unknown
+      "tier": "unknown_designated",
+      "score": 0.8,
+      "confidence": "medium",
+      "basis": [                       // 구급대원에게 그대로 보여줄 근거
+        "병원 신고 없음(정보미제공)",
+        "전문병원 지정: 화상",
+        "마지막 입력 2458일 전",
+        "등급: 응급실운영신고기관"
+      ],
+      "items": { "19": "정보미제공" }   // 그룹을 이룬 MKioskTy 항목별 원본 신고값
+    }
+  }
+}
+```
+
+### hub가 쓰는 방법
+
+1. 예상 병명 → 15그룹 중 하나로 매핑 (기존 임베딩 매칭 그대로)
+2. 그 그룹의 `score`와 거리 점수를 **hub가 정한 비중으로** 합산
+3. `confidence`는 **점수에 곱하지 말고** 화면에 그대로 표시
+4. `status`가 `unavailable`이어도 후보에서 제거하지 말고 아래로 내릴 것
+5. `basis`를 dashboard에 그대로 노출 — "왜 이 병원인가"의 답이다
+
+**절대값과 비중은 info가 정하지 않는다.** "2km 가깝지만 근거가 약한 병원 vs 5km 멀지만
+확실한 병원"의 트레이드오프는 거리를 가진 hub가 결정할 문제다. info는 순서와 근거만 준다.
+
+`stale`·`missingFromFeed`·`bedCountUnknown`은 **표시 의무가 있는 값**이다. 특히
+`bedCountUnknown`이 true면 "0"이나 "병상 없음"이 아니라 **"미상"**으로 보여야 한다
+(기존 dashboard 규약과 동일).
 
 ---
 
