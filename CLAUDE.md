@@ -373,6 +373,10 @@ Supabase에서 읽는 구조다(위 참고). 지금 상태에서는 존(Zone)을
 - **`GET /identity` HTTP 엔드포인트 추가(2026-08-11)**: 위 `identity_info`는 `/hospital`/`/ambulance` 페이지가 열린 뒤(WebSocket 연결 후)에야 존재 여부를 알 수 있어서, 잘못된 코드로 들어가면 그 페이지 전체가 "접근 불가" 화면으로 막히는 방식이었다. 코드 입력하는 **첫 페이지에서 넘어가기 전에** 미리 확인하고 싶다는 요청에 따라 `GET /identity?role=&id=`를 REST로 추가했다 — `_resolve_identity()`로 `identity_info`와 같은 조회 로직을 재사용하며, 다른 origin(dashboard:3000 ↔ hub:5001)의 브라우저 `fetch`가 되도록 이 엔드포인트만 `Access-Control-Allow-Origin: *`을 붙였다
 - voice는 구급차마다 별도 장비에서 뜬다. voice가 뜰 때 자기 IP를 자동 탐지해 `POST /voice/register`로 hub에 자가등록하면, hub는 `AmbulanceInfo.voicePort`(feature/info가 Supabase `ambulances` 테이블에서 읽어 보내줌)와 합쳐 주소를 기억해뒀다가 통화 시작/종료 신호를 그 구급차로 중계한다. 구급차 GPS도 하드코딩된 고정값 대신 이 `AmbulanceInfo` 조회로 대체했다
 - 실제 hub+info 실서버를 동시에 띄우고 소켓 2개(구급차 탭 + 병원 탭 흉내) 동시 연결, apid 기반 신호 중계, 승인 후 재브로드캐스트까지 전부 실제 HTTP/WebSocket으로 검증했다 (`run_match.py`에도 다중 사건 격리 검증 추가됨)
+- **info-v2(`hospital_score/`) 신뢰도 판정을 설명용으로 수신·전달한다(2026-08-13).** info-v2는 병원별로 15개 중증질환군에 대해 5단계 신뢰도(`declared_yes` 1.0 ~ `declared_no` 0.2, `confidence`, `basis` 근거 문장)를 심평원(HIRA) 대조로 판정해 `HospitalInfo.assessment`로 보낸다(Optional — 이 필드 없이 오는 구 feature/info 데이터도 그대로 통과). `process_voice_summary()`가 예상 병명을 이 15개 질환군 어휘와 한 번 더 매칭(기존 진료과 임베딩 매칭과는 별도 호출)해, 매칭된 병원의 그 그룹 판정을 `HospitalMatch.reliability`로 dashboard까지 전달한다
+  - **finalScore(거리·진료과 가중합)는 전혀 안 건드렸다** — 순위 계산은 지금과 완전히 동일하고, `reliability`는 "왜 이 순위인지" 설명 근거로만 추가된다(팀 확정: 순위 반영 여부는 hospital_score/README.md의 "hub가 쓰는 방법" 제안 중 이번엔 채택하지 않고 다음 단계로 미룸)
+  - hub의 `hub/schema.py`가 `extra="forbid"`로 막혀 있다는 서술이 hospital_score/README.md에 있었는데, 실제로는 아니다(pydantic BaseModel 기본값은 `extra="ignore"`) — `assessment` 필드가 없어도 파싱은 안 깨졌을 것이나, hub가 그 값을 실제로 읽어 쓰려면 어차피 스키마에 명시적으로 선언해야 해서 이번에 추가했다
+- **`feature/info-v2`가 develop에 머지됐다(2026-08-13).** `info/Hospital_inform/info/hospital_score/`(신뢰도 진단·심평원 대조·거절 로그 수신구)가 이제 develop에 포함되지만, `send_to_hub.py` 상시 파이프라인은 여전히 이 폴더를 import하지 않는다 — 병원 목록·병상 자체는 이전과 동일하게 E-Gen(+Supabase 병상)만 쓴다. **"hub로 흐르는 병원이 7곳뿐인 문제"(Supabase `SUPABASE_TO_EGEN_HPID` 대응표 의존)는 이번 작업 범위가 아니다** — info-v2가 제안한 TTL 오버레이 재설계는 아직 미착수
 
 ## feature/dashboard 담당자 참고사항
 
@@ -425,6 +429,14 @@ Supabase에서 읽는 구조다(위 참고). 지금 상태에서는 존(Zone)을
     자체의 전체 화면 차단은 제거했다 — 직접 URL로 들어온 경우엔 상단바
     이름이 ID 폴백으로 남는 정도로만 티가 난다(랜딩 페이지 우회는 이번
     범위에서 막지 않기로 함).
+- **info-v2 신뢰도 판정("왜 이 순위인지") 설명 표시 (2026-08-13)**: hub가
+  `hospitals[].reliability`(질환군·score·confidence·basis)를 보내주면
+  구급차 대시보드 병원 후보 카드에 칩+근거 문장으로 노출한다
+  (`HospitalCandidateListPanel.tsx`). 이 값은 순위 정렬에는 안 쓰이는 순수
+  설명용 정보라 — 실제 순위는 여전히 `specialtyMatch`(진료과 임베딩)와
+  `distanceKm`로만 정해진다. `reliability` 필드 자체가 없는 병원(구
+  feature/info 데이터 등)은 칩이 안 뜨는 것으로 자연히 처리된다(Optional
+  필드라 별도 분기 불필요).
 
 ---
 
