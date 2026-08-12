@@ -43,12 +43,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import dataset as D
+from . import hira as H
 from . import hira_files as HF
 from . import vocabulary as V
 
+#: 캐시 경로는 그 파일을 만드는 쪽(`hira.py --build-join`)이 정한다.
+#: 여기서 다시 정의하면 한쪽만 바꿨을 때 조용히 어긋난다
 CACHE_DIR = HF.CACHE_DIR
-JOIN_PATH = CACHE_DIR / "egen_hira_join.json"
-SPECIALISTS_PATH = CACHE_DIR / "specialists.json"
+JOIN_PATH = H.JOIN_PATH
+SPECIALISTS_PATH = H.SPECIALISTS_PATH
 
 # --- 계층 -------------------------------------------------------------------
 # 근거 강도의 순서다. 값 자체에 의미를 두지 않는다 — 순서만 쓴다.

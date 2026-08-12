@@ -30,26 +30,41 @@ data.go.kr 게이트웨이는 경로를 서비스+오퍼레이션 **전체**로 
 
 `ykiho`(암호화요양기호)가 있어야 한다
 ------------------------------------
-이 서비스의 모든 오퍼레이션은 `ykiho`를 입력으로 받는다. 없이 부르면 정상 응답에
+상세정보서비스의 모든 오퍼레이션은 `ykiho`를 입력으로 받는다. 없이 부르면 정상 응답에
 `totalCount=0`이 온다(오류가 아니라서 조용히 빈 결과가 된다 — 주의).
 
-`ykiho` 목록은 **병원정보서비스(15001698)**에 있는데 아직 활용신청 전이라 막혀 있다
-(`hospInfoServicev2/getHospBasisList` → 403). 그게 열리기 전까지 이 파일은 개별
-`ykiho`를 알고 있을 때만 쓸 수 있다.
+`ykiho` 목록은 **병원정보서비스(15001698)**에 있다. 그런데 E-Gen과 심평원은 공통
+식별자가 없어서(`hpid` ↔ `ykiho`) 좌표 최근접으로 붙여야 한다. 그 두 단계를 묶은 것이
+`--build-join`이다.
 
-    python -m hospital_score.hira --probe --ykiho <암호화요양기호>
+    python -m hospital_score.hira --build-join                 # 조인 + 전문의 수까지
+    python -m hospital_score.hira --probe --ykiho <요양기호>    # 응답 필드만 확인
+
+`--build-join`이 만드는 두 파일(`data/hira/egen_hira_join.json`,
+`data/hira/specialists.json`)을 `scoring.py`가 읽는다. **캐시가 없어도 점수는 나오지만
+심평원 근거가 통째로 빠져 미상이 전부 `unknown_bare`로 떨어진다.** `data/`는 커밋되지
+않으므로 새 장비에서는 이 명령을 한 번 돌려야 한다.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import unquote
 
+from . import dataset as D
+
 #: 자격증명 파일. 실행 위치와 무관하게 `__file__` 기준으로 고정한다
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+
+#: 조인·전문의 캐시. `scoring.py`가 여기서 읽는다. `data/`는 커밋되지 않는다
+CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "hira"
+JOIN_PATH = CACHE_DIR / "egen_hira_join.json"
+SPECIALISTS_PATH = CACHE_DIR / "specialists.json"
 
 BASE_URL = "https://apis.data.go.kr/B551182"
 
@@ -230,6 +245,159 @@ class HiraClient:
         return self._call(SVC_HOSP, OP_HOSP_LIST, {"sidoCd": sido_cd, "clCd": cl_cd})
 
 
+#: 조인 대상 종별코드. 응급의료기관은 대부분 병원급이다.
+#: (보건의료원·보건지소는 여기 없어서 안 붙는다 — 매칭 실패가 아니라 조회 범위 문제다)
+JOIN_CL_CODES = ("01", "11", "21")  # 상급종합 · 종합병원 · 병원
+
+#: 같은 병원으로 볼 최대 거리. `send_to_hub.py`의 Supabase 대응표 검증과 같은 잣대다
+JOIN_MAX_KM = 1.2
+
+#: 네트워크 오류 재시도. 518회를 도는 동안 일시적 실패는 일어나는 게 정상이고,
+#: 한 번의 타임아웃으로 전체가 죽으면 그때까지 받은 것이 전부 사라진다
+RETRIES = 3
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius = 6371.0
+    rad = math.radians
+    inner = (
+        math.sin(rad(lat2 - lat1) / 2) ** 2
+        + math.cos(rad(lat1)) * math.cos(rad(lat2)) * math.sin(rad(lon2 - lon1) / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(inner))
+
+
+def _with_retry(call, label: str):
+    """일시적 네트워크 오류만 재시도한다. 권한 오류는 재시도해도 소용없으니 즉시 올린다."""
+    for attempt in range(RETRIES):
+        try:
+            return call()
+        except HiraNotApprovedError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if attempt == RETRIES - 1:
+                raise HiraApiError(f"{label}: {type(exc).__name__}") from exc
+            time.sleep(2 * (attempt + 1))
+    return None
+
+
+def build_join(
+    day: str | None = None,
+    max_km: float = JOIN_MAX_KM,
+    client: HiraClient | None = None,
+) -> dict[str, dict]:
+    """E-Gen 병원 ↔ 심평원 요양기관을 좌표 최근접으로 붙여 캐시한다.
+
+    두 기관이 같은 병원에 다른 번호를 붙여놨고 서로 연결표가 없어서(`hpid` ↔ `ykiho`)
+    좌표로 붙일 수밖에 없다. 실측에서 533곳 중 518곳(97.2%)이 1.2km 이내였고 오차
+    중앙값은 11m였다. 기관명 정규화만으로는 92.7%다 — 같은 병원인데 표기가 달라
+    놓치는 것들이 있어서다(`의료법인대산의료재단익산병원` ↔ `익산병원`).
+    """
+    client = client or HiraClient()
+
+    rows: list[dict] = []
+    for code in JOIN_CL_CODES:
+        got = _with_retry(lambda c=code: client.hospital_list(cl_cd=c), f"목록 clCd={code}")
+        print(f"  심평원 clCd={code}: {len(got)}건", flush=True)
+        rows.extend(got)
+
+    points = [
+        (float(row["YPos"]), float(row["XPos"]), row)
+        for row in rows
+        if row.get("XPos") and row.get("YPos")
+    ]
+    if not points:
+        raise HiraApiError("심평원 목록에 좌표가 없다")
+
+    hospitals = D.load_hospitals(D.snapshot_files(day=day))
+    if not hospitals:
+        raise HiraApiError("E-Gen 스냅샷이 없다 — snapshot_nationwide.bat이 도는지 확인할 것")
+
+    matches: dict[str, dict] = {}
+    distances: list[float] = []
+    for hospital in hospitals.values():
+        if not (hospital.lat and hospital.lon):
+            continue
+        best = min(
+            points, key=lambda p: haversine_km(hospital.lat, hospital.lon, p[0], p[1])
+        )
+        distance = haversine_km(hospital.lat, hospital.lon, best[0], best[1])
+        distances.append(distance)
+        if distance > max_km:
+            continue
+        matches[hospital.hpid] = {
+            "hpid": hospital.hpid,
+            "egenName": hospital.name,
+            "emcls": hospital.emcls,
+            "ykiho": best[2]["ykiho"],
+            "hiraName": best[2].get("yadmNm"),
+            "clCdNm": best[2].get("clCdNm"),
+            "drTotCnt": best[2].get("drTotCnt"),
+            "distanceKm": round(distance, 4),
+        }
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    JOIN_PATH.write_text(
+        json.dumps(matches, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    distances.sort()
+    median = distances[len(distances) // 2] if distances else 0.0
+    print(
+        f"  조인 {len(matches)}/{len(distances)}곳 ({len(matches) / max(1, len(distances)):.1%}), "
+        f"오차 중앙값 {median * 1000:.0f}m → {JOIN_PATH.name}",
+        flush=True,
+    )
+    return matches
+
+
+def fetch_specialists(
+    matches: dict[str, dict] | None = None, client: HiraClient | None = None
+) -> dict[str, list[dict]]:
+    """조인된 병원의 전문과목별 전문의 수를 받아 캐시한다.
+
+    이미 받아둔 곳은 건너뛴다(이어받기). 중간에 죽어도 거기까지는 남도록 25곳마다 쓴다.
+    """
+    client = client or HiraClient(timeout=30.0)
+    if matches is None:
+        if not JOIN_PATH.exists():
+            raise HiraApiError(f"{JOIN_PATH.name}이 없다 — --build-join을 먼저 돌릴 것")
+        matches = json.loads(JOIN_PATH.read_text(encoding="utf-8"))
+
+    specialists: dict[str, list[dict]] = {}
+    if SPECIALISTS_PATH.exists():
+        specialists = json.loads(SPECIALISTS_PATH.read_text(encoding="utf-8"))
+        print(f"  기존 캐시 {len(specialists)}곳 이어받기", flush=True)
+
+    todo = [(hpid, row) for hpid, row in matches.items() if hpid not in specialists]
+    print(f"  전문의 수 조회 대상 {len(todo)}곳", flush=True)
+
+    failed: list[str] = []
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for index, (hpid, row) in enumerate(todo, 1):
+        try:
+            specialists[hpid] = _with_retry(
+                lambda y=row["ykiho"]: client.detail_op("specialists", y), hpid
+            )
+        except HiraApiError:
+            failed.append(hpid)
+        if index % 25 == 0:
+            SPECIALISTS_PATH.write_text(
+                json.dumps(specialists, ensure_ascii=False), encoding="utf-8"
+            )
+            print(f"    {index}/{len(todo)} …", flush=True)
+
+    SPECIALISTS_PATH.write_text(
+        json.dumps(specialists, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    have = sum(1 for rows in specialists.values() if rows)
+    print(
+        f"  전문의 수 {len(specialists)}곳 저장 (응답 있는 곳 {have}곳, 실패 {len(failed)}건)"
+        f" → {SPECIALISTS_PATH.name}",
+        flush=True,
+    )
+    return specialists
+
+
 def probe(ykiho: str) -> None:
     """오퍼레이션 11종의 응답 필드를 눈으로 확인한다.
 
@@ -254,16 +422,30 @@ def probe(ykiho: str) -> None:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="심평원 의료기관별상세정보서비스")
+    parser = argparse.ArgumentParser(description="심평원 병원정보 / 의료기관별상세정보")
+    parser.add_argument(
+        "--build-join", action="store_true", help="E-Gen ↔ 심평원 조인 + 전문의 수 수집"
+    )
+    parser.add_argument("--day", default=None, help="조인에 쓸 스냅샷 날짜 (예: 2026-08-12)")
+    parser.add_argument("--max-km", type=float, default=JOIN_MAX_KM, help="같은 병원으로 볼 최대 거리")
+    parser.add_argument("--skip-specialists", action="store_true", help="조인만 하고 멈춘다")
     parser.add_argument("--probe", action="store_true", help="오퍼레이션 11종 응답 필드 확인")
     parser.add_argument("--ykiho", default="", help="암호화요양기호 (probe에 필요)")
     args = parser.parse_args()
 
-    if args.probe:
+    if args.build_join:
+        shared = HiraClient(timeout=30.0)
+        print("=== E-Gen ↔ 심평원 조인 ===")
+        joined = build_join(day=args.day, max_km=args.max_km, client=shared)
+        if not args.skip_specialists:
+            print("=== 전문과목별 전문의 수 ===")
+            fetch_specialists(joined, client=shared)
+        print("\n이제 scoring이 심평원 근거를 읽는다: python -m hospital_score.scoring --check --validate")
+    elif args.probe:
         if not args.ykiho:
             raise SystemExit(
-                "--ykiho 가 필요하다. 목록은 병원정보서비스(15001698)에 있는데 "
-                "아직 활용신청 전이라 막혀 있다"
+                "--ykiho 가 필요하다. --build-join을 먼저 돌리면 "
+                f"{JOIN_PATH.name}에서 골라 쓸 수 있다"
             )
         probe(args.ykiho)
     else:
