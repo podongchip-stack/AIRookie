@@ -222,7 +222,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 
 - 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
 - STT 모델: Whisper 또는 Qwen3-ASR (스트리밍 지원)
-- **"실시간 음성 필터링"(`filtering.py`, 의료 관련 여부 분류) 단계는 파이프라인에서 뺐다.** threshold가 검증 안 된 상태라 false negative(중요 문장 오제외) 리스크가 있었고, SBAR 구조화 LLM 프롬프트가 이미 잡담·인사말을 스스로 걸러낼 정도로 구체적이라 얻는 이득이 불확실했다(실측 후 결정, `voice/README.md` 참고). 대신 STT 자체의 오인식을 줄이려고 `initial_prompt`로 "이 통화가 어떤 종류의 대화인지"(장르·구조)를 서술해 넘긴다 — 구체 시나리오 어휘를 넣으면 그 샘플에만 맞는 오버피팅이 되므로 일부러 뺐다. `filtering.py` 파일 자체는 참고용으로 남아있다
+- **"실시간 음성 필터링"(`filtering.py`, 의료 관련 여부 분류) 단계는 파이프라인에서 뺐다.** threshold가 검증 안 된 상태라 false negative(중요 문장 오제외) 리스크가 있었고, SBAR 구조화 LLM 프롬프트가 이미 잡담·인사말을 스스로 걸러낼 정도로 구체적이라 얻는 이득이 불확실했다(실측 후 결정, `voice/README.md` 참고). 대신 STT 자체의 오인식을 줄이려고 `initial_prompt`로 "이 통화가 어떤 종류의 대화인지"(장르·구조)를 서술해 넘긴다 — 구체 시나리오 어휘를 넣으면 그 샘플에만 맞는 오버피팅이 되므로 일부러 뺐다. `filtering.py`·`live_transcribe.py` 파일 자체는 데드 코드로 삭제됐다(2026-08-12) — 그 대신 `corrections.json`/`text_postprocess.py` 기반 **오인식 교정**(STT와 LLM 사이에서 사전과 정확히 일치하는 구간만 치환, `raw_text`는 교정 전 원문 그대로 보존)이 새로 들어갔다
 - 원본 로그 보존 원칙(완전 삭제 금지, 사후 검증·audit trail용)은 유지된다 — `transcript.raw_text`/`turns`에 전체 발화가 그대로 남는다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
@@ -294,8 +294,36 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
     동시에 같은 병원을 후보로 걸 수 있기 때문에, 사건 하나만 보여주던 이전 구조로는
     다른 구급차의 요청이 화면에서 사라져 보이는 문제가 있었다. 카드를 선택하면 그
     사건 기준으로 지도가 갱신된다.
-  - apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
-    값인지 서버 사이드 검증은 하지 않는다(다음 단계 TODO, dashboard README 참고).
+  - ~~apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
+    값인지 서버 사이드 검증은 하지 않는다~~ → **2026-08-11 해결.** dashboard가
+    Supabase에 직접 붙지 않고, hub의 신원 확인 응답으로 검증한다. 아래 "이름
+    표시" 항목과 같은 메커니즘.
+- **접근 코드(hpid/apid) 기반 이름 표시 + 존재 검증 (2026-08-11)**: 상단바가
+  "구급 A0000001호차", "병원 ID: S0000001"처럼 ID로만 뜨던 걸 "구급 1호차",
+  "서울대학교병원"처럼 실명으로 표시하고 싶었는데, `hospitals[].name`/
+  `ambulanceName`은 둘 다 사건(매칭 결과)에 등장해야만 값이 와서 통화 전엔
+  이름이 안 떴다. hub가 `identify` 자기소개에 대해 사건 유무와 무관하게 즉시
+  이름/존재 여부를 알려주는 응답(WebSocket `identity_info`)을 추가로 보내주는
+  방식으로 해결했다 — `useDashboardSocket`의 `state.identity`(`{name, known}`)가
+  이 결과를 담고, `matchResults`(사건 데이터)와는 완전히 분리된 상태다. 이
+  과정에서 "dashboard가 병원/구급차 Supabase에 직접 붙어서 해결하자"는 대안도
+  검토했지만 기각했다 — hub가 이미 info를 통해 두 Supabase 데이터를 인메모리로
+  갖고 있어서, dashboard가 Supabase 자격증명을 새로 들고 있을 필요가 없고
+  (`dashboard/.env.local`의 `AMBULANCE_SUPABASE_URL`/`KEY`와
+  `package.json`의 `@supabase/supabase-js`는 애초에 한 번도 안 쓰여서 이번에
+  제거함), "dashboard는 feature/hub와만 직접 통신한다"는 원칙도 그대로
+  유지된다.
+  - **존재하지 않는 코드 처리 위치를 랜딩 페이지로 이동(2026-08-11 후속)**:
+    처음엔 `/hospital`, `/ambulance` 페이지가 열린 뒤(`identity_info`로
+    `known=false` 확인 후) 전체 화면을 "존재하지 않는 접근 코드입니다"로
+    막는 방식이었는데, 코드 입력하는 첫 페이지(`src/app/page.tsx`)에서
+    라우팅하기 전에 바로 알려주고 싶다는 요청으로 바뀌었다. hub에
+    `GET /identity?role=&id=`(HTTP, CORS 허용) 엔드포인트를 새로 추가해
+    "입장" 버튼을 누르면 라우팅 전에 먼저 조회하고, 존재하지 않으면 입력칸과
+    버튼 사이에 빨간 글씨로 안내한다. `/hospital`, `/ambulance` 페이지
+    자체의 전체 화면 차단은 제거했다 — 직접 URL로 들어온 경우엔 상단바
+    이름이 ID 폴백으로 남는 정도로만 티가 난다(랜딩 페이지 우회는 이번
+    범위에서 막지 않기로 함).
 
 ---
 
