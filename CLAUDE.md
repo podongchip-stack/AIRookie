@@ -38,9 +38,9 @@
 구급대원 확인 및 수정 (Override) → 환자 프로필 생성
     ↓
 존(Zone) 기준 병원 매칭 (규칙 기반 적합도 엔진, AI 미사용)
-    - hv1 API (전문의 보유 여부)
-    - hvec API (병상 현황)
-    - hv2 API (중증 질환별 수용 가능 여부)
+    - E-Gen 목록정보 (getEgytListInfoInqire — 좌표 · 응급의료기관 등급)
+    - E-Gen 실시간 가용병상 (getEmrrmRltmUsefulSckbdInfoInqire — hvec 등 병상 6종 · 장비 가용)
+    - E-Gen 중증질환 수용가능 (getSrsillDissAceptncPosblInfoInqire — MKioskTy 28항목)
     ↓
 병원 동시 알림 → 병원 응답 수집 (승인 / 불가)
     ↓
@@ -76,7 +76,7 @@
 | 통화 내용 필터링·구조화 | AI (sLLM + KM-BERT) | 실시간 음성 필터링 처리 — 잡담·불필요 발화 제거 후 의료 관련 문장만 추출 |
 | 병원 리스트 정렬 | 규칙 기반 (GPS 거리 · 존 그룹) | AI 미사용 |
 | 진료과 매칭 (예상 병명 ↔ 병원 진료과) | AI 보조 (경량 임베딩 유사도, sentence-transformers) | 생성형 LLM 아님, 결정적·설명 가능(유사도 점수 노출), On-Premise |
-| 병원 적합도 매칭 (거리·병상·존 스코어링) | 규칙 기반 (hv1/hvec/hv2 API 대조) | AI 미사용, 설명 가능한 구조 유지 |
+| 병원 적합도 매칭 (거리·병상·존 스코어링) | 규칙 기반 (E-Gen 3개 오퍼레이션 대조) | AI 미사용, 설명 가능한 구조 유지 |
 | 의사결정 기록 · 보고서 생성 | AI (On-Premise sLLM) | Fact Checking Engine으로 원본 로그와 대조 검증 |
 
 이 구분을 코드나 UI에 반영할 때는 각 기능이 "AI 처리"인지 "규칙 기반"인지 명시적으로 구분되게 만든다 (예: 로그, 주석, API 응답 필드에 `source: "ai" | "rule"` 등).
@@ -222,7 +222,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 
 - 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
 - STT 모델: Whisper 또는 Qwen3-ASR (스트리밍 지원)
-- **"실시간 음성 필터링"(`filtering.py`, 의료 관련 여부 분류) 단계는 파이프라인에서 뺐다.** threshold가 검증 안 된 상태라 false negative(중요 문장 오제외) 리스크가 있었고, SBAR 구조화 LLM 프롬프트가 이미 잡담·인사말을 스스로 걸러낼 정도로 구체적이라 얻는 이득이 불확실했다(실측 후 결정, `voice/README.md` 참고). 대신 STT 자체의 오인식을 줄이려고 `initial_prompt`로 "이 통화가 어떤 종류의 대화인지"(장르·구조)를 서술해 넘긴다 — 구체 시나리오 어휘를 넣으면 그 샘플에만 맞는 오버피팅이 되므로 일부러 뺐다. `filtering.py` 파일 자체는 참고용으로 남아있다
+- **"실시간 음성 필터링"(`filtering.py`, 의료 관련 여부 분류) 단계는 파이프라인에서 뺐다.** threshold가 검증 안 된 상태라 false negative(중요 문장 오제외) 리스크가 있었고, SBAR 구조화 LLM 프롬프트가 이미 잡담·인사말을 스스로 걸러낼 정도로 구체적이라 얻는 이득이 불확실했다(실측 후 결정, `voice/README.md` 참고). 대신 STT 자체의 오인식을 줄이려고 `initial_prompt`로 "이 통화가 어떤 종류의 대화인지"(장르·구조)를 서술해 넘긴다 — 구체 시나리오 어휘를 넣으면 그 샘플에만 맞는 오버피팅이 되므로 일부러 뺐다. `filtering.py`·`live_transcribe.py` 파일 자체는 데드 코드로 삭제됐다(2026-08-12) — 그 대신 `corrections.json`/`text_postprocess.py` 기반 **오인식 교정**(STT와 LLM 사이에서 사전과 정확히 일치하는 구간만 치환, `raw_text`는 교정 전 원문 그대로 보존)이 새로 들어갔다
 - 원본 로그 보존 원칙(완전 삭제 금지, 사후 검증·audit trail용)은 유지된다 — `transcript.raw_text`/`turns`에 전체 발화가 그대로 남는다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
@@ -248,6 +248,96 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 - hub→info 방향(병상 갱신 쓰기)도 **구현 완료**됐다. `app.py`가 `POST /hub/bed-update`(기본 포트 5002 — 팀 합의로 info 포트 고정, 2026-08-11)로 hub의 병상 갱신을 받아 `SupabaseEgenClient.update_bed_count()`로 Supabase의 `hvec` 컬럼에 즉시 반영한다 — 위 주기적 재조회의 최대 30분 지연을 이송 확정 시점만큼은 보정해준다. 실제 Supabase 병상이 줄어드는 것까지 확인됐다(info/README.md "hub → info" 참고)
 - **여러 사건(구급차) 동시 처리를 지원하는 구급차 레지스트리 동기화가 추가됐다.** 병원용과는 **별도의 Supabase 프로젝트**(`ambulances` 테이블, apid/name/gps/voicePort)를 `send_to_hub.py`가 같은 주기로 읽어 `POST /info/ambulances`로 hub에 보낸다. `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY` 환경변수가 없으면 이 부분만 조용히 건너뛰고 병원 정보 동기화는 그대로 진행한다 — voice의 실제 IP는 여기 없고(구급차 노트북마다 네트워크가 달라 자주 바뀔 수 있음) voice가 뜰 때 hub에 직접 자가등록한다(feature/hub 담당자 참고사항 참고)
 
+### 신뢰도 진단·외부 대조 트랙 (`hospital_score/`, 2026-08-12 신설 — `feature/info-v2`)
+
+> **아직 hub로 나가지 않는다.** 상시 파이프라인(`send_to_hub.py`)은 오늘도 E-Gen 신고만
+> 보낸다. 아래는 `origin/feature/info-v2`에 있는 실험 트랙이며, 검증되면 그때 연동을
+> 제안한다. `hospital_score/`는 바깥 모듈을 import 하지 않고 바깥에서도 이 폴더를
+> import 하지 않으므로 **폴더째 지워도 기존 경로가 멀쩡하다.**
+
+- **왜 만들었나** — E-Gen이 주는 값은 전부 **병원이 스스로 신고한 것**이고, 같은 소스
+  안에서는 그게 맞는지 검증할 방법이 없다. 실측으로 확인된 구멍: 하루 넘게 방치된 병상
+  값을 실시간으로 송출하는 병원이 **전국 25곳(최고 8.6년)**이고, **전국 가용병상 1위가
+  2,457일 묵은 값**이다(한림대학교한강성심병원 30병상 — 2위부터는 전부 10분 이내 갱신이라
+  오염된 건 정렬 맨 윗칸 하나다). 중증질환 수용가능 신고의 "정보미제공"은 전체 70.8%이고
+  등급별로 21.4% → 53.0% → 88.2% → 96.4%로 계단식이다. 그리고 **화상 전문병원 5곳 중
+  E-Gen에 화상 역량이 보이는 곳은 0곳**이다
+- **심평원(HIRA) 3종을 붙였다.** 서비스키는 E-Gen과 **같은 값**이다(data.go.kr은 계정당
+  인증키 하나, 서비스별 활용신청만 따로 필요). `.env`에 `HIRA_SERVICE_KEY` 한 줄 추가 필요
+  - 병원정보(15001698) `hospInfoServicev2/getHospBasisList` — `ykiho`·좌표·의사 수
+  - 의료기관별상세(15001699) **`MadmDtlInfoService2.8/`** 11종 — 전문과목별 전문의 수 등
+  - 전문병원 지정 현황(15051054) `api.odcloud.kr` — 분야별 114곳
+- ⚠️ **엔드포인트 버전 함정 (여기서 몇 시간을 날렸다)**: 구버전 `MadmDtlInfoService2.7`도
+  게이트웨이에 실재해서 **403(권한 없음)**을 돌려준다. 이걸 보고 "경로는 맞고 승인만 안
+  났다"고 오진하기 쉽다. data.go.kr은 경로를 서비스+오퍼레이션 전체로 검증하며,
+  `400 NO_OPENAPI_SERVICE`는 없는 경로, `403 NOT_REGISTERED`는 실재하나 권한 없음이다.
+  **403은 "현재 버전"이라는 뜻이 아니다** — 버전은 반드시 포털 마이페이지 활용신청 상세
+  화면의 **End Point** 줄로 확인할 것
+- **E-Gen ↔ 심평원 조인은 좌표 최근접으로 푼다.** 공통 식별자가 없다(`hpid` ↔ `ykiho`).
+  **533곳 중 518곳(97.2%)이 1.2km 이내, 오차 중앙값 11m.** 기관명 정규화만으로는 92.7%라,
+  좌표 없는 데이터(전문병원 지정)를 이름으로 붙인 결과는 **하한**으로 읽어야 한다
+- **산출물은 `[여건 스칼라 + 15그룹 역량 벡터] + 신뢰도 + 근거`다.** 병원당 단일 점수는
+  만들지 않는다 — 심근경색 환자와 화상 환자에게 같은 병원의 수용가능성이 다르다.
+  점수는 "정답이 없으므로" 최적화하지 않고 **근거 강도의 계층 5단계 + 불변식**으로 정한다
+  (`불가능 0.2 < 근거없는미상 0.4 < 전문의있는미상 0.6 < 전문병원지정미상 0.8 < 가능신고 1.0`).
+  **`score`와 `confidence`는 끝까지 곱하지 않는다** — 섞으면 "확실히 낮음"과 "모르겠음"이
+  구분되지 않는다(미상과 확인된 만실을 구분해온 원칙과 같다).
+  전문병원 지정을 홀드아웃 정답으로 쓴 검증에서 **화상 후보가 0곳 → 4곳**이 됐다
+- **hub로 보낼 형태는 기존 `HospitalInfo`에 `assessment` 키 하나를 얹은 superset**이다
+  (`scoring.build_payload()`, 병원당 약 5.1KB). 기존 필드는 그대로다. ⚠️ 이름 주의 —
+  기존 `capabilities`는 역량 코드 7종 `list[str]`이고, 판정의 15그룹은 `assessment.groups`다.
+  **hub의 pydantic이 unknown 필드를 거부하면 보내는 순간 기존 연동이 깨지므로 동시 배포가
+  필요하다**(`schema.py`는 `extra="forbid"`인 팀 합의 계약 파일)
+- **폐기 판정 (되살리지 말 것)**: 병상 수 예측은 `P(만실 전환) = 0.618%`(사전 등록 기준 2%
+  미달)로 접었고, 미상 추정 모델은 관측 4,215칸 중 **97.0%가 "가능"**이라 상수 기준선이
+  이미 97점인 데다 라벨이 상위 등급에 편중된 MNAR이라 접었다 — 그대로 적용하면 "미신고
+  병원도 대부분 수용 가능"이라는 **위험한 방향**의 오류가 난다
+- **거절 로그 수신구를 미리 세워뒀다** (`POST /hub/rejection`, 기본 포트 5003 또는 `app.py`에
+  Blueprint 두 줄). 점수의 진짜 정답은 "병원이 실제로 받았는가"인데 그건 운영 로그가 쌓여야
+  나오고, **로그는 소급해서 만들 수 없다.** 자세한 것은 아래 "거절 로그" 절
+- **E-Gen 원본 스냅샷을 20분 주기로 축적 중이다**(`snapshot_nationwide.bat`, 전국 443곳).
+  `--stage1`을 비우면 전국이 1회 호출로 오므로 **호출 횟수는 서울만 받을 때와 같다.**
+  E-Gen은 과거 이력을 주지 않으므로 시계열이 필요하면 직접 찍어 쌓는 수밖에 없다.
+  가공 전 원본을 저장하는 이유는 매핑 해석이 바뀌어도 과거 데이터를 다시 해석할 수 있어야
+  해서다(가공본만 남기면 매핑을 고칠 때마다 지난 데이터가 죽는다)
+
+### 거절 로그 — dashboard·hub에 요청하는 인터페이스 (2026-08-12)
+
+info 쪽 수신구는 **이미 완성돼 있다.** `POST /hub/rejection`으로 보내기만 하면 된다.
+
+- **hub는 지금 보내는 형태 그대로도 연동된다.** 필수 필드는 `hospitalId`(또는
+  `hospital_id`/`hpid`) 하나뿐이고, 이유가 없으면 `UNSPECIFIED`로 기록된다. 모르는 필드는
+  버리지 않고 `extra`에 보존한다 — 받는 쪽에서 까다롭게 굴면 저쪽이 못 붙이고 그 사이 로그가
+  영영 사라지기 때문이다
+- **dashboard는 "수용 불가" 버튼에 사유 선택을 추가**해야 한다. 어휘는
+  `python -m hospital_score.rejection --vocab`
+- **이유를 4축으로 나누는 이유**: 화상 병동이 아예 없어서 거절한 것과 그날 당직이
+  정형외과라서 거절한 것을 같게 다루면, **일시적 사정 때문에 그 병원을 영구히 후보에서
+  밀어내게 된다.** 축이 다르면 갱신 대상도 다르다 — 구조적(`NO_WARD`/`NO_DEPARTMENT`/
+  `NO_EQUIPMENT` → 역량 벡터 수정) / 주기적(`ON_CALL_MISMATCH`/`NIGHT_UNAVAILABLE` →
+  시간대 패턴) / 순간적(`BEDS_FULL`/`OR_OCCUPIED`/`STAFF_BUSY` → 그때의 여건) /
+  환자 요인(`SEVERITY_EXCEEDED`/`AGE_LIMIT` → 병원 속성이 아님)
+- `declaredAtRequest`(물어볼 당시 E-Gen 신고값)를 같이 넘기면 **"가능이라 신고했는데 거절"**을
+  셀 수 있어, 신고 정확도를 운영 데이터로 직접 측정할 수 있다
+- **무응답(`NO_RESPONSE`)도 반드시 남길 것.** 거절 로그는 우리가 후보로 올린 병원에서만
+  생기므로, 그것마저 없으면 낮은 점수가 낮은 점수를 재생산하는 되먹임이 생긴다
+
+### hub로 흐르는 병원이 7곳뿐인 문제 (팀 결정 필요, 최우선)
+
+`send_to_hub.py`의 `_remap_to_supabase_hpid()`가 `SUPABASE_TO_EGEN_HPID` 대응표 밖의
+기관을 전부 버려서, **E-Gen에서 533곳을 받아도 hub에는 7곳만 간다.** 원인은 병상을
+Supabase에서 읽는 구조다(위 참고). 지금 상태에서는 존(Zone)을 넓혀도 전국에 후보가
+7곳뿐이고 그 7곳은 전부 서울이라 **지방 이송은 후보가 0곳**이다.
+
+**제안**: 병상 차감을 Supabase가 아니라 **짧은 TTL(10~15분) 오버레이**로 관리하고 병상
+자체는 E-Gen 실값을 쓴다 → Supabase 의존 제거 → 대응표 불필요 → 533곳 전부 hub로.
+근거로 `hvidate` 갱신 경과 중앙값이 **5분**(443곳 중 88.7%가 10분 이내)이라는 실측이 있다.
+그렇다면 "info 재조회(30분) 때 우리 차감이 리셋된다"는 기존 설계 전제를 다시 봐야 한다 —
+낡은 값으로 되돌아가는 게 아니라 **병원이 직접 갱신한 진짜 값으로 바뀌는 것**이라, 오히려
+우리 차감이 그걸 덮고 있으면 더 부정확하다. 이송 ETA가 10분인데 차감을 30분 유지하는 것도
+과하다. 딸려오는 변경으로 `hospitalId`가 `S0000001~7` → 실 hpid(`A11...`)가 되므로
+**dashboard 라우팅 확인이 필요하다.**
+
 ## feature/hub 담당자 참고사항
 
 - 입력은 두 가지: feature/voice가 보내는 환자 정보 JSON(부상 상태, 예상 병명, 중증도)과 feature/info가 보내는 병원 정보 JSON(위치, 병상, 전문성)
@@ -266,6 +356,10 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 - 위 전송이 실패하면 그냥 버리지 않고 `hub/data/pending_bed_updates.jsonl`에 쌓아 **재시도 큐**로 관리한다. hub는 상시 백그라운드 루프가 없는 순수 요청-응답 구조라, 재시도 시점은 새 스레드 대신 "다음 `send_to_info()` 호출 기회(=다음 승인 액션)"로 삼았다. `HubEngine.update_hospital_info()`는 해당 병원이 이 대기열에 남아있는 동안은 info발 갱신을 건너뛴다 — 그렇지 않으면 info의 주기적 재조회가 hub가 이미 깎아둔 값을 낡은 값으로 되돌려버리기 때문이다(실제로 재현·복구까지 검증됨)
 - **여러 사건(구급차) 동시 처리를 지원한다.** `caseId`로 사건을, `apid`로 구급차(voice 인스턴스)를 구분한다. `HubEngine`은 승인 상태를 `(caseId, hospitalId)` 키로 분리 보관하고, 사건별 최신 매칭 결과를 캐시해뒀다가 승인 액션이 들어오면 재계산 없이 해당 병원 status만 패치해 재브로드캐스트한다(예전엔 이 재브로드캐스트 자체가 없어서 승인 버튼을 눌러도 화면에 반영이 안 됐다)
 - `_dashboard_ws` 전역 변수 하나였던 것을 소켓 **집합**으로 바꿔 연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다 — 예전엔 마지막에 연결한 탭만 갱신을 받는 버그가 있었다
+- **소켓 재연결 시 진행 중인 사건을 놓치던 문제 수정(2026-08-11)**: hub는 매칭 결과를 "그 순간 연결된 소켓"에만 브로드캐스트해서, 사건이 진행 중인 상태로 새 대시보드 탭이 뒤늦게 열리면 그 탭엔 아무것도 안 뜨는 문제가 실제로 있었다(구급1호차·서울대병원 탭 연결 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로 열면 그 사건이 안 보임). dashboard가 소켓 연결 직후 `{type:"identify", role, id}` 자기소개를 보내면(`DashboardIdentify`), hub가 `HubEngine.get_cases_for_hospital()`/`get_cases_for_apid()`로 관련된 진행 중인 사건들을 찾아 그 소켓에만 즉시 돌려준다(`app.py`의 `_send_catchup()`) — 응답은 평소 브로드캐스트와 같은 `HubMatchResult` 형식이라 dashboard 쪽에 별도 분기가 필요 없다
+- **`HubMatchResult`에 `ambulanceName` 추가(2026-08-11)**: dashboard 상단바가 구급차 이름("구급 1호차")을 표시하려는데, 그동안 `hospitals[].name`(병원명)과 달리 구급차 이름을 실어 보내는 필드가 없었다. `process_voice_summary()`가 사건의 apid(`_case_apid`)로 구급차 레지스트리(`_ambulances`)를 조회해 채운다 — 병원명과 같은 패턴이라, 그 구급차가 실제로 사건에 등장하기 전(아직 통화가 없는 상태)에는 `null`이고 dashboard가 URL의 apid로 대체 표시한다
+- **`DashboardIdentityInfo` 응답 신설(2026-08-11)**: 위 두 방식(`hospitals[].name`/`ambulanceName`)은 전부 "사건이 있어야만" 이름이 나가는 한계가 있었다. 대시보드를 열자마자(통화 전이라도) 실명이 뜨고, 존재하지 않는 hpid/apid는 "접근 불가"로 막고 싶다는 요청에 따라, `identify` 메시지에 대해 사건 유무와 무관하게 즉시 이름/존재 여부를 알려주는 응답(`{type:"identity_info", role, id, name, known}`)을 추가했다(`app.py`의 `_send_identity_info()`, `hub_engine.py`의 `get_hospital()`). hub가 이미 인메모리로 갖고 있는 레지스트리(`_hospitals`/`_ambulances`, feature/info가 Supabase에서 읽어 보내준 것)에서 바로 조회하므로 dashboard가 Supabase에 직접 붙을 필요가 없다 — dashboard는 hub와만 통신한다는 원칙을 유지하면서 원하는 결과를 얻는 방식
+- **`GET /identity` HTTP 엔드포인트 추가(2026-08-11)**: 위 `identity_info`는 `/hospital`/`/ambulance` 페이지가 열린 뒤(WebSocket 연결 후)에야 존재 여부를 알 수 있어서, 잘못된 코드로 들어가면 그 페이지 전체가 "접근 불가" 화면으로 막히는 방식이었다. 코드 입력하는 **첫 페이지에서 넘어가기 전에** 미리 확인하고 싶다는 요청에 따라 `GET /identity?role=&id=`를 REST로 추가했다 — `_resolve_identity()`로 `identity_info`와 같은 조회 로직을 재사용하며, 다른 origin(dashboard:3000 ↔ hub:5001)의 브라우저 `fetch`가 되도록 이 엔드포인트만 `Access-Control-Allow-Origin: *`을 붙였다
 - voice는 구급차마다 별도 장비에서 뜬다. voice가 뜰 때 자기 IP를 자동 탐지해 `POST /voice/register`로 hub에 자가등록하면, hub는 `AmbulanceInfo.voicePort`(feature/info가 Supabase `ambulances` 테이블에서 읽어 보내줌)와 합쳐 주소를 기억해뒀다가 통화 시작/종료 신호를 그 구급차로 중계한다. 구급차 GPS도 하드코딩된 고정값 대신 이 `AmbulanceInfo` 조회로 대체했다
 - 실제 hub+info 실서버를 동시에 띄우고 소켓 2개(구급차 탭 + 병원 탭 흉내) 동시 연결, apid 기반 신호 중계, 승인 후 재브로드캐스트까지 전부 실제 HTTP/WebSocket으로 검증했다 (`run_match.py`에도 다중 사건 격리 검증 추가됨)
 
@@ -290,8 +384,36 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
     동시에 같은 병원을 후보로 걸 수 있기 때문에, 사건 하나만 보여주던 이전 구조로는
     다른 구급차의 요청이 화면에서 사라져 보이는 문제가 있었다. 카드를 선택하면 그
     사건 기준으로 지도가 갱신된다.
-  - apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
-    값인지 서버 사이드 검증은 하지 않는다(다음 단계 TODO, dashboard README 참고).
+  - ~~apid/hpid는 아직 URL 쿼리값만으로 구분하며, Supabase 레지스트리에 실제 존재하는
+    값인지 서버 사이드 검증은 하지 않는다~~ → **2026-08-11 해결.** dashboard가
+    Supabase에 직접 붙지 않고, hub의 신원 확인 응답으로 검증한다. 아래 "이름
+    표시" 항목과 같은 메커니즘.
+- **접근 코드(hpid/apid) 기반 이름 표시 + 존재 검증 (2026-08-11)**: 상단바가
+  "구급 A0000001호차", "병원 ID: S0000001"처럼 ID로만 뜨던 걸 "구급 1호차",
+  "서울대학교병원"처럼 실명으로 표시하고 싶었는데, `hospitals[].name`/
+  `ambulanceName`은 둘 다 사건(매칭 결과)에 등장해야만 값이 와서 통화 전엔
+  이름이 안 떴다. hub가 `identify` 자기소개에 대해 사건 유무와 무관하게 즉시
+  이름/존재 여부를 알려주는 응답(WebSocket `identity_info`)을 추가로 보내주는
+  방식으로 해결했다 — `useDashboardSocket`의 `state.identity`(`{name, known}`)가
+  이 결과를 담고, `matchResults`(사건 데이터)와는 완전히 분리된 상태다. 이
+  과정에서 "dashboard가 병원/구급차 Supabase에 직접 붙어서 해결하자"는 대안도
+  검토했지만 기각했다 — hub가 이미 info를 통해 두 Supabase 데이터를 인메모리로
+  갖고 있어서, dashboard가 Supabase 자격증명을 새로 들고 있을 필요가 없고
+  (`dashboard/.env.local`의 `AMBULANCE_SUPABASE_URL`/`KEY`와
+  `package.json`의 `@supabase/supabase-js`는 애초에 한 번도 안 쓰여서 이번에
+  제거함), "dashboard는 feature/hub와만 직접 통신한다"는 원칙도 그대로
+  유지된다.
+  - **존재하지 않는 코드 처리 위치를 랜딩 페이지로 이동(2026-08-11 후속)**:
+    처음엔 `/hospital`, `/ambulance` 페이지가 열린 뒤(`identity_info`로
+    `known=false` 확인 후) 전체 화면을 "존재하지 않는 접근 코드입니다"로
+    막는 방식이었는데, 코드 입력하는 첫 페이지(`src/app/page.tsx`)에서
+    라우팅하기 전에 바로 알려주고 싶다는 요청으로 바뀌었다. hub에
+    `GET /identity?role=&id=`(HTTP, CORS 허용) 엔드포인트를 새로 추가해
+    "입장" 버튼을 누르면 라우팅 전에 먼저 조회하고, 존재하지 않으면 입력칸과
+    버튼 사이에 빨간 글씨로 안내한다. `/hospital`, `/ambulance` 페이지
+    자체의 전체 화면 차단은 제거했다 — 직접 URL로 들어온 경우엔 상단바
+    이름이 ID 폴백으로 남는 정도로만 티가 난다(랜딩 페이지 우회는 이번
+    범위에서 막지 않기로 함).
 
 ---
 
