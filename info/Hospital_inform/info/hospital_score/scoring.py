@@ -125,6 +125,8 @@ class HospitalScore:
     emcls: str | None
     conditions: Conditions
     capabilities: dict[str, GroupScore]
+    #: 판정에 **실제로 쓰인** 근거의 기계가 읽는 형태. 원자료 전량이 아니다
+    evidence: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -132,6 +134,7 @@ class HospitalScore:
             "name": self.name,
             "emcls": self.emcls,
             "conditions": self.conditions.__dict__,
+            "evidence": self.evidence,
             "capabilities": {
                 group: {
                     "status": score.status,
@@ -266,6 +269,56 @@ def build_conditions(row: dict | None, now: datetime) -> Conditions:
     )
 
 
+#: 판정에 쓰는 진료과만 근거로 싣는다. 26개 과 전부가 아니라 이 목록만이다 —
+#: 근거는 "판단에 실제로 쓰인 것"이어야 검증이 되고, 전량을 실으면 hub가 심평원
+#: 어휘를 알아야 해석할 수 있게 된다
+JUDGEMENT_DEPARTMENTS: tuple[str, ...] = tuple(
+    sorted({dept for depts in ITEM_TO_DEPARTMENTS.values() for dept in depts})
+)
+
+#: E-Gen 가용병상 응답에 같이 오는 장비 가용 여부
+EQUIPMENT_FIELDS = {"hvctayn": "CT", "hvangioayn": "ANGIO"}
+
+
+def build_evidence(
+    hpid: str,
+    row: dict | None,
+    departments: dict[str, int],
+    designated: set[str],
+) -> dict:
+    """판정 근거를 기계가 읽는 형태로 모은다.
+
+    `basis`가 사람이 읽는 문장이라면 이쪽은 대조용 값이다. hub나 dashboard가
+    "이 점수가 왜 나왔나"를 확인할 수 있으면서도, 심평원 도메인 지식(진료과 코드
+    체계·ykiho·전문병원 분야명)을 알 필요는 없게 하는 것이 목적이다.
+    원자료를 통째로 넘기면 그 지식이 hub에 복제되고, 심평원 스키마가 바뀔 때
+    hub까지 깨진다 — 오늘 겪은 2.7→2.8 같은 일이 그렇다.
+    """
+    evidence: dict = {}
+    if designated:
+        evidence["designatedFields"] = sorted(designated)
+
+    used = {
+        dept: count
+        for dept, count in departments.items()
+        if dept in JUDGEMENT_DEPARTMENTS and count > 0
+    }
+    if used:
+        evidence["specialists"] = dict(sorted(used.items()))
+
+    if row:
+        if row.get("hvidate"):
+            evidence["hvidate"] = str(row["hvidate"]).strip()
+        equipment = {
+            label: (row.get(field_name) or "").strip().upper()
+            for field_name, label in EQUIPMENT_FIELDS.items()
+            if (row.get(field_name) or "").strip()
+        }
+        if equipment:
+            evidence["equipment"] = equipment
+    return evidence
+
+
 def score_hospital(
     hospital: D.Hospital,
     frame: D.Frame,
@@ -312,7 +365,49 @@ def score_hospital(
         emcls=hospital.emcls,
         conditions=conditions,
         capabilities=capabilities,
+        evidence=build_evidence(
+            hospital.hpid, frame.beds.get(hospital.hpid), departments, designated
+        ),
     )
+
+
+def build_payload(hospital_info: dict, score: HospitalScore, assessed_at: str) -> dict:
+    """기존 `HospitalInfo`에 판정을 얹은 **하나의** 전송 객체를 만든다.
+
+    병원 하나는 객체 하나여야 한다. 병원 정보와 판정을 따로 보내면 hub가 다시
+    `hospitalId`로 조인해야 하고, 둘 중 하나만 도착한 상태가 생긴다.
+
+    기존 필드는 건드리지 않는다 — hub가 이미 쓰고 있으므로 **superset**이 되게 한다.
+    hub 입장에서는 `assessment` 키 하나가 늘어난 것뿐이다.
+
+    ⚠️ 키 이름 주의: 기존 `HospitalInfo.capabilities`는 표준 역량 코드 7종의
+    `list[str]`이고, 판정의 15그룹은 `assessment.groups`다. 같은 이름을 쓰면
+    반드시 헷갈리므로 네임스페이스를 분리했다.
+
+    이 함수는 `hospital_info`를 인자로 받는다 — `hospital_score/`가 `schema.py`나
+    `mapper.py`를 import 하지 않기 위해서다(폴더째 버릴 수 있어야 한다는 원칙).
+    쓰는 쪽에서 기존 파이프라인이 만든 dict를 그대로 넘기면 된다.
+    """
+    return {
+        **hospital_info,
+        "assessment": {
+            "assessedAt": assessed_at,
+            "source": "rule",
+            "conditions": score.conditions.__dict__,
+            "evidence": score.evidence,
+            "groups": {
+                group: {
+                    "status": capability.status,
+                    "tier": TIER_LABEL[capability.tier],
+                    "score": capability.score,
+                    "confidence": capability.confidence,
+                    "basis": capability.basis,
+                    "items": capability.items,
+                }
+                for group, capability in score.capabilities.items()
+            },
+        },
+    }
 
 
 def score_all(day: str | None = None) -> list[HospitalScore]:
@@ -411,11 +506,33 @@ def validate_designations(scores: list[HospitalScore]) -> str:
     return "\n".join(lines)
 
 
+def _demo_hospital_infos(day: str | None) -> dict[str, dict]:
+    """데모용 — 기존 파이프라인이 만드는 `HospitalInfo`를 스냅샷에서 재현한다.
+
+    `mapper`를 여기서만 **지연 import** 한다. 라이브러리 본문은 여전히
+    `hospital_score/` 밖을 import 하지 않는다 — 이 함수는 "합친 전송 객체가
+    실제로 어떻게 생겼는지" 팀에 보여주기 위한 CLI 전용이다.
+    """
+    from egen.mapper import map_all  # noqa: PLC0415 — 데모 전용 지연 import
+
+    latest: dict[str, list] = {}
+    for record in D.iter_records(D.snapshot_files(day=day)):
+        latest[record["operation"]] = record["items"]  # 마지막 관측이 이긴다
+    if not {D.OP_BEDS, D.OP_LIST, D.OP_ACCEPT} <= latest.keys():
+        return {}
+
+    hospitals, _ = map_all(latest[D.OP_BEDS], latest[D.OP_LIST], latest[D.OP_ACCEPT])
+    return {h.hospitalId: json.loads(h.to_hub_json()) for h in hospitals}
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="병원 수용가능성 점수")
     parser.add_argument("--day", default=None, help="특정 날짜 스냅샷만")
+    parser.add_argument(
+        "--payload", default=None, help="병원 이름 일부 — hub로 보낼 합친 객체를 찍는다"
+    )
     parser.add_argument("--check", action="store_true", help="불변식 검사")
     parser.add_argument("--validate", action="store_true", help="전문병원 홀드아웃 검증")
     parser.add_argument("--sample", default=None, help="병원 이름 일부로 하나 출력")
@@ -444,6 +561,28 @@ if __name__ == "__main__":
         for hospital in found[:1]:
             print()
             print(json.dumps(hospital.to_dict(), ensure_ascii=False, indent=1))
+
+    if args.payload:
+        infos = _demo_hospital_infos(args.day)
+        if not infos:
+            raise SystemExit("스냅샷에서 HospitalInfo를 만들지 못했다")
+        assessed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        found = [h for h in all_scores if args.payload in h.name and h.hpid in infos]
+        if not found:
+            raise SystemExit(f"'{args.payload}'에 해당하는 병원을 찾지 못했다")
+
+        merged = build_payload(infos[found[0].hpid], found[0], assessed_at)
+        print()
+        print(json.dumps(merged, ensure_ascii=False, indent=1))
+
+        total = sum(
+            len(json.dumps(build_payload(infos[h.hpid], h, assessed_at), ensure_ascii=False).encode())
+            for h in all_scores
+            if h.hpid in infos
+        )
+        covered = sum(1 for h in all_scores if h.hpid in infos)
+        print(f"\n전체 {covered}곳 합친 전송 크기: {total / 1024:.0f} KB "
+              f"(병원당 {total / max(1, covered):.0f} B)")
 
     if args.out:
         Path(args.out).write_text(
