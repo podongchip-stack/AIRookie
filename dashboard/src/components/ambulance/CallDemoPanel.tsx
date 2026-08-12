@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { css } from "styled-system/css";
+import { css, cx } from "styled-system/css";
 import { Tag } from "@/components/hospital/Tag";
 import { dangerButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
+import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import type { CallSignalType } from "@/types/dashboard";
 
 const BAR_COUNT = 24;
@@ -278,19 +279,22 @@ export function CallDemoPanel({
 
         <div
           ref={transcriptBoxRef}
-          className={css({
-            flex: "1",
-            minHeight: "0",
-            overflowY: "auto",
-            padding: "3",
-            backgroundColor: "surfaceSub",
-            borderWidth: "1px",
-            borderColor: "line",
-            borderRadius: "field",
-            fontSize: "sm",
-            color: "ink",
-            lineHeight: "1.6",
-          })}
+          className={cx(
+            css({
+              flex: "1",
+              minHeight: "0",
+              overflowY: "auto",
+              padding: "3",
+              backgroundColor: "surfaceSub",
+              borderWidth: "1px",
+              borderColor: "line",
+              borderRadius: "field",
+              fontSize: "sm",
+              color: "ink",
+              lineHeight: "1.6",
+            }),
+            thinScrollbarStyle,
+          )}
         >
           {recognitionUnavailable ? (
             <p className={css({ color: "ink3" })}>

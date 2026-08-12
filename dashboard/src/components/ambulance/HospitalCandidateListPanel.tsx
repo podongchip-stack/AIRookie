@@ -1,9 +1,10 @@
 "use client";
 
-import { css } from "styled-system/css";
+import { css, cx } from "styled-system/css";
 import { hospitalStatusBadge } from "styled-system/recipes";
 import { Tag } from "@/components/hospital/Tag";
 import { mintButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
+import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import type { HospitalStatus, HubMatchResult } from "@/types/dashboard";
 
 // 공용 Panel은 height:100%만 두고 minHeight/overflow는 안 잡아서, 그리드 셀이
@@ -178,32 +179,17 @@ export function HospitalCandidateListPanel({
           지키므로(minHeight:0 + overflow:hidden), 여기는 남는 공간을 그대로
           차지하다가(flex:1) 넘칠 때만 스스로 스크롤하면 된다(고정 maxHeight 불필요). */}
       <ul
-        className={css({
-          display: "flex",
-          flexDirection: "column",
-          gap: "2",
-          flex: "1",
-          minHeight: "0",
-          overflowY: "auto",
-          // 기본 스크롤바가 진한 회색/검정이라 전체 톤(연한 파스텔)과 안 어울려서
-          // 옅고 투명하게 맞춘다. scrollbarWidth/scrollbarColor는 Firefox용,
-          // ::-webkit-scrollbar*는 Chrome/Edge용 — 둘 다 있어야 브라우저 상관없이 적용된다.
-          scrollbarWidth: "thin",
-          scrollbarColor: "rgba(203, 213, 225, 0.5) transparent",
-          "&::-webkit-scrollbar": {
-            width: "6px",
-          },
-          "&::-webkit-scrollbar-track": {
-            backgroundColor: "transparent",
-          },
-          "&::-webkit-scrollbar-thumb": {
-            backgroundColor: "rgba(203, 213, 225, 0.5)",
-            borderRadius: "full",
-          },
-          "&::-webkit-scrollbar-thumb:hover": {
-            backgroundColor: "rgba(203, 213, 225, 0.8)",
-          },
-        })}
+        className={cx(
+          css({
+            display: "flex",
+            flexDirection: "column",
+            gap: "2",
+            flex: "1",
+            minHeight: "0",
+            overflowY: "auto",
+          }),
+          thinScrollbarStyle,
+        )}
       >
         {sortedHospitals.map(({ hospital, confirmed, displayStatus }) => {
           const approvable = hospital.status === "approved" || hospital.status === "confirmed";
