@@ -5,7 +5,7 @@ import { hospitalStatusBadge } from "styled-system/recipes";
 import { Tag } from "@/components/hospital/Tag";
 import { mintButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
-import type { HospitalStatus, HubMatchResult } from "@/types/dashboard";
+import type { HospitalStatus, HubMatchResult, ReliabilityConfidence } from "@/types/dashboard";
 
 // 공용 Panel은 height:100%만 두고 minHeight/overflow는 안 잡아서, 그리드 셀이
 // 콘텐츠(병원 몇 개)만큼 계속 늘어나는 걸 막지 못했다 — maxHeight를 목록에
@@ -134,6 +134,57 @@ const bedChipUnknownStyle = css({
   borderRadius: "chip",
 });
 
+// info-v2(hospital_score) 신뢰도 판정 배지. severityBadge(high=coral)와 반대로
+// "high confidence"는 좋은 신호라 mint를 쓴다 — 색 의미가 severity와 정반대라
+// 그 recipe를 재사용하지 않고 이 패널 안에서만 쓰는 별도 칩으로 둔다.
+const CONFIDENCE_CHIP_STYLE: Record<ReliabilityConfidence, string> = {
+  high: css({
+    display: "inline-flex",
+    alignItems: "center",
+    fontSize: "xs",
+    fontWeight: "semibold",
+    color: "mint",
+    backgroundColor: "mintSoft",
+    paddingX: "2",
+    paddingY: "0.5",
+    borderRadius: "chip",
+  }),
+  medium: css({
+    display: "inline-flex",
+    alignItems: "center",
+    fontSize: "xs",
+    fontWeight: "semibold",
+    color: "ink2",
+    backgroundColor: "surfaceSub",
+    paddingX: "2",
+    paddingY: "0.5",
+    borderRadius: "chip",
+  }),
+  low: css({
+    display: "inline-flex",
+    alignItems: "center",
+    fontSize: "xs",
+    fontWeight: "semibold",
+    color: "ink3",
+    backgroundColor: "surfaceSub",
+    paddingX: "2",
+    paddingY: "0.5",
+    borderRadius: "chip",
+  }),
+};
+
+const CONFIDENCE_LABEL: Record<ReliabilityConfidence, string> = {
+  high: "신뢰도 높음",
+  medium: "신뢰도 보통",
+  low: "신뢰도 낮음",
+};
+
+const reliabilityBasisStyle = css({
+  fontSize: "xs",
+  color: "ink3",
+  marginTop: "0.5",
+});
+
 // 병원이 "승인"(후보 등록) 응답을 보내야만 버튼이 활성화된다. 버튼을 누르면 그 자리에서
 // 바로 이송 승인(final_approval)이 전송된다 — 별도의 "선택 → 하단에서 최종 승인" 2단계가 아니다.
 export function HospitalCandidateListPanel({
@@ -237,7 +288,18 @@ export function HospitalCandidateListPanel({
                         ? `병상 ${hospital.availableBedCount}석`
                         : "병상 없음"}
                   </span>
+                  {/* 순위(specialtyMatch·distanceKm)와는 별개의 설명용 정보 —
+                      info-v2가 심평원 대조로 판단한 신뢰도. 이 병원에 해당
+                      데이터가 없으면(구 feature/info 데이터 등) 칩 자체를 숨긴다. */}
+                  {hospital.reliability && (
+                    <span className={CONFIDENCE_CHIP_STYLE[hospital.reliability.confidence]}>
+                      {hospital.reliability.group} · {CONFIDENCE_LABEL[hospital.reliability.confidence]}
+                    </span>
+                  )}
                 </div>
+                {hospital.reliability && hospital.reliability.basis.length > 0 && (
+                  <p className={reliabilityBasisStyle}>근거: {hospital.reliability.basis.join(" · ")}</p>
+                )}
               </div>
 
               <div className={css({ display: "flex", alignItems: "center", gap: "2", flexShrink: "0" })}>
