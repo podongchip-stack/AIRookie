@@ -26,6 +26,21 @@ export interface SpecialtyMatch {
 
 export type HospitalStatus = "pending" | "approved" | "rejected" | "confirmed";
 
+export type ReliabilityConfidence = "high" | "medium" | "low";
+
+// info-v2(hospital_score)가 심평원(HIRA) 대조로 판정한 신뢰도 — "왜 이 순위인지"의
+// 근거를 보여주기 위한 부가 정보다. specialtyMatch/distanceKm(순위 계산에 실제로
+// 쓰이는 값)와는 별개이며, 이 필드는 순위에 전혀 영향을 주지 않는다(2026-08-13,
+// hub README "hospital_score 연동" 참고 — 반영 범위를 설명용으로만 한정하기로
+// 팀에서 확정함). 병원에 assessment 데이터가 없거나(구 feature/info 정보) 예상
+// 병명이 매칭된 질환군에 그 병원의 판정이 없으면 필드 자체가 없다.
+export interface ReliabilityInfo {
+  group: string;
+  score: number;
+  confidence: ReliabilityConfidence;
+  basis: string[];
+}
+
 export interface HospitalCandidate {
   hospitalId: string;
   name: string;
@@ -41,6 +56,7 @@ export interface HospitalCandidate {
   bedCountUnknown: boolean;
   status: HospitalStatus;
   etaMin?: number;
+  reliability?: ReliabilityInfo;
 }
 
 export interface HubMatchResult {

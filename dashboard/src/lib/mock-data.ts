@@ -28,6 +28,14 @@ export const mockHubMatchResult: HubMatchResult = {
       bedCountUnknown: false,
       status: "pending",
       etaMin: 4,
+      // info-v2 신뢰도 진단 예시(설명용) — 병원 신고는 없지만 전문병원 지정이
+      // 있어 낮게 잡히지 않은 케이스.
+      reliability: {
+        group: "복부응급수술",
+        score: 0.8,
+        confidence: "medium",
+        basis: ["병원 신고 없음(정보미제공)", "전문병원 지정: 외과응급"],
+      },
     },
     {
       hospitalId: "B",
@@ -39,6 +47,12 @@ export const mockHubMatchResult: HubMatchResult = {
       bedCountUnknown: false,
       status: "approved",
       etaMin: 5,
+      reliability: {
+        group: "대동맥응급",
+        score: 1.0,
+        confidence: "high",
+        basis: ["병원 신고: 가능", "마지막 입력 3분 전"],
+      },
     },
     {
       hospitalId: "C",
