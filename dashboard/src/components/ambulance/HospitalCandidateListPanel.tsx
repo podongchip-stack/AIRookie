@@ -72,16 +72,27 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
   confirmed: "이송 확정",
 };
 
-// 1순위 승인(+확정) → 2순위 판단 대기 → 3순위 거절, 같은 우선순위 안에서는
-// 거리순. 거절해도 목록에서 없애지 않는다 — 병원이 "불가"였다가 병상이 나서
-// 다시 받아주는 경우가 있어서, 매번 이 우선순위로 다시 정렬해두면 승인으로
-// 바뀌는 순간 자동으로 위로 올라온다(2026-08-11 논의).
+// 정렬 기준(2026-08-13 변경): 1차 병상 유무 → 2차 승인 여부 → 3차 적합도.
+// 거절해도 목록에서 없애지 않는다 — 병원이 "불가"였다가 병상이 나서 다시
+// 받아주는 경우가 있어서, 매번 이 우선순위로 다시 정렬해두면 승인으로
+// 바뀌는 순간 자동으로 위로 올라온다(2026-08-11 논의, 순위 기준만 바뀌고
+// 이 원칙은 그대로 유지).
 const STATUS_PRIORITY: Record<HospitalStatus, number> = {
   confirmed: 0,
   approved: 1,
   pending: 2,
   rejected: 3,
 };
+
+// 1차 기준(병상 유무)의 두 그룹. "미상"은 "확인된 만실"과 같은 그룹으로 묶지
+// 않는다 — 미상은 실제로 자리가 있을 수도 있는데, 만실과 같이 맨 뒤로 밀어
+// 버리면 구급대원이 그 병원을 스스로 후보에서 빼게 되어 뺑뺑이 방지 목적과
+// 어긋난다(CLAUDE.md 원칙). 그래서 "병상 있음"과 "미상"을 같은 상위 그룹으로,
+// "확인된 만실(0석)"만 하위 그룹으로 나눈다.
+function bedAvailabilityPriority(hospital: { availableBedCount: number; bedCountUnknown: boolean }): number {
+  const confirmedEmpty = !hospital.bedCountUnknown && hospital.availableBedCount <= 0;
+  return confirmedEmpty ? 1 : 0;
+}
 
 const deptChipStyle = css({
   display: "inline-flex",
@@ -219,8 +230,21 @@ export function HospitalCandidateListPanel({
       return { hospital, confirmed, displayStatus };
     })
     .sort((a, b) => {
-      const priorityDiff = STATUS_PRIORITY[a.displayStatus] - STATUS_PRIORITY[b.displayStatus];
-      return priorityDiff !== 0 ? priorityDiff : a.hospital.distanceKm - b.hospital.distanceKm;
+      // 1차: 병상 유무 (있음/미상 vs 확인된 만실)
+      const bedDiff = bedAvailabilityPriority(a.hospital) - bedAvailabilityPriority(b.hospital);
+      if (bedDiff !== 0) return bedDiff;
+
+      // 2차: 승인 여부 (기존 기준 그대로 — 확정 > 승인 > 대기 > 거절)
+      const statusDiff = STATUS_PRIORITY[a.displayStatus] - STATUS_PRIORITY[b.displayStatus];
+      if (statusDiff !== 0) return statusDiff;
+
+      // 3차: 적합도 (specialtyMatch.score, 높을수록 우선)
+      const matchDiff = b.hospital.specialtyMatch.score - a.hospital.specialtyMatch.score;
+      if (matchDiff !== 0) return matchDiff;
+
+      // 여기까지 전부 같으면 거리로 최종 결정 — 동점일 때 순서가 매번
+      // 흔들리지 않도록 하는 안정적 타이브레이커일 뿐, 별도 기준은 아니다.
+      return a.hospital.distanceKm - b.hospital.distanceKm;
     });
 
   return (
