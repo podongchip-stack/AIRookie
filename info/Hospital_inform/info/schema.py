@@ -127,6 +127,44 @@ class Specialty(Strict):
     )
 
 
+class AssessmentConditions(Strict):
+    """hospital_score.scoring.Conditions와 필드 1:1. 환자와 무관한 병원 여건."""
+
+    availableBeds: Optional[int] = None
+    totalBeds: Optional[int] = None
+    bedOccupancy: Optional[float] = None
+    overcrowded: bool = False
+    bedCountUnknown: bool = True
+    feedAgeMinutes: Optional[float] = None
+    stale: bool = False
+    missingFromFeed: bool = False
+
+
+class AssessmentGroup(Strict):
+    """hospital_score.scoring.GroupScore 1건 — 중증질환군 하나에 대한 신뢰도
+    계층 판정. tier는 build_payload()가 이미 문자열 라벨로 바꿔서 준다."""
+
+    status: str
+    tier: str
+    score: float
+    confidence: str
+    basis: list[str] = Field(default_factory=list)
+    items: dict = Field(default_factory=dict)
+
+
+class Assessment(Strict):
+    """info-v2(hospital_score.scoring.build_payload)가 HospitalInfo에 얹는
+    신뢰도 진단 결과. hub의 hub/schema.py에 있는 Assessment와 필드를 맞췄다.
+    hub는 이 값을 finalScore 계산에 안 쓰고 "왜 이 순위인지" 설명 근거로만
+    dashboard에 전달한다(CLAUDE.md "info-v2 신뢰도 판정" 참고)."""
+
+    assessedAt: str
+    source: Literal["rule"] = "rule"
+    conditions: AssessmentConditions
+    evidence: dict = Field(default_factory=dict)
+    groups: dict[str, AssessmentGroup] = Field(default_factory=dict)
+
+
 class HospitalInfo(Strict):
     """병원 1곳의 정보. feature/hub로 보내는 단위."""
 
@@ -151,6 +189,12 @@ class HospitalInfo(Strict):
     capabilities: list[str] = Field(
         default_factory=list,
         description="수행 가능한 시술·장비 코드 목록. hub의 하드필터 대조 대상",
+    )
+    assessment: Optional[Assessment] = Field(
+        default=None,
+        description="info-v2(hospital_score)의 신뢰도 진단. 심평원 캐시가 없거나 이"
+        " 병원 판정에 실패하면 None으로 그대로 전송한다 — hub는 이 필드가 없어도"
+        " 기존 로직 그대로 동작한다.",
     )
 
     @field_validator("updatedAt")

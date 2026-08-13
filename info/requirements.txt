@@ -3,22 +3,24 @@
 
 # ===== 직접 의존성 (용도별) =====
 
-# 웹 프레임워크: 승인 액션 수신, 존 기반 병원 매칭 API 서빙 (규칙 기반)
+# 웹 프레임워크: hospital_score의 거절 로그 수신구(POST /hub/rejection, ingest.py)가
+# 쓴다. 병상 갱신 수신 서버(app.py, POST /hub/bed-update)는 2026-08-13 병원
+# Supabase 제거와 함께 삭제됐다 — 그때 같이 있던 flask-socketio/simple-websocket은
+# 애초에 순수 REST만 썼던 죽은 의존성이라 함께 제거했다(hospital_score/README.md
+# "미구현" 절에 이미 지적돼 있던 항목).
 flask==3.1.3
 
-# 대시보드로의 실시간 바이탈/병원 매칭 결과 전송 (WebSocket)
-flask-socketio==5.6.1
-simple-websocket==1.1.0
-
-# hv1(전문의 보유) / hvec(병상 현황) / hv2(중증질환별 수용 가능) 외부 API 호출 +
-# feature/hub로 병원 정보 전송 (HTTP POST, send_to_hub.py)
+# 실 E-Gen API·심평원(HIRA) API 호출
 requests==2.32.5
 
-# 외부 API 키 등 환경 변수 관리 (Hospital_inform/.env: SUPABASE_URL, SUPABASE_KEY)
+# 외부 API 키 등 환경 변수 관리 (Hospital_inform/.env: EGEN_SERVICE_KEY,
+# HIRA_SERVICE_KEY, AMBULANCE_SUPABASE_URL/KEY)
 python-dotenv==1.2.1
 
-# E-Gen 서비스키 승인 전까지 병원 정보 대체 DB (Hospital_inform/supabase/schema.sql,
-# egen/client.py의 SupabaseEgenClient, send_to_hub.py에서 사용)
+# 구급차 레지스트리(병원용과 별도 프로젝트, ambulances 테이블) 조회 전용.
+# 병원 정보는 2026-08-13부로 Supabase를 안 쓰지만, egen/client.py의
+# SupabaseEgenClient 클래스 자체(build_hospitals.py CLI 폴백용)는 남아있어
+# 이 패키지도 유지한다.
 supabase==2.31.0
 
 # Hospital_inform/info/schema.py, mapper.py의 HospitalInfo 검증
