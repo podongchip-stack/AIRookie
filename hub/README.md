@@ -35,10 +35,11 @@ feature/voice가 보내는 환자 정보(부상 상태, 예상 병명, 중증도
 > dashboard가 보내는 승인 액션(hospital_approve/hospital_reject/final_approval)의
 > 수신 주체는 **이 브랜치(feature/hub)로 확정**되었습니다 (dashboard가 feature/hub와만
 > 직접 통신하기 때문). 매칭 상태(`hospitals[].status`) 반영과, `final_approval` 시
-> feature/info로 병상 갱신을 알리는 처리("입출력 데이터 포맷"의 입력 스키마 3 /
-> 출력 스키마 5 참고)는 `HubEngine.apply_approval_action()`으로 **구현·테스트
-> 완료**했습니다 (`run_match.py` 참고). dashboard와의 실제 WebSocket 통신, feature/info로의
-> 실제 HTTP 전송(`send_to_info()`) 모두 연동 완료됐습니다.
+> 병상을 TTL 오버레이로 차감하는 처리("입출력 데이터 포맷"의 입력 스키마 3 참고)는
+> `HubEngine.apply_approval_action()`으로 **구현·테스트 완료**했습니다 (`run_match.py`
+> 참고). dashboard와의 실제 WebSocket 통신도 연동 완료됐습니다. feature/info로의
+> 병상 갱신 HTTP 전송(`send_to_info()`)은 2026-08-13 병원 Supabase 제거와 함께
+> 완전히 폐지됐습니다 — 아래 "출력 스키마 5" 참고.
 
 > **여러 사건(구급차) 동시 처리 지원 완료.** 처음엔 사건 1건 단독 처리만
 > 다뤘지만, 이제 `caseId`로 사건을, `apid`로 구급차(voice 인스턴스)를 구분해
@@ -364,57 +365,27 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `ambulanceName` | string \| null (2026-08-11 신설) | 구급차 대시보드 상단바 표시용. `hospitals[].name`(병원명)과 같은 패턴 — 이 사건의 apid를 `register_case()`로 기억해둔 값에서 찾아 구급차 레지스트리(`AmbulanceInfo.name`)를 그대로 채운다. apid를 못 찾으면(통화 시작 신호 없이 직접 `/voice/summary`를 부른 테스트 등) `null`이고, dashboard는 URL의 apid로 대체 표시한다. **병원명과 마찬가지로 그 구급차가 실제로 사건에 등장해야만 채워진다** — 사건이 아예 없는 상태(대시보드를 열었지만 아직 통화가 없음)에서는 아직 이 필드 자체를 못 받으므로 ID 폴백이 계속 보인다 |
 
-### 출력 스키마 5: feature/hub → feature/info (병상 갱신 알림)
+### ~~출력 스키마 5: feature/hub → feature/info (병상 갱신 알림)~~ → 2026-08-13 폐지
 
-동시에 여러 구급차가 매칭 중일 때, `final_approval`이 확정된 병원의 병상 수가
-feature/info의 병원 정보에 실시간으로 반영되지 않으면 같은 병상에 다른 구급차가
-중복 매칭될 수 있다. 이걸 막기 위해 hub가 확정 즉시 info에 갱신된 병상 수를
-내려준다.
-
-**구현 완료 (+ 재시도 큐).** `feature/info`의 `POST /hub/bed-update`
-(`info/app.py`, 기본 포트 5002 — voice가 5002를 쓰던 초기 배정에서 포트
-재정리 후 info로 넘어왔다)로 전송한다. hub 쪽 대상 URL은
-`INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5002/hub/bed-update`)로
-바꿀 수 있다.
-
-전송이 실패하면(info가 잠깐 안 떠 있는 등) 그냥 버리지 않고
-`hub/data/pending_bed_updates.jsonl`(한 줄에 `HospitalBedUpdate` JSON 하나)에
-쌓아둔다. hub는 voice/info와 달리 별도 백그라운드 루프·스케줄러가 없는 순수
-요청-응답 구조라, 재시도 시점은 새 스레드를 만드는 대신 **"다음
-`send_to_info()` 호출 기회(=다음 승인 액션이 들어왔을 때, 병원이 달라도
-상관없다)"**로 삼았다 — `send_to_info()`가 호출될 때마다 대기열에 쌓인
-이전 실패 건부터 먼저 재전송을 시도하고, 성공한 것만 대기열에서 지운다.
-
-이 대기열이 없으면 생기던 문제: info의 `send_to_hub.py`가 주기적으로(기본
-30분) Supabase를 다시 읽어 hub에 재전송(`update_hospital_info()`)하는데,
-이게 병원 정보 전체를 **덮어쓰는** 방식이라, hub가 승인 처리로 이미 깎아둔
-값을 아직 그 차감을 모르는 info의 낡은 값이 되돌려버릴 수 있었다(hub가
-직접 처리한 승인 기록이 조용히 사라지는 셈). 이를 막기 위해
-`HubEngine.update_hospital_info()`는 해당 병원의 병상 갱신이 아직 재시도
-대기 중이면(`delivery.has_pending_bed_update()`) info발 갱신을 건너뛴다 —
-재시도가 성공해 대기열에서 빠진 뒤에야 다음 갱신이 정상 반영된다.
-
-실제로 **info를 끈 채 승인 → 대기열에 기록되는 것 → info를 켜고 그 사이
-info의 낡은 재조회가 와도 hub 메모리가 안 되돌아가는 것 → 이후 다른 승인이
-들어오며 대기열이 비워지고 Supabase에 반영되는 것**까지 전부 확인했다.
-
-```json
-{
-  "hospitalId": "H001",
-  "availableBedCount": 11,
-  "status": "confirmed",
-  "updatedAt": "2026-07-30T14:20:00Z",
-  "source": "rule"
-}
-```
-
-| 필드 | 타입 | 설명 |
-|---|---|---|
-| `hospitalId` | string | 대상 병원 식별자 |
-| `availableBedCount` | number | hub가 확정 처리 후 계산한 최신 가용 병상 수 (info가 그대로 덮어쓰면 됨) |
-| `status` | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유 (확정으로 병상이 줄었는지, 거절이라 변동 없는지) |
-| `updatedAt` | string (ISO 8601) | 이 갱신이 발생한 시각 |
-| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+> 예전엔 `final_approval` 확정 즉시 hub가 `POST /hub/bed-update`
+> (`info/app.py`, 포트 5002)로 병상 갱신을 info에 알려 Supabase에 반영시켰다
+> (+ 재시도 큐, `hub/data/pending_bed_updates.jsonl`). info가 병원 Supabase
+> 자체를 없애면서(E-Gen 실 API로 병상까지 직접 조회 — 조회 전용이라 원래
+> 쓰기가 불가능한 곳이었다) 이 왕복이 의미를 잃어 **완전히 제거했다.**
+> `info/app.py`, `hub/delivery.py`의 `send_to_info()`/재시도 큐/
+> `has_pending_bed_update()`, `hub/schema.py`의 `HospitalBedUpdate` 전부
+> 삭제됐다.
+>
+> 대신 병상 차감은 **hub 혼자 자기 메모리에서 짧게(TTL)만 처리**한다.
+> `HubEngine._bed_overlay`(hpid -> 만료 시각 목록)에 `final_approval`마다
+> 기록 하나가 쌓이고, `effective_bed_count()`가 조회 시점에 만료 안 된
+> 개수만큼만 원본(`HospitalInfo.availableBedCount`)에서 빼서 보여준다.
+> `BED_OVERLAY_TTL_MIN=15`(분)는 `hvidate` 갱신 간격 실측(중앙값 5분,
+> 88.7%가 10분 이내)에서 여유를 둔 값 — 그 안에는 E-Gen 자신도 아직 안
+> 바뀌었을 가능성이 높아 오버레이가 유효한 근거가 된다. 예전 대기열 방어
+> 로직(`HubEngine.update_hospital_info()`가 재시도 중인 병원은 upsert
+> 건너뛰기)도 필요 없어졌다 — 오버레이가 read-time에 적용되므로 info가
+> 보내는 최신 원본값을 매번 그대로 덮어써도 안전하다.
 
 ### 출력 스키마 6: feature/hub → feature/dashboard (신원 확인 응답, 2026-08-11 신설)
 
@@ -498,11 +469,11 @@ GET /identity?role=hospital&id=S0000001
   `/voice/summary` 핸들러에서 직접 `ws.send(...)`로 처리한다 (`app.py`의
   `_send_to_dashboard()` 참고). `send_to_dashboard()` 자체는 로그만 남기는
   자리로 남아 있다.
-- **`feature/info`로 보내는 병상 갱신도 같은 패턴**: `deliver_bed_update()`가
-  `save_local_bed_update()`(로컬 저장) + `send_to_info()`(실제 HTTP 전송,
-  위 "출력 스키마 5" 참고)를 묶는다. 파일명은 사건 단위가 아니라 병원 단위라
-  `<hospitalId>_bed_update.json`으로 저장하고, 같은 병원이 다시 갱신되면
-  최신 상태로 덮어쓴다.
+- ~~**`feature/info`로 보내는 병상 갱신도 같은 패턴**: `deliver_bed_update()`가...~~
+  → **2026-08-13 삭제.** `deliver_bed_update()`/`save_local_bed_update()`/
+  `send_to_info()` 전부 없앴다 — 위 "출력 스키마 5" 참고. 병상 차감은 이제
+  파일로도 안 남기고 `HubEngine._bed_overlay`(메모리)에만 있다가 TTL이
+  지나면 조용히 사라진다.
 - 데모 단계에서는 통신을 붙인 뒤에도 로컬 저장을 계속 같이 한다 (감사·재현 목적).
   실제 사업화 단계에서는 이 부분을 재검토해야 한다.
 
@@ -551,16 +522,15 @@ hub/                        (저장소 루트의 .gitignore, CLAUDE.md는 브랜
 ├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
 ├── hub_engine.py         2단계 매칭 오케스트레이션 + 승인 액션 반영(상태 보관 + 재처리)
 ├── decision_log.py       의사결정 로그 (타임스탬프 + SHA-256 해시, 위변조 검증 가능)
-├── delivery.py           결과 저장 + dashboard·info로의 실제 통신 — 파일명을 voice 입력에서 이어받음
+├── delivery.py           결과 저장 + dashboard로의 실제 통신 — 파일명을 voice 입력에서 이어받음
+│                         (info로의 병상 갱신 전송은 2026-08-13 삭제됨)
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
 └── data/
-    ├── pending_bed_updates.jsonl   feature/info 전송 실패 재시도 대기열 (delivery.py가 생성·삭제, 없으면 대기 중인 게 없다는 뜻)
     ├── test/
     │   ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
     │   ├── DrRomantic3v3_call_summary.json    voice 요약 샘플 (feature/voice 역할)
     │   └── output/
-    │       ├── DrRomantic3v3_hub_match_result.json  매칭 결과 (delivery.py가 생성)
-    │       └── H004_bed_update.json                 병상 갱신 알림 (delivery.py가 생성)
+    │       └── DrRomantic3v3_hub_match_result.json  매칭 결과 (delivery.py가 생성)
     └── logs/
         └── decision_log.jsonl   의사결정 로그 (decision_log.py가 생성, append-only)
 ```
@@ -580,7 +550,7 @@ hub_engine.py  (HubEngine — 병원 정보 상태 보관 + 2단계 매칭 오�
    └─→ decision_log.py       매칭 결과·승인 처리마다 로그 기록 (다른 모듈에 의존하지 않음)
 
 run_match.py
-   │  hub_engine.py가 만든 HubMatchResult / HospitalBedUpdate를 그대로 넘김
+   │  hub_engine.py가 만든 HubMatchResult를 그대로 넘김
    ▼
 delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존)
 ```
