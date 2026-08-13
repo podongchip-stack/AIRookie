@@ -31,18 +31,19 @@
 `feature/hub`에 공급**한다. 환자에게 어느 병원이 적합한지는 판정하지 않는다 —
 그건 `feature/hub`의 몫이다.
 
-데이터 소스가 둘이고 성격이 정반대인 것이 이 브랜치의 특징이다.
-(2026-08-12부터 **경로 C**가 붙었다 — 새 소스가 아니라 **가져온 정보를 검증하는**
-층이다. 아래 "경로 C" 참고.)
+데이터 소스가 둘이고 성격이 정반대인 것이 이 브랜치의 특징이다. 2026-08-12부터
+**경로 C**가 붙었는데, 이건 새 소스가 아니라 **가져온 정보를 믿을 수 있는지 검증하는**
+층이다.
 
-| | 경로 A — E-Gen 공개 API | 경로 B — 병원 서류 OCR |
-|---|---|---|
-| 폴더 | [`Hospital_inform/`](Hospital_inform/README.md) | [`ocr/`](ocr/README.md) |
-| 범위 | 전국 전 기관 | 소수 기관 |
-| 실시간성 | 실시간 | 정적 (서류 발급 시점) |
-| 깊이 | 얕음 — 병상 6종, 시술·장비 역량 | 깊음 — 당직 전문의, 진료과별 인력 |
-| 처리 | 규칙 기반 (AI 미사용) | AI(레이아웃·인식·추출) + 규칙(검증) |
-| 현재 상태 | **실 API 연동 완료** (2026-08-10 승인) | 로직 완성 — 실측 대기 |
+| | 경로 A — E-Gen 공개 API | 경로 B — 병원 서류 OCR | 경로 C — 신뢰도 진단 |
+|---|---|---|---|
+| 폴더 | [`Hospital_inform/`](Hospital_inform/README.md) | [`ocr/`](ocr/README.md) | [`hospital_score/`](Hospital_inform/info/hospital_score/README.md) |
+| 질문 | 정보를 어디서 가져오나 | 공개 API가 못 주는 것 | **가져온 정보를 믿을 수 있나** |
+| 범위 | 전국 533곳 | 소수 기관 | 전국 533곳 |
+| 실시간성 | 실시간 | 정적 (서류 발급 시점) | 실시간 + 정적 대조 |
+| 깊이 | 얕음 — 병상 6종, 시술·장비 역량 | 깊음 — 당직 전문의, 진료과별 인력 | 15그룹 역량 + 근거·신뢰도 |
+| 처리 | 규칙 기반 (AI 미사용) | AI(레이아웃·인식·추출) + 규칙(검증) | 규칙 기반 (AI 미사용) |
+| 현재 상태 | **실 API 연동 완료** (2026-08-10 승인) | 로직 완성 — 실측 대기 | **구현 완료 — hub 연동 대기** |
 
 **당직 전문의 정보는 공개 API로 나오지 않는다.** 그 공백을 서류 OCR로 메우는 것이
 이 브랜치의 고유 가치다. E-Gen의 "중증질환 수용가능 정보"가 그 상당 부분을 대체할
@@ -59,10 +60,13 @@
 즉 서류 OCR이 메워야 할 공백이 **무엇인지가 구체적으로 확정**됐다. 자세한 것은
 [`Hospital_inform/README.md`](Hospital_inform/README.md) "실측으로 확인한 것" 참고.
 
-### 경로 C — 신뢰도 진단·외부 대조 (`hospital_score/`, 2026-08-12 신설, 실험 중)
+### 경로 C — 신뢰도 진단·외부 대조 (`hospital_score/`, 2026-08-12 신설, 구현 완료)
 
-> **아직 hub로 나가지 않는다.** 기존 파이프라인은 오늘도 E-Gen 신고만 보낸다.
-> 이 폴더는 통째로 지워도 기존 경로가 멀쩡하도록 격리돼 있다.
+> **구현은 끝났고 hub 연동만 남았다.** 점수 산출(`scoring.py`)까지 전부 돌아가며
+> 불변식 검사와 전문병원 홀드아웃 검증을 통과했다. 다만 상시 파이프라인
+> (`send_to_hub.py`)은 오늘도 E-Gen 신고만 보낸다 — `assessment` 필드는 hub와
+> **동시 배포**여야 하기 때문이다(hub가 unknown 필드를 거부하면 그 순간 기존 연동이
+> 깨진다). 이 폴더는 통째로 지워도 기존 경로가 멀쩡하도록 격리돼 있다.
 
 경로 A·B가 "정보를 어디서 가져오나"의 문제라면, 경로 C는 **"가져온 정보를 믿을 수
 있나"**의 문제다. 만들게 된 계기는 실측 하나였다.
@@ -96,9 +100,22 @@ E-Gen이 주는 값은 전부 **병원이 스스로 신고한 것**이고, 같�
 E-Gen과 심평원은 공통 식별자가 없어(`hpid` ↔ `ykiho`) **좌표 최근접으로 붙였고,
 533곳 중 518곳(97.2%)이 1.2km 이내, 오차 중앙값 11m**로 연결됐다.
 
-산출물은 병원별 **`[여건 스칼라 + 15그룹 역량 벡터] + 신뢰도 + 근거`**다.
-점수는 "정답이 없으므로" 최적화하지 않고, 근거 강도의 계층(5단계)과 불변식으로 정한다.
-전문병원 지정을 홀드아웃 정답으로 쓴 검증에서 **화상 후보가 0곳 → 4곳**이 됐다.
+산출물은 병원별 **`[여건 스칼라 + 15그룹 역량 벡터] + 신뢰도 + 근거`**다. 병원당 단일
+점수는 만들지 않는다 — 심근경색 환자와 화상 환자에게 같은 병원의 수용가능성이 다르다.
+
+점수는 "정답이 없으므로" 최적화하지 않고, **근거 강도의 계층 5단계와 불변식**으로 정한다.
+
+```
+불가능 신고 0.2  <  근거 없는 미상 0.4  <  전문의 있는 미상 0.6
+                 <  전문병원 지정 미상 0.8  <  가능 신고 1.0
+```
+
+`score`와 `confidence`는 **끝까지 곱하지 않는다.** 섞으면 "확실히 낮음"과 "모르겠음"이
+구분되지 않는다 — 미상과 확인된 만실을 구분해온 원칙과 같다. 전문병원 지정을 홀드아웃
+정답으로 쓴 검증에서 **화상 후보가 0곳 → 4곳**이 됐다.
+
+hub로는 기존 `HospitalInfo`에 **`assessment` 키 하나만 얹은 superset**으로 나간다
+(병원당 약 5.1KB). 기존 필드는 하나도 바뀌지 않는다.
 
 거절 로그 수신구(`POST /hub/rejection`)도 함께 세워뒀다. 점수의 진짜 정답은 "병원이
 실제로 받았는가"인데 그건 운영 로그가 쌓여야 나오고, **로그는 소급해서 만들 수 없기**
@@ -108,24 +125,32 @@ E-Gen과 심평원은 공통 식별자가 없어(`hpid` ↔ `ykiho`) **좌표 �
 [`Hospital_inform/info/hospital_score/README.md`](Hospital_inform/info/hospital_score/README.md).
 
 ```
-[경로 A] E-Gen 공개 API
-    ├─ getEgytListInfoInqire               좌표 · 기관분류
-    ├─ getEmrrmRltmUsefulSckbdInfoInqire   실시간 가용병상 · 장비 가용
-    └─ getSrsillDissAceptncPosblInfoInqire 중증질환 수용가능
+[경로 A] E-Gen 공개 API (전국 실시간, 얕음)
+    ├─ getEgytListInfoInqire               좌표 · 응급의료기관 등급
+    ├─ getEmrrmRltmUsefulSckbdInfoInqire   실시간 가용병상 6종 · 총병상 · 장비 가용
+    └─ getSrsillDissAceptncPosblInfoInqire 중증질환 수용가능 28항목
          │
          ├─ [규칙] 3개 응답을 hpid로 합치고 결측·과밀·입력오류 처리 (egen/mapper.py)
          │     HospitalInfo ────────────────────────────┐
          │                                              │
-         └─ [축적] 원본 응답 그대로 시계열 저장 (snapshot.py)
-               data/snapshots/YYYY-MM-DD.jsonl          │
-               └→ 병상 추정 · 과밀 추세 · 갱신 성실도의 재료
-                  (E-Gen은 과거 이력을 안 주므로 직접 쌓아야 한다)
+         └─ [축적] 원본 응답 그대로 시계열 저장 (snapshot.py, 전국 20분)
+               data/snapshots_nationwide/YYYY-MM-DD.jsonl
+                    │                                   │
+                    ↓                                   │
+[경로 C] 신뢰도 진단·외부 대조 (hospital_score/)          │
+    ├─ 심평원 병원정보 (15001698)        ykiho · 좌표     │
+    ├─ 심평원 의료기관별상세 (15001699)  전문과목별 전문의 수
+    └─ 심평원 전문병원 지정 (15051054)   분야별 114곳      │
+         │                                              │
+         └─ [규칙] 좌표 최근접 조인(518곳) → 계층 기반 점수 │
+               assessment (여건 + 15그룹 역량 + 신뢰도 + 근거)
+                                    (배선 대기) ─────────┤
                                                         │
-[경로 B] 병원 서류 이미지                                 │
-         ↓ [AI]  레이아웃 검출 → 영역별 텍스트 인식       │
+[경로 B] 병원 서류 이미지 (정적, 깊음)                     │
+         ↓ [AI]  레이아웃 검출 → 영역별 텍스트 인식        │
       텍스트                                             │
          ↓ [AI]  필드 그룹별 추출 (JSON Schema 제약 디코딩)│
-         ↓ [규칙] 근거 대조(환각 필터) · 어휘 검증         │
+         ↓ [규칙] 근거 대조(환각 필터) · 어휘 검증          │
       DocumentFields ──→ (병합 미구현) ──────────────────┤
                                                         ↓
                                                   feature/hub
@@ -220,9 +245,19 @@ Supabase 대체 DB에 남겨두고(E-Gen이 조회 전용이라 hub의 확정 �
 | `updatedAt` | string (ISO 8601) | 이 레코드가 마지막으로 갱신된 시각 |
 | `bedsByType` | `{[코드]: number}` (선택) | 병상 종류별 가용 수. 미상인 종류는 키를 아예 안 넣는다 |
 | `capabilities` | string[] (선택) | 수행 가능한 시술·장비 표준 코드 |
-| `assessment` | object \| null (선택) | info-v2(`hospital_score/`) 신뢰도 진단. 아래 "1-C" 참고 |
+| `assessment` | object \| null (선택) | info-v2(`hospital_score/`) 신뢰도 진단. 아래 "1-C" 참고 — hub 동시 배포 완료(2026-08-13), 이제 상시 배선됨 |
 
-배경은 [`Hospital_inform/hospital-info-interface-proposal.md`](Hospital_inform/hospital-info-interface-proposal.md) 참고.
+두 어휘는 `Hospital_inform/info/schema.py`에 고정돼 있고 값이 어휘 밖이면
+**만드는 순간 실패**한다(병상 6종 `BED_CODES`, 역량 7종 `CAPABILITY_CODES`).
+voice가 보내는 "필요역량"과 여기서 올리는 "보유역량"이 같은 어휘여야 hub가 대조할 수
+있는데, 한쪽이 임의 코드를 쓰면 에러 없이 조용히 매칭에서 빠지기 때문이다.
+
+⚠️ **이름이 겹쳐 헷갈리기 쉽다.** 기존 `capabilities`는 역량 코드 7종의 `list[str]`이고,
+경로 C 판정의 15그룹은 `assessment.groups`다. 서로 다른 것이라 네임스페이스를 분리했다.
+
+배경은 [`Hospital_inform/hospital-info-interface-proposal.md`](Hospital_inform/hospital-info-interface-proposal.md) 참고 —
+매칭 판정을 임베딩 유사도에서 **표준 코드 정확 대조**로 옮기고 임베딩은 info의 정규화
+단계로 내리자는 제안이며, 위 확장 필드가 전부 여기서 나왔다.
 
 ### 1. feature/info → feature/hub (HospitalInfo 전체 전송)
 
@@ -237,6 +272,15 @@ Supabase 대체 DB에 남겨두고(E-Gen이 조회 전용이라 hub의 확정 �
 >
 > 실 API 호출이 실패하면(서비스키 문제, 트래픽 한도, 일시 장애) 더 이상
 > 대체할 소스가 없으므로 이번 주기는 건너뛰고 다음 주기에 재시도한다.
+>
+> ~~🔴 병원 7곳만 hub로 흘러가던 문제~~ → **2026-08-13 해소됨.** 병상까지
+> 실 API로 읽게 되면서(`SUPABASE_TO_EGEN_HPID` 대응표·`_remap_to_supabase_hpid()`
+> 삭제) 이제 E-Gen이 주는 533곳 전부가 hub로 간다. 병상 차감은 hub 쪽 TTL
+> 오버레이(`BED_OVERLAY_TTL_MIN=15분`)로 대체됐다 — 근거는 `hvidate` 갱신
+> 경과 중앙값 5분(443곳 중 88.7~90.5%가 10분 이내). `hospitalId`도 실 hpid
+> (`A1100017` 등)로 이미 전환 완료됐다 (2026-08-14 전국 확장까지 완료 —
+> 서울특별시 한정에서 전국 533곳으로 넓어짐, `egen/client.py`의 `stage1` 기본값
+> 변경).
 
 **출력** (위 HospitalInfo 표의 필드 전부, 선택 필드는 있을 때만)
 
@@ -405,18 +449,51 @@ python info/build_hospitals.py            # fixture (키 없이 개발할 때)
 
 ```bash
 cd Hospital_inform
-python info/snapshot.py                   # 1회 (작업 스케줄러용)
+python info/snapshot.py                   # 1회 — 서울 (기본값)
 python info/snapshot.py --interval 600    # 600초마다 반복 (콘솔 상주)
+
+# 전국 — 현재 상시 수집이 도는 형태
+python info/snapshot.py --stage1 "" --dir "info\data\snapshots_nationwide"
 ```
 
 E-Gen은 **"지금 값"만 주고 과거 이력을 주지 않는다.** 나중에 몰아서 받을 방법이
-없으므로 지금부터 직접 찍어 쌓는다. `data/snapshots/YYYY-MM-DD.jsonl`에 **가공하지
-않은 원본 행**을 append하며, 호출 실패도 한 줄로 남긴다 ("데이터가 없다"와 "호출이
-실패했다"는 다르다). 좌표·기관분류는 거의 안 바뀌므로 하루 한 번만 부른다 —
-10분 주기 기준 하루 289회다.
+없으므로 지금부터 직접 찍어 쌓는다. `data/snapshots_nationwide/YYYY-MM-DD.jsonl`에
+**가공하지 않은 원본 행**을 append하며, 호출 실패도 한 줄로 남긴다 ("데이터가 없다"와
+"호출이 실패했다"는 다르다). 좌표·등급은 거의 안 바뀌므로 하루 한 번만 부른다 —
+20분 주기 기준 하루 145회다.
 
-상시 수집은 `snapshot.bat`을 Windows 작업 스케줄러에 등록해서 쓴다 (파일 상단에
-등록 방법이 적혀 있다).
+**`--stage1`을 비우면 전국이 1회 호출로 온다** — 호출 횟수가 서울만 받을 때와 같다.
+상시 수집은 `snapshot_nationwide.bat`을 Windows 작업 스케줄러에 등록해 **20분 주기로
+가동 중**이다(전국 443곳, 2026-08-12~). 서울 전용(`snapshot.bat`, 10분)은 전국이 서울을
+포함하므로 같은 날 멈췄다.
+
+> ⚠️ 이 데이터는 커밋되지 않아 **이 장비의 `data/` 폴더가 유일본**이고, E-Gen은 과거
+> 이력을 주지 않으므로 지우면 복구할 방법이 없다.
+
+### 경로 C — 신뢰도 진단·점수 (`hospital_score/`)
+
+```bash
+cd Hospital_inform/info
+python -m hospital_score.report                        # 신뢰도 진단 리포트 (6개 절)
+python -m hospital_score.discarded                     # 폐기 판정 근거 재계산 (병상 예측·미상 추정)
+python -m hospital_score.scoring --check --validate    # 불변식 + 전문병원 홀드아웃 검증
+python -m hospital_score.scoring --sample 한강성심       # 병원 하나 들여다보기
+python -m hospital_score.scoring --payload 한강성심      # hub로 보낼 합친 객체 실물
+python -m hospital_score.rejection --vocab             # 거절 사유 어휘 (dashboard 선택지용)
+python -m hospital_score.ingest                        # 거절 로그 수신 서버 (포트 5003)
+```
+
+전부 로컬 파일만 읽으므로 **네트워크 없이 돈다.** 단, 심평원 캐시는 `data/` 아래라
+커밋되지 않으므로 **새 장비에서는 아래를 한 번 돌려야 한다.**
+
+```bash
+python -m hospital_score.hira_files --fetch    # 전문병원 지정 현황 (API 2회)
+python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+```
+
+캐시가 없어도 점수는 나오지만 **심평원 근거가 통째로 빠져 미상이 전부
+`unknown_bare`(0.4)로 떨어지고**, 화상 0→4를 보여주는 홀드아웃 검증도 재현되지 않는다.
+`--build-join`은 재시도 3회·25곳마다 중간저장·이어받기를 한다.
 
 ### 경로 B — 서류 OCR·필드 추출 (`ocr/`)
 
@@ -493,7 +570,7 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 │       ├── build_hospitals.py     변환 실행 진입점
 │       ├── snapshot.py            원본 응답을 주기적으로 떠서 시계열로 축적
 │       ├── verify_with_hub.py     hub 엔진 연동 검증 (검증 전용, 프로덕션 아님)
-│       ├── hospital_score/        [경로 C] 신뢰도 진단·외부 대조   (실험, hub 미연동)
+│       ├── hospital_score/        [경로 C] 신뢰도 진단·외부 대조   (구현 완료, hub 연동 대기)
 │       │   ├── README.md          이 경로의 상세 문서 + 팀 요청 사항
 │       │   ├── vocabulary.py      MKioskTy 28항목 · 15그룹 · 연령축
 │       │   ├── dataset.py         스냅샷 JSONL → 시각별 관측
@@ -503,7 +580,13 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 │       │   ├── hira_files.py      심평원 파일데이터 (전문병원 지정 현황)
 │       │   ├── rejection.py       거절 이유 어휘 · 로그 · 축별 집계
 │       │   └── ingest.py          거절 로그 수신구 (POST /hub/rejection)
-│       └── data/                  fixture · 변환 결과 · 스냅샷 · 심평원 캐시 (커밋하지 않음)
+│       └── data/                  (전부 커밋하지 않음 — .gitignore의 `data/`가 경로 무관)
+│           ├── fixtures/          E-Gen 응답을 흉내낸 가상 데이터
+│           ├── output/            변환 결과 JSON
+│           ├── snapshots/         원본 시계열 — 서울 55곳 (2026-08-12 중단)
+│           ├── snapshots_nationwide/  원본 시계열 — 전국 443곳 (20분, 가동 중)
+│           ├── hira/              심평원 캐시 (조인 518 · 전문의 518 · 전문병원 114)
+│           └── rejections/        거절 로그 JSONL (append-only)
 │
 ├── ocr/                           [경로 B] 병원 서류 이미지 → 필드   (AI + 규칙)
 │   ├── README.md                  이 경로의 상세 문서
@@ -579,6 +662,16 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 
 ### 미구현
 
+- 🔴 **hub로 흐르는 병원이 7곳뿐** — `send_to_hub.py`의 `_remap_to_supabase_hpid()`가
+  대응표 밖 기관을 전부 버린다. 2026-08-13에 해소 방향(병상 차감을 짧은 TTL 오버레이로)
+  까지 합의됐고, info 쪽 작업은 `_remap_to_supabase_hpid()` 제거와 `fetch_hospitals()`가
+  병상도 실 API로 읽게 바꾸는 것이다 (위 "1. feature/info → feature/hub" 참고)
+- **경로 C의 `assessment`를 상시 파이프라인에 배선** — `scoring.build_payload()`는
+  완성됐지만 지금은 CLI 데모(`--payload`)에서만 불린다. `fetch_hospitals()` 결과에
+  `score_hospital()` 결과를 얹으면 되는데, **hub의 `assessment` 수용과 동시**여야 한다
+- **거절 로그는 수신구만 세워둔 상태** — `POST /hub/rejection`은 완성됐고 hub가 지금
+  형태 그대로 보내도 기록된다(필수 필드 `hospitalId` 하나). 아직 0건이며, **로그는
+  소급해서 만들 수 없으므로** 붙이는 게 늦어질수록 그만큼 영구 손실이다
 - **두 경로의 합류 지점** — `DocumentFields` → `HospitalInfo` 병합. 서류는 정적이라
   좌표·실시간 병상 수는 건드리지 않고, E-Gen이 못 채우는 당직·인력만 덮어야 한다.
   어느 값이 어디서 왔는지(AI / 규칙) 표기하는 방식도 미정
@@ -604,10 +697,27 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
   E-Gen이 시술 역량 상당 부분을 덮지만 **tPA는 못 덮는다**는 결론.
   의사 수는 심평원이 덮는 것으로 2026-08-12에 확인됐다
 - hub 엔진 연동 검증(매칭 순위 확인)은 계약 검증(4/4 통과)까지만 됐고 실행 대기
-- ~~**병상 추정 모델**~~ → **폐기 판정 (2026-08-12).** 관측 5,660건으로 잰
-  `P(만실 전환) = 0.618%`(95% CI 0.41~0.82%)가 사전 등록 기준(2%)에 못 미쳤다.
-  병상은 움직이지만 0까지 가는 일이 거의 없어 예측의 최대 이득이 모델 오차보다 작다.
-  자세한 것은 [`hospital_score/README.md`](Hospital_inform/info/hospital_score/README.md)
+- **경로 C의 점수는 "정답"으로 검증할 수 없다** — "이 병원이 이 환자를 실제로
+  받았는가"의 정답이 없기 때문이다. 그래서 ①불변식 검사(계층 순서·미상이 불가능
+  이하로 평가되지 않음·근거가 비어 있지 않음 등)와 ②전문병원 지정을 홀드아웃
+  정답으로 쓴 부분 검증(화상 0→4)으로 대신했고 둘 다 통과했다. **진짜 정답은
+  거절 로그가 쌓여야 나온다**
+- ~~**미상 칸을 채우는 추정 모델**~~ → **보류 판정 (2026-08-12, 2026-08-14 재계산).**
+  관측 3,574칸 중 **95.6%가 "가능"**이라 상수 기준선이 이미 95점이고(서울 표본은 97.3%),
+  라벨이 상위 등급에 편중된 MNAR이라 미신고 병원에 적용하면 "미신고 병원도 대부분 수용
+  가능"이라는 **위험한 방향**의 오류가 난다. 편중의 크기는 실측된다 — **명부의 21.8%를
+  차지하는 최하위 등급이 라벨의 0.7%만 내놓는다.** 추정 대신 **외부 근거 유무로 계층을
+  나누는 방식**을 택했다
+- ~~**병상 추정 모델**~~ → **폐기 판정 (2026-08-12, 2026-08-14 재계산).** 서울 6,519쌍으로
+  잰 `P(만실 전환) = 0.568%`(95% CI 0.41~0.78%, 10분 지평)가 사전 등록 기준(2%)에 크게
+  못 미쳤다. 전국 50,133쌍(20분 지평)은 0.301%로 더 낮다. 병상은 움직이지만 0까지 가는
+  일이 거의 없어 예측의 최대 이득이 모델 오차보다 작다
+  - **최초 분석(2026-08-11)의 `0.618%`와 신뢰구간이 겹친다** — 다른 시점·다른 코드로
+    두 번 계산해 같은 결론이 나왔다
+- **위 두 판정은 이제 명령 하나로 재현된다**: `python -m hospital_score.discarded`
+  (API 호출 0회). 2026-08-14 이전에는 관측치만 `report.py`로 재현됐고 이 두 판정은
+  근거 코드가 없었다. 자세한 것은
+  [`hospital_score/README.md`](Hospital_inform/info/hospital_score/README.md)
   "판정한 것 / 보류한 것"
 
 ### 유지보수 주의
@@ -619,14 +729,26 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
   여전히 좌표 최근접 대응이 필요하지만, 그건 E-Gen ↔ 심평원 사이의 별개
   문제이고 그 캐시(`data/hira/egen_hira_join.json`)는 자동 생성된다(수기
   대응표 아님)
+- **심평원 캐시는 커밋되지 않는다.** 새 장비에서 경로 C를 돌리려면 아래를 한 번
+  실행해야 한다. 안 하면 점수는 나오지만 **미상이 전부 `unknown_bare`로 떨어져**
+  화상 0→4 같은 결과가 재현되지 않는다.
+  ```bash
+  cd info/Hospital_inform/info
+  python -m hospital_score.hira_files --fetch    # 전문병원 지정 (API 2회)
+  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+  ```
+- **`hospital_score/`는 의도적으로 격리돼 있다.** 바깥 모듈을 import 하지 않고 바깥에서도
+  이 폴더를 import 하지 않아, 폴더째 지워도 기존 경로가 멀쩡하다. 배선할 때 이 성질을
+  깨지 않도록 주의한다 (유일한 예외는 `scoring.py --payload`의 CLI 전용 지연 import)
 - **표준 역량·병상 코드 어휘가 두 벌 있다.** `Hospital_inform/info/schema.py`가
   원본이고 `ocr/src/goldenlink_extract/vocabulary.py`가 복사본이다. 두 경로의
   의존성을 갈라 두려고 일부러 복사했으며, 어긋났는지는 아래로 확인한다.
   ```bash
   python ocr/scripts/run_extract.py --check-vocabulary
   ```
-- **CLAUDE.md 명세 오류 정정 필요** — `hv1`·`hv2`를 별도 API로 적고 있으나 실제로는
-  가용병상 응답 안의 필드다. 호출 설계 자체가 달라진다
+- ~~**CLAUDE.md 명세 오류 정정 필요**~~ → **정정 완료.** `hv1`·`hv2`를 별도 API로
+  적고 있던 것을 "가용병상 응답 안의 필드"로 고쳤고, 팀 공통 문서에도 반영됐다.
+  **아직 남은 곳은 `requirements.txt` 상단 주석 하나뿐**이다
 - OCR이 읽지 못하는 유형이 있다 — 직인이 덮은 글자, 손글씨, 세로 병합 셀 안쪽,
   팩스 저품질 문서 (실측 268개 항목 중 13개)
 
