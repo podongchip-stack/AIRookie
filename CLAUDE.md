@@ -99,17 +99,19 @@ feature/hub를 거친다. feature/hub는 GPS와 feature/info의 병원 정보로
 
 ```
 feature/voice ──(의료 정보·예상 병명·통화 전문 JSON)──→ feature/hub
-feature/info ──(병원 정보 JSON)──────────────────────→ feature/hub
+feature/info ──(병원 정보 JSON, assessment 포함)─────→ feature/hub
 feature/hub ──(통합 매칭 결과 JSON, WebSocket)───────→ feature/dashboard
 feature/dashboard ──(승인 액션 JSON, WebSocket)──────→ feature/hub
 feature/dashboard ──(통화 시작/종료 신호, WebSocket)─→ feature/hub ──(HTTP 중계)──→ feature/voice
-feature/hub ──(병상 갱신 JSON, HTTP)─────────────────→ feature/info
 ```
 
-병상 갱신(hub→info)은 이송 확정(`final_approval`) 시점에만 발생하는 부분
-갱신이다 — feature/info의 `send_to_hub.py`가 주기적으로(기본 30분) 다시
-가져가는 것과는 별개로, 그 사이에 확정된 병상만 즉시 반영해 중복 매칭을
-막는다. 스키마·엔드포인트는 feature/info README.md의 "hub → info" 참고.
+~~병상 갱신(hub→info)은 이송 확정(`final_approval`) 시점에만 발생하는 부분
+갱신이다~~ → **2026-08-13 이 화살표 자체가 없어졌다.** info가 병원
+Supabase 없이 E-Gen 실 API로 병상까지 직접 읽으면서(조회 전용이라 hub가
+쓸 방법이 원래 없었음), hub→info 방향 통신이 통째로 사라졌다. 이송 확정
+시점의 병상 차감은 이제 hub 혼자 자기 메모리(TTL 오버레이, 15분)로만
+처리한다 — feature/info로 아무것도 되돌려 쓰지 않는다. 자세한 것은
+"feature/hub 담당자 참고사항"의 "병상 차감은 TTL 오버레이로 처리한다" 참고.
 
 아래 포맷은 voice를 제외하고는 아직 약식이다. 병원 매칭 결과 스키마는 feature/hub
 README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에는 구 스키마를 남기지 않는다.
@@ -243,17 +245,23 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷)은 feature/hub가 수신하므로 이 브랜치는 별도 구현이 필요 없다
 - 병상 수가 미상인 병상 종류는 `bedsByType`에 그 키(`ER_ADULT` 등)를 아예 넣지 않는 방식으로 표시한다(`egen/mapper.py`의 `build_beds_by_type`). `availableBedCount`엔 보수적으로 0을 넣지만, hub가 `bedsByType`의 키 유무로 "미상"과 "확인된 만실"(`{"ER_ADULT": 0}`)을 구분해 재해석한다
 - `send_to_hub.py`는 1회성 스크립트가 아니라 **상시 프로세스**다 — hub는 한 번 받은 병원 정보를 메모리에 들고 있을 뿐 스스로 재조회하지 않으므로, 이 스크립트가 주기적으로(기본 30분, `INFO_REFETCH_INTERVAL_SEC` 환경변수로 조절) 다시 조회해 재전송한다. Supabase realtime 구독 대신 주기적 재조회 방식을 택했다. hub가 잠깐 안 떠 있어도 죽지 않고 다음 주기에 재시도한다
-- **E-Gen 실 API가 상시 파이프라인에 연결됐다(2026-08-11)** — 서비스키 승인 이후에도 한동안 `build_hospitals.py --http` CLI 도구에만 붙어 있었는데, `send_to_hub.py`의 `fetch_hospitals()`가 이제 목록·좌표·중증질환 수용가능정보는 실 API(`HttpEgenClient`)로, 실시간 병상 수(hvec)만 계속 Supabase 대체 DB(`SupabaseEgenClient`)로 가져와 합친다. 병상만 Supabase에 남긴 이유: E-Gen은 조회 전용 공개 API라 hub의 이송 확정(`final_approval`) 병상 차감을 되돌려 쓸 방법이 없어서, 병상까지 실 API로 읽으면 재조회 때마다 그 차감이 리셋돼 뺑뺑이 방지 취지와 반대로 간다(`HttpEgenClient.update_bed_count()`가 `NotImplementedError`인 이유이기도 함). 실 API 호출이 실패하면 이번 주기는 목록·중증질환도 Supabase 값으로 대체해 계속 돈다
-- **Supabase 대체 DB의 hpid는 가짜다.** 서비스키 승인 전에 만들어져 자체 식별자(`S0000001`~`S0000007`)를 썼고, 실 API의 진짜 hpid(`A11...`)와 전혀 다르다. `send_to_hub.py`의 `SUPABASE_TO_EGEN_HPID`가 GPS 최근접 대조로 검증한(전부 1.2km 이내) 7곳 수기 대응표를 두고 실 API 응답의 hpid를 Supabase hpid로 되돌려 맞춘다 — **`hospitalId`(병원 대시보드 라우팅 값)는 계속 `S0000001`~`S0000007` 체계를 유지**하며, 실 API의 hpid로 바뀌지 않는다. Supabase의 병원 구성이 바뀌면 이 대응표도 같이 갱신해야 한다(info/README.md "유지보수 주의" 참고)
-- hub→info 방향(병상 갱신 쓰기)도 **구현 완료**됐다. `app.py`가 `POST /hub/bed-update`(기본 포트 5002 — 팀 합의로 info 포트 고정, 2026-08-11)로 hub의 병상 갱신을 받아 `SupabaseEgenClient.update_bed_count()`로 Supabase의 `hvec` 컬럼에 즉시 반영한다 — 위 주기적 재조회의 최대 30분 지연을 이송 확정 시점만큼은 보정해준다. 실제 Supabase 병상이 줄어드는 것까지 확인됐다(info/README.md "hub → info" 참고)
+- ~~**E-Gen 실 API가 상시 파이프라인에 연결됐다(2026-08-11)** — 목록·좌표·중증질환은 실 API로, 실시간 병상 수(hvec)만 계속 Supabase 대체 DB로 가져와 합친다~~ → **2026-08-13 병원 Supabase 의존을 완전히 제거.** 병상까지 포함해 목록·병상·중증질환 전부 실 E-Gen API(`HttpEgenClient`)에서 가져온다. Supabase에 병상만 남겨뒀던 이유(E-Gen이 조회 전용이라 hub의 `final_approval` 차감을 되돌려 쓸 방법이 없어서)는 hub 쪽 **TTL 병상 오버레이**(`hub/hub_engine.py`의 `BED_OVERLAY_TTL_MIN`, 15분)로 대체됐다 — 자세한 것은 아래 "feature/hub 담당자 참고사항" 참고
+- ~~**Supabase 대체 DB의 hpid는 가짜다.**~~ → **해소됨.** 병상 소스가 Supabase에서 E-Gen 실 API로 바뀌면서, 두 소스의 hpid를 맞추던 `SUPABASE_TO_EGEN_HPID`(7곳 수기 대응표)와 `_remap_to_supabase_hpid()`를 통째로 삭제했다. **`hospitalId`가 `S0000001~7` 체계에서 실제 E-Gen hpid(`A1100017` 등)로 바뀌었다** — dashboard 접근 코드(`/hospital?id=`)로 쓰던 값이 전부 무효화된다. 대응표 병목이 없어져 E-Gen이 주는 병원 전체(서울 기준 실측 55곳, 전국 500여 곳)가 hub로 흘러간다
+- ~~hub→info 방향(병상 갱신 쓰기)도 **구현 완료**됐다~~ → **2026-08-13 완전히 폐지.** `info/app.py`(`POST /hub/bed-update` 수신 서버)를 삭제했다 — 병원 Supabase 자체가 없어지면서 되돌려 쓸 대상이 사라졌기 때문. hub의 `delivery.py`도 `send_to_info()`/재시도 대기열을 같이 제거했다
 - **여러 사건(구급차) 동시 처리를 지원하는 구급차 레지스트리 동기화가 추가됐다.** 병원용과는 **별도의 Supabase 프로젝트**(`ambulances` 테이블, apid/name/gps/voicePort)를 `send_to_hub.py`가 같은 주기로 읽어 `POST /info/ambulances`로 hub에 보낸다. `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY` 환경변수가 없으면 이 부분만 조용히 건너뛰고 병원 정보 동기화는 그대로 진행한다 — voice의 실제 IP는 여기 없고(구급차 노트북마다 네트워크가 달라 자주 바뀔 수 있음) voice가 뜰 때 hub에 직접 자가등록한다(feature/hub 담당자 참고사항 참고)
 
 ### 신뢰도 진단·외부 대조 트랙 (`hospital_score/`, 2026-08-12 신설 — `feature/info-v2`)
 
-> **아직 hub로 나가지 않는다.** 상시 파이프라인(`send_to_hub.py`)은 오늘도 E-Gen 신고만
-> 보낸다. 아래는 `origin/feature/info-v2`에 있는 실험 트랙이며, 검증되면 그때 연동을
-> 제안한다. `hospital_score/`는 바깥 모듈을 import 하지 않고 바깥에서도 이 폴더를
-> import 하지 않으므로 **폴더째 지워도 기존 경로가 멀쩡하다.**
+> ~~**아직 hub로 나가지 않는다.**~~ → **2026-08-13 상시 파이프라인에 연결 완료.**
+> `send_to_hub.py`가 이제 병원마다 `hospital_score.scoring.score_hospital()`을
+> 그 자리에서 호출해 `HospitalInfo.assessment`에 실어 hub로 보낸다(스냅샷 파일이
+> 아니라 이번 사이클에 이미 받은 raw rows로 `D.Hospital`/`D.Frame`을 구성 —
+> `snapshot_nationwide.bat`이 항상 떠 있어야 하는 숨은 의존을 피하려는 선택).
+> hub는 이 값을 순위 계산에는 안 쓰고 `HospitalMatch.reliability`로 dashboard에
+> "왜 이 순위인지" 설명 근거로만 전달한다(feature/hub 담당자 참고사항 참고).
+> `hospital_score/`는 여전히 바깥 모듈을 import 하지 않으므로, 이 트랙만 통째로
+> 지워도 `send_to_hub.py`가 `assessment` 없이 원본 그대로 보내는 것으로 안전하게
+> 낮아진다(코드는 `try/except`로 감싸둠).
 
 - **왜 만들었나** — E-Gen이 주는 값은 전부 **병원이 스스로 신고한 것**이고, 같은 소스
   안에서는 그게 맞는지 검증할 방법이 없다. 실측으로 확인된 구멍: 하루 넘게 방치된 병상
@@ -333,21 +341,17 @@ info 쪽 수신구는 **이미 완성돼 있다.** `POST /hub/rejection`으로 �
 - **무응답(`NO_RESPONSE`)도 반드시 남길 것.** 거절 로그는 우리가 후보로 올린 병원에서만
   생기므로, 그것마저 없으면 낮은 점수가 낮은 점수를 재생산하는 되먹임이 생긴다
 
-### hub로 흐르는 병원이 7곳뿐인 문제 (팀 결정 필요, 최우선)
+### ~~hub로 흐르는 병원이 7곳뿐인 문제~~ → 2026-08-13 해결됨
 
-`send_to_hub.py`의 `_remap_to_supabase_hpid()`가 `SUPABASE_TO_EGEN_HPID` 대응표 밖의
-기관을 전부 버려서, **E-Gen에서 533곳을 받아도 hub에는 7곳만 간다.** 원인은 병상을
-Supabase에서 읽는 구조다(위 참고). 지금 상태에서는 존(Zone)을 넓혀도 전국에 후보가
-7곳뿐이고 그 7곳은 전부 서울이라 **지방 이송은 후보가 0곳**이다.
-
-**제안**: 병상 차감을 Supabase가 아니라 **짧은 TTL(10~15분) 오버레이**로 관리하고 병상
-자체는 E-Gen 실값을 쓴다 → Supabase 의존 제거 → 대응표 불필요 → 533곳 전부 hub로.
-근거로 `hvidate` 갱신 경과 중앙값이 **5분**(443곳 중 88.7%가 10분 이내)이라는 실측이 있다.
-그렇다면 "info 재조회(30분) 때 우리 차감이 리셋된다"는 기존 설계 전제를 다시 봐야 한다 —
-낡은 값으로 되돌아가는 게 아니라 **병원이 직접 갱신한 진짜 값으로 바뀌는 것**이라, 오히려
-우리 차감이 그걸 덮고 있으면 더 부정확하다. 이송 ETA가 10분인데 차감을 30분 유지하는 것도
-과하다. 딸려오는 변경으로 `hospitalId`가 `S0000001~7` → 실 hpid(`A11...`)가 되므로
-**dashboard 라우팅 확인이 필요하다.**
+과거엔 `send_to_hub.py`의 `_remap_to_supabase_hpid()`가 `SUPABASE_TO_EGEN_HPID`
+대응표 밖의 기관을 전부 버려서, E-Gen에서 533곳을 받아도 hub에는 7곳만 갔다 —
+원인은 병상만 Supabase에서 읽던 구조였다. 여기 제안됐던 방향(병상 차감을
+Supabase가 아니라 짧은 TTL 오버레이로 관리하고 병상 자체는 E-Gen 실값을 쓴다)을
+그대로 채택해 구현했다 — `hub/hub_engine.py`의 `BED_OVERLAY_TTL_MIN`(15분),
+`send_to_hub.py`의 Supabase 병상 조회·대응표 삭제. 이제 E-Gen이 주는 병원
+전체(서울 실측 55곳, 전국 500여 곳)가 hub로 흘러간다. 예고됐던 대로
+`hospitalId`가 `S0000001~7`에서 실 hpid(`A1100017` 등)로 바뀌었다 —
+dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
 
 ## feature/hub 담당자 참고사항
 
@@ -363,8 +367,8 @@ Supabase에서 읽는 구조다(위 참고). 지금 상태에서는 존(Zone)을
 - dashboard와는 WebSocket으로 통신한다 (`new WebSocket()`, socket.io 아님 — flask-socketio 대신 순수 WebSocket 라이브러리를 쓴다). hospital_approve/hospital_reject/final_approval 액션의 수신 주체는 **이 브랜치로 확정**됐고, 매칭 상태(`hospitals[].status`) 반영까지 구현·테스트 완료했다
 - dashboard의 통화 시작/종료 신호(3번 포맷)를 같은 WebSocket으로 받아 feature/voice의 로컬 마이크 서버로 HTTP 중계한다 — 오디오 자체는 hub를 거치지 않는다
 - 병상 수가 미상인 병원과 확인된 만실은 후보에서 안 빼는 결과는 같아도 원인이 다르다 — 섞이면 사후에 데이터 품질 문제인지 실제 만실인지 구분할 수 없다. `HospitalMatch.bedCountUnknown`으로 구분해 내보내며, 미상이어도 `status`는 막지 않는다(미상을 이유로 이송을 막으면 뺑뺑이가 오히려 늘어난다). 승인 처리 시 병상을 안 깎는 이유도 "모르는 병원 / 병상 미상 / 진짜 만실" 세 가지로 나눠 로그에 남긴다
-- `delivery.py`의 `send_to_info()`는 더 이상 자리만 있는 TODO가 아니다 — feature/info의 `POST /hub/bed-update`를 실제로 호출한다. URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값 `http://127.0.0.1:5002/hub/bed-update`, info 포트는 5002로 고정)로 바꿀 수 있고, info가 잠깐 안 떠 있어도 예외를 흡수하고 hub 프로세스는 계속 진행한다(voice/info가 서로의 부재를 조용히 흡수하는 것과 같은 방어 패턴)
-- 위 전송이 실패하면 그냥 버리지 않고 `hub/data/pending_bed_updates.jsonl`에 쌓아 **재시도 큐**로 관리한다. hub는 상시 백그라운드 루프가 없는 순수 요청-응답 구조라, 재시도 시점은 새 스레드 대신 "다음 `send_to_info()` 호출 기회(=다음 승인 액션)"로 삼았다. `HubEngine.update_hospital_info()`는 해당 병원이 이 대기열에 남아있는 동안은 info발 갱신을 건너뛴다 — 그렇지 않으면 info의 주기적 재조회가 hub가 이미 깎아둔 값을 낡은 값으로 되돌려버리기 때문이다(실제로 재현·복구까지 검증됨)
+- ~~`delivery.py`의 `send_to_info()`는 더 이상 자리만 있는 TODO가 아니다 — feature/info의 `POST /hub/bed-update`를 실제로 호출한다~~ → **2026-08-13 폐지.** info가 병원 Supabase를 안 쓰면서(E-Gen 실 API로 병상까지 직접 조회) 되돌려 쓸 대상이 사라졌다. `send_to_info()`·재시도 대기열(`pending_bed_updates.jsonl`)·`HubEngine.update_hospital_info()`의 "대기열에 남아있으면 upsert 보류" 방어 로직을 전부 제거했다 — info가 보내는 최신값을 매번 그대로 덮어써도 안전해졌다(아래 TTL 오버레이가 read-time에 적용되므로).
+- **병상 차감은 TTL 오버레이로 처리한다.** `HubEngine._bed_overlay`(hpid -> 만료 시각 목록, `BED_OVERLAY_TTL_MIN=15`)에 `final_approval`마다 하나씩 쌓이고, `effective_bed_count()`가 조회 시점에 만료 안 된 개수만큼만 얹어 보여준다. 15분은 `hvidate` 갱신 간격 실측(중앙값 5분, 88.7%가 10분 이내)에서 여유를 둔 값 — 그 안엔 E-Gen 자신도 아직 안 바뀌었을 가능성이 높다. `self._hospitals`의 원본값은 이제 직접 mutate하지 않는다(과거엔 `info.availableBedCount -= 1`로 직접 깎았음)
 - **여러 사건(구급차) 동시 처리를 지원한다.** `caseId`로 사건을, `apid`로 구급차(voice 인스턴스)를 구분한다. `HubEngine`은 승인 상태를 `(caseId, hospitalId)` 키로 분리 보관하고, 사건별 최신 매칭 결과를 캐시해뒀다가 승인 액션이 들어오면 재계산 없이 해당 병원 status만 패치해 재브로드캐스트한다(예전엔 이 재브로드캐스트 자체가 없어서 승인 버튼을 눌러도 화면에 반영이 안 됐다)
 - `_dashboard_ws` 전역 변수 하나였던 것을 소켓 **집합**으로 바꿔 연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다 — 예전엔 마지막에 연결한 탭만 갱신을 받는 버그가 있었다
 - **소켓 재연결 시 진행 중인 사건을 놓치던 문제 수정(2026-08-11)**: hub는 매칭 결과를 "그 순간 연결된 소켓"에만 브로드캐스트해서, 사건이 진행 중인 상태로 새 대시보드 탭이 뒤늦게 열리면 그 탭엔 아무것도 안 뜨는 문제가 실제로 있었다(구급1호차·서울대병원 탭 연결 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로 열면 그 사건이 안 보임). dashboard가 소켓 연결 직후 `{type:"identify", role, id}` 자기소개를 보내면(`DashboardIdentify`), hub가 `HubEngine.get_cases_for_hospital()`/`get_cases_for_apid()`로 관련된 진행 중인 사건들을 찾아 그 소켓에만 즉시 돌려준다(`app.py`의 `_send_catchup()`) — 응답은 평소 브로드캐스트와 같은 `HubMatchResult` 형식이라 dashboard 쪽에 별도 분기가 필요 없다
@@ -376,7 +380,7 @@ Supabase에서 읽는 구조다(위 참고). 지금 상태에서는 존(Zone)을
 - **info-v2(`hospital_score/`) 신뢰도 판정을 설명용으로 수신·전달한다(2026-08-13).** info-v2는 병원별로 15개 중증질환군에 대해 5단계 신뢰도(`declared_yes` 1.0 ~ `declared_no` 0.2, `confidence`, `basis` 근거 문장)를 심평원(HIRA) 대조로 판정해 `HospitalInfo.assessment`로 보낸다(Optional — 이 필드 없이 오는 구 feature/info 데이터도 그대로 통과). `process_voice_summary()`가 예상 병명을 이 15개 질환군 어휘와 한 번 더 매칭(기존 진료과 임베딩 매칭과는 별도 호출)해, 매칭된 병원의 그 그룹 판정을 `HospitalMatch.reliability`로 dashboard까지 전달한다
   - **finalScore(거리·진료과 가중합)는 전혀 안 건드렸다** — 순위 계산은 지금과 완전히 동일하고, `reliability`는 "왜 이 순위인지" 설명 근거로만 추가된다(팀 확정: 순위 반영 여부는 hospital_score/README.md의 "hub가 쓰는 방법" 제안 중 이번엔 채택하지 않고 다음 단계로 미룸)
   - hub의 `hub/schema.py`가 `extra="forbid"`로 막혀 있다는 서술이 hospital_score/README.md에 있었는데, 실제로는 아니다(pydantic BaseModel 기본값은 `extra="ignore"`) — `assessment` 필드가 없어도 파싱은 안 깨졌을 것이나, hub가 그 값을 실제로 읽어 쓰려면 어차피 스키마에 명시적으로 선언해야 해서 이번에 추가했다
-- **`feature/info-v2`가 develop에 머지됐다(2026-08-13).** `info/Hospital_inform/info/hospital_score/`(신뢰도 진단·심평원 대조·거절 로그 수신구)가 이제 develop에 포함되지만, `send_to_hub.py` 상시 파이프라인은 여전히 이 폴더를 import하지 않는다 — 병원 목록·병상 자체는 이전과 동일하게 E-Gen(+Supabase 병상)만 쓴다. **"hub로 흐르는 병원이 7곳뿐인 문제"(Supabase `SUPABASE_TO_EGEN_HPID` 대응표 의존)는 이번 작업 범위가 아니다** — info-v2가 제안한 TTL 오버레이 재설계는 아직 미착수
+- ~~**`feature/info-v2`가 develop에 머지됐다(2026-08-13).** ... `send_to_hub.py` 상시 파이프라인은 여전히 이 폴더를 import하지 않는다~~ → **같은 날 상시 파이프라인 연결까지 완료.** `feature/info-v2`를 `feature/info`에도 머지해 한 브랜치로 합쳤고, `send_to_hub.py`가 병원마다 `hospital_score.scoring`을 호출해 `assessment`를 붙여 보낸다. info-v2가 제안했던 TTL 오버레이도 hub 쪽에 구현 완료 — 위 "hub로 흐르는 병원이 7곳뿐인 문제" 절 참고
 
 ## feature/dashboard 담당자 참고사항
 
