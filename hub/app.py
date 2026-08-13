@@ -20,7 +20,7 @@ from flask import Flask, jsonify, request
 from flask_sock import Sock
 from pydantic import ValidationError
 
-from delivery import deliver, deliver_bed_update
+from delivery import deliver
 from hub_engine import HubEngine
 from schema import (
     AmbulanceInfo,
@@ -279,9 +279,7 @@ def _handle_dashboard_action(payload: dict) -> None:
         print(f"  [통신] 잘못된 ApprovalAction 수신: {exc.errors()}")
         return
 
-    bed_update = engine.apply_approval_action(action)
-    if bed_update is not None:
-        deliver_bed_update(bed_update)
+    engine.apply_approval_action(action)
 
     # maybe_expand_zone()은 거절 액션에만 부른다 — reject_ratio가 누적 계산이라
     # 승인/최종승인 뒤에도 부르면 새 거절이 없는데도 계속 확장돼버린다

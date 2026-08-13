@@ -6,16 +6,14 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import decision_log
-import delivery
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
     GpsPoint,
-    HospitalBedUpdate,
     HospitalInfo,
     HospitalMatch,
     HospitalStatus,
@@ -28,6 +26,15 @@ from schema import (
 from scoring import final_score, rank
 from specialty_matcher import SpecialtyMatcher
 
+# 병상 차감을 지속시키는 방식(2026-08-13 변경). 예전엔 hub가 깎은 값을
+# feature/info의 Supabase에 써서 다음 재조회 때도 유지시켰는데, info가 이제
+# Supabase 없이 E-Gen 실 API만 쓰면서(조회 전용이라 쓰기 자체가 불가능) 그
+# 경로가 사라졌다. 대신 hub가 짧은 시간만 자기 메모리에 차감분을 얹어 보여주는
+# TTL 오버레이로 대체한다 — 그 시간이 지나면 E-Gen 자신이 갱신한 진짜 값을
+# 그대로 믿는다. 15분은 hvidate 갱신 간격 실측(중앙값 5분, 88.7%가 10분
+# 이내)에서 여유를 둔 값이다.
+BED_OVERLAY_TTL_MIN = 15
+
 # dashboard의 ApprovalAction.action -> 매칭 결과에 반영할 상태.
 # hospital_approve/hospital_reject는 "병원의 승인은 후보 등록일 뿐"(CLAUDE.md)이라
 # 상태만 바뀌고 병상은 안 줄어든다. final_approval(구급대원의 이송 승인)만 실제
@@ -37,10 +44,6 @@ _ACTION_TO_STATUS: dict[str, HospitalStatus] = {
     "hospital_reject": "rejected",
     "final_approval": "confirmed",
 }
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # feature/info는 성인 응급실 병상 수를 bedsByType["ER_ADULT"]로 보내고, 미상이면
@@ -136,20 +139,42 @@ class HubEngine:
         # 그 시점엔 voice 데이터가 다시 오지 않는다 — 그래서 마지막 값을
         # 들고 있다가 재사용한다.
         self._case_voice: dict[str, VoiceCallSummaryMessage] = {}
+        # hospitalId -> 아직 유효한 차감 만료 시각 목록. final_approval마다 하나씩
+        # 추가되고, effective_bed_count()가 조회 시점에 만료분을 걸러낸다(별도
+        # 백그라운드 정리 스레드 없음 — hub가 상시 루프 없는 순수 요청-응답
+        # 구조라는 기존 원칙과 같다).
+        self._bed_overlay: dict[str, list[datetime]] = {}
 
     def update_hospital_info(self, info: HospitalInfo) -> None:
         """feature/info로부터 받은 병원 정보를 hospitalId 기준으로 upsert한다.
 
-        단, 이 병원의 병상 갱신이 feature/info 전송 재시도 대기열
-        (delivery.has_pending_bed_update())에 아직 남아있으면 건너뛴다. hub가
-        승인 처리로 이미 깎아둔 값을, 그 차감을 아직 모르는 info의 낡은 값이
-        되돌려버리는 걸 막기 위해서다 — 재시도가 성공해 대기열에서 빠진
-        뒤에야 다음 갱신이 정상 반영된다.
+        예전엔 병상 갱신이 feature/info 전송 재시도 대기열에 남아있는 동안
+        upsert 자체를 건너뛰는 방어 로직이 있었다 — hub가 Supabase에 써둔
+        차감이, 그 차감을 아직 모르는 info의 낡은 값에 되돌아가는 걸 막기
+        위해서였다. 병상 차감이 TTL 오버레이(읽는 시점에 얹는 방식)로
+        바뀌면서 그 문제 자체가 사라졌다 — info가 보내주는 값은 매번 최신
+        E-Gen 원본 그대로 반영해도 된다.
         """
-        if delivery.has_pending_bed_update(info.hospitalId):
-            print(f"  [병상 갱신 보류] {info.hospitalId}는 feature/info 전송 재시도 대기 중이라 이번 갱신을 건너뜀")
-            return
         self._hospitals[info.hospitalId] = info
+
+    def _prune_and_count_overlay(self, hospital_id: str, now: datetime) -> int:
+        """만료된 차감 기록을 걷어내고, 아직 유효한 개수를 돌려준다."""
+        expirations = self._bed_overlay.get(hospital_id)
+        if not expirations:
+            return 0
+        active = [expires_at for expires_at in expirations if expires_at > now]
+        if active:
+            self._bed_overlay[hospital_id] = active
+        else:
+            del self._bed_overlay[hospital_id]
+        return len(active)
+
+    def effective_bed_count(self, info: HospitalInfo) -> int:
+        """TTL 오버레이가 적용된 실제 표시용 병상 수. 0 미만으로는 안 내려간다
+        — 같은 병원에 짧은 시간 안에 여러 사건이 동시에 확정되는 극단적인
+        경우에도 dashboard에 음수 병상이 뜨지 않게 한다."""
+        overlay = self._prune_and_count_overlay(info.hospitalId, datetime.now(timezone.utc))
+        return max(0, info.availableBedCount - overlay)
 
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
         return self._hospitals.get(hospital_id)
@@ -212,18 +237,19 @@ class HubEngine:
             update: dict = {"status": status}
             info = self._hospitals.get(hospital_id)
             if info is not None:
-                update["availableBedCount"] = info.availableBedCount
+                update["availableBedCount"] = self.effective_bed_count(info)
                 update["bedCountUnknown"] = _is_bed_count_unknown(info)
             return h.model_copy(update=update)
 
         updated_hospitals = [_patch(h) for h in result.hospitals]
         self._case_results[case_id] = result.model_copy(update={"hospitals": updated_hospitals})
 
-    def apply_approval_action(self, action: ApprovalAction) -> HospitalBedUpdate | None:
+    def apply_approval_action(self, action: ApprovalAction) -> None:
         """dashboard가 보낸 승인 액션을 반영한다 (dashboard는 이 브랜치와만 직접
         통신하므로 수신은 여기서 한다). hospitals[].status에 반영될 내부 상태를
-        갱신하고, 병상이 실제로 줄어드는 경우(final_approval)에만 feature/info로
-        보낼 HospitalBedUpdate를 만들어 반환한다 — 그 외에는 None을 반환한다.
+        갱신하고, 병상이 실제로 줄어드는 경우(final_approval)에는 TTL 오버레이에
+        차감 기록을 얹는다. feature/info로 병상 갱신을 되돌려 쓸 방법이 없어졌으므로
+        (E-Gen이 조회 전용) 더 이상 반환값으로 알릴 대상이 없다 — None만 반환한다.
         """
         # 멱등성: 이미 confirmed된 병원에 최종 승인이 중복 도착해도(버튼 중복
         # 클릭, 네트워크 재시도 등) 병상을 두 번 깎지 않는다. 여러 사건이
@@ -234,7 +260,7 @@ class HubEngine:
                 "approval_action_ignored_duplicate",
                 {"action": action.model_dump(), "reason": "already confirmed"},
             )
-            return None
+            return
 
         new_status = _ACTION_TO_STATUS[action.action]
         self._approval_status[status_key] = new_status
@@ -243,7 +269,7 @@ class HubEngine:
             # 병상은 안 건드리는 액션이라 지금 self._hospitals 값 그대로 패치해도 된다.
             self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
             decision_log.log_decision("approval_action_applied", {"action": action.model_dump(), "bedUpdate": None})
-            return None
+            return
 
         info = self._hospitals.get(action.hospital_id)
         # 병상을 깎지 않고 넘어가는 경우를 이유별로 남긴다. "미상"과 "확인된 만실"은
@@ -256,7 +282,9 @@ class HubEngine:
             # 모르는 값은 깎을 수 없다. 다만 확정(status) 자체는 막지 않는다 —
             # 미상을 이유로 이송을 막으면 뺑뺑이가 오히려 늘어난다.
             skip_reason = "bed count unknown"
-        elif info.availableBedCount <= 0:
+        elif self.effective_bed_count(info) <= 0:
+            # 원본 값이 아니라 오버레이가 이미 반영된 값으로 판단한다 — 다른
+            # 사건이 방금 이 병원을 확정했다면 그 차감이 아직 안 끝난 것이다.
             skip_reason = "no beds left"
 
         if skip_reason is not None:
@@ -266,26 +294,27 @@ class HubEngine:
                 "approval_action_ignored_no_bed",
                 {"action": action.model_dump(), "reason": skip_reason},
             )
-            return None
+            return
 
-        info.availableBedCount -= 1
-        info.updatedAt = _utcnow_iso()
-        # 병상이 실제로 줄어든 뒤에 패치해야 dashboard 캐시에도 새 병상 수가
-        # 반영된다 — 감소 전에 패치하면 status만 바뀌고 병상 배지는 옛날 값
-        # 그대로 남는다(실제로 재현됐던 문제).
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=BED_OVERLAY_TTL_MIN)
+        self._bed_overlay.setdefault(info.hospitalId, []).append(expires_at)
+        # 병상 차감(오버레이)이 실제로 얹힌 뒤에 패치해야 dashboard 캐시에도 새
+        # 병상 수가 반영된다 — 얹기 전에 패치하면 status만 바뀌고 병상 배지는
+        # 옛날 값 그대로 남는다(예전 Supabase 방식에서 실제로 재현됐던 문제와
+        # 같은 종류라 순서를 그대로 지킨다).
         self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
 
-        bed_update = HospitalBedUpdate(
-            hospitalId=info.hospitalId,
-            availableBedCount=info.availableBedCount,
-            status="confirmed",
-            updatedAt=info.updatedAt,
-        )
         decision_log.log_decision(
             "approval_action_applied",
-            {"action": action.model_dump(), "bedUpdate": bed_update.model_dump()},
+            {
+                "action": action.model_dump(),
+                "bedOverlay": {
+                    "hospitalId": info.hospitalId,
+                    "effectiveBedCount": self.effective_bed_count(info),
+                    "expiresAt": expires_at.isoformat(),
+                },
+            },
         )
-        return bed_update
 
     def reject_ratio(self, case_id: str, ambulance_gps: GpsPoint, max_zone: int) -> float:
         """현재 존(1~max_zone) 안 병원들 중, 명시적으로 응답(approved/rejected/
@@ -370,7 +399,7 @@ class HubEngine:
                 gps=item["info"].gps,
                 distanceKm=item["distanceKm"],
                 specialtyMatch=item["specialtyMatch"],
-                availableBedCount=item["info"].availableBedCount,
+                availableBedCount=self.effective_bed_count(item["info"]),
                 bedCountUnknown=_is_bed_count_unknown(item["info"]),
                 status=self._approval_status.get((voice.caseId, item["hospitalId"]), "pending"),
                 reliability=(

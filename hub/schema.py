@@ -291,18 +291,3 @@ class DashboardIdentityInfo(BaseModel):
     id: str
     name: Optional[str] = None
     known: bool
-
-
-# ── feature/hub → feature/info (출력, HospitalInfo 부분 갱신) ───────────────
-
-class HospitalBedUpdate(BaseModel):
-    """final_approval로 병상이 실제로 줄었을 때만 보내는 부분 갱신(patch).
-    HospitalInfo 전체가 아니라 바뀐 필드만 담는다 (info README "통합 데이터
-    모델: HospitalInfo" 표의 "2번" 열 참고).
-    """
-
-    hospitalId: str
-    availableBedCount: int
-    status: Literal["confirmed", "rejected"]
-    updatedAt: str
-    source: Literal["rule"] = "rule"

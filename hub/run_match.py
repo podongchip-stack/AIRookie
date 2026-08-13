@@ -8,11 +8,12 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import decision_log
 import delivery
-from hub_engine import HubEngine
+from hub_engine import BED_OVERLAY_TTL_MIN, HubEngine
 from schema import AmbulanceInfo, ApprovalAction, GpsPoint, HospitalInfo, VoiceCallSummaryMessage
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -123,6 +124,9 @@ def main() -> None:
     # 통신이 붙어도 HubEngine.apply_approval_action()을 그대로 부르면 되므로,
     # 이 테스트가 검증하는 로직 자체는 병합 후에도 안 바뀐다.
     top_hospital_id = result.hospitals[0].hospitalId
+    hospital_before = engine.get_hospital(top_hospital_id)
+    raw_before = hospital_before.availableBedCount
+    effective_before = engine.effective_bed_count(hospital_before)
     action = ApprovalAction(
         caseId=CASE_ID,
         action="final_approval",
@@ -130,20 +134,19 @@ def main() -> None:
         actor="paramedic",
         timestamp="2026-07-30T14:20:00Z",
     )
-    bed_update = engine.apply_approval_action(action)
-    assert bed_update is not None, "final_approval인데 병상 갱신이 안 나오면 안 된다"
-    print(f"  {top_hospital_id} 확정 → 남은 병상 {bed_update.availableBedCount}개로 갱신")
-
-    saved_bed_update_path = delivery.deliver_bed_update(bed_update)
-    print(f"  병상 갱신 결과 저장: {saved_bed_update_path}")
+    engine.apply_approval_action(action)
+    effective_after = engine.effective_bed_count(engine.get_hospital(top_hospital_id))
+    assert effective_after == effective_before - 1, "final_approval인데 TTL 오버레이로 병상이 안 줄면 안 된다"
+    print(
+        f"  {top_hospital_id} 확정 → 표시 병상 {effective_before}개 -> {effective_after}개 "
+        f"(TTL {BED_OVERLAY_TTL_MIN}분, feature/info로 되돌려 쓰지 않음)"
+    )
 
     print("\n=== 멱등성 확인: 같은 최종 승인이 중복으로 다시 도착해도 병상이 또 안 깎여야 함 ===")
-    duplicate_update = engine.apply_approval_action(action)
-    assert duplicate_update is None, (
-        "이미 confirmed된 병원에 중복 요청이 오면 None을 반환해야 한다 "
-        "(None이 아니라 새 HospitalBedUpdate가 나온다는 건 병상이 또 깎였다는 뜻)"
-    )
-    print(f"  [확인] 중복 final_approval 무시됨 — {top_hospital_id} 병상이 또 깎이지 않음")
+    engine.apply_approval_action(action)
+    effective_after_duplicate = engine.effective_bed_count(engine.get_hospital(top_hospital_id))
+    assert effective_after_duplicate == effective_after, "이미 confirmed된 병원에 중복 요청이 오면 병상이 또 깎이면 안 된다"
+    print(f"  [확인] 중복 final_approval 무시됨 — {top_hospital_id} 병상이 또 깎이지 않음 ({effective_after_duplicate}개 유지)")
 
     print("\n=== 재매칭: 같은 조건으로 다시 매칭하면 확정 상태·병상 수가 반영되는지 확인 ===")
     t1 = time.perf_counter()
@@ -158,8 +161,18 @@ def main() -> None:
 
     confirmed = next(h for h in result_after_approval.hospitals if h.hospitalId == top_hospital_id)
     assert confirmed.status == "confirmed", "승인 액션을 반영했는데 status가 그대로면 안 된다"
-    assert confirmed.availableBedCount == bed_update.availableBedCount, "병상 수가 갱신되지 않았다"
+    assert confirmed.availableBedCount == effective_after, "병상 수가 갱신되지 않았다"
     print(f"\n  [확인] {top_hospital_id}의 status가 confirmed로, 병상 수가 감소분으로 반영됨")
+
+    print("\n=== TTL 만료 확인: 오버레이가 만료되면 원래(E-Gen 원본) 병상 수로 돌아가야 함 ===")
+    overlay_entries = engine._bed_overlay.get(top_hospital_id)
+    assert overlay_entries, "final_approval 직후인데 오버레이 기록이 없으면 안 된다"
+    # 실제로 15분을 기다릴 수 없으니, 만료 시각을 과거로 강제로 앞당겨 만료를 흉내낸다.
+    engine._bed_overlay[top_hospital_id] = [datetime.now(timezone.utc) - timedelta(minutes=1)]
+    effective_expired = engine.effective_bed_count(engine.get_hospital(top_hospital_id))
+    assert effective_expired == raw_before, "TTL이 지났으면 원본(E-Gen) 병상 수로 돌아가야 한다"
+    assert top_hospital_id not in engine._bed_overlay, "만료된 오버레이 기록은 조회 시점에 정리돼야 한다"
+    print(f"  [확인] TTL 만료 후 병상 수가 원본({raw_before}개)으로 복귀, 오버레이 기록도 정리됨")
 
     print("\n=== 의사결정 로그 위변조 검증 ===")
     ok, checked = decision_log.verify_log()
