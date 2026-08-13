@@ -1,11 +1,14 @@
 {
+  "caseId": "case-DrRomantic3v3",
   "patientInfo": {
     "injuryStatus": [
       "의식 저하",
       "호흡 곤란"
     ],
     "expectedDiagnosis": "교통사고로 인한 흉부 손상",
-    "severityTag": "high"
+    "severityTag": "high",
+    "rawTranscript": "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다... A병원: 네 잠시만요...",
+    "filteredTranscript": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란."
   },
   "zoneActive": [
     1
@@ -24,8 +27,10 @@
         "score": 0.5776
       },
       "availableBedCount": 5,
+      "bedCountUnknown": false,
       "status": "pending",
-      "etaMin": null
+      "etaMin": null,
+      "reliability": null
     },
     {
       "hospitalId": "H001",
@@ -40,8 +45,10 @@
         "score": 0.5132
       },
       "availableBedCount": 12,
+      "bedCountUnknown": false,
       "status": "pending",
-      "etaMin": null
+      "etaMin": null,
+      "reliability": null
     },
     {
       "hospitalId": "H002",
@@ -56,9 +63,12 @@
         "score": 0.0
       },
       "availableBedCount": 0,
+      "bedCountUnknown": false,
       "status": "pending",
-      "etaMin": null
+      "etaMin": null,
+      "reliability": null
     }
   ],
-  "source": "rule"
+  "source": "rule",
+  "ambulanceName": null
 }

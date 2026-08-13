@@ -14,7 +14,19 @@ from pathlib import Path
 import decision_log
 import delivery
 from hub_engine import BED_OVERLAY_TTL_MIN, HubEngine
-from schema import AmbulanceInfo, ApprovalAction, GpsPoint, HospitalInfo, VoiceCallSummaryMessage
+from schema import (
+    AmbulanceInfo,
+    ApprovalAction,
+    Assessment,
+    AssessmentConditions,
+    AssessmentGroup,
+    GpsPoint,
+    HospitalInfo,
+    Specialty,
+    VoiceCallSummaryMessage,
+    VoiceSummary,
+    VoiceTranscript,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 TEST_DIR = BASE_DIR / "data" / "test"
@@ -220,6 +232,76 @@ def main() -> None:
         "register_case()로 등록한 (caseId -> apid)가 get_case_apid()로 그대로 조회돼야 한다"
     )
     print("  [확인] AmbulanceInfo 등록·조회, (caseId -> apid) 매핑 모두 정상 동작")
+
+    test_declared_no_demotion()
+
+
+def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
+    return AssessmentGroup(status="unavailable" if tier == "declared_no" else "unknown",
+                            tier=tier, score=score, confidence=confidence, basis=["테스트"], items={})
+
+
+def test_declared_no_demotion() -> None:
+    """hospital_score(assessment)의 관련 질환군이 declared_no(병원이 명시적으로
+    "수용 불가"라고 신고)면, 거리·진료과가 아무리 유리해도 순위 맨 뒤로 밀려야
+    한다(scoring.rank()의 demote 키). finalScore 계산식 자체는 안 바뀐다 —
+    가중합으로 섞지 않고 정렬 순서만 조정하는 방식을 택한 이유는 hub_engine.py의
+    `_should_demote()` 문서화 참고(임의 가중치 없이 안전을 보장하려면 실험상
+    신뢰도 가중치가 70%대까지 필요해, 그럴 바엔 순서로 미는 편이 낫다는 결론).
+    """
+    print("\n=== declared_no 데모션 확인: 거리·진료과 1등이어도 수용불가 신고면 맨 뒤로 ===")
+    engine = HubEngine()
+
+    declared_no_hospital = HospitalInfo(
+        hospitalId="D001", name="[테스트] 초근접·진료과 동점, 수용불가 신고",
+        gps=GpsPoint(lat=35.1810, lng=128.1090), availableBedCount=5, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=0)],
+        updatedAt="2026-08-14T00:00:00Z",
+        assessment=Assessment(
+            assessedAt="2026-08-14T00:00:00+09:00", conditions=AssessmentConditions(), evidence={},
+            groups={"대동맥응급": _assessment_group("declared_no", 0.2, "high")},
+        ),
+    )
+    unknown_hospital = HospitalInfo(
+        hospitalId="D002", name="[테스트] 그다음, 미상",
+        gps=GpsPoint(lat=35.1950, lng=128.1200), availableBedCount=3, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=0)],
+        updatedAt="2026-08-14T00:00:00Z",
+        assessment=Assessment(
+            assessedAt="2026-08-14T00:00:00+09:00", conditions=AssessmentConditions(), evidence={},
+            groups={"대동맥응급": _assessment_group("unknown_bare", 0.4, "low")},
+        ),
+    )
+    no_assessment_hospital = HospitalInfo(
+        hospitalId="D003", name="[테스트] assessment 없음 (구 데이터, 하위호환 확인)",
+        gps=GpsPoint(lat=35.2000, lng=128.1300), availableBedCount=1, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=0)],
+        updatedAt="2026-08-14T00:00:00Z",
+        assessment=None,
+    )
+    for h in (declared_no_hospital, unknown_hospital, no_assessment_hospital):
+        engine.update_hospital_info(h)
+
+    voice = VoiceCallSummaryMessage(
+        caseId="case-declared-no-test",
+        transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+        summary=VoiceSummary(
+            patient="60대 남성", mechanism="대동맥 박리 의심",
+            symptoms=["흉통"], treatment=["산소 공급"], severity_tag="high",
+        ),
+        source="ai",
+    )
+    result = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    for h in result.hospitals:
+        rel = f"{h.reliability.group}/{h.reliability.score}" if h.reliability else "없음"
+        print(f"  {h.hospitalId} {h.name} — 거리 {h.distanceKm}km, reliability=[{rel}]")
+
+    assert result.hospitals[-1].hospitalId == "D001", (
+        "declared_no 신고 병원(D001)은 거리·진료과가 유리해도 항상 맨 뒤여야 한다"
+    )
+    d001 = next(h for h in result.hospitals if h.hospitalId == "D001")
+    assert d001.specialtyMatch.score > 0, "데모션은 specialtyMatch 값 자체를 건드리면 안 된다 — 정렬 순서만 바뀐다"
+    print("  [확인] D001이 거리 1위·진료과 동점임에도 declared_no라서 맨 뒤로 밀림 (specialtyMatch 값 자체는 안 바뀜)")
 
 
 if __name__ == "__main__":

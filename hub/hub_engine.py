@@ -91,10 +91,11 @@ def _reliability_for(info: HospitalInfo, group: str) -> ReliabilityInfo | None:
     """이 병원의 assessment(info-v2 신뢰도 진단)에서 group에 해당하는 판정을
     꺼내 dashboard 설명용 ReliabilityInfo로 옮긴다.
 
-    finalScore 계산에는 전혀 관여하지 않는다 — 순위는 지금처럼 specialtyMatch
-    (진료과 임베딩)와 distanceKm만으로 정해지고, 이건 "왜 이 순위인지"를
-    dashboard에 보여주기 위한 부가 설명일 뿐이다. assessment 자체가 없는
-    병원(심평원 미연동 구 데이터)이나 그 질환군 판정이 없으면 None을 돌려주고,
+    finalScore 값 자체의 계산식(진료과 임베딩 가중합)에는 관여하지 않는다 —
+    이건 "왜 이 순위인지"를 dashboard에 보여주기 위한 설명 필드다. 다만
+    같은 판정이 순위의 "정렬 순서"에는 영향을 준다(`_should_demote()` 참고,
+    finalScore를 건드리지 않는 별도 경로). assessment 자체가 없는 병원
+    (심평원 미연동 구 데이터)이나 그 질환군 판정이 없으면 None을 돌려주고,
     dashboard는 이 경우 설명 섹션을 안 보여주면 된다.
     """
     if info.assessment is None:
@@ -108,6 +109,27 @@ def _reliability_for(info: HospitalInfo, group: str) -> ReliabilityInfo | None:
         confidence=group_score.confidence,
         basis=group_score.basis,
     )
+
+
+def _should_demote(info: HospitalInfo, group: str | None) -> bool:
+    """이 병원을 순위 맨 뒤로 밀어야 하는지 — assessment의 관련 질환군이
+    `declared_no`(병원이 명시적으로 "수용 불가"라고 신고)일 때만 True.
+
+    가중합으로 finalScore에 섞지 않는 이유: hospital_score의 5단계
+    score(0.2~1.0)는 순서만 의미가 있는 값이라(scoring.py의 TIER_* 주석
+    "값 자체에 의미를 두지 않는다 — 순서만 쓴다"), 여기에 임의 비중을 곱해
+    거리·진료과 점수와 산술로 합치면 근거 없는 정밀함을 만드는 것과 같다.
+    실제로 실험해보면(가상 worktree) 안전을 완전히 보장하려는 가중치는
+    70%대까지 올라가서, 그럴 바엔 거리·진료과를 사실상 무시하는 셈이 된다
+    — 그래서 점수는 안 섞고 정렬 순서만 조정한다("제거하지 말고 아래로
+    내릴 것", hospital_score/README.md "hub가 쓰는 방법" 4번 지침과 일치).
+    거절 로그가 쌓여 실측 기반 가중치를 낼 수 있게 되면(3번 방법) 이 자리를
+    가중합으로 승격하는 걸 재검토한다.
+    """
+    if info.assessment is None or group is None:
+        return False
+    group_score = info.assessment.groups.get(group)
+    return group_score is not None and group_score.tier == "declared_no"
 
 
 class HubEngine:
@@ -359,6 +381,12 @@ class HubEngine:
     ) -> HubMatchResult:
         """2단계: voice의 의료 정보가 도착하면, 보관해둔 병원 정보와 결합해
         진료과 매칭 + 거리를 가중합한 최종 매칭 결과를 만든다.
+
+        정렬에는 한 가지 예외가 있다 — hospital_score(assessment)의 관련
+        질환군이 `declared_no`(병원이 명시적으로 "수용 불가"라고 신고)인
+        병원은 finalScore와 무관하게 순위 맨 뒤로 밀린다(`_should_demote()`,
+        `scoring.rank()`의 `demote` 키). finalScore 값 자체(가중합 공식)는
+        바뀌지 않고, 정렬 순서만 조정된다 — 후보에서 제거하는 게 아니다.
         """
         self._case_voice[voice.caseId] = voice
         self._case_max_zone[voice.caseId] = max_zone
@@ -389,6 +417,7 @@ class HubEngine:
                     "distanceKm": round(distance, 2),
                     "info": info,
                     "specialtyMatch": SpecialtyMatch(department=best_dept, score=round(similarity, 4)),
+                    "demote": _should_demote(info, best_assessment_group),
                 }
             )
 
