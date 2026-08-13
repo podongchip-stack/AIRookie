@@ -19,12 +19,20 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from . import dataset as D
 from . import hira_files as HF
 from . import vocabulary as V
+
+#: Windows 기본 콘솔은 cp949라 아래 출력에 쓰인 em dash 하나에 UnicodeEncodeError로
+#: 죽는다. 문서 여러 곳이 이 파일을 "재현 명령"으로 내세우는데, 정작 기본 환경에서는
+#: 첫 섹션도 못 넘기고 실패했다 — 재현 가능성이 이 파일의 존재 이유이므로
+#: 출력 인코딩을 맨 먼저 고정한다.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 #: 등급 표기 순서. 역량 순이라 표가 읽기 쉬워진다
 EMCLS_ORDER = [
@@ -35,8 +43,10 @@ EMCLS_ORDER = [
 ]
 
 #: 이 시간을 넘게 갱신이 없으면 "실시간"이라 부를 수 없다고 본다.
-#: 근거: 실측한 `hvidate` 갱신 간격 중앙값이 3.5분이고 55곳 중 50곳이 10분 이내다.
-#: 하루는 그 분포에서 한참 벗어난 값이라 판정 기준으로 안전하다
+#: 근거(표본을 밝혀둔다 — 두 값이 문서마다 달라 보이는 이유다): 서울 55곳 실측에서
+#: `hvidate` 갱신 간격 중앙값 3.5분, 50곳이 10분 이내. 전국 443곳으로 넓히면
+#: 중앙값 5분, 88.7%가 10분 이내다(`scoring.py`의 같은 상수 주석).
+#: 어느 표본이든 하루는 그 분포에서 한참 벗어난 값이라 판정 기준으로 안전하다
 STALE_THRESHOLD = timedelta(days=1)
 
 
@@ -274,9 +284,10 @@ def section_volatility(frames: list[D.Frame]) -> None:
             f"{hpid}({n}회)" for hpid, n in changes.most_common(5)
         ))
     print()
-    print("  병상은 값이 움직여도 0까지 가는 일이 거의 없어(P(만실 전환) 0.618%) 예측을")
-    print("  접었다. 수용가능 신고는 미상이 절반을 넘고 값도 움직인다 — 관측된 칸이")
-    print("  자동 라벨이 되므로 사람이 정답을 쓸 필요가 없다.")
+    print("  병상은 값이 움직여도 0까지 가는 일이 거의 없어 예측을 접었다")
+    print("  (그 판정의 근거는 여기서 계산하지 않는다 — python -m hospital_score.discarded).")
+    print("  수용가능 신고는 미상이 절반을 넘고 값도 움직인다 — 관측된 칸이 자동 라벨이")
+    print("  되므로 사람이 정답을 쓸 필요가 없다.")
 
 
 def section_specialty_crosscheck(
