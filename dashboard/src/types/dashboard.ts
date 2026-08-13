@@ -83,6 +83,27 @@ export type ApprovalActionType =
 
 export type Actor = "hospital" | "paramedic";
 
+// info-v2(hospital_score)의 거절 로그 수신구(POST /hub/rejection)가 쓰는 4축 어휘
+// (CLAUDE.md "거절 로그" 절, 2026-08-12). 구조적(NO_WARD/NO_DEPARTMENT/NO_EQUIPMENT)
+// 사유는 병원 역량 벡터 자체를 고치는 신호로, 주기적(ON_CALL_MISMATCH/NIGHT_UNAVAILABLE)
+// 은 시간대 패턴으로, 순간적(BEDS_FULL/OR_OCCUPIED/STAFF_BUSY)은 그때그때의 여건으로
+// 갱신 대상이 서로 달라 축을 나눠 요청됐다 — 하나로 뭉치면 일시적 사정 때문에 그
+// 병원이 영구히 후보에서 밀려나는 문제가 생긴다.
+// NO_RESPONSE는 여기 없다 — "병원이 응답 자체를 안 함"을 위한 값이라 이 버튼(응답을
+// 눌렀을 때만 발생)과는 안 맞는다. hub/info 쪽 타임아웃 처리가 필요한 별도 사안이다.
+export type RejectionReason =
+  | "NO_WARD"
+  | "NO_DEPARTMENT"
+  | "NO_EQUIPMENT"
+  | "ON_CALL_MISMATCH"
+  | "NIGHT_UNAVAILABLE"
+  | "BEDS_FULL"
+  | "OR_OCCUPIED"
+  | "STAFF_BUSY"
+  | "SEVERITY_EXCEEDED"
+  | "AGE_LIMIT"
+  | "UNSPECIFIED";
+
 // dashboard → feature/hub. 이 스키마만 CLAUDE.md/hub README 모두 snake_case로 확정돼 있다.
 export interface ApprovalAction {
   // 여러 사건이 동시에 진행되면 hospital_id만으로는 "어느 사건에 대한
@@ -93,6 +114,9 @@ export interface ApprovalAction {
   hospital_id: string;
   actor: Actor;
   timestamp: string;
+  // action이 "hospital_reject"일 때만 채워진다 — hub는 지금도 이 필드 없이 오는
+  // 액션을 그대로 받아 UNSPECIFIED로 기록하므로, 값이 없어도 기존 연동은 깨지지 않는다.
+  reason?: RejectionReason;
 }
 
 // 통화 시연 컴포넌트(구급차 대시보드)가 hub에 보내는 통화 시작/종료 신호.
