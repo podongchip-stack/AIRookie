@@ -99,17 +99,19 @@ feature/hub를 거친다. feature/hub는 GPS와 feature/info의 병원 정보로
 
 ```
 feature/voice ──(의료 정보·예상 병명·통화 전문 JSON)──→ feature/hub
-feature/info ──(병원 정보 JSON)──────────────────────→ feature/hub
+feature/info ──(병원 정보 JSON, assessment 포함)─────→ feature/hub
 feature/hub ──(통합 매칭 결과 JSON, WebSocket)───────→ feature/dashboard
 feature/dashboard ──(승인 액션 JSON, WebSocket)──────→ feature/hub
 feature/dashboard ──(통화 시작/종료 신호, WebSocket)─→ feature/hub ──(HTTP 중계)──→ feature/voice
-feature/hub ──(병상 갱신 JSON, HTTP)─────────────────→ feature/info
 ```
 
-병상 갱신(hub→info)은 이송 확정(`final_approval`) 시점에만 발생하는 부분
-갱신이다 — feature/info의 `send_to_hub.py`가 주기적으로(기본 30분) 다시
-가져가는 것과는 별개로, 그 사이에 확정된 병상만 즉시 반영해 중복 매칭을
-막는다. 스키마·엔드포인트는 feature/info README.md의 "hub → info" 참고.
+~~병상 갱신(hub→info)은 이송 확정(`final_approval`) 시점에만 발생하는 부분
+갱신이다~~ → **2026-08-13 이 화살표 자체가 없어졌다.** info가 병원
+Supabase 없이 E-Gen 실 API로 병상까지 직접 읽으면서(조회 전용이라 hub가
+쓸 방법이 원래 없었음), hub→info 방향 통신이 통째로 사라졌다. 이송 확정
+시점의 병상 차감은 이제 hub 혼자 자기 메모리(TTL 오버레이, 15분)로만
+처리한다 — feature/info로 아무것도 되돌려 쓰지 않는다. 자세한 것은
+"feature/hub 담당자 참고사항"의 "병상 차감은 TTL 오버레이로 처리한다" 참고.
 
 아래 포맷은 voice를 제외하고는 아직 약식이다. 병원 매칭 결과 스키마는 feature/hub
 README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에는 구 스키마를 남기지 않는다.
