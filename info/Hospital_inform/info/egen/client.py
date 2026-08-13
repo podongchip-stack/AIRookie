@@ -352,13 +352,13 @@ class HttpEgenClient:
 
         return rows
 
-    def get_realtime_beds(self, stage1: str = "서울특별시", stage2: str = "") -> list[dict]:
+    def get_realtime_beds(self, stage1: str = "", stage2: str = "") -> list[dict]:
         return self._call(OP_REALTIME_BEDS, {"STAGE1": stage1, "STAGE2": stage2})
 
-    def get_severe_illness(self, stage1: str = "서울특별시", stage2: str = "") -> list[dict]:
+    def get_severe_illness(self, stage1: str = "", stage2: str = "") -> list[dict]:
         return self._call(OP_SEVERE_ILLNESS, {"STAGE1": stage1, "STAGE2": stage2})
 
-    def get_list_info(self, q0: str = "서울특별시", q1: str = "") -> list[dict]:
+    def get_list_info(self, q0: str = "", q1: str = "") -> list[dict]:
         return self._call(OP_LIST_INFO, {"Q0": q0, "Q1": q1})
 
     def update_bed_count(self, hpid: str, hvec_value: int) -> None:
