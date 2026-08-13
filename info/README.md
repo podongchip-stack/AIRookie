@@ -162,7 +162,7 @@ E-Gen과 심평원은 공통 식별자가 없어(`hpid` ↔ `ykiho`) **좌표 �
 
 | 파일 | 내용 | 언제 필요한가 |
 |---|---|---|
-| `requirements.txt` | Flask, Flask-SocketIO, requests, python-dotenv | 서버·E-Gen API 호출. `send_to_hub.py`(주기적 재조회)와 `app.py`(hub의 병상 갱신 수신)가 이 의존성을 쓴다 |
+| `requirements.txt` | requests, python-dotenv | E-Gen·심평원 API 호출. `send_to_hub.py`(주기적 재조회)가 이 의존성을 쓴다. Flask/Flask-SocketIO는 병상 갱신 수신 서버(`app.py`)가 2026-08-13 삭제되며 같이 정리 대상 |
 | `ocr/requirements.txt` | torch, transformers, onnxruntime, opencv 등 | 서류 이미지 → 텍스트. **NVIDIA GPU 필요** |
 | `ocr/requirements-extract.txt` | pydantic | 텍스트 → 필드. GPU 불필요, Ollama 서버만 있으면 됨 |
 | `simulation/requirements.txt` | tkinterdnd2, pypdfium2 | 처리 과정을 보는 GUI. 위 두 개 위에 창만 얹는다 |
@@ -195,81 +195,63 @@ GPU 없는 장비에서 E-Gen 정규화와 필드 추출 로직을 개발할 수
 
 ### 통합 데이터 모델: HospitalInfo
 
-`feature/info`와 `feature/hub` 사이를 오가는 두 메시지(아래 1·2번)는 서로 다른
-스키마가 아니라, **같은 병원 레코드(HospitalInfo)를 서로 다른 크기로 주고받는
-것**이다. info가 hub로는 전체 레코드를 보내고, hub가 info로는 병상 수만 담은
-부분 갱신(patch)을 돌려준다 — 필드 집합은 아래 표 하나를 기준으로 통일한다.
+**2026-08-13부로 병원 Supabase 의존을 완전히 제거했다.** 예전엔 병상 수만
+Supabase 대체 DB에 남겨두고(E-Gen이 조회 전용이라 hub의 확정 차감을 되돌려
+쓸 방법이 없어서), hub가 그 차감을 Supabase에 다시 써서 재조회에도 유지되게
+하는 왕복 구조(아래 "2번" 메시지, `info/app.py`)가 있었다. 이제 그 왕복
+자체가 없다 — 병상 차감은 hub 쪽 **TTL 오버레이**(짧은 시간만 hub 메모리에
+얹어 보여주는 방식, `hub/hub_engine.py`의 `BED_OVERLAY_TTL_MIN`)로 대신
+처리한다. `info/app.py`(`POST /hub/bed-update` 수신 서버)는 삭제됐다.
 
-| 필드                                  | 타입                           | 설명                                            | 1번(info→hub 전체 전송) | 2번(hub→info 부분 갱신)                    |
-| ----------------------------------- | ---------------------------- | --------------------------------------------- | ------------------ | ------------------------------------- |
-| `hospitalId`                        | string                       | 병원 고유 식별자                                     | 포함                 | 포함 (대상 식별용)                           |
-| `name`                              | string                       | 병원명                                           | 포함                 | 미포함 (안 바뀌는 값)                         |
-| `gps.lat` / `gps.lng`               | number                       | 병원 위치 좌표 (Hub의 거리 계산에 사용)                     | 포함                 | 미포함                                   |
-| `availableBedCount`                 | number                       | 실시간 가용 응급실 병상 수                               | 포함 (현재값)           | 포함 (hub가 확정 처리 후 계산한 최신값 — 이 값으로 덮어씀) |
-| `nightDutyAvailable`                | boolean                      | 야간 당직 전문의 존재 여부                               | 포함                 | 미포함                                   |
-| `specialties[].department`          | string                       | 진료과명                                          | 포함                 | 미포함                                   |
-| `specialties[].doctorCount`         | number                       | 해당 진료과 수술 가능 의사 수                             | 포함                 | 미포함                                   |
-| `specialties[].recentProcedureTags` | string[]                     | 최근 수술 이력 기반 전문 분야 태그 (개인정보 블라인드 처리, 가안 DB 기반) | 포함                 | 미포함                                   |
-| `status`                            | `"confirmed"` \| `"rejected"` | 이 갱신이 발생한 사유                                 | 미포함 (해당 없음)        | 포함                                    |
-| `source`                            | `"rule"`                     | 규칙 기반 데이터임을 나타내는 고정값                          | 포함                 | 포함                                    |
-| `updatedAt`                         | string (ISO 8601)            | 이 레코드/갱신이 마지막으로 발생한 시각                        | 포함                 | 포함                                    |
+그래서 `feature/info`가 `feature/hub`로 보내는 메시지는 **`HospitalInfo`
+전체 전송 하나뿐**이다.
 
-위 표가 **팀 합의 기준**이다. 여기에 더해 `Hospital_inform/`은 아래 두 필드를
-optional 확장으로 덧붙여 내보낸다. 기존 필드는 하나도 바꾸지 않았고, hub의
-`HospitalInfo`는 모르는 필드를 무시하므로(pydantic 기본 동작) 지금 보내도 아무것도
-깨지지 않는다. **아직 합의 전이며 제안 상태다.**
-
-| 필드 | 타입 | 설명 | 상태 |
-|---|---|---|---|
-| `bedsByType` | `{[코드]: number}` | 병상 종류별 가용 수 (`ER_ADULT`, `ER_PEDIATRIC`, `ICU` …). 성인/소아 분기의 핵심. **미상인 종류는 키 자체를 넣지 않는다** | 확장 (제안) |
-| `capabilities` | string[] | 수행 가능한 시술·장비 표준 코드 (`PROC_PCI_EMERGENCY`, `EQP_CT_24H` …). hub의 하드필터 대조 대상 | 확장 (제안) |
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `hospitalId` | string | E-Gen 기관코드(hpid)를 그대로 쓴다. `A1100017`처럼 실제 값 |
+| `name` | string | 병원명 |
+| `gps.lat` / `gps.lng` | number | 병원 위치 좌표 |
+| `availableBedCount` | number | 실시간 가용 응급실 병상 수(E-Gen 원본값) |
+| `nightDutyAvailable` | boolean | 야간 당직 전문의 존재 여부 |
+| `specialties[].department` | string | 진료과명 |
+| `specialties[].doctorCount` | number | 해당 진료과 수술 가능 의사 수 |
+| `specialties[].recentProcedureTags` | string[] | 최근 수술 이력 기반 전문 분야 태그 |
+| `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+| `updatedAt` | string (ISO 8601) | 이 레코드가 마지막으로 갱신된 시각 |
+| `bedsByType` | `{[코드]: number}` (선택) | 병상 종류별 가용 수. 미상인 종류는 키를 아예 안 넣는다 |
+| `capabilities` | string[] (선택) | 수행 가능한 시술·장비 표준 코드 |
+| `assessment` | object \| null (선택) | info-v2(`hospital_score/`) 신뢰도 진단. 아래 "1-C" 참고 |
 
 배경은 [`Hospital_inform/hospital-info-interface-proposal.md`](Hospital_inform/hospital-info-interface-proposal.md) 참고.
 
 ### 1. feature/info → feature/hub (HospitalInfo 전체 전송)
 
-> `feature/hub` 신설에 따라 추가된 스키마. `feature/hub`가 실제로 받는
-> 입력 형태와 동일하다. 가안이며 팀 리뷰 후 확정 예정.
-
-> **상시 파이프라인의 데이터 출처 (2026-08-11 갱신)**: `send_to_hub.py`의
-> `fetch_hospitals()`가 목록·좌표·중증질환 수용가능정보는 실 E-Gen API
-> (`HttpEgenClient`)에서, 실시간 병상 수(hvec)는 여전히 Supabase 대체 DB
-> (`SupabaseEgenClient`)에서 읽어 합친다. 병상만 Supabase에 남긴 이유: E-Gen은
-> 조회 전용 공개 API라 hub가 이송 확정(`final_approval`) 시 차감한 병상 수를
-> 되돌려 쓸 방법이 없다(`egen/client.py`의 `HttpEgenClient.update_bed_count()`는
-> `NotImplementedError`). 병상까지 실 API로 읽으면 재조회 때마다(기본 30분) hub가
-> 이미 차감해둔 값이 되돌아가 뺑뺑이 방지 취지와 반대로 간다 — 자세한 근거는
-> `send_to_hub.py` 모듈 docstring 참고. 실 API 호출이 실패하면(서비스키 미설정,
-> 일일 트래픽 한도 초과 등) 이번 주기는 목록·중증질환도 Supabase 값으로 대체해
-> 계속 돈다.
+> **2026-08-13 갱신**: `send_to_hub.py`의 `fetch_hospitals()`가 목록·병상·
+> 중증질환 수용가능정보 **전부**를 실 E-Gen API(`HttpEgenClient`)에서
+> 가져온다. Supabase 호출이 완전히 빠지면서 `SUPABASE_TO_EGEN_HPID`(7곳
+> 수기 대응표)와 `_remap_to_supabase_hpid()`도 같이 삭제됐다 — 이제 hpid
+> 불일치 자체가 없다(양쪽 다 실 API의 진짜 hpid를 그대로 씀). 그 결과
+> **`hospitalId`가 `S0000001~7` 체계에서 실제 E-Gen hpid(`A1100017` 등)로
+> 바뀌었다.** hub·dashboard가 이 값을 식별자로 쓰므로(`/hospital?id=`
+> 접근 코드 포함) 영향이 있다 — CLAUDE.md "hospitalId 체계 변경" 참고.
 >
-> **hpid 불일치 주의**: Supabase 대체 DB는 서비스키 승인 전에 만들어져 실제
-> hpid를 몰랐고 자체 식별자(`S0000001`~`S0000007`)를 붙였다 — 실 API의
-> hpid(`A11...`)와 전혀 다른 값이다. 그대로는 두 소스를 hpid로 join할 수 없어서,
-> `send_to_hub.py`의 `SUPABASE_TO_EGEN_HPID`에 GPS 최근접 대조로 검증한(전부
-> 1.2km 이내) 7곳 수기 대응표를 두고 실 API 응답의 hpid를 Supabase hpid로
-> 되돌려 맞춘다. **`hospitalId`는 계속 `S0000001`~`S0000007` 체계를 유지한다**
-> (hub·dashboard가 이미 이 값을 식별자로 쓰고 있어 바꾸면 파급이 크다). 이 7개
-> 병원 구성이 바뀌면 대응표도 같이 갱신해야 한다.
+> 실 API 호출이 실패하면(서비스키 문제, 트래픽 한도, 일시 장애) 더 이상
+> 대체할 소스가 없으므로 이번 주기는 건너뛰고 다음 주기에 재시도한다.
 
-**출력** (위 HospitalInfo 표의 "1번" 열에 해당하는 필드 전부)
+**출력** (위 HospitalInfo 표의 필드 전부, 선택 필드는 있을 때만)
 
 ```json
 {
-  "hospitalId": "H001",
-  "name": "○○병원",
-  "gps": { "lat": 35.1795, "lng": 128.1076 },
-  "availableBedCount": 12,
+  "hospitalId": "A1100017",
+  "name": "서울대학교병원",
+  "gps": { "lat": 37.5798, "lng": 127.0027 },
+  "availableBedCount": 0,
   "nightDutyAvailable": true,
   "specialties": [
-    {
-      "department": "흉부외과",
-      "doctorCount": 3,
-      "recentProcedureTags": ["기흉", "흉부외상"]
-    }
+    { "department": "순환기내과", "doctorCount": 0, "recentProcedureTags": ["응급 관상동맥중재술"] }
   ],
   "source": "rule",
-  "updatedAt": "2026-07-29T10:00:00Z"
+  "updatedAt": "2026-08-13T09:20:00+09:00"
 }
 ```
 
@@ -301,37 +283,37 @@ optional 확장으로 덧붙여 내보낸다. 기존 필드는 하나도 바꾸�
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `updatedAt` | string (ISO 8601) | 마지막 갱신 시각 |
 
-### 2. feature/hub → feature/info (HospitalInfo 부분 갱신 — 병상 수만)
+### 1-C. feature/info → feature/hub (`assessment` — info-v2 신뢰도 진단, 신규)
 
-> dashboard의 승인 액션은 feature/hub가 직접 받는다 (feature/info는 받지 않음).
-> 대신 `final_approval`로 이송이 확정되면, 같은 병상에 다른 구급차가 중복
-> 매칭되는 걸 막기 위해 hub가 이 브랜치에 갱신된 병상 수를 알려준다. 동시에
-> 여러 구급차가 매칭 중일 수 있어서 필요한 흐름이다 — `send_to_hub.py`의
-> 주기적 재조회(기본 30분)만으로는 확정 시점에 바로 반영이 안 될 수 있기
-> 때문. 위 HospitalInfo의 다른 필드(name/gps/nightDutyAvailable/specialties)는
-> hub가 바꿀 이유가 없어서 이 메시지엔 담지 않는다 — 받은 쪽(info)은
-> `hospitalId`로 기존 레코드를 찾아 `availableBedCount`만 덮어쓰면 된다.
->
-> **구현 완료.** `info/app.py`가 `POST /hub/bed-update`(기본 포트 5002 — 팀
-> 합의로 info 고정 포트, 2026-08-11)로 이 메시지를 받아
-> `SupabaseEgenClient.update_bed_count()`로 Supabase의 `hvec` 컬럼에 즉시
-> 반영한다. hub 쪽 전송 URL은 `INFO_BED_UPDATE_URL` 환경변수(기본값
-> `http://127.0.0.1:5002/hub/bed-update`)로 바꿀 수 있고,
-> info 서버가 잠깐 안 떠 있어도 hub는 예외를 흡수하고 계속 진행한다 — 그
-> 경우엔 최대 재조회 주기(기본 30분) 뒤에 `send_to_hub.py`가 다시 맞춰준다.
-> 실제 Supabase 병상이 줄어드는 것까지 확인된 상태다.
-
-**입력** (위 HospitalInfo 표의 "2번" 열에 해당하는 필드만) — 엔드포인트: `POST /hub/bed-update`
+`hospital_score/`(2026-08-13 상시 파이프라인 연결)가 병원마다 15개 중증질환군에
+대한 5단계 신뢰도 판정(신고값·심평원 전문의 수·전문병원 지정 근거)을 만들어
+`HospitalInfo.assessment`에 얹어 보낸다. hub는 이 값을 순위 계산(`finalScore`)에는
+쓰지 않고, "왜 이 순위인지" 설명 근거로만 dashboard에 전달한다
+(`hub/schema.py`의 `HospitalMatch.reliability`, CLAUDE.md "info-v2 신뢰도 판정"
+참고). 심평원 조인·전문의 수 캐시(`python -m hospital_score.hira --build-join`)가
+없으면 `assessment`가 그냥 없이 나간다 — hub·dashboard는 이 필드가 없어도
+기존 로직 그대로 동작한다.
 
 ```json
 {
-  "hospitalId": "H001",
-  "availableBedCount": 11,
-  "status": "confirmed",
-  "updatedAt": "2026-07-30T14:20:00Z",
-  "source": "rule"
+  "assessedAt": "2026-08-13T09:20:00+09:00",
+  "source": "rule",
+  "conditions": { "availableBeds": 0, "totalBeds": 1365, "bedOccupancy": 1.0, "overcrowded": true, "bedCountUnknown": false, "feedAgeMinutes": 3.0, "stale": false, "missingFromFeed": false },
+  "groups": {
+    "재관류중재술": { "status": "available", "tier": "declared_yes", "score": 1.0, "confidence": "high", "basis": ["병원 신고: 수용 가능", "등급: 권역응급의료센터"], "items": { "1": "Y" } }
+  }
 }
 ```
+
+### 2. feature/hub → feature/info — 2026-08-13부로 폐지
+
+> 예전엔 `final_approval`로 병상이 줄면 hub가 `POST /hub/bed-update`
+> (`info/app.py`, 포트 5002)로 info에 알려 Supabase에 반영했다 — Supabase
+> 재조회 때 그 차감이 유지되게 하려는 목적이었다. 병원 Supabase 자체가
+> 없어지면서 이 왕복도 의미를 잃어 **`info/app.py`를 삭제했다.** 병상
+> 차감은 이제 hub가 자기 메모리에 짧게(TTL 오버레이)만 반영하고 끝낸다 —
+> feature/info로 아무것도 되돌려 쓰지 않는다. 자세한 것은 CLAUDE.md의
+> "hospital_score 신뢰도 판정"/hub README "TTL 병상 오버레이" 참고.
 
 ### 3. 서류 1장 → DocumentFields (브랜치 내부 중간 산출물, 신규)
 
@@ -495,8 +477,8 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 ├── README.md                      이 문서
 ├── DEVELOPMENT.md                 브랜치 전략
 ├── requirements.txt               서버 의존성 (Flask 등)
-├── app.py                         hub의 병상 갱신 수신 서버 (POST /hub/bed-update)
-├── send_to_hub.py                 Supabase → hub 주기적 재조회 상시 프로세스 (기본 30분)
+├── send_to_hub.py                 E-Gen 실 API → hub 주기적 재조회 상시 프로세스 (기본 30분,
+│                                   병상 포함 전부 E-Gen에서 읽음 — Supabase 의존 없음, 2026-08-13)
 │
 ├── Hospital_inform/               [경로 A] E-Gen 공개 API → HospitalInfo   (규칙 기반)
 │   ├── README.md                  이 경로의 상세 문서
@@ -600,10 +582,12 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 - **두 경로의 합류 지점** — `DocumentFields` → `HospitalInfo` 병합. 서류는 정적이라
   좌표·실시간 병상 수는 건드리지 않고, E-Gen이 못 채우는 당직·인력만 덮어야 한다.
   어느 값이 어디서 왔는지(AI / 규칙) 표기하는 방식도 미정
-- **서버** — hub의 병상 갱신을 받는 `POST /hub/bed-update`(`app.py`, 기본 포트
-  5002 — 팀 합의로 고정)는 구현·검증 완료(실제 Supabase 병상이 줄어드는 것까지
-  확인). 다만 `requirements.txt`의 `Flask-SocketIO`는 이 엔드포인트가 순수
-  REST(Flask)라 실제로는 안 쓰인다 — 제거 검토 필요
+- ~~**서버** — hub의 병상 갱신을 받는 `POST /hub/bed-update`(`app.py`)~~ →
+  **2026-08-13 완전히 폐지.** 병원 Supabase 자체를 없애면서(아래 "hpid 불일치"
+  절 참고) 되돌려 쓸 대상이 사라졌다. `app.py` 파일을 삭제했고, 병상 차감은
+  hub 쪽 TTL 오버레이(짧은 시간만 hub 메모리에 얹는 방식)로 대체됐다.
+  `requirements.txt`의 `Flask-SocketIO`/`simple-websocket`도 이 엔드포인트가
+  쓰던 죽은 의존성이라 같이 제거했다
 - 구급차 정보(`AmbulanceInfo`) 동기화는 구현·검증 완료(실제 Supabase
   `ambulances` 테이블 3건 조회 확인). 다만 병원용과 별도 프로젝트라
   `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY`를 각자 `.env`에 따로
@@ -628,12 +612,13 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 
 ### 유지보수 주의
 
-- **`send_to_hub.py`의 `SUPABASE_TO_EGEN_HPID` 대응표는 수기 관리다.** Supabase
-  `hospitals` 테이블에 병원이 추가·교체되면 이 표도 같이 갱신해야 한다 (GPS
-  최근접 대조로 새 대응 쌍을 찾는 방법은 위 "1. feature/info → feature/hub" 절
-  참고). 안 맞으면 해당 병원은 목록·중증질환 정보 없이 병상 수만 있는 상태로
-  빠진다(`map_all()`이 `skipped_no_location`으로 건너뜀 — 조용히 사라지지 않고
-  `fetch_hospitals()` 로그의 리포트에 이름이 남는다)
+- ~~`send_to_hub.py`의 `SUPABASE_TO_EGEN_HPID` 대응표는 수기 관리다~~ →
+  **2026-08-13 대응표 자체를 삭제.** 병상까지 실 API로 읽게 되면서 두 소스의
+  hpid를 맞출 필요가 없어졌다 — E-Gen 목록·병상·중증질환 응답이 전부 같은
+  hpid를 쓴다. `hospital_score/`의 심평원 조인(`hira.py --build-join`)은
+  여전히 좌표 최근접 대응이 필요하지만, 그건 E-Gen ↔ 심평원 사이의 별개
+  문제이고 그 캐시(`data/hira/egen_hira_join.json`)는 자동 생성된다(수기
+  대응표 아님)
 - **표준 역량·병상 코드 어휘가 두 벌 있다.** `Hospital_inform/info/schema.py`가
   원본이고 `ocr/src/goldenlink_extract/vocabulary.py`가 복사본이다. 두 경로의
   의존성을 갈라 두려고 일부러 복사했으며, 어긋났는지는 아래로 확인한다.
