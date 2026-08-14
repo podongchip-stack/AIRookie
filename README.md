@@ -9,70 +9,76 @@
 AI는 의료진의 판단을 대체하지 않는다 — 환자 정보 구조화와 의사결정 기록
 자동화만 맡고, 병원 매칭(거리·병상·존)은 규칙 기반 엔진이 담당한다. 자세한
 철학·원칙·데이터 포맷은 [CLAUDE.md](CLAUDE.md)를 참고한다 (모든 브랜치에
-공통 적용되는 문서).
+공통 적용되는 문서). 보고서용 재료 정리는 [REPORT.md](REPORT.md)(통합 시스템
+기준)와 각 브랜치의 `REPORT.md`/`REPORT_NOTES.md`를 참고한다.
 
 ---
 
 ## 폴더 구조
 
 이 저장소는 여러 브랜치가 하나의 작업 폴더를 공유하는 모노레포 구조다. 각
-브랜치가 담당 영역을 자기 폴더로 분리해서 관리하며, develop은 그 셋을 통합해
-실제로 통신이 되는 상태까지 합친 브랜치다.
+브랜치가 담당 영역을 자기 폴더로 분리해서 관리하며, `develop`은 4개 브랜치를
+전부 통합해 실제로 통신이 되는 상태까지 합친 브랜치다.
 
 ```
 AIRookie/
 ├── CLAUDE.md         공통 컨텍스트 (전 브랜치 동일 적용)
-├── voice/            음성 수집·STT·실시간 음성 필터링·정보 구조화 (feature/voice)
-├── hub/              병원 매칭 엔진 + HTTP 서버 (feature/hub)
-├── info/             병원 정보 관리: E-Gen API·OCR (feature/info)
-└── (dashboard/는 아직 develop에 통합되지 않음 — feature/dashboard 작업 완료 후 병합 예정)
+├── REPORT.md          통합 시스템 보고서 재료 (수식·통신·실측 근거)
+├── voice/            음성 수집·STT·오인식 교정·SBAR 구조화 (feature/voice)
+├── hub/              병원 매칭 엔진 + HTTP/WebSocket 서버 (feature/hub)
+├── info/             병원 정보 관리: E-Gen·심평원 API·OCR (feature/info)
+└── dashboard/        구급차·병원 대시보드 (feature/dashboard)
 ```
 
 각 폴더의 상세 내용(모델, 스키마, 실행 방법)은 폴더별 문서를 참고한다.
 
 | 폴더 | 문서 | 담당 영역 |
 |---|---|---|
-| `voice/` | [voice/README.md](voice/README.md) | STT, 실시간 음성 필터링, SBAR 구조화 |
-| `hub/` | [hub/README.md](hub/README.md) | 존 기반 병원 매칭, 진료과 임베딩 매칭, HTTP 서버 |
-| `info/` | [info/README.md](info/README.md) | E-Gen API 병원 정보 정규화, 서류 OCR (현재 미사용) |
+| `voice/` | [voice/README.md](voice/README.md) | STT, 오인식 교정, SBAR 구조화 |
+| `hub/` | [hub/README.md](hub/README.md), [hub/REPORT.md](hub/REPORT.md) | 존 기반 병원 매칭, 진료과 임베딩 매칭, HTTP/WebSocket 서버 |
+| `info/` | [info/README.md](info/README.md), [info/REPORT_NOTES.md](info/REPORT_NOTES.md) | E-Gen·심평원 API 병원 정보 정규화, 신뢰도 진단(`hospital_score`), 서류 OCR |
+| `dashboard/` | [dashboard/README.md](dashboard/README.md) | 구급차/병원 실시간 화면, 승인 워크플로우 |
 
 `info/ocr/`, `info/LLMdata/`, `info/simulation/`은 병원 서류 OCR 기반 정보
-추출 경로다. 코드는 그대로 두었지만, 현재 병원 정보는 `info/Hospital_inform/`
-(E-Gen API 경로)을 기준으로 하며 OCR 경로는 이번 통합 범위에서는 쓰지 않는다.
+추출 경로다(경로 B). 현재 상시 파이프라인은 `info/Hospital_inform/`(경로 A,
+E-Gen·심평원 실 API)을 기준으로 하며, 경로 B는 아직 경로 A와 병합되지 않았다
+(당직 정보·tPA만 서류로 메울 수 있음).
 
 ---
 
 ## 지금까지 통합된 것 / 남은 것
 
-**완료 (이 브랜치)**
-- voice·hub·info 세 브랜치를 각자 폴더 구조로 정리한 뒤 develop에 병합
-- hub에 Flask 서버(`hub/app.py`) 구축 — `hub_engine.py`/`delivery.py`/
-  `decision_log.py`의 기존 매칭·기록 로직은 그대로 재사용
-- voice → hub: 통화 요약을 실제 HTTP POST로 전송 (`voice/transcribe.py`의
-  `send_to_hub()`)
-- info → hub: 병원 정보를 실제 HTTP POST로 전송 (`info/send_to_hub.py`).
-  E-Gen 서비스키 승인 전까지, Supabase에 넣어둔 **실제 서울 권역응급의료센터
-  7곳** 정보를 대신 가져와 보낸다 (병원명·주소·좌표는 실제, 병상·장비 등
-  운영 데이터는 플레이스홀더 — [info/Hospital_inform/README.md](info/Hospital_inform/README.md) 참고)
-- 위 두 통신 경로를 단독 처리(구급차 한 대) 시나리오로 실제 HTTP 통신까지 검증 완료
-  (구급차 테스트 좌표도 병원 위치에 맞춰 서울시청 부근으로 맞춰둠)
+**완료**
+- `voice`·`hub`·`info`·`dashboard` 4개 브랜치가 전부 `develop`에 병합돼 실제
+  통신까지 검증됨(HTTP/WebSocket 전부 실서버로 확인)
+- voice → hub, info → hub, hub ↔ dashboard(WebSocket) 전 구간 연동 완료
+- **병원 정보는 Supabase가 아니라 E-Gen·심평원 실 API로만 받는다.** 병원용
+  Supabase는 2026-08-13 완전히 제거됐다 — `hospitalId`도 자체 발급 코드가
+  아니라 실제 E-Gen 기관코드(`A1100017` 등)를 그대로 쓴다
+- 수집 범위가 서울특별시에서 **전국(533곳)**으로 확장됨
+- info-v2(`hospital_score/`)가 병원 신고 데이터의 신뢰도를 심평원 대조로
+  진단해 hub·dashboard까지 전달됨(설명용) + `declared_no`(명시적 수용 불가
+  신고)는 hub 순위 정렬에도 실제로 반영됨(2026-08-14)
+- 병상 차감은 hub 메모리의 TTL 오버레이(15분)로 처리 — info로 되돌려 쓰지 않음
+- 여러 사건(구급차)이 동시에 처리돼도 `caseId`·`apid`로 격리됨
+- 존(Zone) 확장(거절 비율 기반), 신원 확인(`GET /identity`), dashboard의 거절
+  사유 선택 UI까지 전부 구현·병합 완료
 
 **아직 범위 밖**
-- feature/dashboard와의 통신 (hub → dashboard, dashboard → hub 승인 액션)
-- hub → info 병상 갱신 알림 (`hub/delivery.py`의 `send_to_info()`는 자리만 있음)
-- 여러 사건(구급차)이 동시에 처리되는 경우의 상태 분리 — 지금은 `HubEngine`
-  인스턴스 하나를 전역으로 쓴다
-- 구급차 실제 GPS를 받는 입력 채널 — 지금은 `hub/app.py`에 서울시청 부근
-  테스트 좌표가 고정값으로 들어가 있다 (실제 GPS 연동 전까지 임시)
-- E-Gen 실제 API 연동 — 서비스키 승인 전까지 Supabase 대체 DB로 대신함
+- hub → info 거절 로그 전달 배선(`POST /hub/rejection`) — info 수신구는
+  준비돼 있으나 hub가 아직 안 부름(`hub/REPORT.md` §5-1)
+- 서류 OCR(경로 B) → E-Gen 정규화(경로 A) 병합
+- 구급차 실시간 GPS(지금은 `AmbulanceInfo`에 저장된 고정값)
+- 카카오내비 자동 연동(CLAUDE.md 시스템 흐름도에만 명시, 코드 없음)
 
 ---
 
 ## 로컬에서 전체 흐름 실행해보기
 
-세 서비스는 HTTP로 통신하므로 각자 독립된 가상환경에서 따로 실행한다 (하나로
-통합하지 않는다 — torch/transformers 등 버전이 서로 달라 한 환경에 넣으면
-충돌한다). 아래는 conda 기준이며, `venv` 등 다른 도구를 써도 무방하다.
+네 서비스는 HTTP/WebSocket으로 통신하므로 각자 독립된 가상환경에서 따로
+실행한다 (하나로 통합하지 않는다 — torch/transformers 등 버전이 서로 달라
+한 환경에 넣으면 충돌한다). 아래는 conda 기준이며, `venv` 등 다른 도구를 써도
+무방하다.
 
 ### 0. 가상환경 준비 (최초 1회)
 
@@ -88,20 +94,31 @@ conda activate rookie_info
 cd info && pip install -r requirements.txt && cd ..
 ```
 
-`voice`는 이미 존재하는 `rookie_voice` 환경(또는 [voice/README.md](voice/README.md)의
-"빠른 시작")을 그대로 쓰면 된다.
+`voice`는 [voice/README.md](voice/README.md)의 "빠른 시작"을, `dashboard`는
+[dashboard/README.md](dashboard/README.md)를 참고한다(Node.js 기반, `npm
+install` 후 `npm run dev`).
 
-### 0-1. info: Supabase 접속 정보 받기 (최초 1회)
+### 0-1. info: API 키 준비 (최초 1회)
 
-info는 E-Gen 서비스키 승인 전까지 Supabase를 대체 DB로 쓴다. 이미 만들어둔
-Supabase 프로젝트(서울 권역응급의료센터 7곳 데이터 포함)의 **Project URL과
-secret key를 팀 채널(예: 슬랙 DM)로 전달받아야 한다** — 이 값은 git 저장소에
-올라가 있지 않다 (`Hospital_inform/.env`가 `.gitignore` 대상).
+병원 Supabase는 더 이상 안 쓴다 — `info/Hospital_inform/.env`에 아래 두 값만
+있으면 된다(같은 계정 인증키 하나를 두 서비스에 활용신청한 것이라 값은 같다):
 
-받은 값으로 `info/Hospital_inform/.env` 파일을 새로 만든다:
 ```
-SUPABASE_URL=<전달받은 Project URL>
-SUPABASE_KEY=<전달받은 secret key>   # publishable key 아님, sb_secret_로 시작하는 값
+EGEN_SERVICE_KEY=<E-Gen 서비스키>
+HIRA_SERVICE_KEY=<심평원 서비스키, EGEN_SERVICE_KEY와 동일한 값>
+```
+
+구급차 레지스트리(병원용과 별도 Supabase 프로젝트)를 쓰려면
+`AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY`도 추가한다 — 없으면 이
+부분만 조용히 건너뛰고 병원 정보 동기화는 계속된다.
+
+심평원 조인·전문의 수 캐시가 로컬에 없으면(새 장비 등) 아래를 한 번 실행해야
+`hospital_score`의 신뢰도 진단이 제대로 나온다(안 해도 죽지 않고 `unknown_bare`로
+안전하게 낮아질 뿐이다):
+```bash
+cd info/Hospital_inform/info
+python -m hospital_score.hira_files --fetch
+python -m hospital_score.hira --build-join
 ```
 
 **1. hub 서버 실행**
@@ -111,33 +128,41 @@ cd hub
 python app.py            # http://127.0.0.1:5001
 ```
 
-**2. info → hub: 병원 정보 전송**
+**2. info → hub: 병원 정보 상시 전송**
 ```bash
 conda activate rookie_info
 cd info
 python send_to_hub.py
 ```
-Supabase에서 서울 병원 7곳을 조회해 hub로 전송한다. hub를 재시작(코드 수정
-등으로 자동 리로드된 경우 포함)하면 메모리 안의 병원 정보가 초기화되므로,
-그때마다 이 스크립트를 다시 실행해야 한다.
+E-Gen·심평원 실 API에서 전국 병원 정보를 조회해 기본 30분 주기로 hub에 계속
+재전송하는 상시 프로세스다(1회성 아님). hub를 재시작하면 메모리 안의 병원
+정보가 초기화되므로, 다음 주기까지 기다리거나 이 스크립트를 다시 실행한다.
 
 **3. voice → hub: 통화 요약 전송**
 
 `voice/transcribe.py --summarize`를 실행하면 STT + 구조화가 끝난 뒤 자동으로
-hub에 전송된다 (자세한 실행법은 [voice/README.md](voice/README.md) 참고).
-hub 주소를 바꾸려면 `HUB_VOICE_SUMMARY_URL` 환경변수를 쓴다.
+hub에 전송된다(자세한 실행법은 [voice/README.md](voice/README.md) 참고).
 
 음성 파이프라인 없이 매칭만 빠르게 확인하려면 curl로 대신할 수 있다 (2번을
 먼저 실행해 병원이 등록된 상태여야 함):
 ```bash
 curl -s -X POST http://127.0.0.1:5001/voice/summary \
   -H "Content-Type: application/json" \
-  -d '{"summary": {"patient": "60대 남성", "mechanism": "급성 심근경색 의심", "symptoms": ["흉통", "호흡곤란"], "treatment": ["산소 공급"], "severity_tag": "high"}, "source": "ai"}' \
+  -d '{"caseId": "case-test", "transcript": {"raw_text": "x", "filtered_text": "x"}, "summary": {"patient": "60대 남성", "mechanism": "급성 심근경색 의심", "symptoms": ["흉통", "호흡곤란"], "treatment": ["산소 공급"], "severity_tag": "high"}, "source": "ai"}' \
   | python -m json.tool
 ```
-구급차 테스트 좌표가 서울시청 부근으로 고정돼 있어, zone 1(0~5km) 안의
-서울대학교병원·고려대학교안암병원 정도가 매칭되어 나오는 게 정상이다.
+
+**4. dashboard 실행**
+```bash
+cd dashboard
+npm install
+npm run dev               # http://localhost:3000
+```
+`NEXT_PUBLIC_HUB_HTTP_URL`(예: `http://127.0.0.1:5001`)을 `.env.local`에
+설정한다. `/ambulance?id=<apid>`·`/hospital?id=<hpid>`로 접속하며, 접근 코드는
+`send_to_hub.py`가 실제로 보낸 hpid/apid를 써야 한다(더 이상 `S0000001~7`
+같은 고정 코드가 아니다).
 
 **결과 확인**: hub가 반환한 매칭 결과는 `hub/data/test/output/`에 저장되고,
 모든 의사결정은 `hub/data/logs/decision_log.jsonl`에 타임스탬프+해시로
-기록된다 (`hub/decision_log.py`).
+기록된다(`hub/decision_log.py`).
