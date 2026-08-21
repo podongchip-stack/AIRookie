@@ -68,14 +68,48 @@ flowchart TB
 
 ## 팀 구성
 
-| 역할 | 이름 |
-|------|------|
-| PM | 이승주 |
-| AI 개발자 | 이승주 |
-| AI 개발자 | 곽호영 |
-| AI 개발자 | 김태우 |
-| AI 개발자 | 최준혁 |
-| AI 개발자 | 김동현 |
+<table>
+  <tr>
+    <td align="center" width="150">
+      <a href="https://github.com/dltmdwn0147">
+        <img src="https://github.com/dltmdwn0147.png?size=200" width="100" height="100" alt="이승주"><br>
+        <sub><b>이승주</b></sub>
+      </a><br>
+      <sub>PM · AI 개발자</sub>
+    </td>
+    <td align="center" width="150">
+      <a href="https://github.com/Playedwell03">
+        <img src="https://github.com/Playedwell03.png?size=200" width="100" height="100" alt="곽호영"><br>
+        <sub><b>곽호영</b></sub>
+      </a><br>
+      <sub>AI 개발자</sub>
+    </td>
+    <td align="center" width="150">
+      <a href="https://github.com/taewoo01">
+        <img src="https://github.com/taewoo01.png?size=200" width="100" height="100" alt="김태우"><br>
+        <sub><b>김태우</b></sub>
+      </a><br>
+      <sub>AI 개발자</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="150">
+      <a href="https://github.com/junniec01-creator">
+        <img src="https://github.com/junniec01-creator.png?size=200" width="100" height="100" alt="최준혁"><br>
+        <sub><b>최준혁</b></sub>
+      </a><br>
+      <sub>AI 개발자</sub>
+    </td>
+    <td align="center" width="150">
+      <a href="https://github.com/podongchip-stack">
+        <img src="https://github.com/podongchip-stack.png?size=200" width="100" height="100" alt="김동현"><br>
+        <sub><b>김동현</b></sub>
+      </a><br>
+      <sub>AI 개발자</sub>
+    </td>
+    <td width="150"></td>
+  </tr>
+</table>
 
 ---
 
