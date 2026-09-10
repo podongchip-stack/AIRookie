@@ -63,10 +63,15 @@ E-Gen·심평원 실 API)을 기준으로 하며, 경로 B는 아직 경로 A와
 - 여러 사건(구급차)이 동시에 처리돼도 `caseId`·`apid`로 격리됨
 - 존(Zone) 확장(거절 비율 기반), 신원 확인(`GET /identity`), dashboard의 거절
   사유 선택 UI까지 전부 구현·병합 완료
+- **거절 로그 파이프라인 3지점 연결 완료(2026-09-10)**: dashboard 사유 선택 →
+  hub `send_rejection_to_info()` 중계 → info `POST /hub/rejection` 수신구
+  (`python -m hospital_score.ingest`, 포트 5003 — info 상시 프로세스와 별개로
+  띄우는 선택적 서버). hub는 `ApprovalAction.reason`을 순위 계산에 쓰지 않고
+  로그로만 전달한다
+- hub 인메모리 위생: 확정된 지 60분 지난 사건 캐시 자동 정리(`_prune_old_cases`),
+  의사결정 로그의 통화 전문은 지문(sha256)으로 치환
 
 **아직 범위 밖**
-- hub → info 거절 로그 전달 배선(`POST /hub/rejection`) — info 수신구는
-  준비돼 있으나 hub가 아직 안 부름(`hub/REPORT.md` §5-1)
 - 서류 OCR(경로 B) → E-Gen 정규화(경로 A) 병합
 - 구급차 실시간 GPS(지금은 `AmbulanceInfo`에 저장된 고정값)
 - 카카오내비 자동 연동(CLAUDE.md 시스템 흐름도에만 명시, 코드 없음)
@@ -163,6 +168,17 @@ npm run dev               # http://localhost:3000
 `send_to_hub.py`가 실제로 보낸 hpid/apid를 써야 한다(더 이상 `S0000001~7`
 같은 고정 코드가 아니다).
 
+**5. (선택) info: 거절 로그 수신구 실행**
+```bash
+conda activate rookie_info
+cd info/Hospital_inform/info
+python -m hospital_score.ingest      # http://127.0.0.1:5003
+```
+dashboard에서 병원이 "수용 불가"를 누르면 hub가 사유를 `POST /hub/rejection`으로
+이 서버에 중계한다. `send_to_hub.py`와 별개의 선택적 프로세스이고, 안 띄워도
+hub는 조용히 넘어간다(fire-and-forget). 쌓인 로그는
+`python -m hospital_score.rejection --summary`로 축별 집계해 본다.
+
 **결과 확인**: hub가 반환한 매칭 결과는 `hub/data/test/output/`에 저장되고,
 모든 의사결정은 `hub/data/logs/decision_log.jsonl`에 타임스탬프+해시로
-기록된다(`hub/decision_log.py`).
+기록된다(`hub/decision_log.py` — 통화 전문은 sha256 지문으로 치환돼 남는다).
