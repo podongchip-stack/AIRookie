@@ -220,9 +220,16 @@ class HubEngine:
         self._hospitals[info.hospitalId] = info
 
     def _prune_old_cases(self, now: datetime | None = None) -> list[str]:
-        """이송이 확정된 지 CASE_RETENTION_MIN이 지난 사건을 모든 사건 dict에서
-        걷어낸다. 진행 중이거나 아직 확정 전인 사건(_case_confirmed_at에 없음)은
-        건드리지 않는다 — 따라잡기(_send_catchup)·다중 사건 격리는 그대로 보장된다.
+        """이송이 확정된 지 CASE_RETENTION_MIN이 지난 사건의 **큰 캐시**
+        (매칭 결과·voice 요약)를 걷어낸다. 진행 중이거나 아직 확정 전인 사건
+        (_case_confirmed_at에 없음)은 건드리지 않는다 — 따라잡기(_send_catchup)·
+        다중 사건 격리는 그대로 보장된다.
+
+        `_approval_status`는 **일부러 남긴다.** 여기 있는 `(caseId, hospitalId) ->
+        상태`는 `final_approval` 멱등성 가드가 읽는 값인데, 이걸 지우면 같은
+        최종 승인이 CASE_RETENTION_MIN 뒤에 중복 도착할 때(네트워크 재시도 등)
+        가드가 뚫려 병상이 한 번 더 깎인다. 항목이 작은 튜플뿐이고 액션을 받은
+        사건에만 생기므로, 남겨도 누적 부담이 사실상 없다(큰 건 위 두 dict다).
 
         조회 시점 lazy 정리라 별도 스레드가 없다(_bed_overlay와 같은 패턴).
         지운 caseId 목록을 돌려준다(테스트·로그용).
@@ -236,8 +243,6 @@ class HubEngine:
             self._case_max_zone.pop(cid, None)
             self._case_voice.pop(cid, None)
             self._case_confirmed_at.pop(cid, None)
-            for key in [k for k in self._approval_status if k[0] == cid]:
-                del self._approval_status[key]
         if stale:
             print(f"  [정리] 확정된 지 {CASE_RETENTION_MIN}분 지난 사건 {len(stale)}건 캐시에서 제거: {stale}")
         return stale
