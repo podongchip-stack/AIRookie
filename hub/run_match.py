@@ -350,10 +350,24 @@ def test_case_eviction() -> None:
     # 3) 아무 사건이나 새로 처리되면 진입 시점에 정리가 돈다
     engine.process_voice_summary(_voice("case-evict-trigger"), gps, max_zone=1)
 
-    assert engine.get_case_result(old_case) is None, "확정된 지 오래된 사건이 캐시에서 안 지워졌다"
-    assert not any(k[0] == old_case for k in engine._approval_status), "오래된 사건의 승인 상태도 같이 지워져야 한다"
+    assert engine.get_case_result(old_case) is None, "확정된 지 오래된 사건의 매칭 결과 캐시가 안 지워졌다"
+    assert old_case not in engine._case_voice, "오래된 사건의 voice 요약 캐시가 안 지워졌다"
+    assert any(k[0] == old_case for k in engine._approval_status), (
+        "승인 상태는 멱등성 가드용이라 정리하면 안 된다 — 중복 final_approval 시 병상이 두 번 깎인다"
+    )
     assert engine.get_case_result(live_case) is not None, "아직 확정 전인 진행 중 사건이 잘못 지워졌다"
-    print(f"  [확인] {CASE_RETENTION_MIN}분 지난 확정 사건({old_case})은 제거, 진행 중 사건({live_case})은 유지")
+    print(f"  [확인] {CASE_RETENTION_MIN}분 지난 확정 사건({old_case})의 큰 캐시는 제거, 승인 상태(멱등성)는 유지, 진행 중 사건({live_case})은 유지")
+
+    # 오래된 사건에 중복 final_approval이 와도 병상이 또 깎이면 안 된다 (멱등성 유지 확인)
+    engine.apply_approval_action(ApprovalAction(
+        caseId=old_case, action="final_approval", hospital_id="E001",
+        actor="paramedic", timestamp="2026-09-10T02:00:00Z",
+    ))
+    overlay_count = len(engine._bed_overlay.get("E001", []))
+    assert overlay_count == 1, (
+        f"오래된 확정 사건에 중복 final_approval이 왔는데 병상 오버레이가 {overlay_count}개다 (1개여야 함)"
+    )
+    print("  [확인] 캐시 정리 후에도 중복 final_approval은 멱등 — 병상이 두 번 안 깎임")
 
 
 if __name__ == "__main__":
