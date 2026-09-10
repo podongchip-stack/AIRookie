@@ -13,7 +13,7 @@ from pathlib import Path
 
 import decision_log
 import delivery
-from hub_engine import BED_OVERLAY_TTL_MIN, HubEngine
+from hub_engine import BED_OVERLAY_TTL_MIN, CASE_RETENTION_MIN, HubEngine
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -234,6 +234,7 @@ def main() -> None:
     print("  [확인] AmbulanceInfo 등록·조회, (caseId -> apid) 매핑 모두 정상 동작")
 
     test_declared_no_demotion()
+    test_case_eviction()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -302,6 +303,57 @@ def test_declared_no_demotion() -> None:
     d001 = next(h for h in result.hospitals if h.hospitalId == "D001")
     assert d001.specialtyMatch.score > 0, "데모션은 specialtyMatch 값 자체를 건드리면 안 된다 — 정렬 순서만 바뀐다"
     print("  [확인] D001이 거리 1위·진료과 동점임에도 declared_no라서 맨 뒤로 밀림 (specialtyMatch 값 자체는 안 바뀜)")
+
+
+def test_case_eviction() -> None:
+    """이송이 확정된 지 CASE_RETENTION_MIN이 지난 사건은 인메모리 캐시에서
+    걷어내지만(무한 누적 방지), 진행 중이거나 아직 확정 전인 사건은 그대로
+    남겨 다중 사건 격리·따라잡기(_send_catchup)를 깨지 않는다.
+    """
+    print("\n=== 사건 캐시 정리 확인: 오래 전 확정된 사건만 비우고 진행 중 사건은 남긴다 ===")
+    engine = HubEngine()
+
+    hospital = HospitalInfo(
+        hospitalId="E001", name="[테스트] 캐시 정리용 병원",
+        gps=GpsPoint(lat=35.1810, lng=128.1090), availableBedCount=5, nightDutyAvailable=True,
+        specialties=[Specialty(department="응급의학과", doctorCount=1)],
+        updatedAt="2026-09-10T00:00:00Z",
+    )
+    engine.update_hospital_info(hospital)
+
+    def _voice(case_id: str) -> VoiceCallSummaryMessage:
+        return VoiceCallSummaryMessage(
+            caseId=case_id,
+            transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+            summary=VoiceSummary(
+                patient="50대 남성", mechanism="복통", symptoms=["복통"],
+                treatment=["산소 공급"], severity_tag="medium",
+            ),
+            source="ai",
+        )
+
+    gps = GpsPoint(lat=35.1800, lng=128.1080)
+    old_case, live_case = "case-evict-old", "case-evict-live"
+
+    # 1) 오래된 사건: 매칭 → 확정 → 확정 시각을 CASE_RETENTION_MIN+5분 과거로 강제
+    engine.process_voice_summary(_voice(old_case), gps, max_zone=1)
+    engine.apply_approval_action(ApprovalAction(
+        caseId=old_case, action="final_approval", hospital_id="E001",
+        actor="paramedic", timestamp="2026-09-10T00:00:00Z",
+    ))
+    assert old_case in engine._case_confirmed_at, "final_approval인데 확정 시각이 기록되지 않았다"
+    engine._case_confirmed_at[old_case] = datetime.now(timezone.utc) - timedelta(minutes=CASE_RETENTION_MIN + 5)
+
+    # 2) 진행 중 사건: 매칭만 (확정 안 함)
+    engine.process_voice_summary(_voice(live_case), gps, max_zone=1)
+
+    # 3) 아무 사건이나 새로 처리되면 진입 시점에 정리가 돈다
+    engine.process_voice_summary(_voice("case-evict-trigger"), gps, max_zone=1)
+
+    assert engine.get_case_result(old_case) is None, "확정된 지 오래된 사건이 캐시에서 안 지워졌다"
+    assert not any(k[0] == old_case for k in engine._approval_status), "오래된 사건의 승인 상태도 같이 지워져야 한다"
+    assert engine.get_case_result(live_case) is not None, "아직 확정 전인 진행 중 사건이 잘못 지워졌다"
+    print(f"  [확인] {CASE_RETENTION_MIN}분 지난 확정 사건({old_case})은 제거, 진행 중 사건({live_case})은 유지")
 
 
 if __name__ == "__main__":

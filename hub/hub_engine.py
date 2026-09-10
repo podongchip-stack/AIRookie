@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import decision_log
@@ -34,6 +35,40 @@ from specialty_matcher import SpecialtyMatcher
 # 그대로 믿는다. 15분은 hvidate 갱신 간격 실측(중앙값 5분, 88.7%가 10분
 # 이내)에서 여유를 둔 값이다.
 BED_OVERLAY_TTL_MIN = 15
+
+# 이송이 확정(final_approval)된 사건을 인메모리 캐시에 얼마나 더 들고 있을지.
+# hub는 상시 정리 스레드가 없는 순수 요청-응답 구조라, 사건별 dict
+# (_case_results 등)가 프로세스가 사는 동안 무한히 쌓인다. 확정된 사건은
+# 이송이 끝난 것이므로, 뒤늦게 연결되는 대시보드 탭의 따라잡기(_send_catchup)에
+# 필요한 잠깐만 남겨두고 이 시간이 지나면 조회 시점에 걷어낸다. 진행 중이거나
+# 아직 확정 전인 사건은 절대 지우지 않는다.
+CASE_RETENTION_MIN = 60
+
+
+def _redact_transcript(payload: dict) -> dict:
+    """decision_log에 남길 hub_match_result 사본에서 통화 전문(raw/filtered)을
+    지문(sha256 + 글자 수)으로 치환한다.
+
+    decision_log는 위변조 방지 append-only 파일이라 한 번 쓰면 지우지 않는데,
+    통화 전문(개인정보가 섞일 수 있는 자유 텍스트)의 원본은 이미 feature/voice의
+    로컬 파일(data/voice_data/summary_text/*.json)에 보존된다. "어떤 환자
+    정보로 어떤 병원 순위가 나왔는지"의 감사는 구조화 필드(severity·mechanism·
+    symptoms·병원 순위)로 충분하고, 지문이 남아 voice 원본과 대조도 된다.
+    dashboard로 나가는 HubMatchResult 자체는 이 함수를 거치지 않으므로 통화
+    전문 표시 기능은 그대로다.
+    """
+    patient = payload.get("patientInfo")
+    if not isinstance(patient, dict):
+        return payload
+    for key in ("rawTranscript", "filteredTranscript"):
+        text = patient.get(key)
+        if isinstance(text, str):
+            patient[key] = {
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "chars": len(text),
+            }
+    return payload
+
 
 # dashboard의 ApprovalAction.action -> 매칭 결과에 반영할 상태.
 # hospital_approve/hospital_reject는 "병원의 승인은 후보 등록일 뿐"(CLAUDE.md)이라
@@ -166,6 +201,11 @@ class HubEngine:
         # 백그라운드 정리 스레드 없음 — hub가 상시 루프 없는 순수 요청-응답
         # 구조라는 기존 원칙과 같다).
         self._bed_overlay: dict[str, list[datetime]] = {}
+        # caseId -> 이송이 확정된 시각(UTC). 위 dict들과 달리 이건 정리용이다 —
+        # process_voice_summary()/apply_approval_action() 진입 때마다 여기서
+        # CASE_RETENTION_MIN이 지난 사건을 골라 모든 사건 dict에서 걷어낸다
+        # (_prune_old_cases). _bed_overlay와 같은 "조회 시점 lazy 정리" 패턴이다.
+        self._case_confirmed_at: dict[str, datetime] = {}
 
     def update_hospital_info(self, info: HospitalInfo) -> None:
         """feature/info로부터 받은 병원 정보를 hospitalId 기준으로 upsert한다.
@@ -178,6 +218,29 @@ class HubEngine:
         E-Gen 원본 그대로 반영해도 된다.
         """
         self._hospitals[info.hospitalId] = info
+
+    def _prune_old_cases(self, now: datetime | None = None) -> list[str]:
+        """이송이 확정된 지 CASE_RETENTION_MIN이 지난 사건을 모든 사건 dict에서
+        걷어낸다. 진행 중이거나 아직 확정 전인 사건(_case_confirmed_at에 없음)은
+        건드리지 않는다 — 따라잡기(_send_catchup)·다중 사건 격리는 그대로 보장된다.
+
+        조회 시점 lazy 정리라 별도 스레드가 없다(_bed_overlay와 같은 패턴).
+        지운 caseId 목록을 돌려준다(테스트·로그용).
+        """
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(minutes=CASE_RETENTION_MIN)
+        stale = [cid for cid, at in self._case_confirmed_at.items() if at <= cutoff]
+        for cid in stale:
+            self._case_results.pop(cid, None)
+            self._case_apid.pop(cid, None)
+            self._case_max_zone.pop(cid, None)
+            self._case_voice.pop(cid, None)
+            self._case_confirmed_at.pop(cid, None)
+            for key in [k for k in self._approval_status if k[0] == cid]:
+                del self._approval_status[key]
+        if stale:
+            print(f"  [정리] 확정된 지 {CASE_RETENTION_MIN}분 지난 사건 {len(stale)}건 캐시에서 제거: {stale}")
+        return stale
 
     def _prune_and_count_overlay(self, hospital_id: str, now: datetime) -> int:
         """만료된 차감 기록을 걷어내고, 아직 유효한 개수를 돌려준다."""
@@ -273,6 +336,8 @@ class HubEngine:
         차감 기록을 얹는다. feature/info로 병상 갱신을 되돌려 쓸 방법이 없어졌으므로
         (E-Gen이 조회 전용) 더 이상 반환값으로 알릴 대상이 없다 — None만 반환한다.
         """
+        self._prune_old_cases()
+
         # 멱등성: 이미 confirmed된 병원에 최종 승인이 중복 도착해도(버튼 중복
         # 클릭, 네트워크 재시도 등) 병상을 두 번 깎지 않는다. 여러 사건이
         # 동시에 진행될 수 있어 (caseId, hospitalId) 조합으로 구분한다.
@@ -286,6 +351,11 @@ class HubEngine:
 
         new_status = _ACTION_TO_STATUS[action.action]
         self._approval_status[status_key] = new_status
+        if new_status == "confirmed":
+            # 이송 확정 시각을 기록해둔다 — _prune_old_cases()가 이 시각을 기준으로
+            # CASE_RETENTION_MIN이 지난 사건을 캐시에서 걷어낸다. 병상이 안 깎인
+            # 확정(skip_reason 경로)이어도 사건이 끝난 건 같으므로 여기서 기록한다.
+            self._case_confirmed_at[action.caseId] = datetime.now(timezone.utc)
 
         if action.action != "final_approval":
             # 병상은 안 건드리는 액션이라 지금 self._hospitals 값 그대로 패치해도 된다.
@@ -388,6 +458,7 @@ class HubEngine:
         `scoring.rank()`의 `demote` 키). finalScore 값 자체(가중합 공식)는
         바뀌지 않고, 정렬 순서만 조정된다 — 후보에서 제거하는 게 아니다.
         """
+        self._prune_old_cases()
         self._case_voice[voice.caseId] = voice
         self._case_max_zone[voice.caseId] = max_zone
 
@@ -465,7 +536,10 @@ class HubEngine:
         self._case_results[voice.caseId] = result
         # CLAUDE.md "모든 의사결정 로그는 타임스탬프 + SHA-256 해시로 저장" 원칙.
         # "어떤 환자 정보로 어떤 병원 순위가 나왔는지"가 이 브랜치의 핵심 의사결정이다.
-        decision_log.log_decision("hub_match_result", result.model_dump())
+        # 통화 전문(patientInfo.raw/filteredTranscript)만 지문으로 치환해 남긴다 —
+        # 원본은 feature/voice 로컬 파일에 이미 보존되고, append-only 로그에 개인정보
+        # 섞인 자유 텍스트를 영구 중복 적재할 이유가 없다(_redact_transcript 참고).
+        decision_log.log_decision("hub_match_result", _redact_transcript(result.model_dump()))
         return result
 
     def expand_if_needed(self, max_zone: int, reject_ratio: float) -> int:
