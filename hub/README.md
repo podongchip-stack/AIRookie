@@ -129,10 +129,10 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 `TIER_*` 주석)와도 가중합보다 순서 조정 쪽이 더 맞는다.
 
 **거절 로그가 쌓이면 재검토한다.** 지금은 실제 운영 데이터(병원이 실제로
-받았는지)가 없어서 안전 위주로 결정했다 — `POST /hub/rejection`으로 거절 로그가
-쌓이기 시작하면, tier·거리·진료과매칭이 실제 승인율과 어떤 관계인지 역산해
-가중합으로 승격할지 재검토할 수 있다(아직 hub는 이 엔드포인트로 아무것도 안
-보낸다 — 알려진 제약사항 참고).
+받았는지)가 없어서 안전 위주로 결정했다 — hub는 이제 `hospital_reject`마다
+`POST /hub/rejection`으로 사유를 info에 중계하므로(2026-09-10 배선 완료,
+"결과 저장 및 전송 방식" 참고), 로그가 쌓이기 시작하면 tier·거리·진료과매칭이
+실제 승인율과 어떤 관계인지 역산해 가중합으로 승격할지 재검토할 수 있다.
 
 ## 개발 환경 / 언어
 
@@ -383,7 +383,7 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `patientInfo.expectedDiagnosis` | string | voice가 추출한 예상 병명 (원본 `summary.mechanism` 기반) |
 | `patientInfo.severityTag` | `"high"` \| `"medium"` \| `"low"` | 중증도 |
 | `patientInfo.rawTranscript` | string | voice의 통화 원문 전체 (`transcript.raw_text` 그대로) |
-| `patientInfo.filteredTranscript` | string | 실시간 음성 필터링을 거친 텍스트 (`transcript.filtered_text` 그대로) |
+| `patientInfo.filteredTranscript` | string | voice가 오인식 교정(`corrections.json`)을 거쳐 LLM 입력으로 쓴 텍스트 (`transcript.filtered_text` 그대로). "실시간 음성 필터링" 단계는 voice에서 제거됨 — 필드명만 하위호환으로 유지 |
 | `zoneActive` | number[] | 현재 활성화된 존 번호 목록 |
 | `hospitals[].hospitalId` / `name` | string | 병원 식별자 및 병원명 |
 | `hospitals[].gps` | object | 병원 위치 좌표 (대시보드 지도 표시용) |
@@ -506,6 +506,14 @@ GET /identity?role=hospital&id=S0000001
   `send_to_info()` 전부 없앴다 — 위 "출력 스키마 5" 참고. 병상 차감은 이제
   파일로도 안 남기고 `HubEngine._bed_overlay`(메모리)에만 있다가 TTL이
   지나면 조용히 사라진다.
+- **`send_rejection_to_info()` (2026-09-10 추가)**: `app.py`의
+  `_handle_dashboard_action()`이 `hospital_reject`일 때 `_build_rejection_payload()`로
+  `{hospitalId, caseId, timestamp, reasonCode}`(+ 사건 캐시가 있으면
+  `severity`·`diseaseGroup`·`declaredAtRequest`)를 만들어 `HUB_REJECTION_URL`
+  (기본 `http://127.0.0.1:5003/hub/rejection`)로 POST한다. fire-and-forget —
+  수신구(`hospital_score/ingest.py`, 별도 기동하는 선택적 서버)가 안 떠 있어도
+  예외를 삼키고 계속한다. 병상 갱신과 달리 이건 E-Gen이 아니라 info가 쓰기
+  가능한 자체 운영 로그라 왕복이 성립한다. 회귀 테스트: `test_rejection_forward.py`.
 - 데모 단계에서는 통신을 붙인 뒤에도 로컬 저장을 계속 같이 한다 (감사·재현 목적).
   실제 사업화 단계에서는 이 부분을 재검토해야 한다.
 
@@ -523,6 +531,14 @@ CLAUDE.md "보안 및 개인정보 원칙"의 "모든 의사결정 로그는 타
   달라져서 위변조를 바로 알 수 있다
 - `decision_log.verify_log()`로 로그 파일 전체를 검증할 수 있다 — 위변조 여부와
   검사한 줄 수를 반환한다 (`run_match.py` 맨 마지막에서 실행함)
+- **통화 전문은 지문으로만 남긴다 (2026-09-10)**: `hub_match_result` 항목의
+  `patientInfo.rawTranscript`/`filteredTranscript`는 `_redact_transcript()`가
+  `{"sha256", "chars"}`로 치환한 뒤 기록한다. 원본은 feature/voice의 로컬 파일에
+  이미 보존되고, 위변조 방지 append-only 파일(절대 지우지 않음)에 개인정보 섞인
+  자유 텍스트를 영구 중복 적재하지 않으려는 것이다. 구조화 필드(severity·
+  expectedDiagnosis·injuryStatus·병원 순위)는 그대로라 "왜 이 순위인지" 감사는
+  그대로 가능하고, 지문이 있어 voice 원본과 대조도 된다. dashboard로 나가는
+  `HubMatchResult` 자체는 이 치환을 거치지 않는다(전문 표시 기능 유지).
 
 ## 실행 방법
 
@@ -627,10 +643,10 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - dashboard가 브라우저 마이크 오디오를 실시간으로 hub에 보내는 코드
   (`sendAudioChunk`)는 이미 있지만, 실제 STT 입력은 voice의 로컬 마이크로
   확정되어 hub는 그 오디오 프레임을 받기만 하고 버린다 — 필요해지면 재검토
-- **거절 로그를 info로 전달하는 배선이 없다.** `_handle_dashboard_action()`이
-  `hospital_reject` 액션의 상태 갱신·존 확장은 처리하지만, info의
-  `POST /hub/rejection`(수신구는 이미 완성돼 있음)으로 전달하는 코드가 없다.
-  거절 로그는 소급 생성이 안 되므로, hospital_score 가중치를 실측 기반으로
-  검증하려면(위 "병원 신뢰도(hospital_score) 반영" 절 참고) 이 배선이 최우선
+- **거절 로그 수신구는 별도로 띄워야 한다.** hub는 `hospital_reject`마다
+  `POST /hub/rejection`으로 사유를 중계하지만(2026-09-10 배선 완료), 받는 쪽
+  (`hospital_score/ingest.py`, 포트 5003)은 info의 상시 프로세스와 별개라
+  `python -m hospital_score.ingest`로 직접 실행해야 로그가 쌓인다. 안 띄우면
+  hub는 조용히 넘어가고 그 기간의 거절 로그는 사라진다(소급 생성 불가)
 
 ## 추가사항

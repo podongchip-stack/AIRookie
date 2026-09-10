@@ -20,7 +20,7 @@ from flask import Flask, jsonify, request
 from flask_sock import Sock
 from pydantic import ValidationError
 
-from delivery import deliver
+from delivery import deliver, send_rejection_to_info
 from hub_engine import HubEngine
 from schema import (
     AmbulanceInfo,
@@ -266,6 +266,49 @@ def _send_identity_info(ws, identify: DashboardIdentify) -> None:
         print(f"  [통신] identity_info 전송 실패: {e}")
 
 
+# hospital_score 신뢰도 tier(문자열 라벨) -> "물어볼 당시 병원이 뭐라고 신고했나".
+# declaredAtRequest로 넘기면 info가 "가능이라 신고했는데 거절"을 셀 수 있어
+# 신고 정확도를 운영 데이터로 직접 측정한다(CLAUDE.md "거절 로그" 절). 미상
+# tier(unknown_*)는 신고 자체가 없었다는 뜻이라 필드를 아예 넣지 않는다.
+_TIER_TO_DECLARED = {"declared_yes": "Y", "declared_no": "불가능"}
+
+
+def _build_rejection_payload(action: ApprovalAction) -> dict:
+    """dashboard의 hospital_reject 액션을 feature/info 거절 로그 수신구가 받는
+    형태로 조립한다. 필수는 hospitalId 하나뿐이고(수신구가 관대하게 받는다),
+    나머지는 사건 캐시에서 best-effort로 채운다 — 조회가 실패하면 그 필드만
+    빠지고 전달 자체는 계속된다(거절 로그는 소급 생성이 안 되므로 부분 정보라도
+    남기는 게 낫다).
+    """
+    payload: dict = {
+        "hospitalId": action.hospital_id,
+        "caseId": action.caseId,
+        "timestamp": action.timestamp,
+        "reasonCode": action.reason or "UNSPECIFIED",
+    }
+
+    result = engine.get_case_result(action.caseId)
+    if result is not None:
+        payload["severity"] = result.patientInfo.severityTag
+        match = next(
+            (h for h in result.hospitals if h.hospitalId == action.hospital_id), None
+        )
+        if match is not None and match.reliability is not None:
+            group = match.reliability.group
+            payload["diseaseGroup"] = group
+            info = engine.get_hospital(action.hospital_id)
+            group_score = (
+                info.assessment.groups.get(group)
+                if info is not None and info.assessment is not None
+                else None
+            )
+            declared = _TIER_TO_DECLARED.get(getattr(group_score, "tier", None))
+            if declared is not None:
+                payload["declaredAtRequest"] = declared
+
+    return payload
+
+
 def _handle_dashboard_action(payload: dict) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
     구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
@@ -286,6 +329,11 @@ def _handle_dashboard_action(payload: dict) -> None:
     # (HubEngine.maybe_expand_zone 문서 참고, 실제로 재현·검증됨).
     expanded_result = None
     if action.action == "hospital_reject":
+        # 거절 사유를 feature/info 거절 로그로 중계한다. 점수의 진짜 정답
+        # ("병원이 실제로 받았는가")은 이 로그가 쌓여야 나오고 소급 생성이
+        # 안 되므로, 수신구가 안 떠 있어도(fire-and-forget) 매번 보낸다.
+        send_rejection_to_info(_build_rejection_payload(action))
+
         ambulance_gps = _resolve_ambulance_gps(action.caseId)
         expanded_result = engine.maybe_expand_zone(action.caseId, ambulance_gps)
 

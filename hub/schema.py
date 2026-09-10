@@ -234,6 +234,24 @@ class ApprovalAction(BaseModel):
     hospital_id: str
     actor: Actor
     timestamp: str
+    # dashboard의 "수용 불가" 버튼이 함께 보내는 거절 사유(action == "hospital_reject"일
+    # 때만). hub는 이 값을 순위 계산에 쓰지 않고 feature/info의 거절 로그 수신구
+    # (POST /hub/rejection, hospital_score/ingest.py)로 그대로 중계한다 — 점수의
+    # 진짜 정답("병원이 실제로 받았는가")은 운영 로그가 쌓여야 나오고, 로그는
+    # 소급해서 만들 수 없어서다(CLAUDE.md "거절 로그" 절).
+    #
+    # 여기서 Literal로 막지 않고 Optional[str]로 두는 건 의도적이다 — 수신구가
+    # "관대하게 받는다"(모르는 코드도 UNSPECIFIED로 기록, 필드가 없어도 통과)를
+    # 원칙으로 하므로, dashboard가 어휘를 늘렸을 때 hub가 액션 전체를 거부해
+    # 그 사이 로그가 사라지는 게 더 나쁘다. 기대값은 아래 4축 어휘:
+    #   구조적  : NO_WARD | NO_DEPARTMENT | NO_EQUIPMENT
+    #   주기적  : ON_CALL_MISMATCH | NIGHT_UNAVAILABLE
+    #   순간적  : BEDS_FULL | OR_OCCUPIED | STAFF_BUSY
+    #   환자    : SEVERITY_EXCEEDED | AGE_LIMIT
+    #   미기재  : UNSPECIFIED
+    # (dashboard types/dashboard.ts의 RejectionReason, info hospital_score/rejection.py의
+    #  REASON_AXIS와 같은 어휘. 값이 없거나 hospital_reject가 아니면 None.)
+    reason: Optional[str] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 통화 시작/종료 신호) ─────────────
