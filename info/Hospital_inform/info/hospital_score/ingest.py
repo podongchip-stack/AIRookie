@@ -1,25 +1,20 @@
-"""거절 로그 수신구 — hub가 부르기만 하면 되도록 미리 세워두는 구멍.
+"""거절 로그 수신구 — hub의 `hospital_reject` 사유를 받아 축별로 쌓는 서버.
 
-hub·dashboard 쪽 작업(거절 사유 선택 UI, 액션 스키마에 reasonCode 추가)이 끝나기를
-기다리면 그동안의 로그가 0건이 된다. 로그는 나중에 소급해서 만들 수 없으므로,
-**받는 쪽을 먼저 세워두고 저쪽이 준비되는 대로 붙게** 한다.
+**hub가 실제로 연동됐다(2026-09-10).** hub의 `_handle_dashboard_action()`이
+`hospital_reject`마다 `hub/delivery.py`의 `send_rejection_to_info()`로 이 주소에
+POST한다. `hospital_id` 하나만 있으면 기록되고(이유 없으면 `UNSPECIFIED`),
+모르는 필드는 `extra`에 보존한다 — hub가 어휘를 늘려도 로그가 죽지 않는다.
 
-지금 hub가 보내는 형태 그대로도 받는다 — `hospital_id` 하나만 있으면 기록된다
-(이유는 `UNSPECIFIED`). 즉 저쪽은 **스키마를 안 바꿔도 지금 당장 연동할 수 있고**,
-나중에 `reasonCode`를 얹으면 그때부터 분류가 정밀해진다.
+기동 방법
+---------
+`send_to_hub.py`(상시 병원 정보 전송)와 별개 프로세스라 따로 띄운다:
 
-붙이는 방법 두 가지
--------------------
-1. 기존 info 서버(`info/app.py`, 포트 5002)에 얹기 — 두 줄이면 된다:
+    cd info/Hospital_inform/info
+    python -m hospital_score.ingest        # 포트 5003
 
-       from hospital_score.ingest import rejection_bp
-       app.register_blueprint(rejection_bp)
-
-   `app.py`는 팀원 담당 파일이라 여기서 직접 고치지 않았다. 붙일지는 팀 합의로 정한다.
-
-2. 따로 띄우기 (팀원 파일을 아예 안 건드리는 쪽):
-
-       python -m hospital_score.ingest        # 포트 5003
+(예전엔 `info/app.py`(병상 갱신 수신 서버)에 Blueprint를 얹는 안도 있었으나,
+그 서버는 2026-08-13 삭제됐다. 지금은 이 standalone 실행이 유일한 기동 경로다.)
+안 띄우면 hub는 조용히 넘어가고 그 기간의 거절 로그는 사라진다(소급 생성 불가).
 
 엔드포인트
 ----------

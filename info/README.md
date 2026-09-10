@@ -117,9 +117,12 @@ E-Gen과 심평원은 공통 식별자가 없어(`hpid` ↔ `ykiho`) **좌표 �
 hub로는 기존 `HospitalInfo`에 **`assessment` 키 하나만 얹은 superset**으로 나간다
 (병원당 약 5.1KB). 기존 필드는 하나도 바뀌지 않는다.
 
-거절 로그 수신구(`POST /hub/rejection`)도 함께 세워뒀다. 점수의 진짜 정답은 "병원이
-실제로 받았는가"인데 그건 운영 로그가 쌓여야 나오고, **로그는 소급해서 만들 수 없기**
-때문이다. hub는 지금 보내는 형태 그대로도 연동된다.
+거절 로그 수신구(`POST /hub/rejection`, `hospital_score/ingest.py`)는 **hub가 실제로
+연동됐다(2026-09-10).** hub가 `hospital_reject`마다 사유를 이 주소로 중계한다.
+`send_to_hub.py`(상시 병원 정보 전송)와 별개 프로세스라
+`cd info/Hospital_inform/info && python -m hospital_score.ingest`(포트 5003)로 따로
+띄운다 — 안 띄우면 hub는 조용히 넘어가고 그 기간의 거절 로그는 사라진다(소급 생성 불가).
+쌓인 로그는 `python -m hospital_score.rejection --summary`로 축별 집계한다.
 
 자세한 것과 팀에 요청하는 사항은
 [`Hospital_inform/info/hospital_score/README.md`](Hospital_inform/info/hospital_score/README.md).
@@ -187,7 +190,7 @@ hub로는 기존 `HospitalInfo`에 **`assessment` 키 하나만 얹은 superset*
 
 | 파일 | 내용 | 언제 필요한가 |
 |---|---|---|
-| `requirements.txt` | requests, python-dotenv | E-Gen·심평원 API 호출. `send_to_hub.py`(주기적 재조회)가 이 의존성을 쓴다. Flask/Flask-SocketIO는 병상 갱신 수신 서버(`app.py`)가 2026-08-13 삭제되며 같이 정리 대상 |
+| `requirements.txt` | requests, python-dotenv, flask, supabase | E-Gen·심평원 API 호출(`send_to_hub.py` 주기적 재조회). `flask`는 거절 로그 수신구(`hospital_score/ingest.py`, `POST /hub/rejection`)가 쓴다 — 병상 갱신 수신 서버(`app.py`, `POST /hub/bed-update`)는 2026-08-13 삭제됐고 Flask-SocketIO 체인도 그때 정리됐다 |
 | `ocr/requirements.txt` | torch, transformers, onnxruntime, opencv 등 | 서류 이미지 → 텍스트. **NVIDIA GPU 필요** |
 | `ocr/requirements-extract.txt` | pydantic | 텍스트 → 필드. GPU 불필요, Ollama 서버만 있으면 됨 |
 | `simulation/requirements.txt` | tkinterdnd2, pypdfium2 | 처리 과정을 보는 GUI. 위 두 개 위에 창만 얹는다 |
@@ -480,8 +483,15 @@ python -m hospital_score.scoring --check --validate    # 불변식 + 전문병�
 python -m hospital_score.scoring --sample 한강성심       # 병원 하나 들여다보기
 python -m hospital_score.scoring --payload 한강성심      # hub로 보낼 합친 객체 실물
 python -m hospital_score.rejection --vocab             # 거절 사유 어휘 (dashboard 선택지용)
+python -m hospital_score.rejection --summary           # 거절 로그 축별 집계
 python -m hospital_score.ingest                        # 거절 로그 수신 서버 (포트 5003)
 ```
+
+`ingest`는 **hub가 실제로 연동된 수신구다(2026-09-10).** hub가 `hospital_reject`
+액션마다 `POST /hub/rejection`으로 사유를 보낸다 — 전체 흐름을 돌릴 때
+`send_to_hub.py`와 함께 이 서버도 띄워야 거절 로그가 쌓인다(안 띄우면 hub가
+조용히 넘어가고 그 기간 로그는 사라진다). 자세한 건 루트 `README.md` "로컬에서
+전체 흐름 실행해보기" 5번.
 
 전부 로컬 파일만 읽으므로 **네트워크 없이 돈다.** 단, 심평원 캐시는 `data/` 아래라
 커밋되지 않으므로 **새 장비에서는 아래를 한 번 돌려야 한다.**
