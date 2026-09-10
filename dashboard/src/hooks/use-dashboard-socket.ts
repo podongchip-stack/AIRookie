@@ -73,6 +73,14 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     const wsUrl = process.env.NEXT_PUBLIC_DASHBOARD_WS_URL;
 
     if (!wsUrl) {
+      // 화면 상단바에 "○ 목데이터 모드" 배지가 이미 뜨지만, 배포 환경에서 env를
+      // 빠뜨리면 그 배지를 놓치고 가짜 데이터를 실데이터로 오인할 수 있다 —
+      // 콘솔에도 한 번 분명히 남긴다(로컬 UI 작업은 이 경로가 정상이므로
+      // fallback 동작 자체는 그대로 둔다).
+      console.warn(
+        "[골든링크] NEXT_PUBLIC_DASHBOARD_WS_URL이 설정되지 않아 목데이터 모드로 동작합니다. " +
+          "배포 환경이라면 hub WebSocket 주소를 .env에 설정하세요.",
+      );
       // 이펙트 본문에서 setState를 동기 호출하면 안 되므로(react-hooks/set-state-in-effect),
       // mock 응답들도 전부 타이머로 미룬다. hub가 없는 mock 모드에서는
       // known=false(접근 불가) 화면이 떠서 UI 작업이 막히면 안 되므로, identity가
