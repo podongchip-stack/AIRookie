@@ -49,6 +49,12 @@ EMCLS_ORDER = [
 #: 어느 표본이든 하루는 그 분포에서 한참 벗어난 값이라 판정 기준으로 안전하다
 STALE_THRESHOLD = timedelta(days=1)
 
+#: 두 관측을 "연속"으로 볼 최대 간격의 배수. `discarded.py`와 같은 값이며 이유도 같다 —
+#: 수집이 끊긴 구간을 그대로 이으면 관측하지 않은 시간이 지속시간에 섞인다.
+#: 실제로 2026-08-16 ~ 09-05 3주가 비어 있어, 이 필터가 없으면 "3주 연속 과밀"이
+#: 최장 기록으로 올라온다
+GAP_TOLERANCE = 2.0
+
 
 def _emcls_key(name: str | None) -> str:
     return name if name in EMCLS_ORDER else "(등급미상)"
@@ -154,11 +160,231 @@ def section_staleness(frames: list[D.Frame], hospitals: dict[str, D.Hospital]) -
         print(f"    {beds:>4}병상  {_fmt_age(age) if age else '?':>10}  {name}{flag}")
 
 
+def overcrowding_runs(
+    frames: list[D.Frame], gap_tolerance: float = GAP_TOLERANCE
+) -> dict:
+    """`hvec`가 음수(과밀)로 연속 관측된 구간을 병원별로 잘라낸다.
+
+    `snapshot.py`가 스냅샷의 용도로 선언한 세 가지 중 "과밀 추세 — hvec가 음수인
+    병원이 얼마나 오래 그 상태로 있는지"가 이 함수다. 나머지 둘(병상 추정 ·
+    입력 성실도)과 달리 **시계열이 아니면 계산할 수 없다** — 한 시점만 보면
+    지금 과밀인지는 알아도 그게 10분째인지 이틀째인지 구분되지 않는다.
+
+    과밀의 정의
+    ----------
+    `-1`은 미입력이고 `-2` 이하가 과밀(정원 초과 수용)이다(`mapper.py`와 같은
+    규약). `parse_bed_count()`가 `-1`을 이미 `None`으로 돌려주므로, 여기서는
+    "값이 있고 음수"면 과밀이다.
+
+    구간을 끊는 세 가지
+    ------------------
+    - **미상** : 직전이 `-1`이면 그 사이 과밀이 이어졌는지 알 수 없다. `discarded.py`가
+      전이를 셀 때 미상에서 연속성을 끊는 것과 같은 이유로, 미상을 건너뛰고 앞뒤를
+      잇지 않는다. 이으면 관측하지 않은 구간을 과밀로 셈해 지속시간이 부풀어 오른다
+    - **수집 중단** : 08-16 ~ 09-05처럼 3주가 비어 있는 구간이 실제로 있다. 이걸 그대로
+      이으면 "3주 연속 과밀"이라는 가짜 기록이 나온다. 주기 중앙값의 `gap_tolerance`
+      배까지만 한 쌍으로 인정한다(`discarded.py`와 같은 상수)
+    - **정상 복귀** : `hvec >= 0`이 관측되면 그 지점에서 구간이 닫힌다
+
+    절단(censoring)을 구분한다
+    -------------------------
+    구간의 양 끝이 모두 관측으로 막혀 있어야(앞에 정상값, 뒤에 정상값) 지속시간을
+    "이만큼이었다"고 말할 수 있다. 한쪽이라도 수집 중단·미상·관측 종료로 끝났으면
+    **하한만 아는 것**이다. 이 구분을 안 하면 오래 가는 과밀일수록 관측 끝에 걸릴
+    확률이 높다는 편향(length bias)이 그대로 중앙값에 섞인다.
+
+    완결 구간이라도 지속시간은 여전히 **과소추정**이다. 과밀이 시작된 실제 시각은
+    직전 정상 관측과 첫 과밀 관측 사이 어딘가이고, 끝난 시각도 마찬가지다. 따라서
+    참값은 `[관측된 span, span + 2 x 주기]` 안에 있다.
+    """
+    with_beds = [frame for frame in frames if frame.beds]
+    if len(with_beds) < 2:
+        return {"frames": len(with_beds)}
+
+    gaps = sorted(
+        (later.ts - earlier.ts).total_seconds() / 60
+        for earlier, later in zip(with_beds, with_beds[1:])
+    )
+    cadence = gaps[len(gaps) // 2]
+    max_gap = cadence * gap_tolerance
+
+    #: 열려 있는 과밀 구간. hpid -> [시작ts, 마지막ts, 최저hvec, 관측수, 좌측막힘]
+    open_runs: dict[str, list] = {}
+    last_seen: dict[str, datetime] = {}
+    closed: list[dict] = []
+
+    cells_total = cells_over = 0
+    ever: set[str] = set()
+    depth_counter: Counter = Counter()
+
+    def close(hpid: str, reason: str) -> None:
+        """구간을 닫는다. `reason`은 오른쪽 끝이 무엇으로 막혔는지다.
+
+        절단 사유를 남기지 않으면 "완결 233 / 절단 664"를 봤을 때 수집 설계가
+        나쁜 건지 데이터가 원래 그런 건지 구분할 수 없다. 사유별로 나눠야
+        "우리가 놓친 것"과 "E-Gen이 안 준 것"이 갈린다.
+        """
+        run = open_runs.pop(hpid, None)
+        if run is None:
+            return
+        start, last, depth, n_obs, left_bounded = run
+        closed.append({
+            "hpid": hpid,
+            "start": start,
+            "end": last,
+            "span": last - start,
+            "depth": depth,
+            "n_obs": n_obs,
+            "complete": left_bounded and reason == "recovered",
+            "reason": reason if left_bounded else "left_open",
+        })
+
+    for frame in with_beds:
+        for hpid, row in frame.beds.items():
+            count = D.parse_bed_count(row.get("hvec"))
+            previous = last_seen.get(hpid)
+
+            if count is None:
+                close(hpid, "unknown")  # 미상 — 이후를 알 수 없다
+                last_seen.pop(hpid, None)
+                continue
+
+            cells_total += 1
+            if previous is None:
+                bounded = False
+            else:
+                gap = (frame.ts - previous).total_seconds() / 60
+                bounded = 0 < gap <= max_gap
+                if not bounded:
+                    close(hpid, "gap")  # 수집이 끊겼거나 병원이 응답에서 빠졌다
+            last_seen[hpid] = frame.ts
+
+            if count < 0:
+                cells_over += 1
+                ever.add(hpid)
+                depth_counter[count] += 1
+                run = open_runs.get(hpid)
+                if run is None:
+                    open_runs[hpid] = [frame.ts, frame.ts, count, 1, bounded]
+                else:
+                    run[1] = frame.ts
+                    run[2] = min(run[2], count)
+                    run[3] += 1
+            else:
+                close(hpid, "recovered")
+
+    for hpid in list(open_runs):
+        close(hpid, "still_open")  # 관측이 끝날 때까지 과밀이었다
+
+    last_frame = with_beds[-1]
+    now_over = {
+        hpid: D.parse_bed_count(row.get("hvec"))
+        for hpid, row in last_frame.beds.items()
+        if (D.parse_bed_count(row.get("hvec")) or 0) < 0
+    }
+
+    return {
+        "frames": len(with_beds),
+        "cadence_min": cadence,
+        "max_gap_min": max_gap,
+        "cells_total": cells_total,
+        "cells_over": cells_over,
+        "ever": ever,
+        "depth": depth_counter,
+        "runs": closed,
+        "now_over": now_over,
+        "last_ts": last_frame.ts,
+    }
+
+
+def section_overcrowding(frames: list[D.Frame], hospitals: dict[str, D.Hospital]) -> None:
+    """과밀(hvec 음수)이 얼마나 오래 지속되는지 — 시계열이어야만 나오는 값."""
+    print()
+    print("=" * 78)
+    print("3. 응급실 과밀 지속시간 — 음수는 얼마나 오래 음수인가")
+    print("=" * 78)
+
+    stats = overcrowding_runs(frames)
+    if stats.get("frames", 0) < 2:
+        print("  관측이 2개 미만이라 지속시간을 볼 수 없다")
+        return
+
+    cells_total, cells_over = stats["cells_total"], stats["cells_over"]
+    if not cells_over:
+        print(f"  관측 {cells_total:,}칸에 과밀(hvec <= -2)이 하나도 없다")
+        return
+
+    print(f"  수집 주기(중앙값): {stats['cadence_min']:.0f}분   "
+          f"연속 인정 상한: {stats['max_gap_min']:.0f}분")
+    print(f"  병상값이 있는 관측 {cells_total:,}칸 중 과밀 "
+          f"{cells_over:,}칸 ({cells_over / cells_total:.2%})")
+    print(f"  한 번이라도 과밀이었던 병원: {len(stats['ever'])}곳")
+    print(f"  마지막 관측({stats['last_ts']:%m-%d %H:%M}) 시점에 과밀: "
+          f"{len(stats['now_over'])}곳")
+
+    runs = stats["runs"]
+    complete = [r for r in runs if r["complete"]]
+    censored = [r for r in runs if not r["complete"]]
+
+    print()
+    print(f"  과밀 구간 {len(runs)}개 — 완결 {len(complete)}개 / 절단 {len(censored)}개")
+    print("    완결 = 앞뒤로 정상값(hvec >= 0)이 관측돼 시작과 끝이 모두 막힌 구간")
+    print("    절단 = 한쪽이라도 막히지 않은 구간. 지속시간은 하한만 안다")
+
+    reasons = Counter(r["reason"] for r in censored)
+    labels = {
+        "left_open": "앞이 안 막힘 (구간 도중에 관측이 시작됨)",
+        "gap": "수집 끊김 / 병원이 병상API 응답에서 빠짐",
+        "unknown": "hvec가 -1(미입력)로 바뀜",
+        "still_open": "관측 마지막까지 과밀 상태",
+        "recovered": "(완결 조건 미충족)",
+    }
+    for reason, n in reasons.most_common():
+        print(f"      {n:>4}개  {labels.get(reason, reason)}")
+
+    if complete:
+        spans = sorted((r["span"] for r in complete), key=lambda d: d.total_seconds())
+        median = spans[len(spans) // 2]
+        longest = spans[-1]
+        single = sum(1 for r in complete if r["n_obs"] == 1)
+        print()
+        print(f"  완결 구간 지속시간  중앙값 {_fmt_age(median):>6}   최대 {_fmt_age(longest):>6}")
+        print(f"    한 번만 관측되고 끝난 구간: {single}/{len(complete)}개 "
+              f"(지속시간이 0으로 기록된다)")
+        print(f"    참값은 [관측값, 관측값 + {stats['cadence_min'] * 2:.0f}분] 안에 있다 —")
+        print("    과밀이 시작·종료된 실제 시각은 관측 사이 어딘가라 항상 과소추정이다.")
+
+    longest_any = sorted(runs, key=lambda r: -r["span"].total_seconds())[:10]
+    print()
+    print(f"  가장 오래 이어진 과밀 10건:")
+    print(f"    {'지속':>8} {'관측':>5} {'최저':>6}  {'상태':<5}{'등급':<18}병원")
+    for run in longest_any:
+        hospital = hospitals.get(run["hpid"])
+        name = hospital.name if hospital else run["hpid"]
+        emcls = _emcls_key(hospital.emcls if hospital else None)
+        mark = "완결" if run["complete"] else "절단"
+        print(f"    {_fmt_age(run['span']):>8} {run['n_obs']:>5} {run['depth']:>6}  "
+              f"{mark:<5}{emcls:<18}{name}")
+
+    depth = stats["depth"]
+    worst = min(depth) if depth else 0
+    print()
+    print(f"  과밀 깊이(정원 초과 인원): 최저 {worst}   관측된 값 "
+          + ", ".join(f"{v}({n:,}회)" for v, n in sorted(depth.items())[:8])
+          + (" …" if len(depth) > 8 else ""))
+    print()
+    print(f"  → 이 {cells_over:,}칸은 hub로 나갈 때 전부 `0`이 된다. mapper.py의")
+    print("     clamp_available()이 스키마 제약(음수 불가) 때문에 음수를 0으로 낮추기")
+    print(f"     때문이다. 즉 정원을 {abs(worst)}명 초과한 병원과 딱 만실인 병원이")
+    print("     dashboard에서 같은 '0병상'으로 보인다. 미상과 만실은 bedCountUnknown으로")
+    print("     구분해왔지만, 만실과 과밀은 구분되지 않는다.")
+
+
 def section_accept(frames: list[D.Frame], hospitals: dict[str, D.Hospital]) -> None:
     """중증질환 수용가능 신고가 등급별·항목별로 얼마나 비어 있는지."""
     print()
     print("=" * 78)
-    print("3. 중증질환 수용가능 신고 — 미상이 어디에 몰려 있나")
+    print("4. 중증질환 수용가능 신고 — 미상이 어디에 몰려 있나")
     print("=" * 78)
     if not frames:
         return
@@ -219,7 +445,7 @@ def section_pediatric_msg(frames: list[D.Frame]) -> None:
     """소아 항목에만 있는 Msg(연령·체중 조건)가 미상을 얼마나 메워주는지."""
     print()
     print("=" * 78)
-    print("4. 소아 항목의 조건 메시지 — 미상을 메울 재료가 되나")
+    print("5. 소아 항목의 조건 메시지 — 미상을 메울 재료가 되나")
     print("=" * 78)
     if not frames:
         return
@@ -256,7 +482,7 @@ def section_volatility(frames: list[D.Frame]) -> None:
     """관측 사이에 신고가 실제로 움직이는지 — 움직이지 않으면 추정할 것도 없다."""
     print()
     print("=" * 78)
-    print("5. 신고의 변동성 — 추정할 여지가 있는가")
+    print("6. 신고의 변동성 — 추정할 여지가 있는가")
     print("=" * 78)
     if len(frames) < 2:
         print("  관측이 2개 미만이라 변동을 볼 수 없다")
@@ -301,7 +527,7 @@ def section_specialty_crosscheck(
     """
     print()
     print("=" * 78)
-    print("6. 외부 근거 대조 — 전문병원 지정 ↔ E-Gen 신고")
+    print("7. 외부 근거 대조 — 전문병원 지정 ↔ E-Gen 신고")
     print("=" * 78)
 
     specialty = HF.load_specialty_hospitals()
@@ -394,6 +620,7 @@ def main() -> None:
 
     section_coverage(frames, hospitals)
     section_staleness(frames, hospitals)
+    section_overcrowding(frames, hospitals)
     section_accept(frames, hospitals)
     section_pediatric_msg(frames)
     section_volatility(frames)
