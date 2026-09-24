@@ -86,6 +86,11 @@ class LiveTranscriber:
     def start(self) -> None:
         self._thread.start()
 
+    @property
+    def segments(self) -> list[Segment]:
+        """지금까지 인식된 구간의 복사본. 통화 중 화면 갱신용(simulation3)."""
+        return list(self._segments)
+
     def finish(self) -> list[Segment]:
         """감시를 멈추고 아직 인식하지 않은 소리까지 처리해 전체 구간 목록을 돌려준다."""
         self._stop.set()

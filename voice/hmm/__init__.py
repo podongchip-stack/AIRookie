@@ -53,9 +53,19 @@ class HmmExtractor:
         self.tokenizer = AutoTokenizer.from_pretrained(run_dir / "tokenizer")
         self.mapping = load_department_mapping()
 
-    def extract(self, text: str) -> tuple[dict, float]:
-        """통화 텍스트 1건 -> (summary 6필드, 소요 초)."""
+    def analyze(self, text: str) -> dict:
+        """통화 텍스트 1건 -> 조립 전 중간값까지 전부.
+
+        {"final_output": summary 6필드, "fields": 모델 판정(원인·원인 유형·부위·대표 증상 등),
+         "symptom_spans": 증상 구간 원문, "seconds": 소요 초}
+        """
         started = time.perf_counter()
         with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
             result = predict(self.model, self.tokenizer, [text], self.device, self.max_tokens, self.mapping)[0]
-        return result["final_output"], time.perf_counter() - started
+        result["seconds"] = time.perf_counter() - started
+        return result
+
+    def extract(self, text: str) -> tuple[dict, float]:
+        """통화 텍스트 1건 -> (summary 6필드, 소요 초)."""
+        result = self.analyze(text)
+        return result["final_output"], result["seconds"]

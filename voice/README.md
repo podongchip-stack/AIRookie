@@ -82,6 +82,9 @@ dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 | `call_capture.py` | 마이크로 직접 통화를 흉내내는 CLI 테스트 | 실행 / `Ctrl+C` | 통화 중 발화 단위 |
 | `transcribe.py` | 이미 녹음된 파일 배치 처리 | (해당 없음) | 파일 통째로 5초 조각 |
 
+시연·튜닝용 화면은 `simulation3/gui.py`에 따로 있다 — 같은 모듈을 쓰면서 통화 중에 6필드·모델 판정
+중간값·hub JSON을 실시간으로 보여준다(전송은 안 함). 사용법은 [`simulation3/README.md`](simulation3/README.md).
+
 ---
 
 ## 실행 방법
@@ -214,7 +217,8 @@ Qwen3-ASR은 오디오 한 덩어리를 받아 문장을 생성하는 모델이�
 **무음 판정은 소리 크기만 본다.** 사람 목소리와 소음을 구분하지 못하므로, 시끄러운 곳에서
 발화가 안 끊기면 `VOICE_SILENCE_RMS`를 올리고, 말하는 중에 자꾸 끊기면
 `VOICE_UTTERANCE_HOLD_SEC`를 늘린다. 기본값은 브라우저 마이크 기준으로 잡힌 값이라,
-실제 장비 마이크에서 한 번 맞춰봐야 한다.
+실제 장비 마이크에서 한 번 맞춰봐야 한다 — `simulation3/gui.py`가 현재 음량과 판정을 보여줘서
+맞추기 쉽다.
 
 통화 중 인식이 예외로 멈춰도 통화를 잃지 않는다 — 인식이 멈춘 지점부터 `finish()`가
 남은 소리를 한꺼번에 다시 인식한다.
@@ -414,7 +418,12 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 │   │   ├── assemble.py          필드 → 계약 6필드 (규칙)
 │   │   ├── symptom_names.py     증상 구간 → 표준명 (임시 규칙)
 │   │   └── department_mapping.json  원인·부위 → 전문과목 대응표
-│   └── schema.py                [출력]   pydantic 스키마 (hub 전송용 JSON)
+│   ├── schema.py                [출력]   pydantic 스키마 (hub 전송용 JSON)
+│   │
+│   │   ── 그 외 ──
+│   └── simulation3/             시연·튜닝용 데스크톱 화면 (실운영 경로 아님)
+│       ├── README.md            사용법
+│       └── gui.py               tkinter. 처리는 전부 위 모듈을 import
 │
 └── data/                        (.gitignore의 data/ 규칙에 걸려 저장소에는 안 올라감)
     └── voice_data/

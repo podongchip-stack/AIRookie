@@ -79,48 +79,25 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
 
 
-def emit_call_summary(
+def build_call_summary_message(
     segments: list[Segment],
     duration_sec: float,
     name: str,
-    extractor: HmmExtractor,
+    summary: dict,
     case_id: str | None = None,
-    do_summarize: bool = True,
-) -> None:
-    """발화 구간 -> STT 원문 저장 -> HMM 구조화 -> JSON 조립·저장 -> hub 전송.
-
-    발화는 줄바꿈으로 이어 붙인다. HMM은 "줄바꿈 = 화자 전환"인 통화 텍스트로 학습했는데, 여기 줄바꿈은
-    발화(무음) 경계라 완전히 같은 형태는 아니다 — 화자 분리가 붙으면 그 경계로 바꿀 자리다.
-
-    오인식 교정 단계는 없다. filtered_text(=구조화에 실제로 들어간 입력)는 raw_text와 같다 — 필드는
-    hub·dashboard와의 계약이라 남긴다. 원본 보존 원칙대로 raw_text/turns에 인식 결과 전체가 남는다.
+) -> CallSummaryMessage:
+    """발화 구간 + summary 6필드 -> hub로 보낼 CallSummaryMessage (pydantic 검증 포함). 저장·전송은 하지 않는다.
 
     실제 통화 시작 시각 메타데이터가 없으므로, 처리 시점에서 오디오 길이만큼 거슬러
     올라간 시각을 통화 시작 시각으로 근사한다.
     """
     full_text = "\n".join(segment.text for segment in segments)
-    ORIGIN_TEXT_DIR.mkdir(parents=True, exist_ok=True)
-    text_path = ORIGIN_TEXT_DIR / f"{name}.txt"
-    text_path.write_text(full_text, encoding="utf-8")
-    print(f"\n텍스트 파일 저장: {text_path}")
-
-    if not do_summarize:
-        return
-    if not full_text:
-        print("\n인식된 발화가 없어 구조화·전송을 건너뜁니다.", file=sys.stderr)
-        return
-
-    summary, extract_elapsed = extractor.extract(full_text)
-    print(f"구조화 완료 ({extract_elapsed:.2f}초)")
-
     call_start = datetime.now(timezone.utc) - timedelta(seconds=duration_sec)
     # voice/app.py(실제 파이프라인)는 hub가 중계한 caseId를 그대로 넘긴다.
     # CLI 단독 실행에는 caseId 개념이 없어 None이 들어오는데,
     # hub의 스키마는 caseId를 필수로 요구하므로 파일명 기반으로 만들어 채운다.
-    resolved_case_id = case_id or f"case-{name}"
-
-    message = CallSummaryMessage(
-        caseId=resolved_case_id,
+    return CallSummaryMessage(
+        caseId=case_id or f"case-{name}",
         transcript=Transcript(
             raw_text=full_text,
             filtered_text=full_text,
@@ -140,6 +117,39 @@ def emit_call_summary(
         model_used=ModelUsed(stt=asr.MODEL_NAME, llm=hmm.MODEL_NAME),
     )
 
+
+def emit_call_summary(
+    segments: list[Segment],
+    duration_sec: float,
+    name: str,
+    extractor: HmmExtractor,
+    case_id: str | None = None,
+    do_summarize: bool = True,
+) -> None:
+    """발화 구간 -> STT 원문 저장 -> HMM 구조화 -> JSON 조립·저장 -> hub 전송.
+
+    발화는 줄바꿈으로 이어 붙인다. HMM은 "줄바꿈 = 화자 전환"인 통화 텍스트로 학습했는데, 여기 줄바꿈은
+    발화(무음) 경계라 완전히 같은 형태는 아니다 — 화자 분리가 붙으면 그 경계로 바꿀 자리다.
+
+    오인식 교정 단계는 없다. filtered_text(=구조화에 실제로 들어간 입력)는 raw_text와 같다 — 필드는
+    hub·dashboard와의 계약이라 남긴다. 원본 보존 원칙대로 raw_text/turns에 인식 결과 전체가 남는다.
+    """
+    full_text = "\n".join(segment.text for segment in segments)
+    ORIGIN_TEXT_DIR.mkdir(parents=True, exist_ok=True)
+    text_path = ORIGIN_TEXT_DIR / f"{name}.txt"
+    text_path.write_text(full_text, encoding="utf-8")
+    print(f"\n텍스트 파일 저장: {text_path}")
+
+    if not do_summarize:
+        return
+    if not full_text:
+        print("\n인식된 발화가 없어 구조화·전송을 건너뜁니다.", file=sys.stderr)
+        return
+
+    summary, extract_elapsed = extractor.extract(full_text)
+    print(f"구조화 완료 ({extract_elapsed:.2f}초)")
+
+    message = build_call_summary_message(segments, duration_sec, name, summary, case_id)
     output_json = message.model_dump_json(exclude_none=True, indent=2)
     SUMMARY_TEXT_DIR.mkdir(parents=True, exist_ok=True)
     summary_path = SUMMARY_TEXT_DIR / f"{name}_call_summary.json"
