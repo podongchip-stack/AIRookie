@@ -541,6 +541,7 @@ class HubEngine:
             hospitals=hospital_matches,
             source="rule",
             ambulanceName=ambulance.name if ambulance is not None else None,
+            apid=apid,
         )
         # 승인 액션이 들어왔을 때 재계산 없이 패치·재브로드캐스트할 수 있게
         # 사건 단위로 최신 결과를 캐시해둔다 (get_case_result() 참고).
