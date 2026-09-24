@@ -103,6 +103,24 @@ class Assessment(BaseModel):
     groups: dict[str, AssessmentGroup] = Field(default_factory=dict)
 
 
+class BedReliabilityInput(BaseModel):
+    """feature/info의 reliability/(infosurv 서빙 모듈)가 HospitalInfo에 얹어
+    보내는 병상 정보 신뢰도 예측. XGBoost AFT 생존모델이라 source는 "ai"다.
+
+    hub가 실제로 쓰는 건 predictedSurvivalSec(예측 생존시간)과 bornAt(현재
+    claim-version 탄생 시각) 둘이다 — authority는 정보 나이에 따라 계속
+    떨어지는 값이라 hub가 매칭 시점마다 bed_reliability.evaluate()로
+    재계산한다. authorityAtSend/ttlSec은 info의 전송 시점 스냅샷(로그·대조용).
+    """
+
+    predictedSurvivalSec: float
+    bornAt: str
+    authorityAtSend: float
+    ttlSec: float
+    modelTag: str
+    source: Literal["ai"] = "ai"
+
+
 class HospitalInfo(BaseModel):
     hospitalId: str
     name: str
@@ -123,6 +141,9 @@ class HospitalInfo(BaseModel):
     # 깨지지 않는다. Optional로 명시한 이유는 "받으면 실제로 타입 검증까지
     # 하고 싶어서"이지 "안 받으면 깨져서"가 아니다.
     assessment: Optional[Assessment] = None
+    # reliability/(infosurv)의 병상 정보 신뢰도 예측. assessment와 같은 패턴 —
+    # 이 필드 없이 오는 구 feature/info 데이터도 그대로 통과한다.
+    bedReliability: Optional[BedReliabilityInput] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -188,6 +209,24 @@ class ReliabilityInfo(BaseModel):
     basis: list[str] = Field(default_factory=list)
 
 
+class BedReliabilityMatch(BaseModel):
+    """이 병원의 병상 숫자를 얼마나 믿어도 되는지 — 매칭 시점에 hub가
+    재계산해 dashboard로 내보내는 설명용 필드(2026-09-24 신설).
+
+    ReliabilityInfo(assessment 기반, 중증질환군 수용 신고의 신뢰도)와는 다른
+    축이다 — 이쪽은 "가용 병상 수 값 자체가 아직 유효한가"를 본다. 순위
+    (finalScore)에는 관여하지 않는다. authority는 지금 시점, rArrive는
+    도착 시점(거리/평균속도로 추정한 horizonSec 뒤)의 유효 확률.
+    """
+
+    authority: float
+    rArrive: float
+    horizonSec: float
+    ttlSec: float
+    modelTag: str
+    source: Literal["ai"] = "ai"
+
+
 class HospitalMatch(BaseModel):
     hospitalId: str
     name: str
@@ -202,6 +241,7 @@ class HospitalMatch(BaseModel):
     status: HospitalStatus = "pending"
     etaMin: Optional[int] = None
     reliability: Optional[ReliabilityInfo] = None
+    bedReliability: Optional[BedReliabilityMatch] = None
 
 
 class HubMatchResult(BaseModel):
