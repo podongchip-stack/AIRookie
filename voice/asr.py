@@ -4,14 +4,13 @@ C:\\Dev\\HMM\\use\\transcribe_ko.py의 인식 로직을 가져왔다. 어댑터�
 20시간으로 학습했고, 학습 데이터가 평균 2초짜리 발화라 긴 통화를 통째로 넣지 않고 조용한 지점에서
 5초 안팎으로 잘라 구간별로 인식한다(20초 단위는 문장이 통째로 빠졌고 8초 단위도 일부 누락).
 
-가중치는 저장소에 없다. 베이스 모델은 첫 실행 때 Hugging Face 캐시(HF_HOME)로 내려받고,
-어댑터(약 79MB)는 ASR_ADAPTER_DIR 폴더에 있어야 한다.
+가중치는 저장소에 없다. 베이스 모델과 어댑터(약 79MB) 모두 첫 실행 때 Hugging Face 캐시(HF_HOME)로
+내려받는다. ASR_ADAPTER_DIR 환경변수를 주면 어댑터는 그 로컬 폴더를 쓴다(weights.py).
 """
 
 from __future__ import annotations
 
 import math
-import os
 import threading
 import time
 from dataclasses import dataclass
@@ -25,8 +24,9 @@ from peft import PeftModel
 from scipy.signal import resample_poly
 from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
 
+from weights import resolve_weights_dir
+
 BASE_MODEL_ID = "Qwen/Qwen3-ASR-1.7B-hf"
-ASR_ADAPTER_DIR = Path(os.environ.get("ASR_ADAPTER_DIR", r"C:\Dev\HMM\use\adapter"))
 
 #: model_used.stt에 싣는 이름
 MODEL_NAME = "qwen3-asr-1.7b-lora"
@@ -116,7 +116,9 @@ class AsrModel:
     겹칠 수 있어 락으로 한 번에 하나만 돌린다.
     """
 
-    def __init__(self, device: str = "auto", adapter_dir: Path = ASR_ADAPTER_DIR) -> None:
+    def __init__(self, device: str = "auto", adapter_dir: Path | None = None) -> None:
+        if adapter_dir is None:
+            adapter_dir = resolve_weights_dir("ASR_ADAPTER_DIR", "asr_adapter")
         if not adapter_dir.is_dir():
             raise FileNotFoundError(f"ASR 어댑터 폴더가 없습니다: {adapter_dir} (ASR_ADAPTER_DIR 환경변수로 지정)")
         self.device = pick_device(device)
