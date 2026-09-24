@@ -5,15 +5,18 @@ ARKit이 폰 안에서 만든 메시(scene_mesh.ply)는 iOS 버전·기기마다
 (15 Pro 26.6.1은 뎁스 신뢰도 "높음" 0% → 메시가 거의 안 생김, 0918 실측), 비교의 본체는
 **원자료(뎁스·포즈)를 Mac에서 같은 조건으로 융합한 결과**다. ARKit 메시는 참고로만 싣는다.
 
-재구성은 fuse_depth.py를 그대로 부른다(2cm 균일 TSDF, 4.0m, 기본 필터). 기존 결과를
-덮어쓰지 않도록 비교용 이름(fused_compare.ply)으로 저장하고, 있으면 재사용한다(--refuse로 다시).
+live4d는 lidar3d와 별개 모듈이다. 촬영 원본은 lidar3d 서버가 받은 세션 폴더를 **읽기만** 하고,
+재구성은 lidar3d의 fuse_depth.py를 그대로 불러 쓴다(2cm 균일 TSDF, 4.0m, 기본 필터).
+만들어지는 파일은 전부 live4d/data/ 아래에 둔다 — lidar3d 세션 폴더에는 아무것도 쓰지 않는다.
+비교용 메시는 있으면 재사용한다(--refuse로 다시).
 
-사용법:
-  python3 scripts/compare_devices.py <세션A> <세션B> [--voxel 0.02] [--refuse]
-  예) python3 scripts/compare_devices.py server/sessions/session_A_iPhone15Pro server/sessions/session_B_iPhone12Pro
+사용법 (저장소 루트에서):
+  python3 live4d/scripts/compare_devices.py <세션A> <세션B> [--voxel 0.02] [--refuse]
+  예) python3 live4d/scripts/compare_devices.py \
+        lidar3d/server/sessions/session_A_iPhone15Pro lidar3d/server/sessions/session_B_iPhone12Pro
 
 같은 장소·같은 경로·비슷한 시간 길이로 찍어야 공정하다. 결과는 표로 출력하고
-<세션A>/compare_<A>_vs_<B>.json 에도 남긴다.
+live4d/data/compare/compare_<A>_vs_<B>.json 에도 남긴다.
 """
 from __future__ import annotations
 
@@ -27,8 +30,16 @@ from pathlib import Path
 
 import numpy as np
 
-SCRIPTS = Path(__file__).resolve().parent
+LIVE4D_DIR = Path(__file__).resolve().parents[1]
+# 재구성은 lidar3d의 스크립트를 재사용한다(같은 조건 비교가 목적이라 따로 만들지 않는다).
+LIDAR3D_SCRIPTS = LIVE4D_DIR.parent / "lidar3d" / "scripts"
+OUT_DIR = LIVE4D_DIR / "data" / "compare"
 COMPARE_MESH = "fused_compare.ply"
+
+
+def _mesh_path(sess: Path) -> Path:
+    """세션별 비교용 메시 위치 — live4d/data/compare/<세션이름>/fused_compare.ply"""
+    return OUT_DIR / sess.name / COMPARE_MESH
 
 
 def _ply_counts_and_area(path: Path) -> dict | None:
@@ -107,12 +118,14 @@ def _capture_stats(sess: Path) -> dict:
 
 def _fuse(sess: Path, voxel: float, refuse: bool) -> float | None:
     """fuse_depth.py로 비교용 메시를 만든다. 걸린 초를 돌려준다(재사용이면 None)."""
-    out = sess / COMPARE_MESH
+    out = _mesh_path(sess)
     if out.exists() and not refuse:
         return None
+    out.parent.mkdir(parents=True, exist_ok=True)
     started = time.time()
-    cmd = [sys.executable, str(SCRIPTS / "fuse_depth.py"), str(sess),
-           "--voxel", str(voxel), "--maxd", "4.0", "--out", COMPARE_MESH]
+    # fuse_depth.py는 --out을 세션 폴더 기준으로 이어 붙이는데, 절대 경로를 주면 그 위치에 쓴다.
+    cmd = [sys.executable, str(LIDAR3D_SCRIPTS / "fuse_depth.py"), str(sess),
+           "--voxel", str(voxel), "--maxd", "4.0", "--out", str(out)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"❌ 융합 실패: {sess.name}\n{result.stdout[-1500:]}\n{result.stderr[-1500:]}")
@@ -151,7 +164,7 @@ def main() -> None:
         print(f"… {sess.name}: Mac 재구성 (voxel {args.voxel}m)")
         stats["fuse_seconds"] = _fuse(sess, args.voxel, args.refuse) or "재사용"
         arkit = _ply_counts_and_area(sess / "scene_mesh.ply") or {}
-        fused = _ply_counts_and_area(sess / COMPARE_MESH) or {}
+        fused = _ply_counts_and_area(_mesh_path(sess)) or {}
         stats.update({
             "arkit_area_m2": arkit.get("area_m2"), "arkit_faces": arkit.get("faces"),
             "fused_area_m2": fused.get("area_m2"), "fused_faces": fused.get("faces"),
@@ -167,7 +180,8 @@ def main() -> None:
     for label, key in ROWS:
         print(f"{label:<{width}} | {str(sa.get(key)):<34} | {str(sb.get(key)):<34}")
 
-    out = args.session_a.resolve() / f"compare_{a}_vs_{b}.json"
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = OUT_DIR / f"compare_{a}_vs_{b}.json"
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n저장: {out}")
     print("읽는 법: 같은 장소·경로라면 [본체] 표면적·면 수가 비슷하고 트래킹·흔들림이 안정적인 기기가 4D 녹화에 적합하다.")
