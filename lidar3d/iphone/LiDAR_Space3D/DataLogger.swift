@@ -16,6 +16,8 @@ final class CSVLogger {
         guard let handle = try? FileHandle(forWritingTo: fileURL) else {
             return nil
         }
+        
+
         self.fileHandle = handle
         write(header + "\n")
     }

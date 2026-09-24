@@ -69,6 +69,25 @@ final class SessionManager: ObservableObject {
         didSet { UserDefaults.standard.set(showMeshOverlay, forKey: "opt.showMeshOverlay") }
     }
 
+    /// 촬영 모드 — 3D 스캔(들고 한 바퀴) / 4D 고정 녹화(거치 후 시간대별 기록, live4d).
+    /// 다른 옵션처럼 앱을 껐다 켜도 유지된다. 메시 생성 여부가 바뀌므로 ARSession을 다시 구성한다.
+    @Published var captureMode: CaptureMode =
+        CaptureMode(rawValue: UserDefaults.standard.string(forKey: "opt.captureMode") ?? "") ?? .scan3D {
+        didSet {
+            UserDefaults.standard.set(captureMode.rawValue, forKey: "opt.captureMode")
+            guard oldValue != captureMode, !isRecording, !isSaving else { return }
+            applyCaptureMode()
+            arCaptureManager.configureAndRun()
+        }
+    }
+    /// 녹화 경과 시간(초). 4D 최대 시간·예상 용량 표시에 쓴다.
+    @Published var recordingElapsed: TimeInterval = 0
+
+    /// 실제로 뎁스를 저장·업로드하는지. 4D는 뎁스가 결과물의 본체라 토글과 무관하게 켠다.
+    /// (마지막으로 찍은 세션 기준 — 녹화 뒤 모드를 바꿔도 그 세션의 업로드가 틀어지지 않게)
+    var effectiveCaptureDepth: Bool { captureDepth || captureMode.requiresDepth }
+    private var effectiveUploadDepth: Bool { uploadDepth || recordingMode.requiresDepth }
+
     /// 저장된 값이 없으면 기본값을 쓴다. (UserDefaults.bool은 없을 때 false를 주므로
     /// 기본값이 true인 항목은 이렇게 존재 여부를 먼저 확인해야 한다.)
     private static func pref(_ key: String, default fallback: Bool) -> Bool {
@@ -86,7 +105,13 @@ final class SessionManager: ObservableObject {
     let arCaptureManager = ARCaptureManager()
     let motionManager = MotionManager()
     let coach: ScanCoach
+    /// 4D 고정 녹화에서 거치 상태·발열 감시. 3D 스캔에서는 쓰지 않는다.
+    let mountMonitor = FixedMountMonitor()
     private var cancellables = Set<AnyCancellable>()
+    /// 지금(또는 마지막으로) 녹화한 세션의 모드. 녹화 뒤 사용자가 모드를 바꿔도 그 세션의
+    /// 업로드 목록·필수 파일·metadata가 틀어지지 않도록 녹화 시점 값을 따로 들고 있는다.
+    private var recordingMode: CaptureMode = .scan3D
+    private var elapsedTimer: Timer?
 
     private var sessionDirectory: URL?
     private var depthDirectory: URL?
@@ -121,6 +146,16 @@ final class SessionManager: ObservableObject {
         coach.objectWillChange.receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        mountMonitor.objectWillChange.receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
+
+    /// 모드에 따라 ARKit 캡처 설정을 맞춘다. 메시 켜고 끄기는 configureAndRun() 뒤에 적용된다.
+    private func applyCaptureMode() {
+        arCaptureManager.meshEnabled = captureMode.meshEnabled
+        arCaptureManager.depthSaveHz = captureMode.depthSaveHz
+        arCaptureManager.videoSaveHz = captureMode.videoSaveHz
     }
 
     /// ARSession 실행. ARSCNView가 makeUIView에서 자기를 session.delegate로 잡기 때문에
@@ -130,6 +165,7 @@ final class SessionManager: ObservableObject {
             lastError = "이 기기는 ARKit을 지원하지 않습니다. LiDAR 캡처 불가."
             return
         }
+        applyCaptureMode()
         arCaptureManager.configureAndRun()
         if !lidarAvailable {
             lastError = "이 기기는 LiDAR 미지원입니다 — 포즈/영상은 기록되지만 뎁스·메시는 없습니다."
@@ -184,12 +220,15 @@ final class SessionManager: ObservableObject {
 
         let version = maxVersion + 1
         UserDefaults.standard.set(version, forKey: key)
-        return "\(prefix)\(version)_\(DeviceInfo.slug)"
+        // 4D는 뒤에 _4D를 붙여 서버 목록에서 바로 구분되게 한다(순번은 3D와 공유).
+        return "\(prefix)\(version)_\(DeviceInfo.slug)\(captureMode.sessionSuffix)"
     }
 
     // MARK: - 세션 시작
 
     func startSession() {
+        recordingMode = captureMode
+        applyCaptureMode()
         let sessionId = nextSessionId()
         let dir = documentsDirectory().appendingPathComponent(sessionId, isDirectory: true)
 
@@ -209,7 +248,7 @@ final class SessionManager: ObservableObject {
         // depth/ 폴더는 뎁스를 실제로 찍을 때만 만든다 (빈 폴더가 업로드 목록에 끼지 않게).
         var depthDir: URL?
         var depthIndexLogger: CSVLogger?
-        if captureDepth && arCaptureManager.sceneDepthActive {
+        if effectiveCaptureDepth && arCaptureManager.sceneDepthActive {
             let d = dir.appendingPathComponent("depth", isDirectory: true)
             if (try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)) != nil {
                 depthDir = d
@@ -225,7 +264,7 @@ final class SessionManager: ObservableObject {
                                     header: "frame_index,timestamp")
         let poseLogger = CSVLogger(fileURL: dir.appendingPathComponent("arkit_pose.csv"),
                                    header: ARCaptureManager.poseCSVHeader)
-        arCaptureManager.depthCaptureEnabled = captureDepth
+        arCaptureManager.depthCaptureEnabled = effectiveCaptureDepth
         arCaptureManager.startRecording(videoURL: dir.appendingPathComponent("video.mov"),
                                         frameLogger: frameLogger,
                                         poseLogger: poseLogger,
@@ -247,9 +286,27 @@ final class SessionManager: ObservableObject {
         // 코칭: 이제부터 실제 촬영이므로 로거를 붙이고 활성화한다.
         coach.stop()
         coach.tooCloseEnabled = arCaptureManager.sceneDepthActive
-        coach.start(logger: CSVLogger(fileURL: dir.appendingPathComponent("coaching.csv"),
-                                      header: ScanCoach.coachingCSVHeader))
+        let coachingLogger = CSVLogger(fileURL: dir.appendingPathComponent("coaching.csv"),
+                                       header: ScanCoach.coachingCSVHeader)
+        coach.start(logger: coachingLogger)
         coach.setActive(true)
+        // 4D: 거치 상태·발열 이벤트를 같은 coaching.csv에 남긴다(ScanCoach와 로거 공유).
+        if recordingMode == .fixed4D {
+            mountMonitor.start(session: arCaptureManager.session, logger: coachingLogger)
+        }
+
+        // 경과 시간 + 4D 최대 시간 자동 종료
+        recordingElapsed = 0
+        let started = Date()
+        elapsedTimer?.invalidate()
+        elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self, self.isRecording else { return }
+            self.recordingElapsed = Date().timeIntervalSince(started)
+            if let limit = self.recordingMode.maxDuration, self.recordingElapsed >= limit {
+                self.lastError = "4D 최대 녹화 시간(\(Int(limit / 60))분)에 도달해 자동으로 종료했습니다."
+                self.stopSession { _ in }
+            }
+        }
 
         // 10~30분짜리 스캔 도중 자동 잠금이 세션을 끊으면 안 된다.
         UIApplication.shared.isIdleTimerDisabled = true
@@ -264,9 +321,14 @@ final class SessionManager: ObservableObject {
         isRecording = false
         isSaving = true
         UIApplication.shared.isIdleTimerDisabled = false
+        elapsedTimer?.invalidate()
+        elapsedTimer = nil
         motionManager.stop()
+        // 공유 로거를 ScanCoach가 닫기 전에 감시를 먼저 멈춘다.
+        mountMonitor.stop()
         coach.setActive(false)
         coach.stop()
+        let mode = recordingMode
 
         // 메시 스냅샷은 ARSession을 멈추기 **전에** 떠야 한다.
         // delegateQueue 위에서 복사한다 — 메인에서 직접 읽으면 ARKit의 앵커 갱신과 경합한다.
@@ -284,7 +346,9 @@ final class SessionManager: ObservableObject {
             DispatchQueue.global(qos: .userInitiated).async {
                 var result: MeshExporter.Result?
                 var meshError: String?
-                if anchors.isEmpty {
+                if !mode.meshEnabled {
+                    // 4D 고정 녹화는 메시를 만들지 않는다 — 정상이다.
+                } else if anchors.isEmpty {
                     meshError = "메시 앵커가 0개입니다 (LiDAR 미지원이거나 스캔 시간이 너무 짧음)."
                 } else {
                     do {
@@ -299,7 +363,7 @@ final class SessionManager: ObservableObject {
 
                 // 뎁스 zip은 업로드 토글이 켜진 경우에만 만든다 (수백 MB짜리 작업).
                 var zipURL: URL?
-                if self.uploadDepth, let depthDir = self.depthDirectory,
+                if self.effectiveUploadDepth, let depthDir = self.depthDirectory,
                    self.arCaptureManager.depthFrameCount > 0 {
                     zipURL = Self.makeZip(of: depthDir, named: "depth.zip", in: dir)
                 }
@@ -357,7 +421,7 @@ final class SessionManager: ObservableObject {
 
         var metadata: [String: Any] = [
             "session_id": currentSessionId ?? "",
-            "capture_mode": "lidar_arkit",
+            "capture_mode": recordingMode.metadataTag,
             "schema_version": 2,
 
             // --- 서버가 파이프라인을 분기하는 근거 ---
@@ -505,6 +569,26 @@ final class SessionManager: ObservableObject {
             metadata["mesh_face_count"] = 0
         }
 
+        // --- 4D 고정 녹화 요약 (live4d) ---
+        // Mac 쪽이 "이 세션을 시간대별 3D로 믿어도 되는가"를 판단하는 근거다. 거치대가 움직였다면
+        // 그 구간은 배경까지 흔들려 사람의 움직임과 구분되지 않는다(이벤트 시각은 coaching.csv).
+        metadata["capture_mode_label"] = recordingMode.title
+        if recordingMode == .fixed4D {
+            metadata["fixed4d_recording_seconds"] = recordingElapsed
+            metadata["fixed4d_max_duration_seconds"] = recordingMode.maxDuration ?? 0
+            metadata["fixed4d_mount_max_translation_m"] = Double(mountMonitor.maxTranslationM)
+            metadata["fixed4d_mount_max_rotation_deg"] = Double(mountMonitor.maxRotationDeg)
+            metadata["fixed4d_mount_drift_event_count"] = mountMonitor.driftEventCount
+            metadata["fixed4d_mount_threshold"] = [
+                "translation_m": Double(FixedMountMonitor.maxTranslationM),
+                "rotation_deg": Double(FixedMountMonitor.maxRotationDeg),
+            ]
+            metadata["fixed4d_thermal_seconds"] = mountMonitor.thermalSeconds
+            metadata["fixed4d_note"] = "ARKit 메시는 만들지 않는다(scene_mesh.ply 없음). 시간대별 3D는 "
+                + "원본 뎁스(depth/)와 포즈로 Mac에서 재구성한다. 거치대 이탈 구간은 coaching.csv의 "
+                + "mount_drift/mount_recovered 이벤트로 확인한다."
+        }
+
         let url = dir.appendingPathComponent("metadata.json")
         if let data = try? JSONSerialization.data(withJSONObject: metadata,
                                                   options: [.prettyPrinted, .sortedKeys]) {
@@ -541,7 +625,7 @@ final class SessionManager: ObservableObject {
         //   metadata.json이 먼저 올라가면, 뎁스가 어떻게 되든 그 세션은 뷰어에서 열리고
         //   분석도 된다. 뎁스는 "있으면 좋은" 부가 데이터이므로 이 순서가 맞다.
         //   (서버의 /session/stop은 업로드가 다 끝난 뒤 앱이 한 번 부르므로 순서와 무관하다.)
-        if uploadDepth, depthZipURL != nil { names.append("depth.zip") }
+        if effectiveUploadDepth, depthZipURL != nil { names.append("depth.zip") }
 
         return names
             .map { dir.appendingPathComponent($0) }
@@ -559,7 +643,8 @@ final class SessionManager: ObservableObject {
         // metadata.json이 없으면 서버도 뷰어도 그 세션을 해석할 수 없다.
         // scene_mesh.ply가 없으면 3D 모델 자체가 없는 것이다(LiDAR 미지원 기기는 예외).
         var required = ["metadata.json"]
-        if lidarAvailable { required.append("scene_mesh.ply") }
+        // 4D 고정 녹화는 메시를 만들지 않으므로 scene_mesh.ply를 요구하지 않는다.
+        if lidarAvailable && recordingMode.meshEnabled { required.append("scene_mesh.ply") }
         return required.filter { !FileManager.default.fileExists(
             atPath: dir.appendingPathComponent($0).path) }
     }

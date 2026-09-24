@@ -71,6 +71,10 @@ final class ARCaptureManager: NSObject {
     var videoSaveHz: Double = 15.0
     /// 뎁스 저장 자체를 끄는 스위치 (UI 토글).
     var depthCaptureEnabled: Bool = true
+    /// ARKit 씬 재구성(메시)을 켤지. 4D 고정 녹화는 끈다(CaptureMode.meshEnabled) — 시간대별
+    /// 3D는 Mac이 원본 뎁스로 만들고, 메시를 끄면 장시간 녹화의 발열이 줄어든다.
+    /// 바꾼 뒤에는 configureAndRun()을 다시 불러야 적용된다.
+    var meshEnabled: Bool = true
 
     // MARK: - 관측된 실제값 (추정이 아니라 측정값. metadata.json으로 나간다.)
 
@@ -165,7 +169,11 @@ final class ARCaptureManager: NSObject {
         // 씬 재구성: 분류 포함을 우선하고, 안 되면 분류 없는 메시로, 그것도 안 되면 끈다.
         // RoomPlan을 쓰지 않는 이유는 docs/coordinate_system.md 참고 — 차량 전복/붕괴 공간처럼
         // "방"이 아닌 현장에서는 벽/문 자동 검출을 신뢰할 수 없다.
-        if ARCaptureManager.supportsMeshWithClassification {
+        if !meshEnabled {
+            config.sceneReconstruction = []
+            meshActive = false
+            classificationActive = false
+        } else if ARCaptureManager.supportsMeshWithClassification {
             config.sceneReconstruction = .meshWithClassification
             meshActive = true
             classificationActive = true

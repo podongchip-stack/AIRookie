@@ -80,7 +80,19 @@ struct ContentView: View {
                 .frame(height: 300)
                 .animation(.easeInOut(duration: 0.2), value: session.coachAlert)
 
-            if let alert = session.coachAlert {
+            if let drift = session.mountMonitor.driftAlert {
+                VStack {
+                    Spacer()
+                    Text(drift)
+                        .font(.headline).bold()
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Color.red.opacity(0.85))
+                        .clipShape(Capsule())
+                        .padding(.bottom, 14)
+                }
+                .frame(height: 300)
+            } else if let alert = session.coachAlert {
                 VStack {
                     Spacer()
                     Text(alert.message)
@@ -97,6 +109,7 @@ struct ContentView: View {
     }
 
     private var coachBorderColor: Color {
+        if session.mountMonitor.driftAlert != nil { return .red }
         guard let alert = session.coachAlert else {
             return session.isRecording ? .green.opacity(0.7) : .clear
         }
@@ -104,7 +117,7 @@ struct ContentView: View {
     }
 
     private var coachBorderWidth: CGFloat {
-        session.coachAlert == nil ? (session.isRecording ? 3 : 0) : 6
+        (session.coachAlert == nil && session.mountMonitor.driftAlert == nil) ? (session.isRecording ? 3 : 0) : 6
     }
 
     // MARK: LiDAR 상태
@@ -120,11 +133,39 @@ struct ContentView: View {
                       ARCaptureManager.supportsSmoothedSceneDepth ? "지원 (함께 저장)" : "미지원",
                       color: ARCaptureManager.supportsSmoothedSceneDepth ? .green : .gray)
             statusRow("Pose Rows", "\(session.poseRowCount)", color: .primary)
+            if session.captureMode == .fixed4D {
+                statusRow("4D 녹화 시간", fixed4DElapsedText, color: .primary)
+                statusRow("4D 예상 용량", fixed4DSizeText, color: .primary)
+                statusRow("고정 상태", mountText,
+                          color: session.mountMonitor.driftAlert == nil ? .green : .red)
+                statusRow("발열", FixedMountMonitor.name(of: session.mountMonitor.thermalState),
+                          color: session.mountMonitor.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+                            ? .red : .primary)
+            }
             statusRow("Scene Size", sceneExtentText, color: .primary)
             if !session.lastMeshSummary.isEmpty {
                 statusRow("Last Mesh", session.lastMeshSummary, color: .green)
             }
         }
+    }
+
+    private var fixed4DElapsedText: String {
+        let e = Int(session.recordingElapsed)
+        let limit = Int(session.captureMode.maxDuration ?? 0)
+        return String(format: "%d:%02d / %d:%02d", e / 60, e % 60, limit / 60, limit % 60)
+    }
+
+    /// 뎁스+신뢰도 크기 기준 추정치(영상은 제외). 업로드 시간을 가늠하는 용도.
+    private var fixed4DSizeText: String {
+        let mb = Double(session.depthFrameCount * CaptureMode.depthBytesPerFrame) / 1_048_576
+        return String(format: "뎁스 %.0f MB", mb)
+    }
+
+    private var mountText: String {
+        let m = session.mountMonitor
+        guard session.isRecording else { return "대기" }
+        return String(format: "%@ (%.1fcm · %.1f°)", m.driftAlert == nil ? "고정" : "이탈",
+                      m.currentTranslationM * 100, m.currentRotationDeg)
     }
 
     /// 트래킹 상태를 **사유까지** 보여준다. "limited"만 봐서는 무엇을 고쳐야 할지 알 수 없다.
@@ -182,16 +223,26 @@ struct ContentView: View {
     private var captureOptionsSection: some View {
         Group {
             Text("Capture Options").font(.headline)
+            // 촬영 모드 — 녹화·저장 중에는 바꿀 수 없다(ARSession을 다시 구성하므로).
+            Picker("촬영 모드", selection: $session.captureMode) {
+                ForEach(CaptureMode.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(session.isRecording || session.isSaving)
+            Text(session.captureMode.guide)
+                .font(.caption2).foregroundColor(.secondary)
             Toggle("메시 오버레이 표시", isOn: $session.showMeshOverlay)
+                .disabled(!session.captureMode.meshEnabled)
             Toggle("코칭 햅틱", isOn: Binding(get: { session.coach.hapticsEnabled },
                                           set: { session.coach.hapticsEnabled = $0 }))
             // 음성은 기본 OFF — 현장에서 폰이 말하면 무전 교신과 겹친다.
             Toggle("코칭 음성 안내", isOn: Binding(get: { session.coach.voiceEnabled },
                                             set: { session.coach.voiceEnabled = $0 }))
-            Toggle("뎁스 저장 (기기 내)", isOn: $session.captureDepth)
-                .disabled(session.isRecording || !session.sceneDepthSupported)
-            Toggle("뎁스도 업로드 (용량 큼)", isOn: $session.uploadDepth)
-                .disabled(session.isRecording || !session.captureDepth)
+            // 4D는 뎁스가 결과물의 본체라 항상 켜진다 — 토글은 켜진 상태로 보여주고 잠근다.
+            Toggle("뎁스 저장 (기기 내)", isOn: session.captureMode.requiresDepth ? .constant(true) : $session.captureDepth)
+                .disabled(session.isRecording || !session.sceneDepthSupported || session.captureMode.requiresDepth)
+            Toggle("뎁스도 업로드 (용량 큼)", isOn: session.captureMode.requiresDepth ? .constant(true) : $session.uploadDepth)
+                .disabled(session.isRecording || !session.captureDepth || session.captureMode.requiresDepth)
             Text("3D 뷰어가 그리는 것은 scene_mesh.ply 하나다. 뎁스는 오프라인 검증용이라 "
                  + "기본적으로 기기에만 남는다 — 켜면 업로드가 수백 MB가 된다.")
                 .font(.caption2).foregroundColor(.secondary)
@@ -260,7 +311,9 @@ struct ContentView: View {
                         }
                     } else {
                         session.startSession()
-                        statusMessage = "촬영 중 — 천천히 움직이세요"
+                        statusMessage = session.captureMode == .fixed4D
+                            ? "4D 녹화 중 — 폰을 건드리지 마세요 (1.5초 뒤 기준 자세 확정)"
+                            : "촬영 중 — 천천히 움직이세요"
                     }
                 }
                 .buttonStyle(.borderedProminent)
