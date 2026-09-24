@@ -8,8 +8,15 @@
 
 원리 — **측정값만 쓴다(AI 추정 없음)**:
   1. 움직이는 대상: 카메라가 고정이라 화소별 뎁스 중앙값이 그 카메라의 배경이 된다. 매 프레임에서
-     배경보다 --fg-min 이상 앞에 있는 화소를 뽑고 작은 잡음 덩어리는 버린다. 그 순간 포즈로 3D에 놓고
-     같은 프레임 영상의 색을 입힌다.
+     배경보다 "그 화소의 문턱" 이상 앞에 있는 화소를 뽑고 작은 잡음 덩어리는 버린다. 그 순간 포즈로 3D에
+     놓고 같은 프레임 영상의 색을 입힌다.
+     화소별 문턱 = max(--fg-min, --noise-k × 그 화소의 센서 흔들림).
+     센서 흔들림은 **연속한 두 프레임 차이**의 중앙값으로 잰다(σ ≈ 1.4826·median|ΔD|/√2). 전 구간 중앙값과의
+     차이로 재면 사람이 오래 머문 화소에서 "있음↔없음"이 흔들림으로 잡혀 정작 사람을 지워 버렸다.
+     사람의 움직임은 1/15초 사이엔 대부분 작아서, 프레임 간 차이는 센서 잡음을 주로 반영한다. 가만히 있는 장면에서도
+     뎁스가 크게 흔들리는 기기(0925 실측: 15 Pro 흔들림 중앙 161mm, 12 Pro 17mm)는 고정 문턱 10cm로는
+     벽·책상이 통째로 "움직이는 대상"으로 잡혔다(15 Pro 화면의 26%). 흔들림이 큰 화소는 그만큼 더 앞에
+     있어야 인정해 측정값만으로 잡음을 거른다(12 Pro처럼 흔들림이 작은 기기는 결과가 거의 같다).
   2. 배경: 1대 모드는 위 중앙값 배경을 그대로 쓴다(사람이 절반 넘게 머문 자리는 흐릿한 형체가 남는다).
      여러 대 모드에서 3D 스캔 세션이 있으면 **스캔을 배경으로** 쓴다(빈 공간을 따로 찍었으므로 형체가 없다).
      스캔은 뎁스 프레임을 역투영해 2cm 격자로 줄인 색 점이다.
@@ -97,7 +104,10 @@ def _read_frames(sess: Path, every: int = 1):
     return meta, out, (W, H)
 
 
-def process_4d(sess: Path, fg_min: float, min_blob: int) -> dict:
+NOISE_K = 3.0
+
+
+def process_4d(sess: Path, fg_min: float, min_blob: int, noise_k: float = NOISE_K) -> dict:
     """한 4D 세션 → 프레임별 움직이는 점(월드) + 중앙값 배경 + 카메라."""
     meta, fr, (W, H) = _read_frames(sess)
     D = np.stack([f["depth"] for f in fr])
@@ -105,12 +115,16 @@ def process_4d(sess: Path, fg_min: float, min_blob: int) -> dict:
         bg = np.nanmedian(np.where(D > 0, D, np.nan), axis=0)
     bg_valid = np.isfinite(bg)
     bg0 = np.nan_to_num(bg)
+    Dn = np.where(D > 0, D, np.nan)
+    with np.errstate(all="ignore"):
+        mad = np.nanmedian(np.abs(np.diff(Dn, axis=0)), axis=0) * 1.4826 / np.sqrt(2)
+    thresh = np.maximum(fg_min, noise_k * np.nan_to_num(mad, nan=fg_min))
     bg_rgb = np.median(np.stack([f["rgb"] for f in fr if f["rgb"] is not None]), axis=0).astype(np.uint8)
     mid = fr[len(fr) // 2]
     kernel = np.ones((3, 3), np.uint8)
     frames = []
     for f in fr:
-        m = (f["depth"] > 0) & bg_valid & ((bg0 - f["depth"]) > fg_min)
+        m = (f["depth"] > 0) & bg_valid & ((bg0 - f["depth"]) > thresh)
         m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN, kernel)
         n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
         keep = np.zeros(n, bool)
@@ -123,6 +137,7 @@ def process_4d(sess: Path, fg_min: float, min_blob: int) -> dict:
         "name": sess.name, "meta": meta, "frames": frames,
         "bg_pts": _backproject(bg0, mid["K"], mid["R"], mid["tr"], bg_valid), "bg_col": bg_rgb[bg_valid],
         "camera": {"R": mid["R"], "t": mid["tr"], "K": mid["K"], "W": W, "H": H},
+        "depth_jitter_mm": float(np.nanmedian(mad) * 1000),
     }
 
 

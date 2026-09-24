@@ -15,6 +15,10 @@
   2차: 두 4D 세션의 "프레임별 움직임 양"(배경보다 앞에 나온 화소 비율) 곡선을 교차상관해 남은 어긋남을
        찾는다. 시점이 달라도 사람이 움직이는 순간은 두 카메라에서 함께 커지기 때문이다. 상관이 약하면
        (0.5 미만) 1차 값을 그대로 쓴다.
+  넓은 탐색: 폰 시계가 수십 초 틀린 경우가 실제로 있었다(0925 촬영, 두 폰 시계 차 약 24초 — 1차 기준으로는
+       두 녹화가 전혀 겹치지 않았다). ±1초 탐색이 실패하면 ±WIDE_LAG_S 범위를 찾아, 상관이 충분히 높고
+       (≥0.6) 1초 넘게 떨어진 다른 후보보다 뚜렷할 때(차이 ≥0.1)만 채택하고 "시계 오차 의심"으로 기록한다.
+       시작 신호(두 카메라에 보이는 곳에서 양팔을 빠르게 두 번 들기)를 넣으면 이 봉우리가 뚜렷해진다.
 
 사용법 (저장소 루트에서):
   python3 live4d/scripts/align_sessions.py --name 0925_test \\
@@ -40,6 +44,7 @@ LIVE4D_DIR = Path(__file__).resolve().parents[1]
 OUT_DIR = LIVE4D_DIR / "data" / "align"
 F = np.diag([1.0, -1.0, -1.0])       # OpenCV 카메라(y 아래, z 앞) ↔ ARKit 카메라(y 위, -z 앞)
 MIN_CORNERS = 8
+WIDE_LAG_S = 60.0
 MAX_REPROJ_PX = 2.0
 
 
@@ -145,20 +150,42 @@ def motion_curve(sess: Path, fg_min: float = 0.10):
     return np.array([float(r["timestamp"]) for r in rows]), frac
 
 
-def refine_offset(ta, fa, tb, fb, max_lag=1.0, step=0.01):
-    """곡선 b를 lag만큼 늦췄을 때 a와 가장 잘 맞는 lag(초)와 상관계수."""
-    lo, hi = max(ta[0], tb[0]), min(ta[-1], tb[-1])
-    if hi - lo < 5:
-        return 0.0, None
-    grid = np.arange(lo + max_lag, hi - max_lag, step)
+def _corr_at(ta, fa, tb, fb, lag, step, min_overlap):
+    """곡선 b를 lag만큼 늦춰 겹친 구간에서의 상관계수(겹침이 짧으면 None)."""
+    lo, hi = max(ta[0], tb[0] + lag), min(ta[-1], tb[-1] + lag)
+    if hi - lo < min_overlap:
+        return None
+    grid = np.arange(lo, hi, step)
     A = np.interp(grid, ta, fa); A = (A - A.mean()) / (A.std() + 1e-9)
-    best = (0.0, -1.0)
+    Bv = np.interp(grid - lag, tb, fb); Bv = (Bv - Bv.mean()) / (Bv.std() + 1e-9)
+    return float(np.mean(A * Bv))
+
+
+def refine_offset(ta, fa, tb, fb, max_lag=1.0, step=0.01, min_overlap=5.0):
+    """b의 시각에 더해야 a와 맞는 보정(초)과 상관계수. 못 찾으면 (0, None)."""
+    best = (0.0, None)
     for lag in np.arange(-max_lag, max_lag + 1e-9, step):
-        Bv = np.interp(grid + lag, tb, fb); Bv = (Bv - Bv.mean()) / (Bv.std() + 1e-9)
-        c = float(np.mean(A * Bv))
-        if c > best[1]:
+        c = _corr_at(ta, fa, tb, fb, lag, step, min_overlap)
+        if c is not None and (best[1] is None or c > best[1]):
             best = (float(lag), c)
     return best
+
+
+def wide_offset(ta, fa, tb, fb, max_lag=WIDE_LAG_S):
+    """넓은 범위 탐색: 거친 격자(0.05초)로 후보를 찾고 그 주변을 0.01초로 다듬는다.
+    반환: (보정 초, 상관, 1초 넘게 떨어진 차선 후보의 상관)"""
+    scores = []
+    for lag in np.arange(-max_lag, max_lag, 0.05):
+        c = _corr_at(ta, fa, tb, fb, lag, 0.02, 5.0)
+        if c is not None:
+            scores.append((c, float(lag)))
+    if not scores:
+        return 0.0, None, None
+    scores.sort(reverse=True)
+    c0, l0 = scores[0]
+    runner = next((c for c, l in scores if abs(l - l0) > 1.0), None)
+    fine = refine_offset(ta, fa, tb + l0, fb, max_lag=0.1)
+    return l0 + fine[0], (fine[1] if fine[1] is not None else c0), runner
 
 
 def main() -> None:
@@ -205,15 +232,23 @@ def main() -> None:
         if item["role"] != "4d":
             continue
         tb, fb = curves[item["name"]]
-        # 공통 시각(유닉스)으로 옮긴 뒤 비교
-        lag, corr = refine_offset(tr + ref["time"]["unix_offset"], fr, tb + item["time"]["unix_offset"], fb)
+        # 공통 시각(유닉스)으로 옮긴 뒤 비교. 보정값 = b 시각에 더할 초.
+        A_t, B_t = tr + ref["time"]["unix_offset"], tb + item["time"]["unix_offset"]
+        lag, corr = refine_offset(A_t, fr, B_t, fb)
         if corr is not None and corr >= 0.5:
-            item["time"]["refine_s"] = -lag
-            item["time"]["corr"] = corr
-            print(f"… {item['name']}: 움직임 곡선 보정 {-lag * 1000:+.0f}ms (상관 {corr:.2f})")
+            item["time"].update(refine_s=lag, corr=corr, method="motion_curve_±1s")
+            print(f"… {item['name']}: 움직임 곡선 보정 {lag * 1000:+.0f}ms (상관 {corr:.2f})")
+            continue
+        wl, wc, runner = wide_offset(A_t, fr, B_t, fb)
+        if wc is not None and wc >= 0.6 and (runner is None or wc - runner >= 0.1):
+            item["time"].update(refine_s=wl, corr=wc, runner_up_corr=runner, method="motion_curve_wide",
+                                clock_error_suspected=True)
+            print(f"… {item['name']}: ⚠ 기기 시계가 약 {wl:+.1f}초 어긋남 — 넓은 탐색으로 보정 "
+                  f"(상관 {wc:.2f}, 차선 {runner if runner is None else round(runner, 2)})")
         else:
-            item["time"]["corr"] = corr
-            print(f"… {item['name']}: 움직임 곡선 상관이 약해({corr}) 기기 시계 값만 사용")
+            item["time"].update(corr=corr, wide_corr=wc, method="clock_only")
+            print(f"… {item['name']}: 움직임 곡선으로 시각을 확정하지 못함(±1초 {corr}, 넓게 {wc}) — "
+                  f"기기 시계 값만 사용. 두 폰 시계 '자동 설정'과 시작 신호를 확인하세요.")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"{args.name}.json"
