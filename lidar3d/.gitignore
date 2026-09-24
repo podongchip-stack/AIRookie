@@ -1,0 +1,25 @@
+# 촬영 세션 원본 (영상·뎁스, 수 GB). 개인 영상이 포함되므로 저장소에 넣지 않는다.
+server/sessions/
+
+# 모델 가중치 (약 147MB)
+models/
+*.pt
+*.pth
+*.ckpt
+
+# 비밀값
+.lidar_token
+.lidar_tunnel
+*.pem
+*.key
+
+# 산출물
+*.ply
+*.bin
+*.pcd
+*.npz
+graphify-out/
+
+# 예외: 뷰어 샘플은 필요하다
+!server/viewer/sample_scene_mesh.ply
+!server/viewer/sample_scene_mesh_faces_class.bin
