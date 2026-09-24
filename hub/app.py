@@ -36,6 +36,11 @@ from schema import (
 
 app = Flask(__name__)
 app.json.ensure_ascii = False  # 한글 필드를 유니코드 이스케이프 없이 그대로 응답
+# dashboard WebSocket에 25초마다 ping을 보낸다(브라우저가 pong으로 자동 응답). Cloudflare
+# 터널 등 프록시를 거치면 아무 프레임도 오가지 않는 연결을 약 125초 만에 끊는데(2026-09-24
+# 도메인 경유 실측), 통화 → 음성 처리를 기다리는 동안이 딱 그 구간이라 매칭 결과를 보낼
+# 때쯤이면 이미 끊겨 있었다. 25초는 그 한도보다 충분히 짧고, 로컬 연결엔 영향이 없다.
+app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 25}
 sock = Sock(app)
 engine = HubEngine()
 

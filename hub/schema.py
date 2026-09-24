@@ -217,6 +217,11 @@ class HubMatchResult(BaseModel):
     # apid를 못 찾으면(register_case 전에 process_voice_summary가 불린 등 예외
     # 상황) None으로 두고, dashboard는 URL의 apid로 대체 표시한다.
     ambulanceName: Optional[str] = None
+    # 이 사건을 연 구급차의 apid(2026-09-24 신설). 브로드캐스트는 모든 대시보드에 모든
+    # 사건을 보내므로, 구급차 대시보드가 새로고침 등으로 자기 caseId를 잊었을 때 "내
+    # 구급차의 사건"을 다시 골라내려면 이 값이 필요하다. ambulanceName과 같은 조회
+    # (register_case로 기억해둔 값)라 못 찾으면 None.
+    apid: Optional[str] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
