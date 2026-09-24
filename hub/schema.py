@@ -239,6 +239,8 @@ class HospitalMatch(BaseModel):
     # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
     bedCountUnknown: bool = False
     status: HospitalStatus = "pending"
+    # 도로 기준 도착 예상 시간(분, 올림). 카카오모빌리티 다중 목적지 길찾기로 채운다(routing.py,
+    # 2026-09-24). 키 없음·조회 실패·반경 10km 밖이면 None. 표시용 — finalScore에는 안 들어간다.
     etaMin: Optional[int] = None
     reliability: Optional[ReliabilityInfo] = None
     bedReliability: Optional[BedReliabilityMatch] = None
@@ -262,6 +264,10 @@ class HubMatchResult(BaseModel):
     # 구급차의 사건"을 다시 골라내려면 이 값이 필요하다. ambulanceName과 같은 조회
     # (register_case로 기억해둔 값)라 못 찾으면 None.
     apid: Optional[str] = None
+    # 매칭에 쓴 구급차 좌표(2026-09-24 신설). 대시보드 지도가 구급차를 임시 위치가 아니라
+    # 실제 위치에 그리고, 도로 경로(GET /route)의 출발점과 맞추는 데 쓴다. 구급차 레지스트리에
+    # 없으면 hub의 기본 좌표(FALLBACK_AMBULANCE_GPS)가 들어간다.
+    ambulanceGps: Optional[GpsPoint] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────

@@ -21,6 +21,7 @@ from flask_sock import Sock
 from pydantic import ValidationError
 
 from delivery import deliver, send_rejection_to_info
+from routing import KakaoRouting
 from hub_engine import HubEngine
 from schema import (
     AmbulanceInfo,
@@ -42,7 +43,10 @@ app.json.ensure_ascii = False  # 한글 필드를 유니코드 이스케이프 �
 # 때쯤이면 이미 끊겨 있었다. 25초는 그 한도보다 충분히 짧고, 로컬 연결엔 영향이 없다.
 app.config["SOCK_SERVER_OPTIONS"] = {"ping_interval": 25}
 sock = Sock(app)
-engine = HubEngine()
+# 카카오모빌리티 길찾기(도로 기준 ETA·경로). KAKAO_REST_API_KEY(환경변수 또는 hub/.env)가
+# 없으면 None — 그 경우 ETA·도로 경로 없이 지금처럼 직선거리로만 동작한다.
+router = KakaoRouting.from_env()
+engine = HubEngine(router=router)
 
 # dashboard는 순수 WebSocket 클라이언트(new WebSocket(), socket.io 아님)라
 # flask-sock(순수 WS)으로 받는다. 구급차 대시보드 여러 개 + 병원 대시보드
@@ -152,6 +156,28 @@ def receive_voice_summary():
     _send_to_dashboard(result.model_dump())
 
     return jsonify(result.model_dump()), 200
+
+
+@app.get("/route")
+def get_route():
+    """대시보드 지도용 도로 경로(2026-09-24). caseId의 구급차 위치 → hospitalId 병원까지
+    카카오모빌리티 자동차 길찾기 결과를 [[lat, lng], ...]로 돌려준다. 좌표를 클라이언트에서
+    받지 않고 hub가 가진 값으로 정한다 — 이 엔드포인트가 아무 좌표나 길찾기해 주는 공개
+    프록시가 되어 API 호출 한도를 소모하지 않게 하려는 것이다. 키가 없거나 조회에 실패하면
+    path=null로 답하고, 대시보드는 지금처럼 직선을 그린다. 다른 origin(로컬 모드
+    dashboard:3000 ↔ hub:5001)에서 부르므로 /identity와 같이 CORS를 연다.
+    """
+    case_id = request.args.get("caseId")
+    hospital_id = request.args.get("hospitalId")
+    hospital = engine.get_hospital(hospital_id) if hospital_id else None
+    body: dict = {"caseId": case_id, "hospitalId": hospital_id, "path": None, "source": "rule"}
+    if case_id and hospital is not None and router is not None:
+        route = router.route(_resolve_ambulance_gps(case_id), hospital.gps)
+        if route is not None:
+            body.update(route)
+    response = jsonify(body)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, 200
 
 
 @app.get("/identity")

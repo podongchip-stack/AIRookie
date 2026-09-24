@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import bed_reliability
 import decision_log
@@ -27,6 +28,9 @@ from schema import (
 )
 from scoring import final_score, rank
 from specialty_matcher import SpecialtyMatcher
+
+if TYPE_CHECKING:
+    from routing import KakaoRouting
 
 # 병상 차감을 지속시키는 방식(2026-08-13 변경). 예전엔 hub가 깎은 값을
 # feature/info의 Supabase에 써서 다음 재조회 때도 유지시켰는데, info가 이제
@@ -168,10 +172,22 @@ def _should_demote(info: HospitalInfo, group: str | None) -> bool:
     return group_score is not None and group_score.tier == "declared_no"
 
 
+def _ceil_minutes(seconds: int) -> int:
+    """초를 분으로 올림한다 — 도착 시간은 짧게 보여주는 쪽이 더 위험하다."""
+    return max(1, -(-seconds // 60))
+
+
 class HubEngine:
-    def __init__(self, specialty_matcher: SpecialtyMatcher | None = None) -> None:
+    def __init__(
+        self,
+        specialty_matcher: SpecialtyMatcher | None = None,
+        router: "KakaoRouting | None" = None,
+    ) -> None:
         self._hospitals: dict[str, HospitalInfo] = {}
         self._matcher = specialty_matcher or SpecialtyMatcher()
+        # 도로 기준 ETA 조회기(routing.py, 카카오모빌리티). None이면 ETA 없이 직선거리만 쓴다 —
+        # 테스트(run_match.py)와 키 없는 환경은 이 경로다. 표시용이라 순위에는 쓰지 않는다.
+        self._router = router
         # dashboard가 보낸 승인 액션 결과. 여러 사건이 동시에 진행될 수 있어
         # (caseId, hospitalId) 조합을 키로 쓴다 — hospitalId만 쓰면 서로 다른
         # 사건이 같은 병원을 후보로 둘 때 승인 상태가 섞인다.
@@ -498,6 +514,13 @@ class HubEngine:
                 }
             )
 
+        # 후보 병원별 도로 기준 소요시간(초). 조회 실패·키 없음·반경 밖이면 그 병원만 빠진다.
+        etas = (
+            self._router.etas(ambulance_gps, {item["hospitalId"]: item["info"].gps for item in scored})
+            if self._router is not None and scored
+            else {}
+        )
+
         hospital_matches = [
             HospitalMatch(
                 hospitalId=item["info"].hospitalId,
@@ -518,6 +541,8 @@ class HubEngine:
                 bedReliability=bed_reliability.evaluate(
                     item["info"].bedReliability, item["distanceKm"]
                 ),
+                # 도로 기준 도착 예상 시간(분, 올림). 표시용 — finalScore에는 안 들어간다.
+                etaMin=_ceil_minutes(etas[item["hospitalId"]][0]) if item["hospitalId"] in etas else None,
             )
             for item in rank(scored)
         ]
@@ -542,6 +567,7 @@ class HubEngine:
             source="rule",
             ambulanceName=ambulance.name if ambulance is not None else None,
             apid=apid,
+            ambulanceGps=ambulance_gps,
         )
         # 승인 액션이 들어왔을 때 재계산 없이 패치·재브로드캐스트할 수 있게
         # 사건 단위로 최신 결과를 캐시해둔다 (get_case_result() 참고).
