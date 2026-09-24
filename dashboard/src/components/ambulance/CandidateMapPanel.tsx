@@ -6,6 +6,7 @@ import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { createColoredMarkerImage, createLabelOverlay } from "@/lib/kakao-map-markers";
+import { fetchRoadPath } from "@/lib/route";
 import type { HospitalCandidate, HubMatchResult } from "@/types/dashboard";
 
 const sideBoxStyle = css({
@@ -17,9 +18,8 @@ const sideBoxStyle = css({
   paddingY: "3",
 });
 
-// 구급차 자신의 GPS는 아직 hub 스키마에 없다(ISSUE_카카오맵연동.md 참고, hub팀에
-// 필드 추가 요청해둔 상태). 그 전까지는 후보 병원들의 중심 좌표에서 살짝
-// 떨어진 자리를 임시 표시 위치로 쓴다.
+// 구급차 위치는 hub가 내려주는 ambulanceGps(2026-09-24 신설)를 쓴다. 구버전 hub라 그
+// 값이 없을 때만 후보 병원들의 중심 좌표에서 살짝 떨어진 자리를 임시 표시 위치로 쓴다.
 const PLACEHOLDER_AMBULANCE_OFFSET = { lat: 0.014, lng: -0.012 };
 
 function markerColorHex(hospital: HospitalCandidate, isConfirmed: boolean): string {
@@ -39,6 +39,7 @@ export function CandidateMapPanel({
   confirmedHospitalId: string | null;
 }) {
   const hospitals = data?.hospitals ?? [];
+  const ambulanceGps = data?.ambulanceGps ?? null;
   const confirmedHospital = hospitals.find((h) => h.hospitalId === confirmedHospitalId) ?? null;
   const { ready, error } = useKakaoMapScript();
 
@@ -77,10 +78,12 @@ export function CandidateMapPanel({
     const lngs = hospitals.map((h) => h.gps.lng);
     const centerLat = lats.reduce((sum, v) => sum + v, 0) / lats.length;
     const centerLng = lngs.reduce((sum, v) => sum + v, 0) / lngs.length;
-    const ambulancePos = new kakao.maps.LatLng(
-      centerLat + PLACEHOLDER_AMBULANCE_OFFSET.lat,
-      centerLng + PLACEHOLDER_AMBULANCE_OFFSET.lng,
-    );
+    const ambulancePos = ambulanceGps
+      ? new kakao.maps.LatLng(ambulanceGps.lat, ambulanceGps.lng)
+      : new kakao.maps.LatLng(
+          centerLat + PLACEHOLDER_AMBULANCE_OFFSET.lat,
+          centerLng + PLACEHOLDER_AMBULANCE_OFFSET.lng,
+        );
 
     if (!mapRef.current) {
       mapRef.current = new kakao.maps.Map(containerRef.current, {
@@ -116,7 +119,7 @@ export function CandidateMapPanel({
     ambulanceMarkerRef.current = new kakao.maps.Marker({
       position: ambulancePos,
       map,
-      title: "구급차 현재 위치(임시 표시)",
+      title: ambulanceGps ? "구급차 현재 위치" : "구급차 현재 위치(임시 표시)",
       image: createColoredMarkerImage("#1E5FA8"),
       zIndex: 20,
     });
@@ -141,9 +144,30 @@ export function CandidateMapPanel({
     }
 
     map.setBounds(bounds);
+
+    // 이송 확정 병원까지 도로 경로를 받아오면 직선(점선)을 실제 길(실선)로 바꾼다. 받는 사이
+    // 사건·확정 병원이 바뀌었으면(cancelled) 늦게 온 응답은 버린다. 실패하면 직선 그대로.
+    let cancelled = false;
+    if (confirmedHospital && data && ambulanceGps) {
+      fetchRoadPath(data.caseId, confirmedHospital.hospitalId).then((path) => {
+        if (cancelled || !path) return;
+        polylineRef.current?.setMap(null);
+        polylineRef.current = new kakao.maps.Polyline({
+          path: path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng)),
+          strokeWeight: 4,
+          strokeColor: "#1E5FA8",
+          strokeOpacity: 0.9,
+          strokeStyle: "solid",
+        });
+        polylineRef.current.setMap(map);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
     // hospitals는 매 렌더 새 배열일 수 있어 참조 대신 caseId+길이로 변경을 감지한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, data?.caseId, hospitals.length, confirmedHospitalId]);
+  }, [ready, data?.caseId, hospitals.length, confirmedHospitalId, ambulanceGps?.lat, ambulanceGps?.lng]);
 
   return (
     <Panel
