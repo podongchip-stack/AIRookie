@@ -10,6 +10,8 @@ KLUE RoBERTa-large 다중과제 모델(HMM v2)이 필드별 점수를 내고(AI 
 
 from __future__ import annotations
 
+import os
+import pathlib
 import time
 from pathlib import Path
 
@@ -23,6 +25,23 @@ from .model import CallExtractor
 
 #: model_used.llm에 싣는 이름. 스키마 필드명은 llm이지만 이 모델은 생성형이 아니다
 MODEL_NAME = "hmm-v2-klue-roberta-large"
+
+
+def _load_checkpoint(checkpoint: Path) -> dict:
+    """best.pt를 읽는다. 이 파일은 Windows에서 저장돼 학습 인자(args의 data·output_dir)에
+    WindowsPath 객체가 pickle로 들어 있는데, macOS·Linux에서는 WindowsPath를 만들 수 없어
+    torch.load가 NotImplementedError로 멈춘다(2026-09-24 macOS에서 재현). 읽는 동안에만
+    어느 OS에서나 만들 수 있는 PureWindowsPath로 대신 풀게 한다 — 그 경로들은 학습 기록일 뿐
+    모델 생성·추론에는 쓰이지 않는다. Windows에서는 아무것도 바꾸지 않는다.
+    """
+    if os.name == "nt":
+        return torch.load(checkpoint, map_location="cpu", weights_only=False)
+    original = pathlib.WindowsPath
+    pathlib.WindowsPath = pathlib.PureWindowsPath  # type: ignore[misc]
+    try:
+        return torch.load(checkpoint, map_location="cpu", weights_only=False)
+    finally:
+        pathlib.WindowsPath = original  # type: ignore[misc]
 
 
 class HmmExtractor:
@@ -39,7 +58,7 @@ class HmmExtractor:
         if not checkpoint.is_file():
             raise FileNotFoundError(f"HMM 체크포인트가 없습니다: {checkpoint} (HMM_RUN_DIR 환경변수로 지정)")
         # 학습 인자에 Path 객체가 들어 있어 weights_only=True로는 못 읽는다 — 팀이 직접 만든 파일
-        state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        state = _load_checkpoint(checkpoint)
         args = state["args"]
         model = CallExtractor(
             args["encoder"],
