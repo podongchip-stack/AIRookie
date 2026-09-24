@@ -3,23 +3,23 @@
 KLUE RoBERTa-large 다중과제 모델(HMM)이 필드별 점수를 내고(AI 처리), 규칙 조립기가 계약 필드로
 맞춘다(규칙 기반 — required_department 도출 포함). 생성형 모델이 아니라 출력 형식이 깨질 일이 없다.
 
-가중치는 저장소에 없다(best.pt 약 1.4GB). HMM_RUN_DIR 폴더에 best.pt와 tokenizer/가 있어야 한다.
+가중치(best.pt 약 1.4GB + tokenizer/)는 저장소에 없고 첫 실행 때 Hugging Face 캐시(HF_HOME)로
+내려받는다. HMM_RUN_DIR 환경변수를 주면 그 로컬 폴더를 쓴다(weights.py).
 """
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer
 
+from weights import resolve_weights_dir
+
 from .assemble import load_department_mapping
 from .decode import predict
 from .model import CallExtractor
-
-HMM_RUN_DIR = Path(os.environ.get("HMM_RUN_DIR", r"C:\Dev\HMM\model_HMM\runs\golden"))
 
 #: model_used.llm에 싣는 이름. 스키마 필드명은 llm이지만 이 모델은 생성형이 아니다
 MODEL_NAME = "hmm-klue-roberta-large"
@@ -28,7 +28,9 @@ MODEL_NAME = "hmm-klue-roberta-large"
 class HmmExtractor:
     """best.pt 하나를 메모리에 올려두고 통화 텍스트를 한 건씩 6필드로 바꾼다."""
 
-    def __init__(self, device: str = "auto", run_dir: Path = HMM_RUN_DIR) -> None:
+    def __init__(self, device: str = "auto", run_dir: Path | None = None) -> None:
+        if run_dir is None:
+            run_dir = resolve_weights_dir("HMM_RUN_DIR", "hmm")
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)

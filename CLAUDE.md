@@ -224,7 +224,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 ## feature/voice 담당자 참고사항
 
 - 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
-- **STT는 Qwen3-ASR-1.7B + LoRA, 구조화는 HMM(KLUE RoBERTa-large 다중과제 모델) + 규칙 조립기다 (2026-09-24 교체).** 이전의 faster-whisper → `corrections.json` 오인식 교정 → Ollama `qwen3:14b` SBAR 구조화 경로는 코드째 삭제했다. 두 모델은 팀이 따로 파인튜닝한 것으로, 코드는 `voice/asr.py`·`voice/hmm/`에 복사해 넣었고 가중치는 저장소 밖에 있다(`ASR_ADAPTER_DIR`·`HMM_RUN_DIR` 환경변수, 배포 방식 미정)
+- **STT는 Qwen3-ASR-1.7B + LoRA, 구조화는 HMM(KLUE RoBERTa-large 다중과제 모델) + 규칙 조립기다 (2026-09-24 교체).** 이전의 faster-whisper → `corrections.json` 오인식 교정 → Ollama `qwen3:14b` SBAR 구조화 경로는 코드째 삭제했다. 두 모델은 팀이 따로 파인튜닝한 것으로, 코드는 `voice/asr.py`·`voice/hmm/`에 복사해 넣었다. 가중치는 저장소에 없고 Hugging Face Hub 공개 저장소 `podongchip/goldenlink-voice-models`(`asr_adapter/`·`hmm/`)에 올려, 첫 실행 때 HF 캐시로 자동으로 받는다(`voice/weights.py`). `ASR_ADAPTER_DIR`·`HMM_RUN_DIR` 환경변수를 주면 Hub 대신 그 로컬 폴더를 쓴다
   - ASR은 AI Hub 119 신고 음성 20시간으로 LoRA 학습(검증 CER 0.298 → 0.182). 학습 데이터가 짧은 발화라 통화를 통째로 넣지 않고 발화 단위로 인식한다
   - HMM은 원인·부위·중증도·나이대·성별·처치(분류 헤드)와 증상 구간(토큰 태깅)을 내고, 규칙 조립기가 이를 `summary` 6필드로 맞춘다. `required_department`는 원인·부위 → 심평원 전문과목 대응표(`voice/hmm/department_mapping.json`)로 도출한다. 생성형이 아니라 출력 형식이 깨질 일이 없고 추론은 0.1초 안팎이다
   - Qwen3-ASR이 transformers 5.13 이상을 요구해 voice 환경을 torch 2.11(cu128)·transformers 5.17로 올렸다. HMM은 이 버전에서 원본(4.57.6)과 eval 295건 출력이 동일함을 확인했다

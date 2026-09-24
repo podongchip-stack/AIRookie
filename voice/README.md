@@ -38,15 +38,18 @@ cd voice
 pip install -r requirements.txt
 ```
 
-**2. 가중치** — 두 모델 모두 저장소에 없다(용량). 아래 경로에 두거나 환경변수로 위치를 알려준다.
+**2. 가중치** — 두 모델 모두 저장소에 없고(용량) Hugging Face Hub 공개 저장소
+[`podongchip/goldenlink-voice-models`](https://huggingface.co/podongchip/goldenlink-voice-models)에 있다.
+따로 받을 필요 없이 첫 실행 때 Hugging Face 캐시(`HF_HOME`)로 자동으로 내려받는다(인터넷 필요, 로그인 불필요).
 
-| 환경변수 | 기본값 | 들어 있어야 하는 것 |
+| Hub 경로 | 내용 | 로컬 폴더로 대신 쓰려면 |
 | --- | --- | --- |
-| `ASR_ADAPTER_DIR` | `C:\Dev\HMM\use\adapter` | Qwen3-ASR LoRA 어댑터 (`adapter_config.json`, `adapter_model.safetensors`, 약 79MB) |
-| `HMM_RUN_DIR` | `C:\Dev\HMM\model_HMM\runs\golden` | HMM 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` |
+| `asr_adapter/` | Qwen3-ASR LoRA 어댑터 (`adapter_config.json`, `adapter_model.safetensors`, 약 79MB) | `ASR_ADAPTER_DIR` |
+| `hmm/` | HMM 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` | `HMM_RUN_DIR` |
 
-ASR 베이스 모델(`Qwen/Qwen3-ASR-1.7B-hf`, 약 4GB)과 HMM 인코더 설정(`klue/roberta-large`)은
-첫 실행 때 Hugging Face 캐시(`HF_HOME`)로 자동으로 내려받는다(인터넷 필요).
+환경변수를 주면 Hub에서 받지 않고 그 폴더를 쓴다(재학습한 가중치를 올리기 전에 시험할 때 등, `weights.py`).
+ASR 베이스 모델(`Qwen/Qwen3-ASR-1.7B-hf`, 약 4GB)과 HMM 인코더 설정(`klue/roberta-large`)도
+같은 캐시로 자동으로 내려받는다.
 
 **3. 실행** — 마이크로 바로 시작해볼 수 있다 (`voice/` 안에서):
 
@@ -155,7 +158,7 @@ VOICE_APID=A0000001 VOICE_PORT=6000 python app.py
 | `VOICE_DEVICE` | `auto` | 연산 장치 |
 | `VOICE_SILENCE_RMS` | `0.01` | 이보다 작은 소리는 말이 아닌 것으로 본다. [발화 단위 인식](#발화-단위-인식-live_transcriberpy) 참고 |
 | `VOICE_UTTERANCE_HOLD_SEC` | `0.4` | 이만큼 조용하면 한 발화가 끝난 것으로 본다 |
-| `ASR_ADAPTER_DIR` / `HMM_RUN_DIR` | [빠른 시작](#빠른-시작) 참고 | 가중치 위치 |
+| `ASR_ADAPTER_DIR` / `HMM_RUN_DIR` | (없음 — Hub에서 받음) | 가중치를 로컬 폴더로 대신 쓸 때. [빠른 시작](#빠른-시작) 참고 |
 
 **동작 순서**
 1. 서버가 뜨기 전에 두 모델을 한 번 올린다(약 15~20초). 통화마다 올리면 그만큼 늦어지므로 프로세스가 살아있는 동안 재사용한다
@@ -250,7 +253,7 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 | 상황 | 동작 |
 | --- | --- |
 | GPU 없음 | **계속** — ASR은 mps/cpu, HMM은 cpu로 (매우 느림, 미검증) |
-| 가중치 폴더 없음 | **시작 실패** — `FileNotFoundError`로 경로를 알려주고 서버가 뜨지 않는다 |
+| 가중치를 못 받음(오프라인 첫 실행) / 환경변수 폴더 없음 | **시작 실패** — 다운로드 오류나 `FileNotFoundError`로 서버가 뜨지 않는다 |
 | 통화 중 인식 예외 | **계속** — 종료 시 남은 소리를 한꺼번에 다시 인식 |
 | 인식된 발화가 없음(무음 통화) | 구조화·전송을 **건너뜀** (원문 `.txt`는 빈 파일로 남음) |
 | hub 미기동 | **계속** — 파일 저장까지 완료, stderr에만 알림 |
@@ -469,7 +472,6 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 
 ## 알려진 제약사항 / TODO
 
-- **가중치 배포 방식 미정.** 기본 경로가 개발 PC의 `C:\Dev\HMM\...`라, 다른 장비에서는 가중치를 받아 `ASR_ADAPTER_DIR`·`HMM_RUN_DIR`로 지정해야 한다
 - **실제 마이크(sounddevice)로 발화 단위 인식을 검증하지 않았다.** 파일을 실시간 속도로 흘려 넣어 확인했다. 무음 판정 기본값은 장비 마이크에서 다시 맞춰야 할 수 있다
 - 화자 분리(diarization)가 없어 모든 턴의 `speaker`는 `"미분리"`로 고정. HMM 입력의 줄바꿈도 화자 전환이 아니라 발화 경계다
 - 파이프라인이 중간에 실패하거나 인식된 발화가 없으면 hub로 알리는 경로가 없어 hub가 계속 기다린다

@@ -12,8 +12,8 @@ cd C:\Dev\Project\AIRookie\voice
 python simulation3\gui.py
 ```
 
-추가 설치는 없다(tkinter는 파이썬 표준 라이브러리). voice의 `requirements.txt`와 가중치 설정
-(`ASR_ADAPTER_DIR`·`HMM_RUN_DIR`, voice README "빠른 시작")을 그대로 쓴다.
+추가 설치는 없다(tkinter는 파이썬 표준 라이브러리). voice의 `requirements.txt`를 그대로 쓰고,
+가중치도 voice와 같이 첫 실행 때 Hugging Face Hub에서 자동으로 받는다(voice README "빠른 시작").
 
 1. 창이 뜨면 모델을 올린다(약 15초). "준비 완료"가 뜨면 **통화 시작**
 2. 말하면 발화가 끊길 때마다 표가 갱신된다
