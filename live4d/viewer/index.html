@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>live4d — 4D 현장 뷰어</title>
+<style>
+  :root { --bg:#0f141a; --panel:#18212b; --line:#2a3644; --ink:#e6edf3; --ink2:#9fb0c0; --accent:#ff8a2a; --ok:#3ecf8e; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  #view { position:fixed; inset:0; }
+  .top { position:fixed; top:12px; left:12px; right:12px; display:flex; gap:10px; align-items:flex-start; pointer-events:none; }
+  .card { pointer-events:auto; background:rgba(24,33,43,.92); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:13px; }
+  .card h1 { font-size:15px; margin:0 0 4px; }
+  .muted { color:var(--ink2); font-size:12px; }
+  .tag { display:inline-block; font-size:11px; font-weight:600; padding:2px 6px; border-radius:6px; margin-right:4px; }
+  .tag.measured { background:#123626; color:var(--ok); }
+  .tag.warn { background:#3a2a12; color:#ffc46b; }
+  .opts label { display:block; margin:3px 0; white-space:nowrap; }
+  .bar { position:fixed; left:12px; right:12px; bottom:12px; display:flex; gap:10px; align-items:center; }
+  .bar button, .bar select { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:14px; cursor:pointer; }
+  .bar button.play { min-width:64px; background:var(--accent); color:#111; border-color:var(--accent); font-weight:700; }
+  #slider { flex:1; accent-color:var(--accent); }
+  #time { font-variant-numeric: tabular-nums; min-width:128px; text-align:right; font-size:13px; }
+  #err { position:fixed; inset:0; display:none; align-items:center; justify-content:center; text-align:center; padding:20px; }
+  @media (max-width:640px) { .top { flex-direction:column; } #time { min-width:auto; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="view"></div>
+<div class="top">
+  <div class="card">
+    <h1>4D 현장 뷰어</h1>
+    <div id="info" class="muted">불러오는 중…</div>
+    <div style="margin-top:6px">
+      <span class="tag measured">측정값만 표시 (AI 추정 없음)</span>
+      <span class="tag warn">고정 시점 1대 — 카메라가 본 면만 있음</span>
+    </div>
+  </div>
+  <div class="card opts">
+    <label><input type="checkbox" id="optBg" checked> 배경 표시</label>
+    <label><input type="checkbox" id="optHi"> 움직이는 대상 강조(주황)</label>
+    <label><input type="checkbox" id="optTrail"> 잔상 (최근 1초)</label>
+    <label><input type="checkbox" id="optCam" checked> 촬영 카메라 위치</label>
+    <label>점 크기 <input type="range" id="optSize" min="1" max="8" value="3"></label>
+    <button id="btnCamView" style="margin-top:4px">촬영 시점으로</button>
+  </div>
+</div>
+<div class="bar card">
+  <button id="btnPrev" title="이전 프레임 (←)">◀</button>
+  <button id="btnPlay" class="play" title="재생/일시정지 (Space)">▶ 재생</button>
+  <button id="btnNext" title="다음 프레임 (→)">▶</button>
+  <input type="range" id="slider" min="0" max="0" value="0">
+  <span id="time">0.0 / 0.0 s</span>
+  <select id="speed" title="재생 속도">
+    <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+    <option value="1" selected>1×</option><option value="2">2×</option>
+  </select>
+</div>
+<div id="err" class="muted"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ?session=<세션 이름>  → ../data/4d/<세션>/ 을 읽는다 (live4d/ 폴더를 웹 루트로 서빙)
+const params = new URLSearchParams(location.search);
+const session = params.get('session');
+const $ = (id) => document.getElementById(id);
+function fail(msg) { $('err').style.display = 'flex'; $('err').innerHTML = msg; }
+if (!session) fail('주소 끝에 <code>?session=&lt;세션 이름&gt;</code> 을 붙여 여세요.<br>예: <code>?session=session_20260925v3_iPhone12Pro_4D</code>');
+
+const base = `../data/4d/${encodeURIComponent(session || '')}/`;
+const getJSON = async (n) => { const r = await fetch(base + n); if (!r.ok) throw new Error(`${n} (${r.status})`); return r.json(); };
+const getBin = async (n) => { const r = await fetch(base + n); if (!r.ok) throw new Error(`${n} (${r.status})`); return r.arrayBuffer(); };
+
+// ---- three.js 장면 (ARKit 월드: Y가 위, 미터 단위 → three.js 기본과 같다) ----
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+$('view').appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f141a);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// 위치는 int16 밀리미터(origin 기준)라 GPU에 그대로 올리고 scale 0.001 + origin 이동으로 복원한다.
+function makePoints(pos, col, size) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
+  const m = new THREE.PointsMaterial({ size, vertexColors: true, sizeAttenuation: false });
+  return new THREE.Points(g, m);
+}
+
+let M, frPos, frCol, bgPoints, curPoints, trailPoints, camMarker;
+let frame = 0, playing = false, playTime = 0, lastTs = 0;
+const HILITE = new Uint8Array([255, 138, 42]);
+
+function frameSlice(i, highlight) {
+  const off = M.frame_offsets[i], n = M.frame_counts[i];
+  const pos = frPos.subarray(off * 3, (off + n) * 3);
+  let col = frCol.subarray(off * 3, (off + n) * 3);
+  if (highlight) { col = new Uint8Array(n * 3); for (let k = 0; k < n; k++) col.set(HILITE, k * 3); }
+  return [pos, col];
+}
+
+function replace(obj, pos, col, size) {
+  if (obj) { scene.remove(obj); obj.geometry.dispose(); obj.material.dispose(); }
+  if (!pos || pos.length === 0) return null;
+  const p = makePoints(pos, col, size);
+  p.scale.setScalar(0.001);
+  p.position.fromArray(M.encoding.origin);
+  scene.add(p);
+  return p;
+}
+
+function showFrame(i) {
+  frame = Math.max(0, Math.min(M.frame_count - 1, i));
+  const size = +$('optSize').value;
+  const [pos, col] = frameSlice(frame, $('optHi').checked);
+  curPoints = replace(curPoints, pos, col, size + 1);
+
+  // 잔상: 최근 1초의 프레임을 흐리게 겹친다(움직임의 궤적).
+  if ($('optTrail').checked) {
+    const t0 = M.times_s[frame] - 1.0, idx = [];
+    for (let j = frame - 1; j >= 0 && M.times_s[j] >= t0; j -= 2) idx.push(j);
+    let total = 0; idx.forEach(j => total += M.frame_counts[j]);
+    const tp = new Int16Array(total * 3), tc = new Uint8Array(total * 3); let w = 0;
+    idx.forEach(j => {
+      const [p] = frameSlice(j, false); tp.set(p, w * 3);
+      for (let k = 0; k < M.frame_counts[j]; k++) tc.set([120, 140, 160], (w + k) * 3);
+      w += M.frame_counts[j];
+    });
+    trailPoints = replace(trailPoints, tp, tc, Math.max(1, size - 1));
+  } else {
+    trailPoints = replace(trailPoints, null);
+  }
+
+  $('slider').value = frame;
+  $('time').textContent = `${M.times_s[frame].toFixed(1)} / ${M.duration_s.toFixed(1)} s · #${frame + 1}`;
+}
+
+function setBg() {
+  if (bgPoints) bgPoints.visible = $('optBg').checked;
+  if (bgPoints) bgPoints.material.size = +$('optSize').value;
+}
+
+// 촬영 카메라 자세로 시점을 옮긴다 — "폰이 본 그대로"에서 시작해 돌려 보게 한다.
+function toCameraView() {
+  const c = M.camera, R = c.rotation;
+  const pos = new THREE.Vector3(...c.position);
+  const fwd = new THREE.Vector3(-R[0][2], -R[1][2], -R[2][2]);   // ARKit 카메라는 -Z를 본다
+  // 위쪽은 폰 센서 방향이 아니라 **중력 방향(ARKit 월드 +Y)**으로 둔다. 폰을 세로로 세웠든
+  // 가로로 눕혔든 장면이 바로 서서 보이고, 돌려 볼 때(OrbitControls)도 자연스럽다.
+  camera.position.copy(pos);
+  camera.up.set(0, 1, 0);
+  controls.target.copy(pos.clone().add(fwd.multiplyScalar(1.5)));
+  camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(c.height / 2 / c.fy));
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function addCameraMarker() {
+  const c = M.camera, R = c.rotation, s = 0.25;
+  const m4 = new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], c.position[0],
+                                     R[1][0], R[1][1], R[1][2], c.position[1],
+                                     R[2][0], R[2][1], R[2][2], c.position[2], 0, 0, 0, 1);
+  const hw = s * c.width / 2 / c.fx, hh = s * c.height / 2 / c.fy;
+  const pts = [[0,0,0],[-hw,hh,-s],[0,0,0],[hw,hh,-s],[0,0,0],[hw,-hh,-s],[0,0,0],[-hw,-hh,-s],
+               [-hw,hh,-s],[hw,hh,-s],[hw,hh,-s],[hw,-hh,-s],[hw,-hh,-s],[-hw,-hh,-s],[-hw,-hh,-s],[-hw,hh,-s]];
+  const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(...p)));
+  camMarker = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x3ecf8e }));
+  camMarker.applyMatrix4(m4);
+  scene.add(camMarker);
+}
+
+async function load() {
+  try {
+    M = await getJSON('manifest.json');
+    const [bp, bc, fp, fc] = await Promise.all(['bg_pos.bin', 'bg_col.bin', 'fr_pos.bin', 'fr_col.bin'].map(getBin));
+    frPos = new Int16Array(fp); frCol = new Uint8Array(fc);
+    bgPoints = replace(null, new Int16Array(bp), new Uint8Array(bc), +$('optSize').value);
+    addCameraMarker();
+    $('slider').max = M.frame_count - 1;
+    const mount = M.mount || {};
+    $('info').innerHTML = `${M.session}<br>${M.device} · ${M.frame_count}프레임 · ${M.duration_s.toFixed(1)}초 · ${M.depth_hz}Hz`
+      + (mount.fixed4d_mount_max_translation_m != null
+         ? `<br>거치 흔들림 최대 ${(mount.fixed4d_mount_max_translation_m * 100).toFixed(1)}cm · ${(+mount.fixed4d_mount_max_rotation_deg).toFixed(1)}°` : '');
+    toCameraView();
+    // 주소로 특정 시각·강조를 바로 열 수 있게 한다: ?session=…&t=12.5&hi=1
+    if (params.get('hi') === '1') $('optHi').checked = true;
+    const t0 = parseFloat(params.get('t'));
+    let start = 0;
+    if (isFinite(t0)) { while (start < M.frame_count - 1 && M.times_s[start] < t0) start++; }
+    showFrame(start);
+  } catch (e) {
+    fail(`데이터를 불러오지 못했습니다: ${e.message}<br>먼저 <code>python3 live4d/scripts/build_4d.py &lt;세션&gt;</code> 을 실행했는지 확인하세요.`);
+  }
+}
+
+// ---- 재생 ----
+function setPlaying(p) {
+  playing = p;
+  $('btnPlay').textContent = p ? '❚❚ 정지' : '▶ 재생';
+  if (p) { if (frame >= M.frame_count - 1) frame = 0; playTime = M.times_s[frame]; lastTs = performance.now(); }
+}
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (M && playing) {
+    playTime += (now - lastTs) / 1000 * +$('speed').value;
+    lastTs = now;
+    let i = frame;
+    while (i < M.frame_count - 1 && M.times_s[i + 1] <= playTime) i++;
+    if (i !== frame) showFrame(i);
+    if (frame >= M.frame_count - 1) setPlaying(false);
+  }
+  if (camMarker) camMarker.visible = $('optCam').checked;
+  controls.update();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+$('btnPlay').onclick = () => M && setPlaying(!playing);
+$('btnPrev').onclick = () => { if (!M) return; setPlaying(false); showFrame(frame - 1); };
+$('btnNext').onclick = () => { if (!M) return; setPlaying(false); showFrame(frame + 1); };
+$('slider').oninput = (e) => { if (!M) return; setPlaying(false); showFrame(+e.target.value); };
+$('btnCamView').onclick = () => M && toCameraView();
+['optHi', 'optTrail', 'optSize'].forEach(id => $(id).oninput = () => { if (M) { setBg(); showFrame(frame); } });
+$('optBg').oninput = setBg;
+addEventListener('keydown', (e) => {
+  if (!M || e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+  if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+  if (e.code === 'ArrowLeft') { setPlaying(false); showFrame(frame - 1); }
+  if (e.code === 'ArrowRight') { setPlaying(false); showFrame(frame + 1); }
+});
+
+if (session) load();
+</script>
+</body>
+</html>
