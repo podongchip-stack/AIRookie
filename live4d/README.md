@@ -16,8 +16,8 @@
 |---|---|---|
 | 0 | 두 기기 비교 테스트 (`scripts/compare_devices.py`) | 완료 — 12 Pro를 주 녹화기로 확정(15 Pro iOS 26.6.1은 뎁스 신뢰도 0%, 표면 잡음 약 4.5배) |
 | 1 | 고정 녹화 모드 (iPhone 앱) | 완료 — 12 Pro 실기기 검증(15Hz 481장, 뎁스·포즈·영상 1:1, 거치 흔들림 0.4cm) |
-| 2 | 공통 시각 + 동기화 신호 (폰끼리 시계 맞추기 + 플래시, XIAO는 선택) | |
-| 3 | 좌표 정합 + 사건 묶기(caseId) | |
+| 2 | 시간 맞추기 | 구현 — 앱이 시계 대응(clock_sync) 기록 + Mac이 움직임 곡선 교차상관으로 정밀 보정, 두 폰 촬영 대기 |
+| 3 | 공간 맞추기 | 구현 — 인쇄한 ChArUco 판(`markers/`)을 모든 세션이 비추면 Mac이 판 좌표계로 통일 (`align_sessions.py`), 두 폰 촬영 대기 |
 | 4 | 시간별 3D (`scripts/build_4d.py`) | 1대 버전 완료 — 배경 중앙값 + 배경보다 10cm 앞 화소, 측정값만 |
 | 5 | 4D 뷰어 (`viewer/index.html`) | 1대 버전 완료 — 슬라이더·재생·배속·잔상·강조·촬영 시점 |
 | 6 | (선택) 사람 추적·자세 | |
@@ -72,3 +72,23 @@ python3 -m http.server 8010 --bind 127.0.0.1 --directory live4d
 - 사람이 녹화의 절반 넘게 머문 자리는 배경 중앙값이 사람 쪽으로 끌려 흐릿한 형체가 남는다
   → 3D 스캔 모드로 찍은 빈 공간을 배경으로 쓰면 해결(예정).
 - 첫 1초 안팎은 ARKit 트래킹이 자리 잡는 중이라 제외된다(트래킹 정상 프레임만 사용).
+
+## 2·3단계 — 두 폰 + 3D 스캔 배경 합치기
+
+**앱 수정은 최소**(metadata에 시계 대응 `clock_sync`만 추가)이고, 맞추기는 모두 Mac에서 한다
+— 기기 종류와 무관하게(안드로이드 포함) 같은 방식으로 쓸 수 있다.
+
+| 맞출 것 | 방법 |
+|---|---|
+| 공간 | 모든 세션이 **ChArUco 판**(`markers/charuco_5x7_35mm.pdf`, A4 100% 인쇄)을 한 번 이상 비춘다 → 판 좌표계로 통일 |
+| 시간(1차) | 앱의 `clock_sync`(부팅 후 경과 시간 ↔ 유닉스 시각)로 ARKit 시각을 공통 시각으로 |
+| 시간(2차) | 두 4D 세션의 움직임 곡선 교차상관으로 남은 어긋남 보정(상관 0.5 미만이면 1차만) |
+| 배경 | 3D 스캔 세션이 있으면 그것을 배경으로(중앙값 배경의 흐릿한 사람 형체 제거) |
+
+```bash
+python3 live4d/scripts/board.py                      # 판 인쇄 파일 생성(이미 markers/에 있음)
+python3 live4d/scripts/align_sessions.py --name <이름> \
+    --scan lidar3d/server/sessions/<3D 스캔> lidar3d/server/sessions/<4D A> lidar3d/server/sessions/<4D B>
+python3 live4d/scripts/build_4d.py --align <이름>    # → live4d/data/4d/<이름>/
+# 뷰어: http://127.0.0.1:8010/viewer/?session=<이름>
+```

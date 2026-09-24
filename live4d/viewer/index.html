@@ -40,7 +40,7 @@
     <div id="info" class="muted">불러오는 중…</div>
     <div style="margin-top:6px">
       <span class="tag measured">측정값만 표시 (AI 추정 없음)</span>
-      <span class="tag warn">고정 시점 1대 — 카메라가 본 면만 있음</span>
+      <span class="tag warn" id="coverTag">카메라가 본 면만 있음</span>
     </div>
   </div>
   <div class="card opts">
@@ -104,7 +104,7 @@ function makePoints(pos, col, size) {
   return new THREE.Points(g, m);
 }
 
-let M, frPos, frCol, bgPoints, curPoints, trailPoints, camMarker;
+let M, frPos, frCol, bgPoints, curPoints, trailPoints, camMarkers = [], camIndex = 0;
 let frame = 0, playing = false, playTime = 0, lastTs = 0;
 const HILITE = new Uint8Array([255, 138, 42]);
 
@@ -158,22 +158,28 @@ function setBg() {
 }
 
 // 촬영 카메라 자세로 시점을 옮긴다 — "폰이 본 그대로"에서 시작해 돌려 보게 한다.
-function toCameraView() {
-  const c = M.camera, R = c.rotation;
+// 카메라가 여러 대면 누를 때마다 다음 카메라로 넘어간다.
+const cams = () => M.cameras || [M.camera];
+function toCameraView(i = camIndex) {
+  camIndex = i % cams().length;
+  const c = cams()[camIndex], R = c.rotation;
   const pos = new THREE.Vector3(...c.position);
   const fwd = new THREE.Vector3(-R[0][2], -R[1][2], -R[2][2]);   // ARKit 카메라는 -Z를 본다
   // 위쪽은 폰 센서 방향이 아니라 **중력 방향(ARKit 월드 +Y)**으로 둔다. 폰을 세로로 세웠든
   // 가로로 눕혔든 장면이 바로 서서 보이고, 돌려 볼 때(OrbitControls)도 자연스럽다.
   camera.position.copy(pos);
-  camera.up.set(0, 1, 0);
+  camera.up.fromArray(M.up || [0, 1, 0]);
   controls.target.copy(pos.clone().add(fwd.multiplyScalar(1.5)));
   camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(c.height / 2 / c.fy));
   camera.updateProjectionMatrix();
   controls.update();
+  $('btnCamView').textContent = cams().length > 1
+    ? `촬영 시점으로 (${camIndex + 1}/${cams().length}: ${c.device || c.name})` : '촬영 시점으로';
 }
 
-function addCameraMarker() {
-  const c = M.camera, R = c.rotation, s = 0.25;
+const CAM_COLORS = [0x3ecf8e, 0x4aa8ff, 0xffc46b, 0xff6b9a];
+function addCameraMarker(c, k) {
+  const R = c.rotation, s = 0.25;
   const m4 = new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], c.position[0],
                                      R[1][0], R[1][1], R[1][2], c.position[1],
                                      R[2][0], R[2][1], R[2][2], c.position[2], 0, 0, 0, 1);
@@ -181,9 +187,10 @@ function addCameraMarker() {
   const pts = [[0,0,0],[-hw,hh,-s],[0,0,0],[hw,hh,-s],[0,0,0],[hw,-hh,-s],[0,0,0],[-hw,-hh,-s],
                [-hw,hh,-s],[hw,hh,-s],[hw,hh,-s],[hw,-hh,-s],[hw,-hh,-s],[-hw,-hh,-s],[-hw,-hh,-s],[-hw,hh,-s]];
   const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(...p)));
-  camMarker = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x3ecf8e }));
-  camMarker.applyMatrix4(m4);
-  scene.add(camMarker);
+  const marker = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: CAM_COLORS[k % CAM_COLORS.length] }));
+  marker.applyMatrix4(m4);
+  scene.add(marker);
+  camMarkers.push(marker);
 }
 
 async function load() {
@@ -192,10 +199,11 @@ async function load() {
     const [bp, bc, fp, fc] = await Promise.all(['bg_pos.bin', 'bg_col.bin', 'fr_pos.bin', 'fr_col.bin'].map(getBin));
     frPos = new Int16Array(fp); frCol = new Uint8Array(fc);
     bgPoints = replace(null, new Int16Array(bp), new Uint8Array(bc), +$('optSize').value);
-    addCameraMarker();
+    cams().forEach(addCameraMarker);
     $('slider').max = M.frame_count - 1;
     const mount = M.mount || {};
-    $('info').innerHTML = `${M.session}<br>${M.device} · ${M.frame_count}프레임 · ${M.duration_s.toFixed(1)}초 · ${M.depth_hz}Hz`
+    const bgNote = (M.background_source || '').startsWith('scan:') ? '배경: 3D 스캔' : '배경: 녹화 중앙값';
+    $('info').innerHTML = `${M.session}<br>${M.device} · 카메라 ${cams().length}대 · ${M.frame_count}프레임 · ${M.duration_s.toFixed(1)}초 · ${bgNote}`
       + (mount.fixed4d_mount_max_translation_m != null
          ? `<br>거치 흔들림 최대 ${(mount.fixed4d_mount_max_translation_m * 100).toFixed(1)}cm · ${(+mount.fixed4d_mount_max_rotation_deg).toFixed(1)}°` : '');
     toCameraView();
@@ -226,7 +234,7 @@ function tick(now) {
     if (i !== frame) showFrame(i);
     if (frame >= M.frame_count - 1) setPlaying(false);
   }
-  if (camMarker) camMarker.visible = $('optCam').checked;
+  camMarkers.forEach(m => m.visible = $('optCam').checked);
   controls.update();
   renderer.render(scene, camera);
 }
@@ -236,7 +244,7 @@ $('btnPlay').onclick = () => M && setPlaying(!playing);
 $('btnPrev').onclick = () => { if (!M) return; setPlaying(false); showFrame(frame - 1); };
 $('btnNext').onclick = () => { if (!M) return; setPlaying(false); showFrame(frame + 1); };
 $('slider').oninput = (e) => { if (!M) return; setPlaying(false); showFrame(+e.target.value); };
-$('btnCamView').onclick = () => M && toCameraView();
+$('btnCamView').onclick = () => M && toCameraView(camIndex + 1);
 ['optHi', 'optTrail', 'optSize'].forEach(id => $(id).oninput = () => { if (M) { setBg(); showFrame(frame); } });
 $('optBg').oninput = setBg;
 addEventListener('keydown', (e) => {

@@ -116,6 +116,12 @@ final class SessionManager: ObservableObject {
     private var sessionDirectory: URL?
     private var depthDirectory: URL?
     private var sessionStartWallClock: Date?
+    /// 기기 간 시간 맞추기용 시계 대응(live4d 2단계). ARFrame.timestamp는 기기 부팅 후 경과 시간
+    /// (ProcessInfo.systemUptime과 같은 시계)이라 기기마다 기준이 다르다. 같은 순간의 경과 시간과
+    /// 유닉스 시각(인터넷 시각 동기화된 기기 시계)을 함께 남기면, 두 폰의 ARKit 시각을 같은 기준으로
+    /// 바꿀 수 있다. 시작·끝 두 번 재서 녹화 중 시계가 어긋났는지(드리프트)도 확인한다.
+    private var clockAtStart: (uptime: Double, unix: Double)?
+    private var clockAtStop: (uptime: Double, unix: Double)?
     private var imuLogger: CSVLogger?
     private var deviceMotionLogger: CSVLogger?
     private var meshResult: MeshExporter.Result?
@@ -149,6 +155,15 @@ final class SessionManager: ObservableObject {
         mountMonitor.objectWillChange.receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &cancellables)
+    }
+
+    /// 경과 시간과 유닉스 시각을 **거의 같은 순간**에 읽는다. 앞뒤로 경과 시간을 두 번 읽어 그 가운데를
+    /// 쓰므로 두 값 사이의 틈이 마이크로초 단위로 줄어든다.
+    private static func sampleClock() -> (uptime: Double, unix: Double) {
+        let u0 = ProcessInfo.processInfo.systemUptime
+        let unix = Date().timeIntervalSince1970
+        let u1 = ProcessInfo.processInfo.systemUptime
+        return ((u0 + u1) / 2, unix)
     }
 
     /// 모드에 따라 ARKit 캡처 설정을 맞춘다. 메시 켜고 끄기는 configureAndRun() 뒤에 적용된다.
@@ -241,6 +256,8 @@ final class SessionManager: ObservableObject {
         sessionDirectory = dir
         currentSessionId = sessionId
         sessionStartWallClock = Date()
+        clockAtStart = Self.sampleClock()
+        clockAtStop = nil
         meshResult = nil
         depthZipURL = nil
         lastMeshSummary = ""
@@ -323,6 +340,7 @@ final class SessionManager: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
         elapsedTimer?.invalidate()
         elapsedTimer = nil
+        clockAtStop = Self.sampleClock()
         motionManager.stop()
         // 공유 로거를 ScanCoach가 닫기 전에 감시를 먼저 멈춘다.
         mountMonitor.stop()
@@ -572,6 +590,24 @@ final class SessionManager: ObservableObject {
         // --- 4D 고정 녹화 요약 (live4d) ---
         // Mac 쪽이 "이 세션을 시간대별 3D로 믿어도 되는가"를 판단하는 근거다. 거치대가 움직였다면
         // 그 구간은 배경까지 흔들려 사람의 움직임과 구분되지 않는다(이벤트 시각은 coaching.csv).
+        // --- 기기 간 시간 맞추기 (live4d) — 모든 모드에 남긴다 ---
+        // unix_time = arkit_timestamp + uptime_to_unix_offset. 두 폰 세션을 같은 시간축에 놓는 1차 기준이며,
+        // 정밀 보정(움직임 곡선 맞추기)은 Mac에서 한다. 정밀도는 각 기기의 시계 동기화 수준(보통 수십 ms)에 달렸다.
+        if let s = clockAtStart {
+            var sync: [String: Any] = [
+                "uptime_at_start": s.uptime, "unix_at_start": s.unix,
+                "uptime_to_unix_offset_start": s.unix - s.uptime,
+                "note": "arkit_timestamp는 systemUptime과 같은 시계. unix = arkit_timestamp + offset",
+            ]
+            if let e = clockAtStop {
+                sync["uptime_at_stop"] = e.uptime
+                sync["unix_at_stop"] = e.unix
+                sync["uptime_to_unix_offset_stop"] = e.unix - e.uptime
+                sync["offset_drift_ms"] = ((e.unix - e.uptime) - (s.unix - s.uptime)) * 1000
+            }
+            metadata["clock_sync"] = sync
+        }
+
         metadata["capture_mode_label"] = recordingMode.title
         if recordingMode == .fixed4D {
             metadata["fixed4d_recording_seconds"] = recordingElapsed

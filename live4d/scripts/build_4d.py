@@ -1,25 +1,25 @@
-"""4D 고정 녹화 세션 → 시간대별 3D(배경 1개 + 프레임별 움직이는 점) — live4d 4단계.
+"""4D 고정 녹화 세션 → 시간대별 3D(배경 + 프레임별 움직이는 점) — live4d 4단계.
 
-한 대로 고정 녹화한 세션(capture_mode=lidar_arkit_fixed4d)을 읽어, 웹 뷰어(live4d/viewer/)가
-슬라이더로 넘겨 볼 수 있는 형태로 만든다.
+두 가지 모드:
+  · 1대:  build_4d.py <4D 세션>                     → live4d/data/4d/<세션>/
+  · 여러 대: build_4d.py --align <정합 이름>          → live4d/data/4d/<정합 이름>/
+    (align_sessions.py가 만든 정합 결과로 두 폰의 점을 **판 좌표계·공통 시각**에 합치고,
+     3D 스캔 세션이 있으면 그것을 배경으로 쓴다)
 
 원리 — **측정값만 쓴다(AI 추정 없음)**:
-  1. 배경: 카메라가 고정이라 같은 화소의 뎁스를 전 구간에서 모아 중앙값을 내면, 사람이 지나가도
-     배경 거리가 남는다(한 화소를 사람이 가리는 시간은 대개 절반 미만). 색도 같은 방식으로 중앙값.
-  2. 움직이는 대상: 매 프레임에서 **배경보다 FG_MIN_M 이상 앞에 있는** 화소. 작은 잡음 덩어리는 버린다.
-     사람이 비켜서 배경이 다시 드러나는 화소는 배경이므로 따로 뽑지 않는다.
-  3. 3D 좌표: 프레임마다 그 순간의 포즈로 역투영한다(고정이라 거의 같지만 미세 흔들림도 반영).
-  4. 색: 같은 프레임의 영상(뎁스와 1:1로 짝지어 기록됨)을 뎁스 해상도로 줄여 입힌다.
+  1. 움직이는 대상: 카메라가 고정이라 화소별 뎁스 중앙값이 그 카메라의 배경이 된다. 매 프레임에서
+     배경보다 --fg-min 이상 앞에 있는 화소를 뽑고 작은 잡음 덩어리는 버린다. 그 순간 포즈로 3D에 놓고
+     같은 프레임 영상의 색을 입힌다.
+  2. 배경: 1대 모드는 위 중앙값 배경을 그대로 쓴다(사람이 절반 넘게 머문 자리는 흐릿한 형체가 남는다).
+     여러 대 모드에서 3D 스캔 세션이 있으면 **스캔을 배경으로** 쓴다(빈 공간을 따로 찍었으므로 형체가 없다).
+     스캔은 뎁스 프레임을 역투영해 2cm 격자로 줄인 색 점이다.
+  3. 여러 대 합치기: 기준(첫 4D) 세션의 프레임 시각을 틱으로 삼고, 틱마다 다른 세션에서 공통 시각이
+     가장 가까운 프레임(±MATCH_TOL_S 이내)을 골라 점을 합친다.
 
-뎁스 정리는 lidar3d의 fuse_depth.clean_depth를 그대로 쓴다(4.0m 초과·경계 튐·스치는 각도 제거)
-— 정적 3D와 같은 기준으로 걸러야 두 결과를 겹쳐 볼 때 어긋나지 않는다.
+뎁스 정리는 lidar3d의 fuse_depth.clean_depth를 그대로 쓴다(4.0m 초과·경계 튐·스치는 각도 제거).
 
-한계(뷰어에도 표시한다): 고정 시점 1대라 **카메라가 본 면만** 있다(사람 뒷면은 비어 있다).
-사람이 한 화소를 절반 넘게 가린 곳은 배경 중앙값이 사람 쪽으로 끌려간다.
-
-사용법 (저장소 루트에서):
-  python3 live4d/scripts/build_4d.py lidar3d/server/sessions/<세션>_4D [--fg-min 0.10] [--min-blob 40]
-출력: live4d/data/4d/<세션>/ — manifest.json, bg_pos.bin, bg_col.bin, fr_pos.bin, fr_col.bin
+출력: manifest.json, bg_pos.bin, bg_col.bin, fr_pos.bin, fr_col.bin
+      위치 = int16 밀리미터(origin 기준), 색 = uint8 RGB. manifest의 up은 중력 반대 방향.
 """
 from __future__ import annotations
 
@@ -36,20 +36,23 @@ import numpy as np
 
 LIVE4D_DIR = Path(__file__).resolve().parents[1]
 OUT_ROOT = LIVE4D_DIR / "data" / "4d"
+ALIGN_DIR = LIVE4D_DIR / "data" / "align"
 FUSE_DEPTH = LIVE4D_DIR.parent / "lidar3d" / "scripts" / "fuse_depth.py"
 MAX_DEPTH_M = 4.0
+MATCH_TOL_S = 0.05          # 여러 대 합칠 때 같은 순간으로 보는 시각 차이
 
 
-def _load_clean_depth():
-    """lidar3d의 뎁스 정리 함수를 가져온다(같은 필터 기준을 쓰기 위해)."""
+def _load_fuse_helpers():
     spec = importlib.util.spec_from_file_location("fuse_depth", FUSE_DEPTH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.clean_depth, mod.quat_to_R
 
 
-def _backproject(depth: np.ndarray, K: tuple[float, float, float, float], R: np.ndarray, t: np.ndarray,
-                 mask: np.ndarray) -> np.ndarray:
+clean_depth, quat_to_R = _load_fuse_helpers()
+
+
+def _backproject(depth, K, R, t, mask):
     """mask 화소를 ARKit 월드 좌표(미터)로. ARKit 카메라는 -Z를 보고 +Y가 위다."""
     fx, fy, cx, cy = K
     v, u = np.nonzero(mask)
@@ -58,139 +61,224 @@ def _backproject(depth: np.ndarray, K: tuple[float, float, float, float], R: np.
     return cam @ R.T + t
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("session", type=Path)
-    ap.add_argument("--fg-min", type=float, default=0.10, help="배경보다 이만큼(m) 앞이면 움직이는 대상")
-    ap.add_argument("--min-blob", type=int, default=40, help="이보다 작은 화소 덩어리는 잡음으로 버림")
-    args = ap.parse_args()
-
-    sess = args.session.resolve()
+def _read_frames(sess: Path, every: int = 1):
+    """트래킹 정상인 뎁스 프레임과 짝 영상(뎁스 해상도로 축소), 포즈를 읽는다."""
     meta = json.loads((sess / "metadata.json").read_text(encoding="utf-8"))
-    if meta.get("capture_mode") != "lidar_arkit_fixed4d":
-        print(f"⚠ capture_mode={meta.get('capture_mode')} — 4D 고정 녹화 세션이 아닙니다. 결과가 흔들릴 수 있습니다.")
     W, H = meta["depth_width"], meta["depth_height"]
     sx, sy = W / meta["video_frame_width"], H / meta["video_frame_height"]
-    clean_depth, quat_to_R = _load_clean_depth()
-    started = time.time()
-
     poses = {r["timestamp"]: r for r in csv.DictReader(open(sess / "arkit_pose.csv"))}
     rows = [r for r in csv.DictReader(open(sess / "depth" / "index.csv"))
-            if r["timestamp"] in poses and poses[r["timestamp"]]["tracking_state"] == "2"]
+            if r["timestamp"] in poses and poses[r["timestamp"]]["tracking_state"] == "2"][::every]
     if not rows:
-        sys.exit("❌ 사용할 뎁스 프레임이 없습니다 (포즈 불일치 또는 트래킹 실패).")
-
-    # --- 영상: 뎁스와 짝지어진 프레임만 뎁스 해상도로 줄여 둔다 ---
+        sys.exit(f"❌ {sess.name}: 사용할 뎁스 프레임이 없습니다 (포즈 불일치 또는 트래킹 실패).")
     want = {int(r["video_frame_index"]) for r in rows if r["video_frame_index"] != "-1"}
-    colors: dict[int, np.ndarray] = {}
-    cap = cv2.VideoCapture(str(sess / "video.mov"))
-    idx = 0
+    colors, cap, idx = {}, cv2.VideoCapture(str(sess / "video.mov")), 0
     while want:
-        ok, frame = cap.read()
-        if not ok:
+        if not cap.grab():
             break
         if idx in want:
-            colors[idx] = cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)[:, :, ::-1]  # BGR→RGB
+            _, frame = cap.retrieve()
+            colors[idx] = cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)[:, :, ::-1]
             want.discard(idx)
         idx += 1
     cap.release()
-
-    # --- 뎁스 정리 + 프레임별 포즈 ---
-    depths, Ks, Rs, ts, rgbs, times = [], [], [], [], [], []
+    out = []
     for r in rows:
         p = poses[r["timestamp"]]
         K = (float(p["fx"]) * sx, float(p["fy"]) * sy, float(p["cx"]) * sx, float(p["cy"]) * sy)
         d = np.fromfile(sess / "depth" / r["depth_file"], dtype="<f4").reshape(H, W)
-        depths.append(clean_depth(d, K, MAX_DEPTH_M))
-        Ks.append(K)
-        Rs.append(quat_to_R(*[float(p[k]) for k in ("qx", "qy", "qz", "qw")]))
-        ts.append(np.array([float(p[k]) for k in ("tx", "ty", "tz")]))
-        vfi = int(r["video_frame_index"])
-        rgbs.append(colors.get(vfi))
-        times.append(float(r["timestamp"]))
-    D = np.stack(depths)
-    times = np.array(times) - times[0]
+        out.append({
+            "t": float(r["timestamp"]), "K": K,
+            "R": quat_to_R(*[float(p[k]) for k in ("qx", "qy", "qz", "qw")]),
+            "tr": np.array([float(p[k]) for k in ("tx", "ty", "tz")]),
+            "depth": clean_depth(d, K, MAX_DEPTH_M),
+            "rgb": colors.get(int(r["video_frame_index"])),
+        })
+    return meta, out, (W, H)
 
-    # --- 1) 배경: 화소별 유효 뎁스의 중앙값, 색도 중앙값 ---
-    Dn = np.where(D > 0, D, np.nan)
+
+def process_4d(sess: Path, fg_min: float, min_blob: int) -> dict:
+    """한 4D 세션 → 프레임별 움직이는 점(월드) + 중앙값 배경 + 카메라."""
+    meta, fr, (W, H) = _read_frames(sess)
+    D = np.stack([f["depth"] for f in fr])
     with np.errstate(all="ignore"):
-        bg = np.nanmedian(Dn, axis=0)
+        bg = np.nanmedian(np.where(D > 0, D, np.nan), axis=0)
     bg_valid = np.isfinite(bg)
-    color_stack = np.stack([c for c in rgbs if c is not None])
-    bg_rgb = np.median(color_stack, axis=0).astype(np.uint8)
-    mid = len(rows) // 2  # 고정 녹화라 가운데 프레임 포즈를 배경 기준으로 쓴다
-    bg_pts = _backproject(np.nan_to_num(bg), Ks[mid], Rs[mid], ts[mid], bg_valid)
-    bg_col = bg_rgb[bg_valid]
-
-    # --- 2) 프레임별 움직이는 대상 ---
+    bg0 = np.nan_to_num(bg)
+    bg_rgb = np.median(np.stack([f["rgb"] for f in fr if f["rgb"] is not None]), axis=0).astype(np.uint8)
+    mid = fr[len(fr) // 2]
     kernel = np.ones((3, 3), np.uint8)
-    fr_pts, fr_col, counts = [], [], []
-    for i in range(len(rows)):
-        m = (D[i] > 0) & bg_valid & ((np.nan_to_num(bg) - D[i]) > args.fg_min)
+    frames = []
+    for f in fr:
+        m = (f["depth"] > 0) & bg_valid & ((bg0 - f["depth"]) > fg_min)
         m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN, kernel)
         n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
         keep = np.zeros(n, bool)
-        keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= args.min_blob
+        keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_blob
         m = keep[lab]
-        pts = _backproject(D[i], Ks[i], Rs[i], ts[i], m)
-        col = rgbs[i][m] if rgbs[i] is not None else np.full((len(pts), 3), 200, np.uint8)
-        fr_pts.append(pts); fr_col.append(col); counts.append(len(pts))
+        pts = _backproject(f["depth"], f["K"], f["R"], f["tr"], m)
+        col = f["rgb"][m] if f["rgb"] is not None else np.full((len(pts), 3), 200, np.uint8)
+        frames.append((f["t"], pts, col))
+    return {
+        "name": sess.name, "meta": meta, "frames": frames,
+        "bg_pts": _backproject(bg0, mid["K"], mid["R"], mid["tr"], bg_valid), "bg_col": bg_rgb[bg_valid],
+        "camera": {"R": mid["R"], "t": mid["tr"], "K": mid["K"], "W": W, "H": H},
+    }
 
-    # --- 3) 저장: 장면 중심 기준 int16 밀리미터(±32m) + uint8 RGB ---
-    allp = np.concatenate([bg_pts] + [p for p in fr_pts if len(p)])
+
+def scan_background(sess: Path, voxel: float = 0.02, every: int = 3):
+    """3D 스캔 세션 → 색 있는 배경 점(월드). 뎁스를 역투영해 voxel 격자당 한 점만 남긴다."""
+    _, fr, _ = _read_frames(sess, every=every)
+    P, C = [], []
+    for f in fr:
+        m = f["depth"] > 0
+        P.append(_backproject(f["depth"], f["K"], f["R"], f["tr"], m))
+        C.append(f["rgb"][m] if f["rgb"] is not None else np.full((int(m.sum()), 3), 200, np.uint8))
+    P, C = np.concatenate(P), np.concatenate(C)
+    key = np.floor(P / voxel).astype(np.int64)
+    _, first = np.unique(key, axis=0, return_index=True)
+    return P[first], C[first]
+
+
+def _xf(T, P):
+    return P @ T[:3, :3].T + T[:3, 3]
+
+
+def write_output(out: Path, bg_pts, bg_col, ticks, frames_pts, frames_col, cameras, up, extra):
+    allp = np.concatenate([bg_pts] + [p for p in frames_pts if len(p)])
     origin = (allp.min(0) + allp.max(0)) / 2
     span = allp.max(0) - allp.min(0)
     if np.any(span / 2 > 32.0):
-        sys.exit(f"❌ 장면이 너무 큽니다({span}) — int16 밀리미터 범위(±32m)를 넘습니다.")
+        sys.exit(f"❌ 장면이 너무 큽니다({np.round(span, 1)}m) — int16 밀리미터 범위(±32m)를 넘습니다.")
     q = lambda p: np.round((p - origin) * 1000).astype(np.int16)
-
-    out = OUT_ROOT / sess.name
     out.mkdir(parents=True, exist_ok=True)
+    counts = [len(p) for p in frames_pts]
     q(bg_pts).tofile(out / "bg_pos.bin")
     bg_col.astype(np.uint8).tofile(out / "bg_col.bin")
-    fr_all = np.concatenate([p for p in fr_pts if len(p)]) if sum(counts) else np.zeros((0, 3))
-    fr_call = np.concatenate([c for c in fr_col if len(c)]) if sum(counts) else np.zeros((0, 3), np.uint8)
-    q(fr_all).tofile(out / "fr_pos.bin")
-    fr_call.astype(np.uint8).tofile(out / "fr_col.bin")
-
-    offsets = np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(int).tolist()
-    cam_R, cam_t = Rs[mid], ts[mid]
+    nonempty = [p for p in frames_pts if len(p)]
+    q(np.concatenate(nonempty) if nonempty else np.zeros((0, 3))).tofile(out / "fr_pos.bin")
+    ce = [c for c in frames_col if len(c)]
+    (np.concatenate(ce) if ce else np.zeros((0, 3), np.uint8)).astype(np.uint8).tofile(out / "fr_col.bin")
+    times = np.array(ticks) - ticks[0]
     manifest = {
-        "session": sess.name,
-        "device": meta.get("device"),
-        "ios": meta.get("ios_version"),
-        "capture_mode": meta.get("capture_mode"),
         "source": "measured",
-        "source_note": "LiDAR 측정값만 사용(AI 추정 없음). 고정 시점 1대라 카메라가 본 면만 있다.",
-        "frame_count": len(rows),
+        "source_note": "LiDAR 측정값만 사용(AI 추정 없음). 카메라가 본 면만 있다.",
+        "frame_count": len(ticks),
         "duration_s": round(float(times[-1]), 3),
-        "depth_hz": round(len(rows) / max(float(times[-1]), 1e-6), 2),
+        "depth_hz": round(len(ticks) / max(float(times[-1]), 1e-6), 2),
         "times_s": [round(float(x), 4) for x in times],
-        "frame_offsets": offsets,
+        "frame_offsets": np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(int).tolist(),
         "frame_counts": [int(c) for c in counts],
         "background_count": int(len(bg_pts)),
-        "encoding": {
-            "position": "int16 밀리미터, origin 기준 (x,y,z) — 실제 좌표 = int16 / 1000 + origin",
-            "color": "uint8 RGB",
-            "origin": [float(x) for x in origin],
-        },
-        "camera": {  # 녹화 카메라 자세(ARKit 월드, camera-to-world) — 뷰어의 "촬영 시점" 버튼용
-            "position": [float(x) for x in cam_t],
-            "rotation": [[float(x) for x in row] for row in cam_R],
-            "fx": Ks[mid][0], "fy": Ks[mid][1], "cx": Ks[mid][2], "cy": Ks[mid][3],
-            "width": W, "height": H,
-        },
-        "params": {"fg_min_m": args.fg_min, "min_blob_px": args.min_blob, "max_depth_m": MAX_DEPTH_M},
-        "mount": {k: meta.get(k) for k in ("fixed4d_mount_max_translation_m", "fixed4d_mount_max_rotation_deg",
-                                            "fixed4d_mount_drift_event_count")},
+        "up": [float(x) for x in up],
+        "encoding": {"position": "int16 밀리미터, origin 기준 — 실제 좌표 = int16 / 1000 + origin",
+                     "color": "uint8 RGB", "origin": [float(x) for x in origin]},
+        "cameras": [{"name": c["name"], "device": c.get("device"),
+                     "position": [float(x) for x in c["t"]], "rotation": [[float(x) for x in r] for r in c["R"]],
+                     "fx": c["K"][0], "fy": c["K"][1], "cx": c["K"][2], "cy": c["K"][3],
+                     "width": c["W"], "height": c["H"]} for c in cameras],
+        **extra,
     }
+    manifest["camera"] = manifest["cameras"][0]      # 구버전 뷰어 호환
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
-
     size_mb = sum(f.stat().st_size for f in out.glob("*.bin")) / 1e6
-    print(f"✅ {sess.name}")
-    print(f"   프레임 {len(rows)}장 / {times[-1]:.1f}초 ({manifest['depth_hz']}Hz)")
-    print(f"   배경 점 {len(bg_pts):,}개 · 움직이는 점 프레임 평균 {np.mean(counts):,.0f}개 (최대 {max(counts):,})")
-    print(f"   출력 {out} ({size_mb:.1f} MB, {time.time() - started:.1f}초)")
+    print(f"   틱 {len(ticks)}개 / {times[-1]:.1f}초 · 배경 점 {len(bg_pts):,} · "
+          f"움직이는 점 평균 {np.mean(counts):,.0f} (최대 {max(counts):,})")
+    print(f"   출력 {out} ({size_mb:.1f} MB)")
+
+
+def build_single(sess: Path, fg_min: float, min_blob: int) -> None:
+    s = process_4d(sess, fg_min, min_blob)
+    meta = s["meta"]
+    if meta.get("capture_mode") != "lidar_arkit_fixed4d":
+        print(f"⚠ capture_mode={meta.get('capture_mode')} — 4D 고정 녹화 세션이 아닙니다.")
+    cam = dict(s["camera"], name=s["name"], device=meta.get("device"))
+    write_output(OUT_ROOT / sess.name, s["bg_pts"], s["bg_col"],
+                 [t for t, _, _ in s["frames"]], [p for _, p, _ in s["frames"]], [c for _, _, c in s["frames"]],
+                 [cam], (0.0, 1.0, 0.0), {
+                     "session": sess.name, "device": meta.get("device"), "background_source": "median_of_4d",
+                     "params": {"fg_min_m": fg_min, "min_blob_px": min_blob, "max_depth_m": MAX_DEPTH_M},
+                     "mount": {k: meta.get(k) for k in ("fixed4d_mount_max_translation_m",
+                                                        "fixed4d_mount_max_rotation_deg",
+                                                        "fixed4d_mount_drift_event_count")}})
+
+
+def build_multi(align_name: str, fg_min: float, min_blob: int) -> None:
+    A = json.loads((ALIGN_DIR / f"{align_name}.json").read_text(encoding="utf-8"))
+    four = [s for s in A["sessions"] if s["role"] == "4d" and s.get("T_board_from_world")]
+    scans = [s for s in A["sessions"] if s["role"] == "scan" and s.get("T_board_from_world")]
+    if not four:
+        sys.exit("❌ 좌표가 맞춰진 4D 세션이 없습니다 — align_sessions.py 결과에서 판 검출을 확인하세요.")
+    skipped = [s["name"] for s in A["sessions"] if not s.get("T_board_from_world")]
+    if skipped:
+        print(f"⚠ 판을 못 찾아 제외: {', '.join(skipped)}")
+
+    procs, cameras = [], []
+    for s in four:
+        print(f"… {s['name']}: 움직이는 점 추출")
+        p = process_4d(Path(s["path"]), fg_min, min_blob)
+        p["name"] = s["name"]
+        T = np.array(s["T_board_from_world"])
+        tc = s["time"]["unix_offset"] + s["time"]["refine_s"]           # 공통 시각 = arkit + tc
+        p["common"] = [(t + tc, _xf(T, pts), col) for t, pts, col in p["frames"]]
+        p["bg_board"] = (_xf(T, p["bg_pts"]), p["bg_col"])
+        c = p["camera"]
+        cameras.append({"name": s["name"], "device": s.get("device"), "R": T[:3, :3] @ c["R"],
+                        "t": _xf(T, c["t"][None])[0], "K": c["K"], "W": c["W"], "H": c["H"]})
+        procs.append(p)
+
+    if scans:
+        s = scans[0]
+        print(f"… {s['name']}: 3D 스캔 배경 생성")
+        P, C = scan_background(Path(s["path"]))
+        bg_pts, bg_col, bg_src = _xf(np.array(s["T_board_from_world"]), P), C, "scan:" + s["name"]
+    else:
+        bg_pts = np.concatenate([p["bg_board"][0] for p in procs])
+        bg_col = np.concatenate([p["bg_board"][1] for p in procs])
+        bg_src = "median_of_4d"
+
+    # 기준 세션의 프레임 시각을 틱으로, 다른 세션은 가장 가까운 프레임을 붙인다.
+    ref = procs[0]["common"]
+    others = [(np.array([t for t, _, _ in p["common"]]), p["common"]) for p in procs[1:]]
+    ticks, fpts, fcol, matched = [], [], [], [0] * len(others)
+    for t, pts, col in ref:
+        P, C = [pts], [col]
+        for k, (ts, fr) in enumerate(others):
+            j = int(np.argmin(np.abs(ts - t)))
+            if abs(ts[j] - t) <= MATCH_TOL_S:
+                P.append(fr[j][1]); C.append(fr[j][2]); matched[k] += 1
+        ticks.append(t); fpts.append(np.concatenate(P)); fcol.append(np.concatenate(C))
+    for k, p in enumerate(procs[1:]):
+        print(f"   {p['name']}: 기준 틱 {len(ref)}개 중 {matched[k]}개와 시각 일치(±{MATCH_TOL_S * 1000:.0f}ms)")
+
+    # 판 좌표계에서의 중력 반대 방향(뷰어 위쪽) — 기준 세션 월드의 +Y를 옮긴다.
+    up = np.array(four[0]["T_board_from_world"])[:3, :3] @ np.array([0.0, 1.0, 0.0])
+    write_output(OUT_ROOT / align_name, bg_pts, bg_col, ticks, fpts, fcol, cameras, up / np.linalg.norm(up), {
+        "session": align_name, "device": " + ".join(filter(None, (c.get("device") for c in cameras))),
+        "background_source": bg_src, "alignment": align_name,
+        "params": {"fg_min_m": fg_min, "min_blob_px": min_blob, "max_depth_m": MAX_DEPTH_M,
+                   "match_tol_s": MATCH_TOL_S},
+        "sources": [{"name": s["name"], "role": s["role"], "board": s.get("board"), "time": s["time"]}
+                    for s in A["sessions"]]})
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("session", nargs="?", type=Path, help="1대 모드: 4D 세션 경로")
+    ap.add_argument("--align", help="여러 대 모드: align_sessions.py --name 값")
+    ap.add_argument("--fg-min", type=float, default=0.10, help="배경보다 이만큼(m) 앞이면 움직이는 대상")
+    ap.add_argument("--min-blob", type=int, default=40, help="이보다 작은 화소 덩어리는 잡음으로 버림")
+    args = ap.parse_args()
+    started = time.time()
+    if args.align:
+        print(f"✅ 여러 대: {args.align}")
+        build_multi(args.align, args.fg_min, args.min_blob)
+    elif args.session:
+        print(f"✅ 1대: {args.session.name}")
+        build_single(args.session.resolve(), args.fg_min, args.min_blob)
+    else:
+        ap.error("세션 경로 또는 --align 이 필요합니다")
+    print(f"   {time.time() - started:.1f}초")
 
 
 if __name__ == "__main__":
