@@ -1,0 +1,19 @@
+# 서버
+fastapi
+uvicorn
+python-multipart
+
+# 3D 처리
+numpy
+open3d
+opencv-python
+scipy
+
+# 사람 검출
+# ⚠️ ultralytics 는 AGPL-3.0 이다. 배포 형태에 따라 소스 공개 의무가 생길 수 있어
+#    교체가 미해결 과제로 남아 있다 (docs/SERVER_ANALYSIS.md 참고).
+torch
+ultralytics
+
+# 3DGS 학습 — GPU 서버에서만 필요 (CUDA)
+# gsplat
