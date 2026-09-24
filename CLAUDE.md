@@ -32,8 +32,8 @@
 음성 수집 → 전처리 (FFmpeg 노이즈 제거)
     ↓
 현장 정보 구조화 AI
-    - Whisper / Qwen3-ASR (STT)
-    - sLLM (Llama3 Korean 8B) 정보 추출
+    - Qwen3-ASR-1.7B + LoRA (STT, 통화 중 발화 단위 인식)
+    - KLUE RoBERTa-large 다중과제 모델(HMM) 정보 추출 + 규칙 조립
     ↓
 구급대원 확인 및 수정 (Override) → 환자 프로필 생성
     ↓
@@ -57,7 +57,7 @@
 |---|---|
 | `main` | 배포 기준 브랜치 |
 | `develop` | 통합 개발 브랜치 |
-| `feature/voice` | 음성 수집, STT, 실시간 음성 필터링, 정보 구조화 |
+| `feature/voice` | 음성 수집, STT(통화 중 발화 단위 인식), 정보 구조화 |
 | `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화 (병원 매칭/존 로직은 feature/hub로 이관 확정, 바이탈 수집은 더 이상 사용하지 않음. 승인 액션 수신 주체는 feature/hub로 확정) |
 | `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직, dashboard와의 WebSocket 통신(승인 액션 수신, 통화 시작/종료 신호를 voice로 중계) |
 | `feature/dashboard` | 구급차·병원 대시보드 프론트엔드 |
@@ -72,8 +72,8 @@
 
 | 구분 | 처리 방식 | 비고 |
 |---|---|---|
-| 음성 → 텍스트 변환 | AI (Whisper / Qwen3-ASR) | 화자 분리 포함 |
-| 통화 내용 필터링·구조화 | AI (sLLM + KM-BERT) | 실시간 음성 필터링 처리 — 잡담·불필요 발화 제거 후 의료 관련 문장만 추출 |
+| 음성 → 텍스트 변환 | AI (Qwen3-ASR-1.7B + LoRA 파인튜닝) | 통화 중 말이 끊길 때마다 발화 단위로 인식. 화자 분리는 아직 없음 |
+| 통화 내용 구조화 | AI (KLUE RoBERTa-large 다중과제 분류·태깅, HMM) + 규칙 조립 | 생성형 LLM 아님 — 원인·부위·중증도·나이대·성별·처치·증상 구간을 모델이 고르고, `mechanism`·`required_department`는 규칙(대응표)으로 조립. 발화 필터링·오인식 교정 단계는 없음 |
 | 병원 리스트 정렬 | 규칙 기반 (GPS 거리 · 존 그룹) | AI 미사용 |
 | 진료과 매칭 (예상 병명 ↔ 병원 진료과) | AI 보조 (경량 임베딩 유사도, sentence-transformers) | 생성형 LLM 아님, 결정적·설명 가능(유사도 점수 노출), On-Premise |
 | 병원 적합도 매칭 (거리·병상·존 스코어링) | 규칙 기반 (E-Gen 3개 오퍼레이션 대조) | AI 미사용, 설명 가능한 구조 유지 |
@@ -137,8 +137,8 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
   },
   "source": "ai",
   "model_used": {
-    "stt": "faster-whisper-large-v3",
-    "llm": "qwen3:14b"
+    "stt": "qwen3-asr-1.7b-lora",
+    "llm": "hmm-klue-roberta-large"
   }
 }
 ```
@@ -146,8 +146,8 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `caseId` | string | 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 요약을 어느 사건과 짝지을지 구분하는 값. voice가 hub의 통화 시작 신호(3번 포맷)에서 받은 caseId를 그대로 돌려준다 |
-| `transcript.raw_text` | string | STT 원본 전문. 필터링 전 전체 발화, 삭제하지 않고 보존 |
-| `transcript.filtered_text` | string | 실시간 음성 필터링 처리 후 남은 텍스트. 요약의 실제 입력값 |
+| `transcript.raw_text` | string | STT 인식 결과 전문(발화마다 줄바꿈). 전체 발화를 삭제하지 않고 보존 |
+| `transcript.filtered_text` | string | 요약의 실제 입력값. 필터링·교정 단계가 없어져 현재는 `raw_text`와 같다 (hub·dashboard와의 계약 필드라 유지) |
 | `transcript.language` | string | 언어 코드 |
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 |
 | `transcript.duration_sec` | number | 통화 길이(초) |
@@ -157,7 +157,7 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | `summary.treatment` | string[] | 처치 목록 |
 | `summary.severity_tag` | `"high"` \| `"medium"` \| `"low"` | 중증도 단계, 이 세 값만 허용 |
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
-| `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명 |
+| `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명. `llm`은 계약상 필드명을 유지할 뿐, 현재 값은 생성형이 아닌 HMM 분류 모델이다 |
 
 이 JSON은 feature/hub로 전달되며, feature/hub는 `summary`(부상 상태·예상 병명·중증도)는
 매칭 스코어링에 쓰고, `transcript.raw_text`/`transcript.filtered_text`(통화 원문 전체·
@@ -223,12 +223,15 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 ## feature/voice 담당자 참고사항
 
 - 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
-- STT 모델: Whisper 또는 Qwen3-ASR (스트리밍 지원)
-- **"실시간 음성 필터링"(`filtering.py`, 의료 관련 여부 분류) 단계는 파이프라인에서 뺐다.** threshold가 검증 안 된 상태라 false negative(중요 문장 오제외) 리스크가 있었고, SBAR 구조화 LLM 프롬프트가 이미 잡담·인사말을 스스로 걸러낼 정도로 구체적이라 얻는 이득이 불확실했다(실측 후 결정, `voice/README.md` 참고). 대신 STT 자체의 오인식을 줄이려고 `initial_prompt`로 "이 통화가 어떤 종류의 대화인지"(장르·구조)를 서술해 넘긴다 — 구체 시나리오 어휘를 넣으면 그 샘플에만 맞는 오버피팅이 되므로 일부러 뺐다. `filtering.py`·`live_transcribe.py` 파일 자체는 데드 코드로 삭제됐다(2026-08-12) — 그 대신 `corrections.json`/`text_postprocess.py` 기반 **오인식 교정**(STT와 LLM 사이에서 사전과 정확히 일치하는 구간만 치환, `raw_text`는 교정 전 원문 그대로 보존)이 새로 들어갔다
+- **STT는 Qwen3-ASR-1.7B + LoRA, 구조화는 HMM(KLUE RoBERTa-large 다중과제 모델) + 규칙 조립기다 (2026-09-24 교체).** 이전의 faster-whisper → `corrections.json` 오인식 교정 → Ollama `qwen3:14b` SBAR 구조화 경로는 코드째 삭제했다. 두 모델은 팀이 따로 파인튜닝한 것으로, 코드는 `voice/asr.py`·`voice/hmm/`에 복사해 넣었고 가중치는 저장소 밖에 있다(`ASR_ADAPTER_DIR`·`HMM_RUN_DIR` 환경변수, 배포 방식 미정)
+  - ASR은 AI Hub 119 신고 음성 20시간으로 LoRA 학습(검증 CER 0.298 → 0.182). 학습 데이터가 짧은 발화라 통화를 통째로 넣지 않고 발화 단위로 인식한다
+  - HMM은 원인·부위·중증도·나이대·성별·처치(분류 헤드)와 증상 구간(토큰 태깅)을 내고, 규칙 조립기가 이를 `summary` 6필드로 맞춘다. `required_department`는 원인·부위 → 심평원 전문과목 대응표(`voice/hmm/department_mapping.json`)로 도출한다. 생성형이 아니라 출력 형식이 깨질 일이 없고 추론은 0.1초 안팎이다
+  - Qwen3-ASR이 transformers 5.13 이상을 요구해 voice 환경을 torch 2.11(cu128)·transformers 5.17로 올렸다. HMM은 이 버전에서 원본(4.57.6)과 eval 295건 출력이 동일함을 확인했다
+- **통화 중 발화 단위 인식**(`voice/live_transcriber.py`): 통화 중 0.5초마다 마이크 버퍼를 보고, 말이 끊기면(음량 기반 무음 감지) 그 발화만 잘라 바로 인식해 둔다. 종료 신호 뒤에는 마지막 발화 인식과 구조화만 남아 hub 도착까지 수 초다(108초 통화 실측 3.7초, 끝나고 한 번에 인식하면 약 61초). 무음 판정은 소리 크기만 보므로 현장 소음에 따라 `VOICE_SILENCE_RMS`·`VOICE_UTTERANCE_HOLD_SEC`로 조절한다
 - 원본 로그 보존 원칙(완전 삭제 금지, 사후 검증·audit trail용)은 유지된다 — `transcript.raw_text`/`turns`에 전체 발화가 그대로 남는다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
-- hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 통화 시작 시 로컬 마이크 녹음을 시작하고, 종료 시 기존 배치 파이프라인(STT→SBAR)을 그대로 실행한다
+- hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 두 모델은 서버가 뜰 때 한 번만 올려둔다. 통화 시작 시 로컬 마이크 녹음과 발화 단위 인식을 시작하고, 종료 시 남은 발화 인식 → 구조화 → hub 전송을 실행한다
 - **여러 구급차 동시 처리를 지원한다.** 이 프로세스 자체는 구급차 1대 전용(마이크가 그 장비 하나뿐)이지만, `VOICE_APID` 환경변수로 자신을 식별해 서버 시작 시 자기 IP를 자동 탐지한 뒤 hub의 `POST /voice/register`로 자가등록한다(구급차 노트북마다 네트워크가 달라 IP를 고정 저장하지 않고 매번 탐지). `POST /call/start`로 받은 `caseId`를 세션에 기억해뒀다가, 통화 종료 후 hub로 보내는 `CallSummaryMessage`에 그대로 실어 돌려준다 — hub는 이 caseId로 사건을 구분한다
 
 ## feature/info 담당자 참고사항
