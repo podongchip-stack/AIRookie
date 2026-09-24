@@ -156,6 +156,7 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | `summary.symptoms` | string[] | 증상 목록 |
 | `summary.treatment` | string[] | 처치 목록 |
 | `summary.severity_tag` | `"high"` \| `"medium"` \| `"low"` | 중증도 단계, 이 세 값만 허용 |
+| `summary.required_department` | string \| null (선택) | 필요 진료과(심평원 전문과목 표기). voice가 원인·부위 → 대응표로 규칙 도출하며, 대응이 없으면 null. hub는 현재 매칭에 쓰지 않는다(`mechanism`을 진료과와 임베딩 비교) |
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
 | `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명. `llm`은 계약상 필드명을 유지할 뿐, 현재 값은 생성형이 아닌 HMM 분류 모델이다 |
 
