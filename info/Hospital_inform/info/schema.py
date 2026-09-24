@@ -165,6 +165,35 @@ class Assessment(Strict):
     groups: dict[str, AssessmentGroup] = Field(default_factory=dict)
 
 
+class BedReliability(Strict):
+    """reliability/(infosurv 서빙 모듈)의 병상 정보 신뢰도 예측 결과.
+
+    XGBoost AFT 생존모델이 "이 병원의 병상 숫자(hvec)가 t초 뒤에도 유효할
+    확률"을 병원별·시점별로 계산한 것이다 (AIROOKIE-EGEN.md 참고). 생성형이
+    아닌 학습 모델이지만 규칙 기반은 아니므로 source는 "ai"다.
+
+    핵심 계약: hub는 `predictedSurvivalSec`(예측 생존시간)과 `bornAt`(현재
+    claim-version 탄생 시각)만 있으면 임의 시점의 authority(지금 믿어도 될
+    확률)와 r_arrive(도착 시점 유효 확률)를 스스로 계산할 수 있다 —
+    `authorityAtSend`/`ttlSec`은 전송 시점 스냅샷(디버깅·로그용)일 뿐,
+    hub가 매칭 시점에 재계산한 값이 항상 우선한다.
+    """
+
+    predictedSurvivalSec: float = Field(gt=0.0, description="모델의 예측 생존시간(초)")
+    bornAt: str = Field(
+        description="현재 claim-version 탄생(값이 이 값으로 바뀐 게 관측된) 시각, ISO 8601 UTC"
+    )
+    authorityAtSend: float = Field(ge=0.0, le=1.0, description="전송 시점의 authority")
+    ttlSec: float = Field(ge=0.0, description="authority가 0.8 아래로 떨어질 때까지 남은 초")
+    modelTag: str = Field(min_length=1, description="사용 모델 식별자. 예: aft_egen_theta3_ext0923")
+    source: Literal["ai"] = "ai"
+
+    @field_validator("bornAt")
+    @classmethod
+    def _iso8601(cls, value: str) -> str:
+        return _validate_iso8601(value)
+
+
 class HospitalInfo(Strict):
     """병원 1곳의 정보. feature/hub로 보내는 단위."""
 
@@ -195,6 +224,12 @@ class HospitalInfo(Strict):
         description="info-v2(hospital_score)의 신뢰도 진단. 심평원 캐시가 없거나 이"
         " 병원 판정에 실패하면 None으로 그대로 전송한다 — hub는 이 필드가 없어도"
         " 기존 로직 그대로 동작한다.",
+    )
+    bedReliability: Optional[BedReliability] = Field(
+        default=None,
+        description="reliability/(infosurv)의 병상 정보 신뢰도 예측. 모델·스냅샷이"
+        " 없거나 예측에 실패하면 None으로 그대로 전송한다 — assessment와 같은"
+        " fail-soft 패턴.",
     )
 
     @field_validator("updatedAt")

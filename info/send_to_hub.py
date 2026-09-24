@@ -59,7 +59,7 @@ sys.path.insert(0, str(HOSPITAL_INFORM_INFO_DIR))
 
 from egen.client import HttpEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
-from schema import AmbulanceInfo, HospitalInfo  # noqa: E402
+from schema import AmbulanceInfo, BedReliability, HospitalInfo  # noqa: E402
 from hospital_score import dataset as hs_dataset  # noqa: E402
 from hospital_score import scoring as hs_scoring  # noqa: E402
 from hospital_score import vocabulary as hs_vocab  # noqa: E402
@@ -188,6 +188,78 @@ def _attach_assessments(
     return enriched
 
 
+# reliability/(infosurv 서빙) 엔진은 claim-version 이력을 사이클 간 이어서
+# 추적해야 하므로 프로세스당 하나를 만들어 계속 들고 있는다. 생성에 한 번
+# 실패하면(모델 파일·xgboost 부재 등) 매 사이클 재시도하지 않고 그대로
+# 끈다 — 실패 원인이 사이클마다 바뀔 성질이 아니고, 로그만 시끄러워진다.
+_bed_engine = None
+_bed_engine_failed = False
+
+
+def _get_bed_engine():
+    global _bed_engine, _bed_engine_failed
+    if _bed_engine is None and not _bed_engine_failed:
+        try:
+            from reliability import BedReliabilityEngine
+
+            _bed_engine = BedReliabilityEngine()
+            print(
+                f"  [reliability] 엔진 준비 완료 (model={_bed_engine.model_tag}, "
+                f"워밍업 관측 {_bed_engine.warmed_up_observations:,}건)"
+            )
+        except Exception as e:  # noqa: BLE001 — 신뢰도 예측 실패가 병원 목록 전송을 막으면 안 됨
+            _bed_engine_failed = True
+            print(f"  [reliability] 엔진 초기화 실패, bedReliability 없이 전송 계속: {e}")
+    return _bed_engine
+
+
+def _attach_bed_reliability(
+    hospitals: list[HospitalInfo], bed_rows: list[dict]
+) -> list[HospitalInfo]:
+    """병원마다 reliability/(infosurv) 병상 정보 신뢰도 예측을 붙인다.
+
+    hospital_score(_attach_assessments)와 같은 fail-soft 패턴 — 엔진이 없거나
+    이번 사이클 예측이 실패해도 원래 HospitalInfo 그대로 전송한다.
+    """
+    engine = _get_bed_engine()
+    if engine is None:
+        return hospitals
+    try:
+        now = datetime.now(timezone.utc)
+        # 순서 중요: 스냅샷 증분(과거)을 먼저 넣고 이번 사이클 rows(현재)를
+        # 넣는다 — 반대로 하면 tracker의 단조 규칙이 스냅샷 줄을 버린다.
+        engine.ingest_snapshots()
+        engine.observe_rows(bed_rows, now)
+        predictions = engine.predict(now)
+    except Exception as e:  # noqa: BLE001 — 신뢰도 예측 실패가 병원 목록 전송을 막으면 안 됨
+        print(f"  [reliability] 이번 주기 예측 실패, bedReliability 없이 전송: {e}")
+        return hospitals
+
+    enriched: list[HospitalInfo] = []
+    attached = 0
+    for info in hospitals:
+        prediction = predictions.get(info.hospitalId)
+        if prediction is None:
+            enriched.append(info)
+            continue
+        enriched.append(
+            info.model_copy(
+                update={
+                    "bedReliability": BedReliability(
+                        predictedSurvivalSec=round(prediction.pred_t_sec, 1),
+                        bornAt=prediction.born.isoformat(timespec="seconds"),
+                        authorityAtSend=round(prediction.authority, 4),
+                        ttlSec=round(prediction.ttl_sec, 1),
+                        modelTag=engine.model_tag,
+                    )
+                }
+            )
+        )
+        attached += 1
+    print(f"  [reliability] {attached}/{len(hospitals)}곳에 병상 신뢰도 예측 첨부")
+    return enriched
+
+
 def fetch_hospitals() -> list[HospitalInfo]:
     """목록·병상·중증질환 수용가능정보를 전부 실 E-Gen API에서 가져와 합치고,
     병원마다 info-v2 신뢰도 진단을 붙인다.
@@ -211,6 +283,7 @@ def fetch_hospitals() -> list[HospitalInfo]:
     print(report.summary())
 
     hospitals = _attach_assessments(hospitals, location_rows, severe_rows, bed_rows)
+    hospitals = _attach_bed_reliability(hospitals, bed_rows)
     return hospitals
 
 

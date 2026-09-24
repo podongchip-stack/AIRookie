@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import bed_reliability
 import decision_log
 import delivery
 from hub_engine import BED_OVERLAY_TTL_MIN, HubEngine
@@ -20,6 +21,7 @@ from schema import (
     Assessment,
     AssessmentConditions,
     AssessmentGroup,
+    BedReliabilityInput,
     GpsPoint,
     HospitalInfo,
     Specialty,
@@ -234,6 +236,7 @@ def main() -> None:
     print("  [확인] AmbulanceInfo 등록·조회, (caseId -> apid) 매핑 모두 정상 동작")
 
     test_declared_no_demotion()
+    test_bed_reliability()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -302,6 +305,81 @@ def test_declared_no_demotion() -> None:
     d001 = next(h for h in result.hospitals if h.hospitalId == "D001")
     assert d001.specialtyMatch.score > 0, "데모션은 specialtyMatch 값 자체를 건드리면 안 된다 — 정렬 순서만 바뀐다"
     print("  [확인] D001이 거리 1위·진료과 동점임에도 declared_no라서 맨 뒤로 밀림 (specialtyMatch 값 자체는 안 바뀜)")
+
+
+def test_bed_reliability() -> None:
+    """feature/info가 bedReliability(infosurv 병상 정보 신뢰도 예측)를 실어
+    보내면, hub가 매칭 시점의 authority(지금 유효 확률)·rArrive(도착 시점
+    유효 확률)로 환산해 HospitalMatch에 싣는지 확인한다. finalScore·순위에는
+    관여하지 않고(설명용), 이 필드 없이 오는 구 데이터는 None으로 통과한다.
+    """
+    print("\n=== bedReliability 환산 확인: 병상 숫자의 유효 확률이 매칭 결과에 실리는지 ===")
+    engine = HubEngine()
+    now = datetime.now(timezone.utc)
+
+    fresh_born = now.isoformat(timespec="seconds")
+    old_born = (now - timedelta(minutes=30)).isoformat(timespec="seconds")
+    with_fresh = HospitalInfo(
+        hospitalId="B001", name="[테스트] 방금 갱신된 병상 값",
+        gps=GpsPoint(lat=35.1810, lng=128.1090), availableBedCount=5, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-24T00:00:00Z",
+        bedReliability=BedReliabilityInput(
+            predictedSurvivalSec=2400.0, bornAt=fresh_born,
+            authorityAtSend=1.0, ttlSec=2400.0, modelTag="aft_egen_theta3_ext0923",
+        ),
+    )
+    with_old = HospitalInfo(
+        hospitalId="B002", name="[테스트] 30분 묵은 병상 값",
+        gps=GpsPoint(lat=35.1950, lng=128.1200), availableBedCount=3, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-24T00:00:00Z",
+        bedReliability=BedReliabilityInput(
+            predictedSurvivalSec=2400.0, bornAt=old_born,
+            authorityAtSend=0.7, ttlSec=0.0, modelTag="aft_egen_theta3_ext0923",
+        ),
+    )
+    without = HospitalInfo(
+        hospitalId="B003", name="[테스트] bedReliability 없음 (구 데이터, 하위호환 확인)",
+        gps=GpsPoint(lat=35.2000, lng=128.1300), availableBedCount=1, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-24T00:00:00Z",
+    )
+    for h in (with_fresh, with_old, without):
+        engine.update_hospital_info(h)
+
+    voice = VoiceCallSummaryMessage(
+        caseId="case-bed-reliability-test",
+        transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+        summary=VoiceSummary(
+            patient="50대 남성", mechanism="교통사고 흉부 충격",
+            symptoms=["호흡 곤란"], treatment=["산소 공급"], severity_tag="high",
+        ),
+        source="ai",
+    )
+    result = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    matches = {h.hospitalId: h for h in result.hospitals}
+    for h in result.hospitals:
+        br = h.bedReliability
+        desc = (
+            f"authority={br.authority} rArrive={br.rArrive} ttl={br.ttlSec}s ({br.source})"
+            if br else "없음"
+        )
+        print(f"  {h.hospitalId} {h.name} — 병상신뢰도 [{desc}]")
+
+    b1, b2 = matches["B001"].bedReliability, matches["B002"].bedReliability
+    assert b1 is not None and b2 is not None, "bedReliability를 보낸 병원은 환산 결과가 실려야 한다"
+    assert matches["B003"].bedReliability is None, "bedReliability 없이 온 구 데이터는 None으로 통과해야 한다"
+    assert 0.0 <= b1.rArrive <= b1.authority <= 1.0, "도착 시점 확률(rArrive)은 지금 확률(authority)보다 클 수 없다"
+    assert b1.authority > b2.authority, "방금 갱신된 값(B001)이 30분 묵은 값(B002)보다 authority가 높아야 한다"
+    assert b2.ttlSec == 0.0 or b2.authority >= bed_reliability.AUTHORITY_TTL_THRESHOLD, (
+        "authority가 임계(0.8) 아래인데 ttl이 남아 있으면 안 된다"
+    )
+    expected_horizon = matches["B001"].distanceKm / bed_reliability.AVG_AMBULANCE_SPEED_KMH * 3600.0
+    assert abs(b1.horizonSec - expected_horizon) < 1.0, "horizonSec은 거리/평균속도에서 나와야 한다"
+    order_without_demote = [h.hospitalId for h in result.hospitals]
+    print(f"  [확인] 신선한 값 authority({b1.authority}) > 묵은 값 authority({b2.authority}), "
+          f"rArrive ≤ authority, 구 데이터는 None 통과 (순위 불변: {order_without_demote})")
 
 
 if __name__ == "__main__":

@@ -77,6 +77,7 @@
 | 병원 리스트 정렬 | 규칙 기반 (GPS 거리 · 존 그룹) | AI 미사용 |
 | 진료과 매칭 (예상 병명 ↔ 병원 진료과) | AI 보조 (경량 임베딩 유사도, sentence-transformers) | 생성형 LLM 아님, 결정적·설명 가능(유사도 점수 노출), On-Premise |
 | 병원 적합도 매칭 (거리·병상·존 스코어링) | 규칙 기반 (E-Gen 3개 오퍼레이션 대조) | AI 미사용, 설명 가능한 구조 유지 |
+| 병상 정보 신뢰도 예측 (병상 숫자가 아직 유효할 확률) | AI (XGBoost AFT 생존모델, infosurv 벤더링) | 생성형 아님, On-Premise, 캘리브레이트된 확률. **순위(finalScore)에는 관여하지 않는 설명용** — AIROOKIE-EGEN.md 참고 |
 | 의사결정 기록 · 보고서 생성 | AI (On-Premise sLLM) | Fact Checking Engine으로 원본 로그와 대조 검증 |
 
 이 구분을 코드나 UI에 반영할 때는 각 기능이 "AI 처리"인지 "규칙 기반"인지 명시적으로 구분되게 만든다 (예: 로그, 주석, API 응답 필드에 `source: "ai" | "rule"` 등).
@@ -325,6 +326,32 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   가공 전 원본을 저장하는 이유는 매핑 해석이 바뀌어도 과거 데이터를 다시 해석할 수 있어야
   해서다(가공본만 남기면 매핑을 고칠 때마다 지난 데이터가 죽는다)
 
+### 병상 정보 신뢰도 서빙 (`reliability/`, 2026-09-24 신설)
+
+모델링 프로젝트(`C:\Dev\Modeling\Source-Action-Based Dynamic Reliability and
+Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-Gen 병상
+정보 신뢰도 모델(infosurv)의 서빙 트랙. 배경·모델 상세는 저장소 루트
+`AIROOKIE-EGEN.md` 참고.
+
+- **벤더링 방식이다.** infosurv의 생존함수(`serve.py`)와 학습 모델 JSON
+  (`aft_egen_theta3_ext0923.json`), 병원별 리듬 테이블(`route_med_gap.json`)을
+  `info/Hospital_inform/info/reliability/`에 복사해 커밋했다 — pip 로컬 경로
+  의존이면 팀원 장비에서 안 돌기 때문. 원본이 재학습되면 모델 JSON을 다시
+  복사하고 `python -m reliability.build_route_med_gap`으로 테이블을 재생성한다
+  (엔진이 모델의 feature_names를 대조해 피처 정의가 어긋나면 그 자리에서 실패시킨다)
+- **실시간 피처 빌더는 infosurv에 없어서 여기서 새로 구현했다**(`features.py`) —
+  학습 파이프라인(egen_pipeline.py)의 claim-version 규칙(값 변화 = 새 버전,
+  공백 1시간 초과 = 세그먼트 리셋, 첫 버전 리듬 피처 NaN, 시각 피처 **UTC**)을
+  관측 스트림 방식으로 재현. 검증은 `python -m reliability.selftest`(API 호출 0회)
+- **관측 소스가 둘이다**: 같은 장비의 스냅샷 JSONL(20분 주기, 증분 읽기)이
+  1순위, 이번 사이클 rows가 2순위. 스냅샷이 없어도 죽지 않는다(30분 해상도로
+  낮아질 뿐) — hospital_score와 같은 fail-soft 원칙으로, `reliability/` 폴더를
+  통째로 지워도 `send_to_hub.py`는 `bedReliability` 없이 원본 그대로 보낸다
+- **hub로는 `HospitalInfo.bedReliability`**(predictedSurvivalSec·bornAt·
+  authorityAtSend·ttlSec·modelTag, source: "ai")로 나간다. authority는 정보
+  나이에 따라 계속 떨어지는 값이라 info의 전송 시점 값은 스냅샷일 뿐이고,
+  hub가 매칭 시점마다 재계산한다(아래 hub 참고사항)
+
 ### 거절 로그 — dashboard·hub에 요청하는 인터페이스 (2026-08-12)
 
 info 쪽 수신구는 **이미 완성돼 있다.** `POST /hub/rejection`으로 보내기만 하면 된다.
@@ -386,6 +413,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **finalScore(거리·진료과 가중합) 계산식 자체는 안 건드렸다** — `reliability`는 여전히 "왜 이 순위인지" 설명 근거다. 다만 **2026-08-14부로 정렬 순서에는 예외가 하나 생겼다**: 관련 질환군이 `declared_no`(병원이 명시적으로 "수용 불가"라고 신고)면 finalScore와 무관하게 순위 맨 뒤로 밀린다(`scoring.rank()`의 `demote` 키, `hub_engine.py`의 `_should_demote()`). 가중합으로 점수에 섞지 않은 이유는 실험(민감도 분석)으로 확인됐다 — 모든 경우에 역전을 막으려면 신뢰도 가중치가 70%대까지 필요해서 거리·진료과 반영이 무의미해지므로, hospital_score/README.md의 "제거하지 말고 아래로 내릴 것" 지침을 순서 조정으로만 구현했다. 거절 로그가 쌓여 실측 기반 가중치를 낼 수 있게 되면 가중합으로 승격하는 걸 재검토한다
   - hub의 `hub/schema.py`가 `extra="forbid"`로 막혀 있다는 서술이 hospital_score/README.md에 있었는데, 실제로는 아니다(pydantic BaseModel 기본값은 `extra="ignore"`) — `assessment` 필드가 없어도 파싱은 안 깨졌을 것이나, hub가 그 값을 실제로 읽어 쓰려면 어차피 스키마에 명시적으로 선언해야 해서 이번에 추가했다
 - ~~**`feature/info-v2`가 develop에 머지됐다(2026-08-13).** ... `send_to_hub.py` 상시 파이프라인은 여전히 이 폴더를 import하지 않는다~~ → **같은 날 상시 파이프라인 연결까지 완료.** `feature/info-v2`를 `feature/info`에도 머지해 한 브랜치로 합쳤고, `send_to_hub.py`가 병원마다 `hospital_score.scoring`을 호출해 `assessment`를 붙여 보낸다. info-v2가 제안했던 TTL 오버레이도 hub 쪽에 구현 완료 — 위 "hub로 흐르는 병원이 7곳뿐인 문제" 절 참고
+- **병상 정보 신뢰도 예측(infosurv 모델)을 수신·전달한다(2026-09-24).** feature/info의 `reliability/` 모듈이 `HospitalInfo.bedReliability`(Optional — 이 필드 없이 오는 구 데이터도 그대로 통과)로 보내면, hub가 매칭 시점마다 `hub/bed_reliability.py`의 `evaluate()`로 **authority**(지금 이 병상 숫자를 믿어도 될 확률)와 **rArrive**(도착 시점 — 거리/평균속도 40km/h로 추정한 horizon 뒤 — 에도 유효할 확률)를 재계산해 `HospitalMatch.bedReliability`로 dashboard에 전달한다. **finalScore·순위에는 관여하지 않는 설명용이다** — `reliability`(hospital_score)와 같은 원칙이되, 이쪽은 서수 티어가 아니라 캘리브레이트된 확률이라 거절 로그로 효과가 실측되면 rArrive의 랭킹 가중치 승격을 재검토한다(AIROOKIE-EGEN.md §5-1). 생존함수는 info 쪽 벤더링 사본(scipy)과 동일 수식을 hub에서 표준 라이브러리로 재구현했고(브랜치 폴더 원칙상 info/를 import 못 함 + scipy 의존 회피), 수치 등가성은 info의 `python -m reliability.selftest`가 검증한다. 검증 시나리오는 `run_match.py`의 `test_bed_reliability()`
 
 ## feature/dashboard 담당자 참고사항
 

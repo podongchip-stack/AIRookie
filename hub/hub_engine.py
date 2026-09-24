@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import bed_reliability
 import decision_log
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
@@ -435,6 +436,11 @@ class HubEngine:
                     _reliability_for(item["info"], best_assessment_group)
                     if best_assessment_group is not None
                     else None
+                ),
+                # 병상 숫자 자체의 유효 확률(infosurv 모델, source: "ai").
+                # finalScore에는 안 들어가는 설명용 — bed_reliability.py 참고.
+                bedReliability=bed_reliability.evaluate(
+                    item["info"].bedReliability, item["distanceKm"]
                 ),
             )
             for item in rank(scored)

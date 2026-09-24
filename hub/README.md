@@ -134,6 +134,34 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 가중합으로 승격할지 재검토할 수 있다(아직 hub는 이 엔드포인트로 아무것도 안
 보낸다 — 알려진 제약사항 참고).
 
+## 병상 정보 신뢰도(bedReliability) 반영 (2026-09-24 신설)
+
+위 hospital_score(중증질환 **수용 신고**의 신뢰도)와는 다른 축으로, feature/info의
+`reliability/` 모듈(infosurv 벤더링 — XGBoost AFT 생존모델, AIROOKIE-EGEN.md 참고)이
+**가용 병상 수 값 자체가 아직 유효한가**를 병원별·시점별 확률로 계산해
+`HospitalInfo.bedReliability`로 보낸다(source: "ai" — 생성형은 아니지만 학습 모델).
+
+hub가 실제로 쓰는 건 `predictedSurvivalSec`(예측 생존시간)과 `bornAt`(현재
+claim-version 탄생 시각) 둘이다. authority(지금 믿어도 될 확률)는 정보 나이에
+따라 계속 떨어지는 값이라 info의 전송 시점 스냅샷을 그대로 쓰면 재조회
+주기(30분)만큼 낡는다 — 그래서 `bed_reliability.evaluate()`가 **매칭 시점마다**
+재계산해 `HospitalMatch.bedReliability`로 내보낸다:
+
+| 필드 | 의미 |
+|---|---|
+| `authority` | 지금 이 병상 숫자를 믿어도 될 확률 (0~1) |
+| `rArrive` | **도착 시점**(거리/평균속도 40km/h로 추정한 `horizonSec` 뒤)에도 유효할 확률 |
+| `ttlSec` | authority가 0.8 아래로 떨어질 때까지 남은 초 (재확인 알림 후보) |
+| `modelTag` | 사용 모델 식별자 (`aft_egen_theta3_ext0923` 등) |
+
+**순위(finalScore)에는 관여하지 않는다** — `reliability`(hospital_score)와 같은
+설명용 원칙. 단 이쪽은 서수 티어가 아니라 **캘리브레이트된 확률**이라, 거절
+로그로 효과가 실측되면 `rArrive`를 랭킹 가중치로 승격하는 것이 다음 단계 후보다
+(AIROOKIE-EGEN.md §5-1이 권하는 방향). 수식은 info 쪽 벤더링 사본과 동일한
+log-normal AFT 생존함수를 표준 라이브러리로 재구현한 것이고(scipy 의존 회피),
+수치 등가성은 info의 `python -m reliability.selftest`가 검증한다. 이 필드 없이
+오는 구 feature/info 데이터는 `bedReliability=null`로 그대로 통과한다.
+
 ## 개발 환경 / 언어
 
 - 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
@@ -195,6 +223,8 @@ feature/hub는 `summary` 필드(부상 상태, 예상 병명, 중증도)는 매�
 | `specialties[].recentProcedureTags` | string[] | 최근 수술 이력 기반 전문 분야 태그 (개인정보 블라인드 처리, 가안 DB 기반이며 향후 실제 데이터로 교체 예정) |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `updatedAt` | string (ISO 8601) | 이 정보가 마지막으로 갱신된 시각 |
+| `assessment` | object (optional) | info-v2(hospital_score)의 신뢰도 진단 — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
+| `bedReliability` | object (optional) | 병상 정보 신뢰도 예측(`predictedSurvivalSec`·`bornAt`·`authorityAtSend`·`ttlSec`·`modelTag`, source: "ai") — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
 
 ### 입력 스키마 3: feature/dashboard로부터 (승인 액션)
 
@@ -394,6 +424,8 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `hospitals[].bedCountUnknown` | boolean | `availableBedCount`가 0일 때 그게 **"확인된 만실"(false)**인지 **"미상"(true)**인지. **dashboard는 true면 "0"이 아니라 "미상"으로 표시해야 한다** — 미상을 0으로 보여주면 구급대원이 멀쩡한 병원을 직접 후보에서 빼게 되어, 뺑뺑이를 줄이려는 목적과 정반대가 된다 |
 | `hospitals[].status` | `"pending"` \| `"approved"` \| `"rejected"` \| `"confirmed"` | 병원 응답 상태 |
 | `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
+| `hospitals[].reliability` | object \| null | info-v2 신뢰도 판정("왜 이 순위인지" 설명용, `group`·`score`·`confidence`·`basis`) — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
+| `hospitals[].bedReliability` | object \| null (2026-09-24 신설) | 병상 숫자 자체의 유효 확률(`authority`·`rArrive`·`horizonSec`·`ttlSec`·`modelTag`, source: "ai"). 매칭 시점에 hub가 재계산한 값. 순위에는 관여하지 않는 설명용 — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `ambulanceName` | string \| null (2026-08-11 신설) | 구급차 대시보드 상단바 표시용. `hospitals[].name`(병원명)과 같은 패턴 — 이 사건의 apid를 `register_case()`로 기억해둔 값에서 찾아 구급차 레지스트리(`AmbulanceInfo.name`)를 그대로 채운다. apid를 못 찾으면(통화 시작 신호 없이 직접 `/voice/summary`를 부른 테스트 등) `null`이고, dashboard는 URL의 apid로 대체 표시한다. **병원명과 마찬가지로 그 구급차가 실제로 사건에 등장해야만 채워진다** — 사건이 아예 없는 상태(대시보드를 열었지만 아직 통화가 없음)에서는 아직 이 필드 자체를 못 받으므로 ID 폴백이 계속 보인다 |
 
