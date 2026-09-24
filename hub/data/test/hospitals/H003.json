@@ -1,0 +1,12 @@
+{
+  "hospitalId": "H003",
+  "name": "서부병원",
+  "gps": { "lat": 35.2400, "lng": 128.1080 },
+  "availableBedCount": 20,
+  "nightDutyAvailable": true,
+  "specialties": [
+    { "department": "흉부외과", "doctorCount": 5, "recentProcedureTags": ["흉부외상", "관통상"] }
+  ],
+  "source": "rule",
+  "updatedAt": "2026-07-30T09:58:00Z"
+}

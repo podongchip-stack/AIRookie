@@ -1,0 +1,13 @@
+{
+  "hospitalId": "H001",
+  "name": "동남병원",
+  "gps": { "lat": 35.1980, "lng": 128.1080 },
+  "availableBedCount": 12,
+  "nightDutyAvailable": true,
+  "specialties": [
+    { "department": "흉부외과", "doctorCount": 3, "recentProcedureTags": ["기흉", "흉부외상"] },
+    { "department": "정형외과", "doctorCount": 2, "recentProcedureTags": ["골절"] }
+  ],
+  "source": "rule",
+  "updatedAt": "2026-07-30T09:55:00Z"
+}
