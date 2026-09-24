@@ -6,7 +6,8 @@
 main
  └── develop
        ├── feature/voice
-       ├── feature/vital
+       ├── feature/info
+       ├── feature/hub
        └── feature/dashboard
 ```
 

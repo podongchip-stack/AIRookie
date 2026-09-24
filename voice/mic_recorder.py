@@ -8,7 +8,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
-# Whisper가 기대하는 샘플레이트로 고정한다. 다른 값으로 녹음하면 STT 단계에서
+# ASR(Qwen3-ASR)이 기대하는 샘플레이트로 고정한다. 다른 값으로 녹음하면 STT 단계에서
 # 매번 리샘플링이 필요해지므로, 녹음 시점부터 16kHz로 맞춘다.
 SAMPLE_RATE = 16000
 # sounddevice 콜백 1회당 프레임 수. 16000Hz 기준 약 256ms 단위로 청크가 들어온다.
@@ -22,9 +22,9 @@ LIVE_AUDIO_DIR = DATA_VOICE_DIR / "live_audio"
 class MicRecorder:
     """마이크 입력을 백그라운드 스레드에서 numpy 버퍼로 계속 누적하는 녹음기.
 
-    STT/필터링과 무관하게 "녹음 자체"만 담당한다. snapshot()은 지금까지 누적된
+    STT와 무관하게 "녹음 자체"만 담당한다. snapshot()/samples_since()는 누적된
     오디오의 복사본을 돌려주므로, 녹음이 진행 중인 동안에도 비파괴적으로 중간
-    상태를 읽을 수 있다(Step 3의 라이브 재변환 루프에서 사용할 지점).
+    상태를 읽을 수 있다(live_transcriber.py가 통화 중 발화 단위 인식에 쓴다).
     """
 
     def __init__(self, sample_rate: int = SAMPLE_RATE, blocksize: int = BLOCKSIZE) -> None:
@@ -63,6 +63,11 @@ class MicRecorder:
         """지금까지 누적된 오디오 버퍼의 복사본을 반환한다 (비파괴적)."""
         with self._lock:
             return self._accumulated.copy()
+
+    def samples_since(self, start: int) -> np.ndarray:
+        """start번째 샘플부터 지금까지의 복사본. 통화 중 주기적으로 읽을 때 전체를 복사하지 않으려고 둔다."""
+        with self._lock:
+            return self._accumulated[start:].copy()
 
     def save_wav(self, path: Path) -> None:
         try:
