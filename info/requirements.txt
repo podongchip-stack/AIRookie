@@ -1,0 +1,71 @@
+# 요구 Python 버전: 3.11 (예: conda create -n <가상환경명> python=3.11)
+# 직접 의존성 + 하위 의존성까지 전부 버전 고정되어 있어 pip install -r requirements.txt 만으로 재현 가능
+
+# ===== 직접 의존성 (용도별) =====
+
+# 웹 프레임워크: hospital_score의 거절 로그 수신구(POST /hub/rejection, ingest.py)가
+# 쓴다. 병상 갱신 수신 서버(app.py, POST /hub/bed-update)는 2026-08-13 병원
+# Supabase 제거와 함께 삭제됐다 — 그때 같이 있던 flask-socketio/simple-websocket은
+# 애초에 순수 REST만 썼던 죽은 의존성이라 함께 제거했다(hospital_score/README.md
+# "미구현" 절에 이미 지적돼 있던 항목).
+flask==3.1.3
+
+# 실 E-Gen API·심평원(HIRA) API 호출
+requests==2.32.5
+
+# 외부 API 키 등 환경 변수 관리 (Hospital_inform/.env: EGEN_SERVICE_KEY,
+# HIRA_SERVICE_KEY, AMBULANCE_SUPABASE_URL/KEY)
+python-dotenv==1.2.1
+
+# 구급차 레지스트리(병원용과 별도 프로젝트, ambulances 테이블) 조회 전용.
+# 병원 정보는 2026-08-13부로 Supabase를 안 쓰지만, egen/client.py의
+# SupabaseEgenClient 클래스 자체(build_hospitals.py CLI 폴백용)는 남아있어
+# 이 패키지도 유지한다.
+supabase==2.31.0
+
+# Hospital_inform/info/schema.py, mapper.py의 HospitalInfo 검증
+pydantic==2.13.4
+
+# reliability/(infosurv 서빙 모듈) — E-Gen 병상 정보 신뢰도 모델 추론.
+# 3.4.1은 배포된 모델 JSON(aft_egen_theta3_ext0923.json)을 저장한 버전과
+# 같다("version":[3,4,1]) — 다른 버전으로 로드하면 포맷 비호환이 날 수 있어
+# 고정한다. numpy/scipy는 xgboost의 하위 의존이지만 reliability/가 직접
+# import하기도 해서(engine.py, serve.py) 직접 의존성으로 올려 둔다.
+xgboost==3.4.1
+numpy==2.5.1
+scipy==1.18.0
+
+# ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
+# bidict/python-engineio/python-socketio/wsproto/simple-websocket은 2026-08-13
+# 제거했다 — 전부 Flask-SocketIO 하나의 하위 의존성 체인이었는데, 그 직접
+# 의존성 자체가 이미 빠져서(위 "직접 의존성" 참고) 고아가 됐다(`pip show
+# python-socketio`의 Required-by가 Flask-SocketIO 하나뿐임을 확인 후 제거).
+anyio==4.14.2
+blinker==1.9.0
+certifi==2026.7.22
+charset-normalizer==3.4.9
+click==8.4.2
+deprecation==2.1.0
+h2==4.4.1
+h11==0.16.0
+hpack==4.2.0
+httpcore==1.0.9
+httpx==0.28.1
+hyperframe==6.1.0
+idna==3.18
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+multidict==6.7.1
+packaging==26.0
+postgrest==2.31.0
+propcache==0.5.2
+realtime==2.31.0
+storage3==2.31.0
+StrEnum==0.4.15
+supabase-auth==2.31.0
+supabase-functions==2.31.0
+urllib3==2.7.0
+websockets==15.0.1
+Werkzeug==3.1.8
+yarl==1.24.5

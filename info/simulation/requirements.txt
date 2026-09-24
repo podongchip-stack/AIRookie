@@ -1,0 +1,18 @@
+# simulation GUI 전용 의존성 (창을 띄우고 PDF를 이미지로 바꾸는 데만 필요)
+#
+# 이 파일만으로는 아무것도 돌지 않는다. OCR·추출 의존성 위에 GUI를 얹는 것이라
+# 아래 순서로 설치한다:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r ocr/requirements.txt -r ocr/requirements-extract.txt
+#   pip install -r simulation/requirements.txt
+#
+# tkinter 자체는 파이썬에 들어 있어 설치 대상이 아니다. 창에 파일을 끌어놓는
+# 기능만 확장으로 붙인다.
+
+tkinterdnd2==0.6.2   # MIT — 창에 파일 끌어놓기(DND_FILES)
+pypdfium2==5.12.1    # BSD-3-Clause 또는 Apache-2.0 택일, 내부 PDFium은 BSD-3-Clause
+
+# PDF 렌더링에 흔히 쓰는 PyMuPDF를 쓰지 않은 이유는 라이선스다. PyMuPDF는
+# AGPL-3.0이라, 레이아웃 모델을 ONNX로 바꿔가며 AGPL 전염을 피한 이 저장소의
+# 결정(ocr/README.md "레이아웃 모델을 ONNX로 쓰는 이유")과 정면으로 충돌한다.

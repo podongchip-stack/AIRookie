@@ -1,0 +1,13 @@
+{
+  "hospitalId": "H004",
+  "name": "북부병원",
+  "gps": { "lat": 35.1850, "lng": 128.1200 },
+  "availableBedCount": 5,
+  "nightDutyAvailable": true,
+  "specialties": [
+    { "department": "외상외과", "doctorCount": 2, "recentProcedureTags": ["다발성 외상"] },
+    { "department": "피부과", "doctorCount": 1, "recentProcedureTags": [] }
+  ],
+  "source": "rule",
+  "updatedAt": "2026-07-30T09:59:00Z"
+}

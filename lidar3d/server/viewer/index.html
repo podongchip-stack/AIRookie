@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiDAR_3D — 3D 뷰어</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel-2:#1c2230; --line:#2a3240;
+    --text:#e6edf3; --muted:#8b98a9; --accent:#4c9aff; --danger:#e62828;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
+  #stage{position:fixed;inset:0}
+  canvas{display:block;outline:none}
+
+  .panel{position:fixed;background:rgba(22,27,34,.94);border:1px solid var(--line);
+    border-radius:12px;backdrop-filter:blur(12px)}
+  #side{top:12px;left:12px;width:270px;max-height:calc(100vh - 24px);overflow-y:auto;padding:14px}
+  #hud{top:12px;right:12px;padding:12px 14px;min-width:190px}
+  #toast{bottom:12px;left:50%;transform:translateX(-50%);padding:10px 16px;display:none;
+    border-color:var(--accent)}
+
+  h1{font-size:15px;margin:0 0 2px;letter-spacing:.2px}
+  .sub{font-size:11px;color:var(--muted);margin-bottom:12px}
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);
+    margin:16px 0 7px;font-weight:600}
+  h2:first-of-type{margin-top:0}
+
+  select,button,input{font:inherit;color:var(--text);background:var(--panel-2);
+    border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+  select,input[type=file]{width:100%}
+  button{cursor:pointer;transition:background .12s,border-color .12s}
+  button:hover{background:#252d3d;border-color:#3a465a}
+  button.on{background:var(--accent);border-color:var(--accent);color:#04101f;font-weight:600}
+  .row{display:flex;gap:6px;margin-top:6px}
+  .row>*{flex:1}
+
+  .legend{display:flex;flex-direction:column;gap:3px}
+  .legend button{display:flex;align-items:center;gap:8px;text-align:left;padding:5px 8px;
+    font-size:12.5px;background:transparent;border-color:transparent}
+  .legend button:hover{background:var(--panel-2)}
+  .legend button[aria-pressed=false]{opacity:.34}
+  .sw{width:13px;height:13px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.22)}
+  .cnt{margin-left:auto;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+
+  .stat{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:2px 0}
+  .stat b{font-variant-numeric:tabular-nums;font-weight:600}
+  .big{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+  .muted{color:var(--muted)}
+  .warn{color:#ffb84d}
+
+  #drop{position:fixed;inset:0;display:none;place-items:center;background:rgba(6,9,14,.9);
+    z-index:20;font-size:17px}
+  /* 사람 상세 모달 */
+  #pmodal{position:fixed;inset:0;display:none;z-index:40;background:rgba(4,7,12,.82);
+    backdrop-filter:blur(6px)}
+  #pmodal.show{display:block}
+  #pcard{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:min(880px,92vw);height:min(680px,88vh);background:var(--panel);
+    border:1px solid var(--line);border-radius:16px;overflow:hidden;
+    display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.6)}
+  #phead{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  #phead h3{margin:0;font-size:15px}
+  #pbody{flex:1;display:flex;min-height:0}
+  #pstage{flex:1;position:relative;background:#0b0e13;min-width:0}
+  #pphotos{width:270px;border-left:1px solid var(--line);overflow-y:auto;padding:10px;
+    background:#0d1117;display:flex;flex-direction:column;gap:8px}
+  #pphotos h4{margin:0 0 2px;font-size:11px;letter-spacing:.6px;color:var(--muted);
+    text-transform:uppercase}
+  #pphotos img{width:100%;border-radius:8px;border:1px solid var(--line);display:block;cursor:zoom-in}
+  #pphotos .cap{font-size:10.5px;color:var(--muted);margin-top:-4px}
+  #pzoom{position:fixed;inset:0;display:none;place-items:center;background:rgba(2,4,8,.94);z-index:60}
+  #pzoom.show{display:grid}
+  #pzoom img{max-width:94vw;max-height:94vh;border-radius:10px}
+  #pfoot{padding:10px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+  #pclose{margin-left:auto}
+  #drop.show{display:grid}
+  kbd{background:var(--panel-2);border:1px solid var(--line);border-radius:4px;
+    padding:1px 5px;font-size:11px;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div class="panel" id="side">
+  <h1>LiDAR_3D</h1>
+  <div class="sub">LiDAR 3D 뷰어 · 단위: 미터</div>
+
+  <h2>세션</h2>
+  <select id="sessions"><option>불러오는 중…</option></select>
+  <div class="row">
+    <button id="reload">새로고침</button>
+    <button id="openFile">파일 열기</button>
+  </div>
+  <div class="row"><button id="sample">샘플 방 보기</button></div>
+  <!-- .ply 와 .bin 을 함께 고르면 분류 토글까지 동작한다 -->
+  <input type="file" id="file" accept=".ply,.bin" multiple hidden>
+
+  <h2>분류 (클릭해서 켜고 끄기)</h2>
+  <div class="legend" id="legend"></div>
+
+  <h2>표시할 메시</h2>
+  <select id="meshSrc">
+    <option value="scene_mesh.ply">ARKit 메시 (기본)</option>
+    <option value="fused_mesh.ply">직접 융합</option>
+    <option value="fused_adaptive.ply">적응형 (배경거침+객체정밀)</option>
+    <option value="fused_objects.ply">적응형 — 사람만 (1cm)</option>
+  </select>
+  <div class="sub" style="margin-top:4px">
+    직접 융합은 전체 2cm, 적응형은 배경 4cm + 사람 1cm입니다.
+    <b>차이는 사람에서만</b> 보입니다 (밀도 4.7배).
+  </div>
+
+  <h2>검출된 사람</h2>
+  <div class="legend" id="personList"><div class="sub">불러오는 중…</div></div>
+  <div class="sub" id="personMsg" style="margin-top:4px"></div>
+
+  <h2>검출 확인</h2>
+  <div class="row"><button id="detectPage">YOLO 검출 재생 보기</button></div>
+  <div class="sub" style="margin-top:4px">
+    영상 위에 YOLO가 고른 사람 마스크를 겹쳐 프레임 단위로 확인합니다.
+  </div>
+
+  <h2>세션 병합 (두 대로 찍었을 때)</h2>
+  <select id="mergeA"></select>
+  <select id="mergeB" style="margin-top:6px"></select>
+  <div class="row"><button id="mergeBtn">두 세션 병합</button></div>
+  <div class="sub" id="mergeMsg" style="margin-top:6px">
+    겹치는 구간이 2m 이상이어야 붙습니다.
+  </div>
+
+  <h2>보기</h2>
+  <div class="row">
+    <button id="reset">시점 초기화</button>
+    <button id="wire">와이어프레임</button>
+  </div>
+  <div class="row">
+    <button id="top">위에서</button>
+    <button id="measure">거리 측정</button>
+  </div>
+  <div class="row">
+    <button id="fromhere">여기서 거리</button>
+  </div>
+  <div class="sub" style="margin-top:9px">
+    드래그=회전 · 휠=확대 · <kbd>⇧</kbd>+드래그=이동
+  </div>
+</div>
+
+<div class="panel" id="hud">
+  <div class="stat"><span class="muted">공간 크기</span></div>
+  <div class="big" id="extent">—</div>
+  <div style="height:8px"></div>
+  <div class="stat"><span class="muted">정점</span><b id="nv">—</b></div>
+  <div class="stat"><span class="muted">면</span><b id="nf">—</b></div>
+  <div class="stat"><span class="muted">문 감지</span><b id="ndoor">—</b></div>
+  <div id="measureBox" style="display:none">
+    <div style="height:8px"></div>
+    <div class="stat"><span class="muted">측정 거리</span></div>
+    <div class="big" id="dist" style="color:var(--accent)">두 점을 클릭</div>
+  </div>
+</div>
+
+<div class="panel" id="toast"></div>
+<div id="pmodal">
+  <div id="pcard">
+    <div id="phead">
+      <h3 id="ptitle">사람</h3>
+      <select id="ppick" style="width:auto"></select>
+      <button id="pmode" title="메시 = 측정용 / 3DGS = 보기용">3DGS로 보기</button>
+      <button id="pconf" aria-pressed="false" style="display:none"
+              title="마스크 일관성이 낮은 정점을 흐리게 — 사람이 아닐 수 있는 부분">신뢰도 표시</button>
+      <button id="pclose">닫기</button>
+    </div>
+    <div id="pbody">
+      <div id="pstage"></div>
+      <div id="pphotos">
+        <h4>실제 사진 (원본 영상)</h4>
+        <div class="sub" id="pnophoto">—</div>
+      </div>
+    </div>
+    <div id="pfoot">—</div>
+  </div>
+</div>
+
+<div id="pzoom"><img id="pzoomimg" alt=""></div>
+
+<div id="drop">scene_mesh.ply (+ scene_mesh_faces_class.bin) 를 여기에 놓으세요</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "gsplat3d":"https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { PLYLoader }     from 'three/addons/loaders/PLYLoader.js';
+// 3D Gaussian Splatting 렌더러.
+// 3DGS PLY는 f_dc_ / opacity / scale_ / rot_ 속성 구조라 PLYLoader(메시용)로는 못 읽는다.
+// (주의: 이 설명에 블록 주석을 쓰면 안 된다. 속성명의 별표가 종료 기호가 되어 주석이 끊긴다.)
+import * as GS3D          from 'gsplat3d';
+
+/* ─────────────────────────────────────────────────────────────────────
+   인증 토큰 — 서버가 LIDAR_TOKEN으로 실행됐을 때만 쓰인다.
+   공개 URL(Cloudflare Tunnel 등)로 열 때 ?token=... 을 붙여서 들어온다.
+
+   fetch를 감싸는 이유: 데이터 요청이 14군데라 하나씩 고치면 빠뜨리기 쉽고,
+   3DGS 로더처럼 우리가 직접 호출하지 않는 내부 fetch도 있기 때문이다.
+   같은 출처(상대 경로) 요청에만 붙이고, CDN 같은 외부 주소는 건드리지 않는다.
+   ───────────────────────────────────────────────────────────────────── */
+/* 스크립트가 죽으면 페이지는 멀쩡해 보이는데 데이터만 안 들어온다.
+   그 상태에서는 브라우저 콘솔을 열기 전까지 원인을 알 수 없으므로, 화면에 띄운다.
+   (toast()는 아래에서 정의되므로 TDZ를 피해 DOM을 직접 만진다.) */
+function showFatal(msg){
+  const t = document.getElementById('toast');
+  if (!t) { console.error(msg); return; }
+  t.textContent = msg;
+  t.style.display = 'block';
+  t.style.color = '#ff6b6b';
+  t.style.maxWidth = '90vw';
+  t.style.whiteSpace = 'normal';
+}
+addEventListener('error', e =>
+  showFatal('스크립트 오류: ' + (e.message || e.error) + (e.filename ? ` (${e.filename}:${e.lineno})` : '')));
+addEventListener('unhandledrejection', e =>
+  showFatal('처리되지 않은 오류: ' + (e.reason && e.reason.message || e.reason)));
+
+const AUTH_TOKEN = (() => {
+  const q = new URLSearchParams(location.search).get('token');
+  try {
+    if (q) sessionStorage.setItem('lidarToken', q);
+    return q || sessionStorage.getItem('lidarToken') || '';
+  } catch { return q || ''; }   // 사생활 보호 모드에서는 sessionStorage가 던진다
+})();
+
+/* 상대 경로 URL에 토큰을 붙인다. <img src> 와 3DGS 로더 경로처럼
+   요청 헤더를 붙일 수 없는 곳에 쓴다. */
+function withToken(url){
+  if (!AUTH_TOKEN || /^https?:\/\//i.test(url)) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(AUTH_TOKEN);
+}
+
+if (AUTH_TOKEN){
+  const rawFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (typeof input === 'string' && !/^https?:\/\//i.test(input)) input = withToken(input);
+    return rawFetch(input, init);
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   분류 팔레트 — iPhone 앱의 MeshExporter.classPalette와 **반드시 동일**해야 한다.
+   한쪽만 고치면 색은 맞는데 라벨이 어긋나는, 가장 알아채기 어려운 종류의 버그가 난다.
+   ───────────────────────────────────────────────────────────────────── */
+const CLASSES = [
+  { name:'none',    ko:'미분류',   rgb:[130,130,130] },
+  { name:'wall',    ko:'벽',       rgb:[200,200,190] },
+  { name:'floor',   ko:'바닥',     rgb:[ 90,140, 90] },
+  { name:'ceiling', ko:'천장',     rgb:[ 90,110,180] },
+  { name:'table',   ko:'테이블',   rgb:[200,150, 60] },
+  { name:'seat',    ko:'좌석',     rgb:[180, 90,180] },
+  { name:'window',  ko:'창문',     rgb:[ 90,200,220] },
+  { name:'door',    ko:'문',       rgb:[230, 40, 40] },
+];
+
+/* ── 씬 기본 구성 ───────────────────────────────────────────────────── */
+const stage = document.getElementById('stage');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1116);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.02, 500);
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+stage.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// ARKit 월드는 Y가 중력 반대(위)이므로 three.js의 기본 Y-up과 그대로 맞는다.
+// 좌표 축을 돌리는 변환을 여기에 넣지 않는다 — 넣는 순간 뷰어에서 잰 거리가
+// 앱이 기록한 좌표와 달라진다.
+scene.add(new THREE.HemisphereLight(0xffffff, 0x28303c, 2.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(2.5, 6, 3.5);
+scene.add(sun);
+const grid = new THREE.GridHelper(40, 40, 0x2a3240, 0x1a202a);
+scene.add(grid);
+
+let meshObj = null, materials = [], bbox = null, wireOn = false;
+
+/* ── PLY 로드 + 분류별 그룹 분할 ─────────────────────────────────────── */
+function buildMesh(geometry, faceClasses){
+  if (meshObj){ scene.remove(meshObj); meshObj.geometry.dispose(); meshObj = null; }
+
+  geometry.computeVertexNormals();
+  const index = geometry.getIndex();
+  const faceCount = index ? index.count/3 : geometry.attributes.position.count/3;
+
+  materials = CLASSES.map(c => new THREE.MeshStandardMaterial({
+    color: new THREE.Color(c.rgb[0]/255, c.rgb[1]/255, c.rgb[2]/255),
+    roughness: 0.92, metalness: 0.0, side: THREE.DoubleSide, flatShading: false,
+  }));
+
+  const counts = new Array(CLASSES.length).fill(0);
+
+  if (faceClasses && faceClasses.length >= faceCount && index){
+    /* 면을 분류별로 모아 인덱스를 재배열하고 group을 만든다.
+       이렇게 하면 "문만 보기" 같은 토글이 드로우콜 수준에서 공짜로 된다.
+       (사이드카 .bin을 쓰는 이유: three.js PLYLoader도 Open3D처럼 PLY 면의
+        커스텀 property를 돌려주지 않는다.) */
+    const src = index.array;
+    const buckets = CLASSES.map(()=>[]);
+    for (let f=0; f<faceCount; f++){
+      const c = faceClasses[f] < CLASSES.length ? faceClasses[f] : 0;
+      buckets[c].push(f); counts[c]++;
+    }
+    const out = new (src.constructor)(faceCount*3);
+    let w = 0;
+    geometry.clearGroups();
+    buckets.forEach((faces, ci)=>{
+      const start = w;
+      for (const f of faces){
+        out[w++] = src[f*3]; out[w++] = src[f*3+1]; out[w++] = src[f*3+2];
+      }
+      if (w > start) geometry.addGroup(start, w-start, ci);
+    });
+    geometry.setIndex(new THREE.BufferAttribute(out, 1));
+    meshObj = new THREE.Mesh(geometry, materials);
+  } else {
+    /* 사이드카가 없으면 PLY에 구워진 정점 색으로 그린다.
+       분류별 토글은 못 하지만 문은 여전히 빨갛게 보인다. */
+    const m = new THREE.MeshStandardMaterial({
+      vertexColors: !!geometry.attributes.color, color: 0xcccccc,
+      roughness: 0.92, side: THREE.DoubleSide });
+    materials = [m];
+    meshObj = new THREE.Mesh(geometry, m);
+    counts[0] = faceCount;
+  }
+
+  scene.add(meshObj);
+  geometry.computeBoundingBox();
+  bbox = geometry.boundingBox.clone();
+  updateHUD(geometry, faceCount, counts, !!faceClasses);
+  buildLegend(counts, !!faceClasses);
+  resetView();
+}
+
+function updateHUD(geometry, faceCount, counts, hasClasses){
+  const s = new THREE.Vector3(); bbox.getSize(s);
+  document.getElementById('extent').textContent =
+    `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} m`;
+  document.getElementById('nv').textContent = geometry.attributes.position.count.toLocaleString();
+  document.getElementById('nf').textContent = Math.round(faceCount).toLocaleString();
+  const doorIdx = CLASSES.findIndex(c=>c.name==='door');
+  document.getElementById('ndoor').textContent =
+    !hasClasses ? '분류 없음' : (counts[doorIdx] ? `${counts[doorIdx].toLocaleString()} 면` : '없음');
+}
+
+function buildLegend(counts, hasClasses){
+  const box = document.getElementById('legend');
+  box.innerHTML = '';
+  if (!hasClasses){
+    box.innerHTML = '<div class="sub warn">이 메시에는 분류 정보가 없습니다 '
+      + '(scene_mesh_faces_class.bin 누락 또는 분류 미지원 기기). 정점 색으로만 표시합니다.</div>';
+    return;
+  }
+  CLASSES.forEach((c,i)=>{
+    if (!counts[i]) return;                       // 없는 클래스는 범례에 넣지 않는다
+    const b = document.createElement('button');
+    b.setAttribute('aria-pressed','true');
+    b.innerHTML = `<span class="sw" style="background:rgb(${c.rgb.join(',')})"></span>`
+      + `<span>${c.ko}</span><span class="cnt">${counts[i].toLocaleString()}</span>`;
+    b.onclick = ()=>{
+      const on = b.getAttribute('aria-pressed') === 'true';
+      b.setAttribute('aria-pressed', String(!on));
+      materials[i].visible = !on;
+    };
+    box.appendChild(b);
+  });
+}
+
+/* ── YOLO 객체 3D 마커 ──────────────────────────────────────────────────
+   objects_3d.json의 위치는 scene_mesh.ply와 **같은 ARKit world 좌표계, 같은 미터**다.
+   그래서 변환 없이 그대로 씬에 놓으면 메시 위 정확한 자리에 붙는다. */
+const objGroup = new THREE.Group(); scene.add(objGroup);
+let objects3d = [], labelsOn = true;
+
+const PRIORITY_COLOR = 0xffd24a, NORMAL_COLOR = 0x7de3ff;
+
+function makeLabelSprite(text, priority){
+  const pad = 12, font = 40;
+  const c = document.createElement('canvas'), g = c.getContext('2d');
+  g.font = `600 ${font}px -apple-system, sans-serif`;
+  const w = g.measureText(text).width;
+  c.width = w + pad*2; c.height = font + pad*2;
+  const g2 = c.getContext('2d');
+  g2.font = `600 ${font}px -apple-system, sans-serif`;
+  g2.fillStyle = priority ? 'rgba(255,210,74,.92)' : 'rgba(18,24,34,.86)';
+  g2.strokeStyle = priority ? 'rgba(120,80,0,.9)' : 'rgba(125,227,255,.8)';
+  g2.lineWidth = 3;
+  const r = 14;
+  g2.beginPath(); g2.roundRect(2, 2, c.width-4, c.height-4, r); g2.fill(); g2.stroke();
+  g2.fillStyle = priority ? '#241a00' : '#dff4ff';
+  g2.textBaseline = 'middle';
+  g2.fillText(text, pad, c.height/2);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sp.scale.set(c.width/c.height * 0.26, 0.26, 1);
+  sp.renderOrder = 999;
+  return sp;
+}
+
+function buildObjectMarkers(list){
+  objGroup.clear();
+  objects3d = list || [];
+  const nobjEl = document.getElementById('nobj');
+  if (nobjEl) nobjEl.textContent = objects3d.length || '없음';
+
+  objects3d.forEach(o=>{
+    const [x,y,z] = o.position_xyz;
+    const color = o.priority ? PRIORITY_COLOR : NORMAL_COLOR;
+    // 구체 = 위치, 수직선 = 바닥에서의 높이감 (구체만 있으면 깊이감이 안 산다)
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.07, 18, 14),
+      new THREE.MeshBasicMaterial({ color, depthTest: false }));
+    dot.position.set(x,y,z); dot.renderOrder = 998;
+    objGroup.add(dot);
+
+    if (bbox){
+      const stem = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(x, bbox.min.y, z), new THREE.Vector3(x,y,z)]),
+        new THREE.LineBasicMaterial({ color, transparent:true, opacity:.45, depthTest:false }));
+      stem.renderOrder = 997; objGroup.add(stem);
+    }
+    const sp = makeLabelSprite(`${o.class}  ×${o.num_observations}`, o.priority);
+    sp.position.set(x, y + 0.22, z);
+    objGroup.add(sp);
+  });
+  objGroup.visible = labelsOn;
+  buildObjectList();
+}
+
+function buildObjectList(){
+  const box = document.getElementById('objlist');
+  if (!box) return;                       // 물체 검출 UI는 제거됐다
+  if (!objects3d.length){
+    box.innerHTML = '<div class="sub">검출된 물체 없음</div>'; return;
+  }
+  box.innerHTML = '';
+  objects3d.forEach(o=>{
+    const b = document.createElement('button');
+    const col = o.priority ? '#ffd24a' : '#7de3ff';
+    b.innerHTML = `<span class="sw" style="background:${col}"></span>`
+      + `<span>${o.class}</span><span class="cnt">×${o.num_observations}</span>`;
+    // 클릭하면 그 물체로 시점을 옮긴다 — 목록에서 찾은 걸 3D에서 바로 보게
+    b.onclick = ()=>{
+      const [x,y,z] = o.position_xyz;
+      controls.target.set(x,y,z);
+      const dir = camera.position.clone().sub(controls.target).normalize().multiplyScalar(2.2);
+      camera.position.copy(new THREE.Vector3(x,y,z).add(dir));
+      controls.update();
+      toast(`${o.class} — 카메라 시작점에서 ${Math.hypot(x,y,z).toFixed(2)} m`, 4000);
+    };
+    box.appendChild(b);
+  });
+}
+
+/* ── 사람 상세 모달 ─────────────────────────────────────────────────
+   목록에서 고른 사람 한 명만 별도 씬으로 띄운다. 본 화면과 완전히 분리해서,
+   모달을 닫아도 보고 있던 시점이 그대로 유지되게 한다. */
+let persons = [];
+let photos = {};   // index -> [{file,size_px,distance_m,...}]
+let pScene = null, pCam = null, pRend = null, pCtl = null, pMesh = null, pRAF = 0;
+/* 3DGS(가우시안 스플랫) 상태.
+   메시는 **측정용**(미터 단위 표면), 3DGS는 **보기용**(반투명 점 분포)이다.
+   그래서 대체하지 않고 같은 사람을 두 방식으로 번갈아 본다. */
+let gsPersons = {};          // index -> {file, gaussians}
+let gsViewer = null;         // GS3D.DropInViewer (three.js Group)
+let gsLoadedFile = null;
+let pViewMode = 'mesh';      // 'mesh' | 'gs'
+let gsBounds = '';
+let gsStatus = null;         // gs_status.json — 3DGS 자동 생성 진행 상황
+let gsPoll = 0;              // 진행 중일 때만 도는 폴링 타이머           // 실제 적재된 스플랫 범위 (화면에 표시해 진단에 쓴다)
+/* 메시를 원점으로 옮길 때 쓴 오프셋. 3DGS는 ARKit 월드 좌표 그대로라
+   같은 오프셋을 적용하지 않으면 화면 밖에 놓인다. */
+let pCenter = new THREE.Vector3();
+
+function ensurePersonViewer(){
+  if (pRend) return;
+  const stage = document.getElementById('pstage');
+  pScene = new THREE.Scene(); pScene.background = new THREE.Color(0x0b0e13);
+  pCam = new THREE.PerspectiveCamera(50, stage.clientWidth/stage.clientHeight, 0.01, 50);
+  pRend = new THREE.WebGLRenderer({ antialias:true });
+  pRend.setPixelRatio(Math.min(devicePixelRatio,2));
+  pRend.setSize(stage.clientWidth, stage.clientHeight);
+  stage.appendChild(pRend.domElement);
+  pCtl = new OrbitControls(pCam, pRend.domElement); pCtl.enableDamping = true;
+  pScene.add(new THREE.HemisphereLight(0xffffff, 0x2a323e, 2.2));
+  const l = new THREE.DirectionalLight(0xffffff, 1.2); l.position.set(1,3,2); pScene.add(l);
+  (function loop(){ pRAF = requestAnimationFrame(loop); pCtl.update(); pRend.render(pScene,pCam); })();
+}
+
+/* 3DGS 장면을 비운다. DropInViewer는 WebGL 자원을 직접 들고 있어서
+   Group만 remove하면 GPU 메모리가 새므로 dispose를 반드시 부른다. */
+async function clearGS(){
+  if (!gsViewer) return;
+  try { await gsViewer.dispose(); } catch(e) { console.warn('3DGS 해제 실패', e); }
+  pScene.remove(gsViewer);
+  gsViewer = null; gsLoadedFile = null;
+}
+
+async function loadGS(file){
+  await clearGS();
+  /* sharedMemoryForWorkers는 COOP/COEP 헤더(교차 출처 격리)를 요구한다.
+     우리 서버는 그 헤더를 안 보내므로 반드시 false여야 한다. */
+  gsViewer = new GS3D.DropInViewer({
+    /* gpuAcceleratedSort는 반드시 false.
+       라이브러리 기본값(true)에서는 스플랫이 **아무것도 그려지지 않는다.**
+       실측: 같은 조건에서 true = 렌더된 픽셀 0.00%, false = 15.37%.
+       오류도 경고도 없이 검은 화면만 나와서 원인을 찾기 매우 어려웠다. */
+    gpuAcceleratedSort: false,
+    /* sharedMemoryForWorkers는 COOP/COEP 헤더(교차 출처 격리)를 요구한다.
+       우리 서버는 그 헤더를 안 보내므로 반드시 false여야 한다. */
+    sharedMemoryForWorkers: false,
+  });
+  await gsViewer.addSplatScenes([{
+    path: withToken(`/session/${currentSession}/file/${file}`),
+    // format을 반드시 명시해야 한다. 라이브러리는 기본적으로 path.endsWith('.ply')로
+    // 포맷을 판별하는데, 우리 URL은 뒤에 ?token=... 이 붙어서 그 검사를 통과하지 못한다.
+    // (명시하지 않으면 "File format not supported"로 조용히 실패한다.)
+    format: GS3D.SceneFormat.Ply,
+    splatAlphaRemovalThreshold: 5,
+  }], false, (pct, label) => {
+    /* 사람 1은 63MB라 회선에 따라 수십 초 걸린다. 진행률이 없으면
+       "눌러도 아무 반응 없음"으로 보여서 고장과 구분되지 않는다. */
+    const f = document.getElementById('pfoot');
+    if (f) f.textContent = `3DGS 불러오는 중… ${Math.round(pct)}%${label ? ' · ' + label : ''}`;
+  });
+  pScene.add(gsViewer);
+  gsLoadedFile = file;
+
+  /* 위치를 추측하지 않는다.
+     이전에는 메시 경계상자 중심(pCenter)만큼 옮겼는데, 3DGS의 실제 범위가 그와
+     다르면 화면 밖에 놓이고도 "로드 성공"으로만 보여서 원인을 알 수 없었다.
+     그래서 실제로 적재된 스플랫의 경계를 재서 거기에 카메라를 맞춘다. */
+  const box = new THREE.Box3();
+  const sm = gsViewer.splatMesh;
+  let n = 0;
+  if (sm && typeof sm.getSplatCount === 'function'){
+    n = sm.getSplatCount();
+    const c = new THREE.Vector3();
+    for (let i = 0; i < n; i += Math.max(1, Math.floor(n / 20000))){
+      sm.getSplatCenter(i, c, false);   // 2만 개만 표본으로 봐도 범위는 충분히 나온다
+      box.expandByPoint(c);
+    }
+  }
+  if (!box.isEmpty()){
+    const ctr = new THREE.Vector3(), size = new THREE.Vector3();
+    box.getCenter(ctr); box.getSize(size);
+    gsViewer.position.copy(ctr).negate();          // 원점으로 가져온다
+    const rad = Math.max(size.length() / 2, 0.2);
+    pCam.position.set(0, size.y * 0.15, rad * 2.4);
+    pCam.near = Math.max(rad / 100, 0.01);
+    pCam.far  = Math.max(rad * 100, 50);
+    pCam.updateProjectionMatrix();
+    pCtl.target.set(0, 0, 0); pCtl.update();
+    gsBounds = `${n.toLocaleString()}개 · ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}m`;
+  } else {
+    // 경계를 못 구하면 최소한 메시 기준으로라도 놓고, 그 사실을 알린다.
+    gsViewer.position.copy(pCenter).negate();
+    gsBounds = '경계 계산 실패 — 메시 중심 기준으로 배치함';
+  }
+}
+
+async function setPersonMode(mode, i){
+  const p = persons[i]; if (!p) return;
+  const btn  = document.getElementById('pmode');
+  const foot = document.getElementById('pfoot');
+  const gs   = gsPersons[String(p.index)];
+
+  if (mode === 'gs'){
+    if (!gs){
+      foot.innerHTML = '이 사람은 <b>3DGS가 없습니다</b> — A100에서 학습 후 '
+        + '<code>scripts/crop_3dgs.py</code>로 잘라내야 합니다. '
+        + '(학습 중 많이 움직인 사람은 가우시안이 거의 안 남아 제외됩니다)';
+      return;
+    }
+    pViewMode = 'gs';
+    if (pMesh) pMesh.visible = false;
+    btn.textContent = '메시로 보기';
+    foot.textContent = '3DGS 불러오는 중…';
+    try {
+      if (gsLoadedFile !== gs.file) await loadGS(gs.file);
+      foot.innerHTML = `<b>3DGS</b> · 적재됨 ${gsBounds} · `
+        + '실제 옷 색과 자세가 사진처럼 보입니다. '
+        + '<b>보기 전용</b>이라 거리·크기 측정은 [메시로 보기]에서 하세요.';
+    } catch(e){
+      foot.textContent = '3DGS를 불러오지 못했습니다: ' + e;
+      setPersonMode('mesh', i);
+    }
+  } else {
+    pViewMode = 'mesh';
+    await clearGS();
+    if (pMesh) pMesh.visible = true;
+    updateGsButton();
+    if (pMeshFoot) foot.innerHTML = pMeshFoot;
+  }
+}
+
+let pMeshFoot = '';
+
+/* 3DGS 자동 생성 상태를 읽어 버튼 문구에 반영한다.
+   학습이 17분까지 걸리므로, "없음"과 "만드는 중"을 구분하지 못하면 고장으로 오해한다. */
+async function refreshGsStatus(id){
+  try{
+    const r = await fetch(`/session/${id}/file/gs_status.json`);
+    gsStatus = r.ok ? await r.json() : null;
+  }catch{ gsStatus = null; }
+
+  clearInterval(gsPoll);
+  // 진행 중일 때만 폴링한다 (끝났거나 없는 세션을 계속 찌르지 않는다).
+  if (gsStatus && (gsStatus.state === 'queued' || gsStatus.state === 'running')){
+    gsPoll = setInterval(async ()=>{
+      if (currentSession !== id) { clearInterval(gsPoll); return; }
+      try{
+        const r = await fetch(`/session/${id}/file/gs_status.json`);
+        if (!r.ok) return;
+        const prev = gsStatus && gsStatus.state;
+        gsStatus = await r.json();
+        updateGsButton();
+        if (gsStatus.state !== prev && gsStatus.state === 'done'){
+          const gr = await fetch(`/session/${id}/file/gs_persons.json`);
+          if (gr.ok){
+            gsPersons = {};
+            for (const g of ((await gr.json()).persons || [])) gsPersons[String(g.index)] = g;
+            updateGsButton();
+            toast(`3DGS 준비 완료 — ${gsStatus.message || ''}`, 6000);
+          }
+          clearInterval(gsPoll);
+        }
+        if (gsStatus.state === 'failed') clearInterval(gsPoll);
+      }catch{}
+    }, 5000);
+  }
+  updateGsButton();
+}
+
+/* 버튼 하나에 세 상태를 담는다: 준비됨 / 만드는 중 / 없음 */
+function updateGsButton(){
+  const mb = document.getElementById('pmode');
+  if (!mb) return;
+  const p = persons[Number(document.getElementById('ppick').value)];
+  const gs = p ? gsPersons[String(p.index)] : null;
+  if (pViewMode === 'gs'){ mb.textContent = '메시로 보기'; mb.disabled = false; return; }
+
+  if (gs){
+    mb.textContent = '3DGS로 보기';
+    mb.disabled = false;
+    mb.title = `${gs.gaussians.toLocaleString()}개 가우시안 (보기 전용)`;
+    return;
+  }
+  const st = gsStatus && gsStatus.state;
+  mb.disabled = true;
+  if (st === 'running' || st === 'queued'){
+    const pct = Math.round(gsStatus.progress || 0);
+    mb.textContent = st === 'queued' ? '3DGS 대기 중…' : `3DGS 학습 중 ${pct}%`;
+    mb.title = gsStatus.message || '';
+  } else if (st === 'failed'){
+    mb.textContent = '3DGS 실패';
+    mb.title = gsStatus.error || '원인 미상';
+  } else {
+    mb.textContent = '3DGS 없음';
+    mb.title = (gsStatus && gsStatus.message) || '이 사람의 3DGS가 아직 없습니다';
+  }
+}
+
+/* ── 마스크 일관성 신뢰도 사이드카 ────────────────────────────────
+   stage2_fuse.py가 만드는 <메시이름>_confidence.bin을 읽어, 신뢰도가 낮은
+   정점을 회색 쪽으로 섞는다. 정점을 지우지 않는 이유는 9차 측정 때문이다 —
+   임계로 자르면 삭제분의 47%가 몸 표면 5cm 이내였다(팔·가장자리를 깎았다).
+
+   (사이드카를 쓰는 이유는 위 scene_mesh_faces_class.bin과 같다:
+    PLYLoader가 PLY의 커스텀 property를 돌려주지 않는다.)
+
+   파일이 없거나 헤더가 맞지 않으면 **조용히** 기존 표시로 돌아간다.
+   보조 기능 때문에 메시가 안 보이는 일은 없어야 한다. */
+const CONF_LO = 0.25, CONF_HI = 0.65;   // 이 사이에서 회색→실색으로 넘어간다
+
+function fnv1a64(bytes){
+  let h = 0xcbf29ce484222325n;
+  const M = 0x100000001b3n, MASK = 0xFFFFFFFFFFFFFFFFn;
+  for (let i = 0; i < bytes.length; i++){ h = ((h ^ BigInt(bytes[i])) * M) & MASK; }
+  return h;
+}
+/* 파이썬 _vhash와 같은 계산: 앞뒤 1000정점의 float32 비트.
+   전체를 해싱하지 않는 이유는 브라우저 비용 때문이다. */
+function vertexHash(pos){
+  const n = pos.count, k = Math.min(1000, n);
+  const head = new Uint8Array(pos.array.buffer, pos.array.byteOffset, k*3*4);
+  const tail = new Uint8Array(pos.array.buffer,
+                              pos.array.byteOffset + (n-k)*3*4, k*3*4);
+  const all = new Uint8Array(head.length + tail.length);
+  all.set(head, 0); all.set(tail, head.length);
+  return fnv1a64(all);
+}
+async function loadConfidence(geo, fileBase){
+  try{
+    const r = await fetch(`/session/${currentSession}/file/${fileBase}_confidence.bin`);
+    if (!r.ok) return null;                       // 없으면 그냥 없는 것
+    const buf = await r.arrayBuffer();
+    if (buf.byteLength < 16) return null;
+    const dv = new DataView(buf);
+    if (String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3)) !== 'LCF1'){
+      console.warn('[신뢰도] 매직이 다릅니다 — 무시합니다'); return null;
+    }
+    const n = dv.getUint32(4, true), want = dv.getBigUint64(8, true);
+    const pos = geo.attributes.position;
+    if (n !== pos.count){                          // 1차 검증: 정점 수
+      console.warn(`[신뢰도] 정점 수 불일치 ${n} vs ${pos.count} — 무시합니다`); return null;
+    }
+    if (vertexHash(pos) !== want){                 // 2차 검증: 좌표 해시
+      console.warn('[신뢰도] 좌표 해시 불일치 (메시가 다시 만들어졌을 수 있습니다) — 무시합니다');
+      return null;
+    }
+    if (buf.byteLength < 16 + n*4) return null;
+    return new Float32Array(buf.slice(16, 16 + n*4));
+  } catch(e){ console.warn('[신뢰도] 읽기 실패 — 무시합니다', e); return null; }
+}
+/* 신뢰도를 색에 섞는다. 반투명은 쓰지 않는다 —
+   사람 메시는 양면 렌더라 반투명으로 하면 뒷면이 비쳐 형태가 더 안 보인다. */
+function applyConfidenceShader(mat){
+  mat.onBeforeCompile = (sh)=>{
+    sh.uniforms.uConfOn = confUniform;
+    sh.vertexShader = 'attribute float conf;\nvarying float vConf;\n' + sh.vertexShader;
+    sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\n  vConf = conf;');
+    sh.fragmentShader = 'uniform float uConfOn;\nvarying float vConf;\n' + sh.fragmentShader;
+    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>',
+      '#include <color_fragment>\n' +
+      '  float f = mix(1.0, smoothstep(' + CONF_LO.toFixed(2) + ', ' + CONF_HI.toFixed(2) +
+      ', vConf), uConfOn);\n' +
+      '  diffuseColor.rgb = mix(vec3(0.52,0.54,0.57), diffuseColor.rgb, f);');
+  };
+  mat.needsUpdate = true;
+}
+const confUniform = { value: 0.0 };
+
+/* ── 후처리를 버튼 없이 필요할 때만 돌린다 ──────────────────────────────
+   예전에는 [적응형 융합] -> [실사 색 입히기] 를 사람이 차례로 눌러야 했다.
+   쓰는 쪽에서 보면 둘 다 "검출된 사람을 보기 위한" 준비 과정일 뿐이라,
+   사람 모달을 열 때 없으면 그때 만든다.
+   ⚠️ /colorize 는 세션의 **모든 사람**을 한 번에 칠한다. 그래서 세션당 한 번만 돌리고
+      그 약속(Promise)을 재사용한다. 두 사람을 연달아 눌러도 두 번 돌지 않는다. */
+const colorizeJobs = {};
+async function ensureColorized(id){
+  if (colorizeJobs[id]) return colorizeJobs[id];
+  colorizeJobs[id] = (async ()=>{
+    const foot = document.getElementById('pfoot');
+    const t0 = Date.now();
+    const h = setInterval(()=>{
+      if (!foot) return;
+      const s2 = Math.floor((Date.now()-t0)/1000);
+      foot.textContent = `실사 색을 입히는 중입니다… (이 세션에서 처음 한 번만) · 경과 ${Math.floor(s2/60)}:${String(s2%60).padStart(2,'0')}`;
+    }, 1000);
+    if (foot) foot.textContent = '실사 색을 입히는 중입니다… (이 세션에서 처음 한 번만)';
+    toast('실사 색 입히는 중… 사람 수에 따라 수십 초 걸립니다', 60000);
+    try{
+      const r = await fetch('/colorize', { method:'POST',
+        body: new URLSearchParams({ session_id: id, stride: 2 }) });
+      const d = await r.json().catch(()=>({}));
+      if (!r.ok || d.status !== 'ok'){
+        clearInterval(h);
+        delete colorizeJobs[id];                 // 실패는 기억하지 않는다 — 다음에 다시 시도
+        toast('실사 색 입히기 실패 — 원본 색으로 표시합니다', 6000);
+        return false;
+      }
+      try{                                       // 참조 사진도 이때 함께 생긴다
+        const ph = await fetch(`/session/${id}/file/photos.json`);
+        if (ph.ok) photos = (await ph.json()).persons || {};
+      }catch{}
+      clearInterval(h);
+      toast(`실사 색 완료 — ${d.count}명`, 4000);
+      return true;
+    }catch(e){
+      clearInterval(h);
+      delete colorizeJobs[id];
+      toast('실사 색 입히기 실패: ' + (e && e.message || e), 6000);
+      return false;
+    }
+  })();
+  return colorizeJobs[id];
+}
+
+/* 사람 분리 결과가 아예 없을 때만 쓰는 되살림 경로.
+   persons.json 이 없으면 누를 버튼(사람 1, 사람 2)이 생기지 않으므로,
+   모달 열기만으로는 시작할 수 없다. 그래서 목록 자리에 한 개만 둔다. */
+/* 후처리는 수 분이 걸린다. 아무 표시가 없으면 실패한 것처럼 보이므로
+   stage1/stage2가 남기는 _progress.json 을 2초마다 읽어 진행률을 보여준다.
+   ⚠️ 서버가 이 파일을 아직 허용하지 않으면(구버전) 경과 시간만 보여주고 계속 진행한다. */
+function startProgress(id, el){
+  const t0 = Date.now();
+  const mmss = ms => `${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`;
+  let last = '';
+  const tick = async ()=>{
+    let head = '';
+    try{
+      const r = await fetch(`/session/${id}/file/_progress.json?_=${Date.now()}`);
+      if (r.ok){
+        const d = await r.json();
+        head = `${d.stage}단계 ${d.name} ${d.done}/${d.total} (${d.pct}%)`
+             + (d.extra ? ` · ${d.extra}` : '');
+        last = head;
+      }
+    }catch{}
+    if (!head) head = last || '준비 중…';
+    el.innerHTML = `<span style="color:#6ee7a0">${head}</span> · 경과 ${mmss(Date.now()-t0)}`;
+  };
+  tick();
+  const h = setInterval(tick, 2000);
+  return ()=>{ clearInterval(h); };
+}
+
+/* 후처리가 끝났는지 **결과 파일로** 확인한다.
+   ⚠️ POST 응답만 믿으면 안 된다. stage1(YOLO)은 실측 12분 33초까지 걸리는데,
+      공개 주소(Cloudflare 무료 플랜)는 원본 응답을 100초에서 끊는다.
+      그러면 서버는 끝까지 계속 도는데 브라우저만 실패로 보고,
+      목록을 갱신하지 않아 "사람을 못 찾았다"처럼 보인다 (실측: 0922v4). */
+async function waitForPersons(id, el, since){
+  const t0 = Date.now();
+  const LIMIT = 30*60*1000;                       // 서버 스크립트 타임아웃과 동일
+  let quiet = 0;
+  while (Date.now()-t0 < LIMIT){
+    await new Promise(r=>setTimeout(r, 3000));
+    let running = false;
+    try{
+      const pr = await fetch(`/session/${id}/file/_progress.json?_=${Date.now()}`);
+      running = pr.ok;                            // 파일이 있으면 아직 돌고 있다
+    }catch{}
+    if (running){ quiet = 0; continue; }
+    // 진행 파일이 없다 -> 끝났거나, 서버가 이 파일을 안 내려준다(구버전).
+    try{
+      const r = await fetch(`/session/${id}/file/persons.json?_=${Date.now()}`);
+      if (r.ok){
+        const j = await r.json();
+        const done = (j.persons || []).length + (j.review || []).length;
+        if (done > 0 && (!since || (j.persons||[]).length !== since)) return j;
+        if (done > 0 && !since) return j;
+      }
+    }catch{}
+    quiet += 3;
+    if (quiet > 90) return null;                  // 90초간 아무 변화 없음 -> 포기
+  }
+  return null;
+}
+
+async function findPersons(btn){
+  const id = currentSession;
+  if (!id) return;
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '사람 찾는 중…';
+  const el = document.getElementById('personMsg');
+  const stopProgress = startProgress(id, el);
+  const before = persons.length;
+  let ok = false, why = '';
+  try{
+    const r = await fetch('/fuse-adaptive', { method:'POST',
+      body: new URLSearchParams({ session_id: id, bg_voxel: 0.04, obj_voxel: 0.01,
+                                  // ⚠️ window 는 0(제한 없음)이어야 한다.
+                                  //    3.0이면 사람들이 촬영 내내 등장할 때 대부분이 잘린다.
+                                  window: 0.0, classes: 'person' }) });
+    const d = await r.json().catch(()=>({}));
+    if (r.ok && d.status === 'ok'){ ok = true; }
+    else {
+      const det = d.detail;
+      why = (det && typeof det === 'object')
+        ? `${det.stage}단계 «${det.name}» 실패 — ${det.hint}`
+        : String(det || '응답 없음').slice(0,200);
+      console.log(d);
+    }
+  }catch(e){
+    why = '연결 끊김: ' + (e && e.message || e);   // 서버는 계속 돌고 있을 수 있다
+  }
+  if (!ok){
+    // 응답을 못 받았어도 서버가 끝냈을 수 있다. 결과 파일로 다시 확인한다.
+    el.innerHTML = `<span class="warn">${why}</span> — 서버가 계속 처리 중일 수 있어 결과를 기다립니다…`;
+    btn.textContent = '결과 기다리는 중…';
+    const j = await waitForPersons(id, el, before);
+    ok = !!j;
+    if (!ok) el.innerHTML = `<span class="warn">${why}</span>`;
+  }
+  stopProgress();
+  if (ok){
+    delete colorizeJobs[id];                     // 메시가 새로 만들어졌으니 색도 다시
+    el.innerHTML = '<span style="color:#6ee7a0">사람 분리 완료 — 목록을 갱신합니다</span>';
+    document.getElementById('meshSrc').value = 'fused_adaptive.ply';
+    await loadSession(id, 'fused_adaptive.ply');
+  }
+  btn.disabled = false; btn.textContent = old;
+}
+
+async function openPerson(i){
+  const p = persons[i]; if (!p) return;
+  ensurePersonViewer();
+  await clearGS(); pViewMode = 'mesh';   // 사람을 바꾸면 이전 3DGS는 버린다
+  document.getElementById('pmodal').classList.add('show');
+  document.getElementById('ppick').value = String(i);
+  const stage = document.getElementById('pstage');
+  pCam.aspect = stage.clientWidth/stage.clientHeight; pCam.updateProjectionMatrix();
+  pRend.setSize(stage.clientWidth, stage.clientHeight);
+
+  // 실사 색이 이미 있으면 그걸 쓰고, 없으면 **지금 만든다** (버튼을 따로 두지 않는다)
+  const colored = p.file.replace('.ply','_colored.ply');
+  let file = colored, buf = null;
+  let r = await fetch(`/session/${currentSession}/file/${colored}`);
+  if (!r.ok){
+    await ensureColorized(currentSession);
+    r = await fetch(`/session/${currentSession}/file/${colored}`);
+  }
+  if (!r.ok){ file = p.file; r = await fetch(`/session/${currentSession}/file/${p.file}`); }
+  if (!r.ok){ document.getElementById('pfoot').textContent = '메시를 불러오지 못했습니다'; return; }
+  buf = await r.arrayBuffer();
+
+  if (pMesh){ pScene.remove(pMesh); pMesh.geometry.dispose(); }
+  const geo = new PLYLoader().parse(buf);
+  geo.computeVertexNormals();
+  const hasColor = !!geo.attributes.color;
+  const pmat = new THREE.MeshStandardMaterial({
+    vertexColors: hasColor, color: hasColor ? 0xffffff : 0xe03a3a,
+    roughness: 0.95, side: THREE.DoubleSide });
+  // 신뢰도 사이드카는 원본 이름 기준이다 (_colored.ply도 정점 순서가 같다 —
+  // color_mesh.py는 색만 덧붙이고 정점 배열을 건드리지 않는다).
+  const confArr = await loadConfidence(geo, p.file.replace('.ply',''));
+  const cbtn = document.getElementById('pconf');
+  if (confArr){
+    geo.setAttribute('conf', new THREE.BufferAttribute(confArr, 1));
+    applyConfidenceShader(pmat);
+    cbtn.style.display = ''; cbtn.setAttribute('aria-pressed', String(confUniform.value > 0.5));
+  } else {
+    cbtn.style.display = 'none'; confUniform.value = 0.0;
+  }
+  pMesh = new THREE.Mesh(geo, pmat);
+  // 원점 중심으로 옮겨 회전이 자연스럽게
+  geo.computeBoundingBox();
+  const c = new THREE.Vector3(); geo.boundingBox.getCenter(c);
+  pMesh.position.sub(c);
+  pCenter.copy(c);
+  pScene.add(pMesh);
+  const size = new THREE.Vector3(); geo.boundingBox.getSize(size);
+  const rad = Math.max(size.length()/2, 0.2);
+  pCam.position.set(0, size.y*0.15, rad*2.4); pCtl.target.set(0,0,0); pCtl.update();
+
+  // 실제 사진 — 3D가 얼마나 더 사실적일 수 있는지의 **상한**이다.
+  const pane = document.getElementById('pphotos');
+  const list = photos[String(p.index)] || [];
+  pane.innerHTML = '<h4>실제 사진 (원본 영상)</h4>';
+  if (!list.length){
+    pane.insertAdjacentHTML('beforeend',
+      '<div class="sub">사진 없음 — [실사 색 입히기]를 누르면 함께 추출됩니다</div>');
+  } else {
+    list.forEach(ph=>{
+      const img = document.createElement('img');
+      img.src = withToken(`/session/${currentSession}/file/${ph.file}`);
+      img.onclick = ()=>{
+        document.getElementById('pzoomimg').src = img.src;
+        document.getElementById('pzoom').classList.add('show');
+      };
+      pane.appendChild(img);
+      const cap = document.createElement('div');
+      cap.className = 'cap';
+      cap.textContent = `${ph.size_px[0]}×${ph.size_px[1]}px · ${ph.distance_m}m`;
+      pane.appendChild(cap);
+    });
+    pane.insertAdjacentHTML('beforeend',
+      '<div class="sub" style="margin-top:6px">3D는 <b>1cm 복셀</b>, 사진은 <b>1px ≈ 0.1cm</b>입니다. '
+      + '사진이 훨씬 세밀하면 3DGS로 더 좋아질 여지가 있다는 뜻입니다.</div>');
+  }
+
+  document.getElementById('ptitle').textContent = `사람 ${p.index}`;
+  updateGsButton();
+  pMeshFoot =
+    `${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m · `
+    + `${geo.attributes.position.count.toLocaleString()}정점 · `
+    + (hasColor
+        ? '<b>실사 색</b> — 회색 부분은 <b>한 번도 관측되지 않은 곳</b>입니다 (칠해 넣지 않았습니다)'
+        : '색 없음 — [실사 색 입히기]를 눌러 영상의 실제 색을 입히세요');
+  document.getElementById('pfoot').innerHTML = pMeshFoot;
+}
+
+function closePerson(){
+  document.getElementById('pmodal').classList.remove('show');
+  clearGS();   // 100만 가우시안은 GPU 메모리를 많이 쓴다. 닫으면 바로 돌려준다.
+}
+
+function buildPersonList(){
+  const box = document.getElementById('personList');
+  const pick = document.getElementById('ppick');
+  if (!persons.length){
+    const c = caps[currentSession] || {};
+    pick.innerHTML = '';
+    if (c.depth === false){
+      box.innerHTML = '<div class="sub">이 세션에는 뎁스가 없어 사람을 분리할 수 없습니다. '
+                    + '앱에서 "뎁스도 업로드"를 켜고 다시 촬영하세요.</div>';
+      return;
+    }
+    box.innerHTML = '';
+    const b = document.createElement('button');
+    b.textContent = '사람 찾기';
+    b.onclick = ()=> findPersons(b);
+    box.appendChild(b);
+    return;
+  }
+  box.innerHTML = '';
+  pick.innerHTML = persons.map((p,i)=>`<option value="${i}">사람 ${p.index}</option>`).join('');
+  persons.forEach((p,i)=>{
+    const b = document.createElement('button');
+    const d = p.size_m;
+    b.innerHTML = `<span class="sw" style="background:#e03a3a"></span>`
+      + `<span>사람 ${p.index}</span>`
+      + `<span class="cnt">${d[0].toFixed(1)}×${d[1].toFixed(1)}×${d[2].toFixed(1)}m</span>`;
+    b.onclick = ()=> openPerson(i);
+    box.appendChild(b);
+  });
+}
+
+/* ── 거리 측정 — "문까지 2m"를 실제로 말할 수 있게 하는 부분 ──────────── */
+let measuring = false;
+const picks = [];
+const markers = new THREE.Group(); scene.add(markers);
+let line = null;
+
+function clearMeasure(){
+  markers.clear(); picks.length = 0;
+  if (line){ scene.remove(line); line.geometry.dispose(); line = null; }
+  document.getElementById('dist').textContent = '두 점을 클릭';
+}
+
+renderer.domElement.addEventListener('pointerdown', ev=>{
+  if (!measuring || !meshObj || ev.button !== 0) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((ev.clientX-r.left)/r.width)*2-1, -((ev.clientY-r.top)/r.height)*2+1);
+  const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObject(meshObj, false)[0];
+  if (!hit) return;
+
+  if (picks.length === 2) clearMeasure();
+  picks.push(hit.point.clone());
+
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.035, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x4c9aff }));
+  dot.position.copy(hit.point); markers.add(dot);
+
+  if (picks.length === 2){
+    const d = picks[0].distanceTo(picks[1]);
+    // 미터다. monocular SfM에는 없던 절대 스케일 — 이 숫자가 이 프로젝트의 요점이다.
+    document.getElementById('dist').textContent = `${d.toFixed(2)} m`;
+    line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(picks),
+      new THREE.LineBasicMaterial({ color: 0x4c9aff }));
+    scene.add(line);
+  }
+});
+
+/* ── 시점 ───────────────────────────────────────────────────────────── */
+function resetView(){
+  if (!bbox) return;
+  const c = new THREE.Vector3(), s = new THREE.Vector3();
+  bbox.getCenter(c); bbox.getSize(s);
+  const r = Math.max(s.length()/2, 0.5);
+  camera.position.set(c.x + r*1.25, c.y + r*0.85, c.z + r*1.25);
+  camera.near = r/200; camera.far = r*40; camera.updateProjectionMatrix();
+  controls.target.copy(c); controls.update();
+  grid.position.set(c.x, bbox.min.y, c.z);
+}
+function topView(){
+  if (!bbox) return;
+  const c = new THREE.Vector3(), s = new THREE.Vector3();
+  bbox.getCenter(c); bbox.getSize(s);
+  camera.position.set(c.x, bbox.max.y + Math.max(s.x, s.z)*1.15, c.z + 0.001);
+  controls.target.copy(c); controls.update();
+}
+
+/* ── 서버 연동 ──────────────────────────────────────────────────────── */
+/* 필요한 서버 엔드포인트 (docs/server_changes.md 참고):
+     GET /sessions                      -> [{"session_id":"...","has_mesh":true}, ...]
+     GET /session/{id}/file/scene_mesh.ply
+     GET /session/{id}/file/scene_mesh_faces_class.bin
+   엔드포인트가 아직 없어도 "파일 열기" / 드래그&드롭으로 즉시 테스트할 수 있다. */
+const toast = (msg, ms=3800)=>{
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.style.display='none', ms);
+};
+
+/* 세션별 objects_3d.json 존재 여부. 없는 파일을 굳이 요청해서 서버 로그에
+   404를 쌓지 않기 위한 것이다 (로그가 지저분하면 진짜 오류를 놓친다). */
+const hasObjects = {};
+
+/* 새 세션이 올라왔는지 주기적으로 확인한다.
+   ⚠️ 보고 있던 세션을 마음대로 바꾸지 않는다 — 시점을 맞춰 보는 중에 화면이 튀면
+      그게 더 불편하다. 목록만 갱신하고, 새 세션이 있으면 알려만 준다.
+   (업로드마다 브라우저 창을 새로 띄우던 동작은 서버에서 껐다: AUTO_OPEN_VIEWER=False) */
+let knownSessions = new Set();
+let currentSession = null;
+/* 세션별 후처리 가능 여부. 서버가 /sessions에서 알려준다.
+   ⚠️ 뎁스 없는 세션에서 융합 버튼을 누르면 반드시 실패하므로 미리 막는다. */
+const caps = {};
+
+function fillSessionSelects(withMesh){
+  const opts = withMesh.map(s=>{
+    const v = s.vertex_count ? ` (${(s.vertex_count/1000).toFixed(0)}k)` : '';
+    return `<option value="${s.session_id}">${s.session_id}${v}</option>`;
+  }).join('');
+  const sel = document.getElementById('sessions');
+  const keep = sel.value;
+  sel.innerHTML = opts;
+  if (keep && withMesh.some(s=>s.session_id===keep)) sel.value = keep;   // 선택 유지
+  const a = document.getElementById('mergeA'), b = document.getElementById('mergeB');
+  const ka = a.value, kb = b.value;
+  a.innerHTML = opts; b.innerHTML = opts;
+  if (ka && withMesh.some(s=>s.session_id===ka)) a.value = ka;
+  if (kb && withMesh.some(s=>s.session_id===kb)) b.value = kb;
+  else if (withMesh.length > 1) b.selectedIndex = 1;
+  withMesh.forEach(s => {
+    hasObjects[s.session_id] = !!s.has_objects;
+    caps[s.session_id] = { depth: !!s.has_depth, fused: !!s.has_fused, adaptive: !!s.has_adaptive };
+  });
+  updateProcButtons();
+}
+
+/* 현재 세션의 능력에 맞춰 버튼과 메시 목록을 조정한다. */
+function updateProcButtons(){
+  const c = caps[currentSession] || {};
+  const msg = document.getElementById('personMsg');
+  const noDepth = currentSession && c.depth === false;
+  if (msg) msg.innerHTML = noDepth
+    ? '<span class="warn">이 세션에는 뎁스가 없습니다 — 사람 분리를 할 수 없습니다.</span>'
+    : '사람을 누르면 실사 색이 자동으로 입혀집니다 (처음 한 번은 수십 초).';
+  // 만들어진 결과만 메시 목록에 남긴다 (없는 파일을 고르면 404가 난다)
+  const sel = document.getElementById('meshSrc');
+  if (sel) [...sel.options].forEach(o => {
+    if (o.value === 'fused_mesh.ply')     o.disabled = !c.fused;
+    if (o.value === 'fused_adaptive.ply') o.disabled = !c.adaptive;
+    if (o.value === 'fused_objects.ply')  o.disabled = !c.adaptive;
+  });
+  /* 비활성화만 하면 value는 그대로 남는다. 뎁스 없는 세션으로 옮겼을 때
+     이전 선택(직접 융합 등)이 유지되어 "fused_mesh.ply 없음" 404가 났다.
+     못 쓰게 된 항목이 선택돼 있으면 ARKit 메시로 되돌린다. */
+  if (sel) {
+    const cur = [...sel.options].find(o => o.value === sel.value);
+    if (cur && cur.disabled) sel.value = 'scene_mesh.ply';
+  }
+}
+
+async function pollSessions(){
+  try{
+    const list = await (await fetch('/sessions')).json();
+    const withMesh = list.filter(s => s.has_mesh !== false);
+    const fresh = withMesh.filter(s => !knownSessions.has(s.session_id));
+    if (!fresh.length) return;
+    fresh.forEach(s => knownSessions.add(s.session_id));
+    fillSessionSelects(withMesh);
+    if (currentSession){
+      const n = fresh[0];
+      const v = n.vertex_count ? ` · ${(n.vertex_count/1000).toFixed(0)}k 정점` : '';
+      toast(`새 세션 ${fresh.length}개 도착 — ${n.session_id}${v} (목록에서 선택)`, 8000);
+    } else {
+      loadSession(fresh[0].session_id);
+    }
+  }catch{}
+}
+
+async function loadSessions(){
+  const sel = document.getElementById('sessions');
+  try{
+    const list = await (await fetch('/sessions')).json();
+    const withMesh = list.filter(s => s.has_mesh !== false);
+    if (!withMesh.length){ sel.innerHTML = '<option>메시가 있는 세션 없음</option>'; return; }
+    withMesh.forEach(s => knownSessions.add(s.session_id));
+    fillSessionSelects(withMesh);
+    /* 보던 세션이 목록에 아직 있으면 그대로 둔다.
+       ⚠️ 예전에는 무조건 withMesh[0]을 로드했다. 그 바람에
+          후처리 버튼이 끝날 때마다 선택이 목록 첫 번째로 튕기고,
+          이어지는 후처리가 currentSession을 쓰는 바람에 엉뚱한 세션을 불러왔다.
+          목록 첫 번째는 '최신'이 아니라 디렉터리 **이름 역순** 1위다. */
+    if (currentSession && withMesh.some(s => s.session_id === currentSession)){
+      sel.value = currentSession;   // 목록을 새로 그렸으므로 선택만 되살린다
+      updateProcButtons();
+    } else {
+      loadSession(withMesh[0].session_id);
+    }
+  }catch(e){
+    // 무엇이 실패했는지 보여준다. 예전에는 조용히 삼켜서 원인을 알 수 없었다.
+    sel.innerHTML = '<option>서버 목록 없음 — 파일 열기 사용</option>';
+    showFatal('세션 목록을 불러오지 못했습니다: ' + (e && e.message || e)
+              + (AUTH_TOKEN ? '' : ' — URL에 ?token= 이 없습니다'));
+  }
+}
+
+async function loadSession(id, meshFile){
+  currentSession = id;
+  console.log('[viewer] 세션 로드:', id, meshFile || '(기본 메시)');
+  document.getElementById('sessions').value = id;
+  updateProcButtons();
+  let file = meshFile || document.getElementById('meshSrc').value || 'scene_mesh.ply';
+  toast(`${id} 불러오는 중… (${file})`, 20000);
+  try{
+    let res = await fetch(`/session/${id}/file/${file}`);
+    /* 융합 결과가 없는 세션(뎁스를 안 올린 경우)에서 이전 선택이 남아 404가 날 수 있다.
+       상태 관리에만 의존하지 않고, 실패하면 항상 있는 ARKit 메시로 되돌린다. */
+    if (!res.ok && file !== 'scene_mesh.ply'){
+      toast(`${file} 이 없어 ARKit 메시로 대체합니다 (뎁스를 올리지 않은 세션)`, 6000);
+      file = 'scene_mesh.ply';
+      const sel = document.getElementById('meshSrc');
+      if (sel) sel.value = file;
+      res = await fetch(`/session/${id}/file/${file}`);
+    }
+    if (!res.ok) throw new Error(`${file} 없음 (HTTP ${res.status})`);
+    const plyBuf = await res.arrayBuffer();
+    // 분류 사이드카는 ARKit 메시의 면 순서 기준이다. 융합 결과에 붙이면 라벨이 어긋난다.
+    let cls = null;
+    if (file === 'scene_mesh.ply'){
+      try{
+        const r = await fetch(`/session/${id}/file/scene_mesh_faces_class.bin`);
+        if (r.ok) cls = new Uint8Array(await r.arrayBuffer());
+      }catch{}
+    }
+    buildMesh(new PLYLoader().parse(plyBuf), cls);
+
+    // 물체 3D 검출은 제거했다 (사람 확인만 쓴다). 마커는 항상 비운다.
+    buildObjectMarkers([]);
+
+    // 사람 분리 결과 (적응형 융합을 돌렸을 때만 존재)
+    persons = [];
+    try{
+      const pr = await fetch(`/session/${id}/file/persons.json`);
+      if (pr.ok) persons = (await pr.json()).persons || [];
+    }catch{}
+    photos = {};
+    try{
+      const ph = await fetch(`/session/${id}/file/photos.json`);
+      if (ph.ok) photos = (await ph.json()).persons || {};
+    }catch{}
+    // 사람별 3DGS (A100에서 학습 후 crop_3dgs.py로 잘라온 것). 없으면 그냥 메시만 쓴다.
+    gsPersons = {};
+    try{
+      const gr = await fetch(`/session/${id}/file/gs_persons.json`);
+      if (gr.ok) for (const g of ((await gr.json()).persons || [])) gsPersons[String(g.index)] = g;
+    }catch{}
+    await refreshGsStatus(id);
+    buildPersonList();
+    toast(`${id} 로드 완료`);
+  }catch(e){
+    toast('로드 실패: ' + e.message, 6000);
+  }
+}
+
+/* 로컬 파일 (서버 엔드포인트 없이도 바로 확인 가능).
+   .ply 하나만 줘도 되고, 분류 사이드카 .bin 을 같이 주면 분류 토글까지 살아난다. */
+const readAB = f => new Promise((ok, no)=>{
+  const fr = new FileReader();
+  fr.onload = ()=>ok(fr.result); fr.onerror = ()=>no(fr.error);
+  fr.readAsArrayBuffer(f);
+});
+
+async function readLocal(files){
+  const list = [...files];
+  const plyFile = list.find(f => f.name.toLowerCase().endsWith('.ply'));
+  const binFile = list.find(f => f.name.toLowerCase().endsWith('.bin'));
+  if (!plyFile){ toast('.ply 파일이 필요합니다', 5000); return; }
+  try{
+    const geo = new PLYLoader().parse(await readAB(plyFile));
+    const cls = binFile ? new Uint8Array(await readAB(binFile)) : null;
+    buildMesh(geo, cls);
+    toast(cls ? `${plyFile.name} + 분류 로드 완료`
+              : `${plyFile.name} 로드 완료 (분류 사이드카 없음 — .bin도 같이 선택하면 분류 토글이 켜집니다)`, 5500);
+  }catch(e){ toast('PLY 파싱 실패: ' + e.message, 6000); }
+}
+
+/* 같은 폴더의 샘플 방. 폰이나 서버 없이 뷰어 동작을 바로 확인하는 용도. */
+async function loadSample(){
+  try{
+    const [ply, bin] = await Promise.all([
+      fetch('sample_scene_mesh.ply').then(r=>r.arrayBuffer()),
+      fetch('sample_scene_mesh_faces_class.bin').then(r=>r.ok?r.arrayBuffer():null).catch(()=>null),
+    ]);
+    buildMesh(new PLYLoader().parse(ply), bin ? new Uint8Array(bin) : null);
+    toast('샘플 방 (4.0 × 2.5 × 3.0 m) — 거리 측정을 눌러 문 폭을 재보세요', 6000);
+  }catch(e){
+    toast('샘플 로드 실패 — file:// 로 열면 막힙니다. http 서버로 여세요 (README 참고)', 7000);
+  }
+}
+
+/* ── 이벤트 바인딩 ──────────────────────────────────────────────────── */
+document.getElementById('pzoom').onclick = ()=> document.getElementById('pzoom').classList.remove('show');
+document.getElementById('pclose').onclick = closePerson;
+document.getElementById('ppick').onchange = e => openPerson(parseInt(e.target.value,10));
+document.getElementById('detectPage').onclick = () => {
+  const q = new URLSearchParams();
+  if (currentSession) q.set('session', currentSession);
+  if (AUTH_TOKEN) q.set('token', AUTH_TOKEN);
+  location.href = 'detect.html' + (q.toString() ? '?' + q : '');
+};
+document.getElementById('pconf').onclick = e => {
+  const on = confUniform.value < 0.5;
+  confUniform.value = on ? 1.0 : 0.0;
+  e.currentTarget.setAttribute('aria-pressed', String(on));
+  document.getElementById('pfoot').textContent = on
+    ? '흐린 부분 = 마스크 일관성 낮음 (사람이 아닐 수 있습니다 — 지우지 않고 표시만 합니다)'
+    : '—';
+};
+document.getElementById('pmodal').onclick = e => { if (e.target.id === 'pmodal') closePerson(); };
+document.getElementById('pmode').onclick = () => {
+  const i = Number(document.getElementById('ppick').value);
+  setPersonMode(pViewMode === 'gs' ? 'mesh' : 'gs', i);
+};
+addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const z = document.getElementById('pzoom');
+  if (z.classList.contains('show')) z.classList.remove('show'); else closePerson();
+});
+
+document.getElementById('meshSrc').onchange = e =>{
+  if (currentSession) loadSession(currentSession, e.target.value);
+};
+document.getElementById('mergeBtn').onclick = async e =>{
+  const a = document.getElementById('mergeA').value;
+  const b = document.getElementById('mergeB').value;
+  const msg = document.getElementById('mergeMsg');
+  if (!a || !b || a === b){ msg.innerHTML = '<span class="warn">서로 다른 두 세션을 고르세요</span>'; return; }
+
+  const btn = e.currentTarget;
+  btn.disabled = true; btn.textContent = '병합 중… (수십 초)';
+  msg.textContent = '정합 계산 중입니다. 창을 닫지 마세요.';
+  try{
+    const body = new URLSearchParams({ sessions: `${a},${b}` });
+    const r = await fetch('/merge', { method:'POST', body });
+    const d = await r.json();
+    if (d.status === 'ok' && d.merged_any){
+      msg.innerHTML = `<span style="color:#6ee7a0">병합 완료: ${d.merged_session}</span>`;
+      await loadSessions();
+      loadSession(d.merged_session);
+    } else if (d.status === 'ok'){
+      // 스크립트는 돌았지만 한 세션도 못 붙인 경우 — 겹침 부족이다. 성공으로 위장하지 않는다.
+      msg.innerHTML = '<span class="warn">정합 실패 — 두 스캔이 충분히 겹치지 않습니다. '
+        + '같은 공간을 2m 이상 겹치게 다시 찍어주세요.</span>';
+    } else {
+      msg.innerHTML = `<span class="warn">병합 실패: ${(d.detail || d.log || '').slice(0,200)}</span>`;
+    }
+    if (d.log) console.log(d.log);      // 자세한 fitness/RMSE는 콘솔에서 확인
+  }catch(err){
+    msg.innerHTML = `<span class="warn">요청 실패: ${err.message}</span>`;
+  }finally{
+    btn.disabled = false; btn.textContent = '두 세션 병합';
+  }
+};
+document.getElementById('reload').onclick   = loadSessions;
+document.getElementById('sessions').onchange = e => loadSession(e.target.value);
+document.getElementById('openFile').onclick = () => document.getElementById('file').click();
+document.getElementById('file').onchange    = e => e.target.files.length && readLocal(e.target.files);
+document.getElementById('sample').onclick   = loadSample;
+document.getElementById('reset').onclick    = resetView;
+document.getElementById('top').onclick      = topView;
+document.getElementById('wire').onclick = e =>{
+  wireOn = !wireOn;
+  materials.forEach(m => m.wireframe = wireOn);
+  e.currentTarget.classList.toggle('on', wireOn);
+};
+/* 스캔 시작 지점(= ARKit world 원점)에서 각 물체까지의 거리.
+   "문까지 2m" 같은 말을 실제로 할 수 있게 하는 부분이다. */
+document.getElementById('fromhere').onclick = ()=>{
+  if (!objects3d.length){ toast('검출된 물체가 없습니다'); return; }
+  const lines = objects3d.slice(0,8).map(o=>{
+    const [x,y,z] = o.position_xyz;
+    return `${o.class} ${Math.hypot(x,y,z).toFixed(2)}m`;
+  });
+  toast('스캔 시작점 기준 — ' + lines.join(' · '), 9000);
+};
+document.getElementById('measure').onclick = e =>{
+  measuring = !measuring;
+  e.currentTarget.classList.toggle('on', measuring);
+  document.getElementById('measureBox').style.display = measuring ? 'block' : 'none';
+  controls.enableRotate = !measuring;      // 측정 중 드래그가 회전으로 먹히면 점을 못 찍는다
+  if (!measuring) clearMeasure();
+};
+
+const drop = document.getElementById('drop');
+addEventListener('dragover', e =>{ e.preventDefault(); drop.classList.add('show'); });
+addEventListener('dragleave', e =>{ if (e.relatedTarget === null) drop.classList.remove('show'); });
+addEventListener('drop', e =>{
+  e.preventDefault(); drop.classList.remove('show');
+  const fs = [...e.dataTransfer.files];
+  if (fs.some(f => f.name.toLowerCase().endsWith('.ply'))) readLocal(fs);
+  else toast('.ply 파일을 놓아주세요 (.bin을 같이 놓으면 분류 토글도 켜집니다)');
+});
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+(function animate(){ requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+loadSessions();
+// 5초마다 새 세션 확인. 목록만 갱신하므로 보던 화면은 그대로다.
+setInterval(pollSessions, 5000);
+</script>
+</body>
+</html>

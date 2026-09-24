@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YOLO 검출 재생</title>
+<style>
+  :root{--bg:#0b0e13;--panel:#151a22;--line:#2a323e;--fg:#e6edf3;--sub:#8b98a8;--accent:#e03a3a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif}
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+         padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  h1{margin:0;font-size:15px;font-weight:600}
+  a{color:#6ea8fe}
+  select,button{background:#1d242e;color:var(--fg);border:1px solid var(--line);
+                border-radius:6px;padding:6px 10px;font-size:13px;cursor:pointer}
+  button:disabled{opacity:.45;cursor:default}
+  label{display:inline-flex;align-items:center;gap:5px;color:var(--sub);font-size:13px}
+  #wrap{position:relative;margin:16px auto;max-width:1100px;padding:0 16px}
+  #stage{position:relative;background:#000;border-radius:8px;overflow:hidden;line-height:0}
+  video{width:100%;display:block}
+  canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  #bar{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+  input[type=range]{flex:1;min-width:200px}
+  #info{margin-top:10px;padding:10px 12px;background:var(--panel);
+        border:1px solid var(--line);border-radius:8px;color:var(--sub);font-size:13px}
+  #info b{color:var(--fg)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;
+        background:#22303f;color:#9fc6ff;margin-right:6px}
+  .warn{color:#ffcf7a}
+  #timeline{position:relative;height:16px;margin-top:6px;background:#10151c;
+            border:1px solid var(--line);border-radius:4px;overflow:hidden}
+  #timeline i{position:absolute;top:0;bottom:0;background:#e03a3a;opacity:.55}
+  #timeline u{position:absolute;top:0;bottom:0;width:2px;background:#fff}
+</style>
+</head>
+<body>
+<header>
+  <h1>YOLO 검출 재생</h1>
+  <select id="sessions"><option>불러오는 중…</option></select>
+  <label><input type="checkbox" id="showMask" checked> 마스크</label>
+  <label><input type="checkbox" id="showBox" checked> 경계상자</label>
+  <label><input type="checkbox" id="onlyPerson"> 사람 있는 구간만</label>
+  <a href="./" id="toViewer">← 3D 뷰어</a>
+</header>
+
+<div id="wrap">
+  <div id="stage">
+    <video id="v" playsinline preload="metadata"></video>
+    <canvas id="c"></canvas>
+  </div>
+
+  <div id="bar">
+    <button id="play">재생</button>
+    <button id="prev" title="이전 프레임">◀</button>
+    <button id="next" title="다음 프레임">▶</button>
+    <input type="range" id="seek" min="0" max="1000" value="0">
+    <span id="t" style="color:var(--sub);font-variant-numeric:tabular-nums">0.00s</span>
+  </div>
+
+  <!-- 사람이 검출된 구간을 한눈에. 어디를 봐야 할지 모르면 찾기 어렵다. -->
+  <div id="timeline"></div>
+
+  <div id="info">불러오는 중…</div>
+</div>
+
+<script type="module">
+/* 인증 토큰 — 3D 뷰어와 같은 규칙. <video src>는 헤더를 붙일 수 없어 쿼리로 넘긴다. */
+const AUTH_TOKEN = (() => {
+  const q = new URLSearchParams(location.search).get('token');
+  try {
+    if (q) sessionStorage.setItem('lidarToken', q);
+    return q || sessionStorage.getItem('lidarToken') || '';
+  } catch { return q || ''; }
+})();
+const withToken = u => (!AUTH_TOKEN || /^https?:\/\//i.test(u)) ? u
+  : u + (u.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(AUTH_TOKEN);
+if (AUTH_TOKEN){
+  const raw = window.fetch.bind(window);
+  window.fetch = (i, o) => raw(typeof i === 'string' && !/^https?:\/\//i.test(i) ? withToken(i) : i, o);
+}
+
+const $ = id => document.getElementById(id);
+const v = $('v'), c = $('c'), ctx = c.getContext('2d');
+let data = null, fps = 15, session = null, frameCount = 0;
+
+const info = (html, warn) => { $('info').innerHTML = warn ? `<span class="warn">${html}</span>` : html; };
+
+/* 현재 재생 시각 -> 프레임 번호.
+   frame_times가 있으면 그걸 쓴다. ARKit 타임스탬프는 균일하지 않아서
+   단순히 시간×fps로 계산하면 뒤로 갈수록 어긋난다. */
+function frameAt(t){
+  const ft = data && data.frame_times;
+  if (ft && Object.keys(ft).length){
+    let best = 0, bd = Infinity;
+    for (const [k, tv] of Object.entries(ft)){
+      const d = Math.abs(tv - t);
+      if (d < bd){ bd = d; best = +k; }
+    }
+    return best;
+  }
+  return Math.round(t * fps);
+}
+const timeOf = f => (data.frame_times && data.frame_times[f] != null)
+  ? data.frame_times[f] : f / fps;
+
+function draw(){
+  if (!v.videoWidth) return;
+  if (c.width !== v.videoWidth){ c.width = v.videoWidth; c.height = v.videoHeight; }
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!data) return;
+
+  const f = frameAt(v.currentTime);
+  const e = data.frames[String(f)];
+  $('t').textContent = `${v.currentTime.toFixed(2)}s · 프레임 ${f}`;
+
+  if (!e){
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.font = `${Math.round(c.width/48)}px sans-serif`;
+    ctx.fillText('사람 없음', 16, Math.round(c.width/40));
+    return;
+  }
+  const W = c.width, H = c.height;
+
+  if ($('showMask').checked){
+    ctx.fillStyle = 'rgba(224,58,58,.34)';
+    ctx.strokeStyle = 'rgba(255,120,120,.95)';
+    ctx.lineWidth = Math.max(2, W/640);
+    for (const poly of e.polys){
+      ctx.beginPath();
+      poly.forEach(([x, y], i) => i ? ctx.lineTo(x*W, y*H) : ctx.moveTo(x*W, y*H));
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+  }
+  if ($('showBox').checked){
+    /* 덩어리마다 박스를 그린다.
+       예전에는 합집합 bbox 하나만 그려서, 사람이 둘일 때 하나로 묶여 보였다.
+       boxes가 없는 옛 파일은 bbox 하나로 폴백한다. */
+    const boxes = e.boxes || [e.bbox];
+    ctx.strokeStyle = '#44d17a';
+    ctx.lineWidth = Math.max(2, W/500);
+    ctx.font = `${Math.round(W/52)}px sans-serif`;
+    boxes.forEach(([x0, y0, x1, y1], i) => {
+      ctx.setLineDash([W/90, W/140]);
+      ctx.strokeRect(x0*W, y0*H, (x1-x0)*W, (y1-y0)*H);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#44d17a';
+      ctx.fillText(`person ${i+1}`, x0*W, Math.max(y0*H - W/100, W/52));
+    });
+  }
+}
+
+/* 사람이 있는 구간을 타임라인에 칠한다 */
+function buildTimeline(){
+  const tl = $('timeline'); tl.innerHTML = '';
+  if (!data || !v.duration) return;
+  const keys = Object.keys(data.frames).map(Number).sort((a,b)=>a-b);
+  for (const f of keys){
+    const s = document.createElement('i');
+    s.style.left = (timeOf(f) / v.duration * 100) + '%';
+    s.style.width = Math.max(0.25, (1/fps) / v.duration * 100) + '%';
+    tl.appendChild(s);
+  }
+  const cur = document.createElement('u'); cur.id = 'cursor'; tl.appendChild(cur);
+}
+
+async function loadSession(id){
+  session = id;
+  info('영상과 검출 결과를 불러오는 중…');
+  v.src = withToken(`/session/${id}/file/video.mov`);
+
+  let r = await fetch(`/session/${id}/file/detection_overlay.json`);
+  if (!r.ok){
+    data = null; draw();
+    info('이 세션에는 검출 오버레이가 없습니다. '
+       + '3D 뷰어에서 <b>적응형 융합</b>을 먼저 실행한 뒤, '
+       + '<code>scripts/export_detection_overlay.py</code>를 돌리면 생깁니다.', true);
+    return;
+  }
+  data = await r.json();
+  fps = (data.video && data.video.fps) || 15;
+  const ratio = data.frames_checked ? (data.frames_with_person / data.frames_checked * 100) : 0;
+  info(`<span class="pill">${data.source}</span>`
+     + `검사 <b>${data.frames_checked}</b>프레임 중 사람 <b>${data.frames_with_person}</b>프레임 `
+     + `(${ratio.toFixed(0)}%) · 덩어리 <b>${data.total_blobs}</b>개 · `
+     + `영상 ${data.video.width}×${data.video.height} @ ${fps}fps<br>`
+     + `빨간 영역이 YOLO-seg가 픽셀 단위로 고른 사람입니다. `
+     + `이 마스크가 뎁스와 합쳐져 사람별 3D가 됩니다.`);
+  v.addEventListener('loadedmetadata', buildTimeline, { once: true });
+  if (v.duration) buildTimeline();
+  draw();
+}
+
+/* 재생 중에는 rAF로 그린다. timeupdate는 초당 4회 정도라 끊겨 보인다. */
+(function loop(){ requestAnimationFrame(loop);
+  draw();
+  if (v.duration){
+    $('seek').value = Math.round(v.currentTime / v.duration * 1000);
+    const cur = document.getElementById('cursor');
+    if (cur) cur.style.left = (v.currentTime / v.duration * 100) + '%';
+  }
+})();
+
+$('play').onclick = () => v.paused ? v.play() : v.pause();
+v.onplay  = () => $('play').textContent = '일시정지';
+v.onpause = () => $('play').textContent = '재생';
+$('seek').oninput = e => { if (v.duration) v.currentTime = e.target.value / 1000 * v.duration; };
+$('prev').onclick = () => v.currentTime = Math.max(0, v.currentTime - 1/fps);
+$('next').onclick = () => v.currentTime = Math.min(v.duration || 0, v.currentTime + 1/fps);
+
+/* 사람 있는 구간만: 다음 검출 프레임으로 건너뛴다 */
+$('onlyPerson').onchange = e => { if (e.target.checked) jumpNext(); };
+function jumpNext(){
+  if (!data) return;
+  const cur = frameAt(v.currentTime);
+  const keys = Object.keys(data.frames).map(Number).sort((a,b)=>a-b);
+  const nxt = keys.find(k => k > cur);
+  if (nxt != null) v.currentTime = timeOf(nxt);
+}
+v.addEventListener('timeupdate', () => {
+  if (!$('onlyPerson').checked || !data || v.paused) return;
+  if (!data.frames[String(frameAt(v.currentTime))]) jumpNext();
+});
+
+$('sessions').onchange = e => loadSession(e.target.value);
+$('showMask').onchange = $('showBox').onchange = draw;
+v.onerror = () => info('영상을 재생할 수 없습니다. 브라우저가 이 코덱(h264/.mov)을 '
+                     + '지원하지 않을 수 있습니다 — Safari나 Chrome을 써보세요.', true);
+
+(async () => {
+  try{
+    const list = await (await fetch('/sessions')).json();
+    const sel = $('sessions');
+    if (!list.length){ sel.innerHTML = '<option>세션 없음</option>'; return; }
+    sel.innerHTML = list.map(s => `<option value="${s.session_id}">${s.session_id}</option>`).join('');
+    const want = new URLSearchParams(location.search).get('session');
+    if (want && list.some(s => s.session_id === want)) sel.value = want;
+    $('toViewer').href = withToken('./');
+    await loadSession(sel.value);
+  }catch(err){
+    info('세션 목록을 불러오지 못했습니다: ' + err.message
+       + (AUTH_TOKEN ? '' : ' — URL에 ?token= 이 없습니다'), true);
+  }
+})();
+</script>
+</body>
+</html>

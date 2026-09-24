@@ -1,0 +1,23 @@
+# goldenlink_extract 전용 의존성 (텍스트 → 필드 구조화)
+#
+# ocr/requirements.txt(이미지 → 텍스트)와 별개다. 두 패키지를 나눠 둔 이유가
+# 여기 있다 — 추출만 돌릴 때는 torch도 onnxruntime도 필요 없다.
+#
+#   GPU 장비 (OCR + 추출 전부)
+#     pip install torch --index-url https://download.pytorch.org/whl/cu128
+#     pip install -r ocr/requirements.txt -r ocr/requirements-extract.txt
+#
+#   GPU 없는 장비 (저장된 OCR 결과로 추출만)
+#     pip install -r ocr/requirements-extract.txt
+
+pydantic==2.13.4   # MIT — 출력 스키마 정의 및 검증
+
+# LLM 호출은 표준 라이브러리 urllib 로 한다. Ollama HTTP API 하나 부르자고
+# requests 를 더할 이유가 없다. 대신 Ollama 서버가 따로 떠 있어야 한다:
+#
+#   ollama serve
+#   ollama pull qwen3:14b        # GPU 장비 (약 9.3GB)
+#   ollama pull qwen3:8b         # 개발 장비 (약 5.2GB)
+#
+# 모델 이름은 환경변수로 바꾼다 (src/goldenlink_extract/config.py 참고):
+#   GOLDENLINK_LLM_MODEL=qwen3:8b

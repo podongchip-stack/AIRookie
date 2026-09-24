@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 변환 결과물. fixture와 매퍼에서 언제든 다시 만들 수 있다.
+info/data/output/
+
+# 시연용 가상 데이터. 실재하는 병원 이름에 지어낸 좌표·병상 수를 붙인 것이라
+# 공개 저장소에 두면 실제 병원 정보로 오인될 수 있어 커밋하지 않는다.
+# 구조와 재생성 방법은 README.md "데이터 정책" 참고.
+info/data/fixtures/
+
+.env
