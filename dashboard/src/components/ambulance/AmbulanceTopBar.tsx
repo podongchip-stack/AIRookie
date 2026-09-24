@@ -1,6 +1,7 @@
 "use client";
 
 import { css } from "styled-system/css";
+import { CONNECTION_LABEL, type ConnectionMode } from "@/hooks/use-dashboard-socket";
 import { formatElapsed, useElapsedSeconds } from "@/hooks/use-elapsed-time";
 
 export function AmbulanceTopBar({
@@ -11,7 +12,7 @@ export function AmbulanceTopBar({
   ambulanceName,
 }: {
   confirmed: boolean;
-  connectionMode: "live" | "mock";
+  connectionMode: ConnectionMode;
   since: string | null;
   ambulanceId: string;
   // hub가 구급차 레지스트리(Supabase ambulances 테이블)를 연동하면 이 값으로
@@ -113,10 +114,10 @@ export function AmbulanceTopBar({
         <span
           className={css({
             fontSize: "xs",
-            color: connectionMode === "live" ? "hospitalStatus.confirmed" : "ink2",
+            color: CONNECTION_LABEL[connectionMode].color,
           })}
         >
-          {connectionMode === "live" ? "● 실시간 연동" : "○ 목데이터 모드"}
+          {CONNECTION_LABEL[connectionMode].text}
         </span>
         <span className={css({ fontSize: "xs", color: "ink2" })}>
           정보 수신 후{" "}

@@ -74,6 +74,10 @@ export interface HubMatchResult {
   // ambulances 테이블)가 hub 쪽에 연동되면 이 필드로 실명("구급 1호차")이
   // 오도록 준비만 해둔다. 안 오면 대시보드가 URL의 ?id=만으로 표시를 대신한다.
   ambulanceName?: string;
+  // 이 사건을 연 구급차의 apid(hub HubMatchResult.apid, 2026-09-24 신설). 구급차
+  // 대시보드가 새로고침으로 자기 caseId를 잊었을 때 "내 구급차의 사건"을 되찾는 데 쓴다.
+  // hub가 못 찾으면 null, 구버전 hub면 필드 자체가 없다.
+  apid?: string | null;
 }
 
 export type ApprovalActionType =
