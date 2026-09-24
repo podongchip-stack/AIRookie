@@ -136,7 +136,7 @@ VIEWER_URL=""
 # 원격 코드 실행 위험이 있다. 0.0.0.0은 유지한다: 구급차 노트북의 voice가 LAN으로 붙어야 한다.
 need "$HUB_PY" hub HUB_PY
 echo "hub 시작 (포트 $HUB_PORT, 임베딩 모델 로드에 시간이 걸릴 수 있음)..."
-(cd hub && exec "$HUB_PY" -c "import app; app.app.run(host='0.0.0.0', port=$HUB_PORT, debug=False)") \
+(cd hub && exec "$HUB_PY" -u -c "import app; app.app.run(host='0.0.0.0', port=$HUB_PORT, debug=False)") \
   > "$LOG_DIR/hub.log" 2>&1 &
 HUB_PID=$!; PIDS+=("$HUB_PID")
 wait_http hub "http://127.0.0.1:$HUB_PORT/identity?role=hospital&id=_" "$HUB_PID" "$LOG_DIR/hub.log" 180
@@ -145,14 +145,14 @@ wait_http hub "http://127.0.0.1:$HUB_PORT/identity?role=hospital&id=_" "$HUB_PID
 if [ "$RUN_INFO" = 1 ]; then
   need "$INFO_PY" info INFO_PY
   echo "info 시작 (병원 정보 → hub, 기본 30분 주기)..."
-  "$INFO_PY" info/send_to_hub.py > "$LOG_DIR/info.log" 2>&1 &
+  "$INFO_PY" -u info/send_to_hub.py > "$LOG_DIR/info.log" 2>&1 &
   PIDS+=("$!")
 fi
 
 # ── 3. lidar3d (3D 뷰어) ──
 if [ "$RUN_LIDAR" = 1 ]; then
   echo "lidar3d 시작 (포트 $LIDAR_PORT)..."
-  (cd lidar3d && LIDAR_TOKEN="$LIDAR_TOKEN" exec "$LIDAR_PY" -m uvicorn server.app:app \
+  (cd lidar3d && LIDAR_TOKEN="$LIDAR_TOKEN" exec "$LIDAR_PY" -u -m uvicorn server.app:app \
       --host 0.0.0.0 --port "$LIDAR_PORT") > "$LOG_DIR/lidar3d.log" 2>&1 &
   LIDAR_PID=$!; PIDS+=("$LIDAR_PID")
   wait_http lidar3d "http://127.0.0.1:$LIDAR_PORT/health?token=$LIDAR_TOKEN" "$LIDAR_PID" "$LOG_DIR/lidar3d.log" 60
