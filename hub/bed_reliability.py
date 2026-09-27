@@ -38,10 +38,9 @@ SIGMA = 1.0
 #: ttlSec의 authority 임계 — info 쪽 engine.AUTHORITY_TTL_THRESHOLD와 같은 값.
 AUTHORITY_TTL_THRESHOLD = 0.8
 
-#: r_arrive의 도착 시간(horizon) 추정에 쓰는 구급차 시내 평균 속도.
-#: 실시간 교통을 반영하는 값이 아니라 "지금이 아니라 도착했을 때"라는
-#: 시점 이동을 근사하기 위한 상수다 — 카카오내비 연동 등으로 실제 ETA를
-#: 얻게 되면 그 값으로 대체한다.
+#: horizon_sec를 못 받았을 때만 쓰는 구급차 시내 평균 속도. hub_engine은
+#: 2026-09-28부터 순위에 쓴 이동 시간(카카오 ETA, 없으면 보정 추정치)을 horizon으로
+#: 넘기므로, 이 상수는 단독 호출(테스트 등)용 대비책이다.
 AVG_AMBULANCE_SPEED_KMH = 40.0
 
 _SQRT2 = math.sqrt(2.0)
@@ -76,11 +75,14 @@ def evaluate(
     bed_reliability: BedReliabilityInput | None,
     distance_km: float,
     now: datetime | None = None,
+    horizon_sec: float | None = None,
 ) -> BedReliabilityMatch | None:
     """info가 보낸 예측을 매칭 시점의 authority/r_arrive로 환산한다.
 
     bedReliability를 안 보내는 병원(모델 미연동 구 데이터)이면 None —
     dashboard는 이 경우 해당 표시를 안 하면 된다(reliability와 같은 패턴).
+
+    horizon_sec(도착까지 걸릴 초)를 주면 그대로 쓰고, 없으면 거리/평균속도로 추정한다.
     """
     if bed_reliability is None:
         return None
@@ -88,7 +90,11 @@ def evaluate(
         now = datetime.now(timezone.utc)
     born = _parse_born_at(bed_reliability.bornAt)
     age = max((now - born).total_seconds(), 0.0)
-    horizon = distance_km / AVG_AMBULANCE_SPEED_KMH * 3600.0
+    horizon = (
+        max(horizon_sec, 0.0)
+        if horizon_sec is not None
+        else distance_km / AVG_AMBULANCE_SPEED_KMH * 3600.0
+    )
     pred_t = bed_reliability.predictedSurvivalSec
     return BedReliabilityMatch(
         authority=round(survival(pred_t, age), 4),

@@ -11,7 +11,14 @@
 """
 from __future__ import annotations
 
+import atexit
 import json
+import os
+import signal
+import sys
+import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +27,7 @@ from flask import Flask, jsonify, request
 from flask_sock import Sock
 from pydantic import ValidationError
 
-from delivery import deliver, send_rejection_to_info
+from delivery import LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
 from hub_engine import HubEngine
 from schema import (
@@ -53,6 +60,9 @@ engine = HubEngine(router=router)
 # 여러 개가 동시에 붙을 수 있어 연결을 집합으로 관리하고 전체에 브로드캐스트한다
 # (예전엔 전역 변수 하나라 마지막 연결만 갱신을 받는 버그가 있었다).
 _dashboard_sockets: set = set()
+# 연결 집합은 소켓 스레드들(추가·제거)과 매칭 작업 스레드(브로드캐스트)가 같이 건드린다.
+# 한 소켓에 두 스레드가 동시에 send하면 프레임이 섞일 수 있어 전송도 같은 락으로 묶는다.
+_sockets_lock = threading.RLock()
 
 # apid별 voice 주소. voice가 뜰 때 자기 IP를 자동 탐지해 /voice/register로
 # 알려주면 여기 저장해두고(포트는 AmbulanceInfo.voicePort로 이미 앎), 통화
@@ -60,6 +70,27 @@ _dashboard_sockets: set = set()
 # 네트워크(와이파이/핫스팟)가 달라 IP가 자주 바뀔 수 있어, Supabase 등에
 # 고정 저장하지 않고 이렇게 런타임에만 들고 있는다.
 _voice_addresses: dict[str, str] = {}
+_voice_addresses_lock = threading.Lock()
+
+# 매칭(임베딩 + 카카오 호출)은 수 초가 걸릴 수 있어 /voice/summary 요청 안에서 돌리지 않고
+# 이 작업 스레드로 넘긴다(2026-09-28). voice의 hub 전송 타임아웃이 10초라, 후보가 많아
+# 카카오 호출(3초 × 30곳 묶음 수)이 겹치면 voice 쪽에서 실패로 찍히던 여지를 없앤다.
+# 작업자 1개 — 같은 사건의 요약·주기적 재계산이 순서대로 처리되게 한다.
+_match_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hub-match")
+
+# 진행 중인 사건을 다시 계산하는 주기(초, 2026-09-28). 매칭 시점에 고정돼 있던 병상 수·
+# ETA·병상 신뢰도를 이송 중에도 갱신한다. 대시보드엔 달라졌을 때만 다시 보낸다. 0이면 끈다.
+# 카카오 ETA는 routing.py가 5분간 캐시하므로 이 주기가 짧아도 호출이 그만큼 늘지는 않는다.
+REFRESH_INTERVAL_SEC = float(os.environ.get("HUB_REFRESH_INTERVAL_SEC", "60"))
+# 상태를 디스크에 저장해 hub 재시작 뒤 복구한다(2026-09-28). 예전엔 재시작하면 병원 목록이
+# 비어 info의 다음 전송(최대 30분)까지 후보가 0곳이었고, 진행 중 사건·승인 상태·병상
+# 차감도 사라졌다. 통화 원문은 저장하지 않는다(hub_engine.export_state 참고).
+PERSIST_STATE = os.environ.get("HUB_PERSIST_STATE", "1") != "0"
+STATE_PATH = Path(
+    os.environ.get("HUB_STATE_PATH", str(Path(__file__).resolve().parent / "data" / "state" / "hub_state.json"))
+)
+# 백그라운드 루프가 깨어나는 간격(초). 변경이 있었을 때만 저장한다.
+MAINTENANCE_TICK_SEC = 5.0
 
 # 사건이 apid로 등록되지 않은 채(테스트 등으로 CallSignal 없이 직접
 # /voice/summary가 오는 경우) 도착하면 이 좌표로 대체한다. 병원이 전부
@@ -75,17 +106,17 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _resolve_ambulance_gps(case_id: str) -> GpsPoint:
-    """caseId로 그 사건의 구급차를 찾아 GPS를 돌려준다. apid를 모르거나(통화
-    시작 신호 없이 직접 테스트) 아직 AmbulanceInfo가 안 왔으면 폴백 좌표를
-    쓴다. /voice/summary와 승인 액션 처리(존 확장 재계산) 양쪽에서 같은
-    구급차의 GPS가 필요해 공통 헬퍼로 뺐다."""
+def _resolve_ambulance_gps(case_id: str) -> tuple[GpsPoint, bool]:
+    """caseId로 그 사건의 구급차를 찾아 (GPS, 기본 좌표로 대체했는지)를 돌려준다. apid를
+    모르거나(통화 시작 신호 없이 직접 테스트) 아직 AmbulanceInfo가 안 왔으면 폴백 좌표를
+    쓴다. 대체 여부는 매칭 결과(ambulanceGpsFallback)에 실어 보낸다 — 예전엔 콘솔에만
+    남아서, 엉뚱한 위치 기준 순위가 정상 결과처럼 나갔다(2026-09-28)."""
     apid = engine.get_case_apid(case_id)
     ambulance = engine.get_ambulance(apid) if apid else None
     if ambulance is None:
         print(f"  [통신] caseId={case_id}의 구급차 GPS를 못 찾아 기본 좌표로 대체")
-        return FALLBACK_AMBULANCE_GPS
-    return ambulance.gps
+        return FALLBACK_AMBULANCE_GPS, True
+    return ambulance.gps, False
 
 
 @app.post("/info/hospitals")
@@ -129,33 +160,48 @@ def receive_voice_registration():
     if ambulance is None:
         return jsonify({"error": f"unknown apid: {registration.apid} (아직 ambulances 정보 미수신)"}), 409
 
-    _voice_addresses[registration.apid] = f"http://{registration.ip}:{ambulance.voicePort}"
-    print(f"  [통신] voice 자가등록 완료 — {registration.apid} -> {_voice_addresses[registration.apid]}")
+    address = f"http://{registration.ip}:{ambulance.voicePort}"
+    with _voice_addresses_lock:
+        _voice_addresses[registration.apid] = address
+    _mark_voice_addresses_dirty()
+    print(f"  [통신] voice 자가등록 완료 — {registration.apid} -> {address}")
     return jsonify({"status": "ok", "apid": registration.apid}), 200
 
 
 @app.post("/voice/summary")
 def receive_voice_summary():
     """feature/voice로부터 통화 요약(VoiceCallSummaryMessage)을 받아 2단계
-    매칭(존 후보 + 진료과·거리 스코어링)을 실행하고 결과를 반환한다.
+    매칭(존 후보 + 진료과·이동 시간 스코어링)을 작업 스레드에 맡기고 바로 202로 답한다.
+    결과는 끝나는 대로 WebSocket으로 대시보드에 밀어준다(2026-09-28 — 예전엔 매칭이 끝날
+    때까지 응답을 붙잡고 결과 전체를 본문으로 돌려줬다. voice는 본문을 쓰지 않고 성공 여부만
+    본다).
     """
     try:
         voice = VoiceCallSummaryMessage.model_validate(request.get_json(force=True))
     except ValidationError as exc:
         return jsonify({"error": "invalid VoiceCallSummaryMessage", "detail": exc.errors()}), 400
 
-    ambulance_gps = _resolve_ambulance_gps(voice.caseId)
-    start_zone = engine.resolve_start_zone(ambulance_gps)
-    result = engine.process_voice_summary(voice, ambulance_gps, max_zone=start_zone)
+    _match_executor.submit(_run_match_job, voice)
+    return jsonify({"status": "accepted", "caseId": voice.caseId}), 202
 
-    # run_match.py와 동일하게 로컬 저장(감사용 사본)도 같이 남긴다. 실제
-    # voice 요약 파일명이 없는 HTTP 경로라 타임스탬프로 이름을 대신한다.
-    synthetic_path = Path(f"live_{_utcnow_iso().replace(':', '')}_call_summary.json")
-    deliver(result, synthetic_path)
 
-    _send_to_dashboard(result.model_dump())
+def _run_match_job(voice: VoiceCallSummaryMessage) -> None:
+    """작업 스레드에서 도는 매칭 본체. 예외가 나도 작업 스레드가 죽지 않게 삼키고 남긴다."""
+    try:
+        ambulance_gps, gps_fallback = _resolve_ambulance_gps(voice.caseId)
+        start_zone = engine.resolve_start_zone(ambulance_gps)
+        result = engine.process_voice_summary(
+            voice, ambulance_gps, max_zone=start_zone, gps_fallback=gps_fallback
+        )
 
-    return jsonify(result.model_dump()), 200
+        # run_match.py와 동일하게 로컬 저장(감사용 사본)도 같이 남긴다. 실제
+        # voice 요약 파일명이 없는 HTTP 경로라 타임스탬프로 이름을 대신한다.
+        synthetic_path = Path(f"live_{_utcnow_iso().replace(':', '')}_call_summary.json")
+        deliver(result, synthetic_path, LIVE_OUTPUT_DIR)
+
+        _send_to_dashboard(result.model_dump())
+    except Exception as e:  # noqa: BLE001
+        print(f"  [매칭] caseId={voice.caseId} 매칭 실패: {e!r}")
 
 
 @app.get("/route")
@@ -172,7 +218,7 @@ def get_route():
     hospital = engine.get_hospital(hospital_id) if hospital_id else None
     body: dict = {"caseId": case_id, "hospitalId": hospital_id, "path": None, "source": "rule"}
     if case_id and hospital is not None and router is not None:
-        route = router.route(_resolve_ambulance_gps(case_id), hospital.gps)
+        route = router.route(_resolve_ambulance_gps(case_id)[0], hospital.gps)
         if route is not None:
             body.update(route)
     response = jsonify(body)
@@ -210,14 +256,25 @@ def _send_to_dashboard(payload: dict) -> None:
     실시간 전송은 WebSocket 연결을 쥐고 있는 여기서 처리한다. 전송 실패한
     소켓은 죽은 것으로 보고 집합에서 뺀다 (voice의 send_to_hub()와 동일한
     방어 패턴 — 연결이 없거나 끊겼어도 본 요청은 계속돼야 함)."""
-    dead = set()
-    for ws in _dashboard_sockets:
+    message = json.dumps(payload, ensure_ascii=False)
+    with _sockets_lock:
+        dead = set()
+        for ws in _dashboard_sockets:
+            try:
+                ws.send(message)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [통신] dashboard WebSocket 전송 실패, 연결 제거: {e}")
+                dead.add(ws)
+        _dashboard_sockets.difference_update(dead)
+
+
+def _send_to_socket(ws, payload: dict, label: str) -> None:
+    """소켓 하나에만 보낸다(따라잡기·신원 확인 응답). 브로드캐스트와 같은 락을 쓴다."""
+    with _sockets_lock:
         try:
             ws.send(json.dumps(payload, ensure_ascii=False))
         except Exception as e:  # noqa: BLE001
-            print(f"  [통신] dashboard WebSocket 전송 실패, 연결 제거: {e}")
-            dead.add(ws)
-    _dashboard_sockets.difference_update(dead)
+            print(f"  [통신] {label} 전송 실패: {e}")
 
 
 def _relay_call_signal(signal: CallSignal) -> None:
@@ -229,7 +286,8 @@ def _relay_call_signal(signal: CallSignal) -> None:
     if signal.signal == "call_started":
         engine.register_case(signal.caseId, signal.apid)
 
-    voice_base_url = _voice_addresses.get(signal.apid)
+    with _voice_addresses_lock:
+        voice_base_url = _voice_addresses.get(signal.apid)
     if voice_base_url is None:
         print(f"  [통신] {signal.apid}의 voice 주소가 아직 등록되지 않아 신호 중계를 건너뜀")
         return
@@ -261,10 +319,7 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
     )
     print(f"  [통신] {identify.role} {identify.id} 연결 — 진행 중인 사건 {len(cases)}건 따라잡기 전송")
     for result in cases:
-        try:
-            ws.send(json.dumps(result.model_dump(), ensure_ascii=False))
-        except Exception as e:  # noqa: BLE001
-            print(f"  [통신] 따라잡기 전송 실패: {e}")
+        _send_to_socket(ws, result.model_dump(), "따라잡기")
 
 
 def _resolve_identity(role: str, id_: str) -> tuple[str | None, bool]:
@@ -291,10 +346,7 @@ def _send_identity_info(ws, identify: DashboardIdentify) -> None:
     name, known = _resolve_identity(identify.role, identify.id)
     info = DashboardIdentityInfo(role=identify.role, id=identify.id, name=name, known=known)
     print(f"  [통신] {identify.role} {identify.id} 신원 확인 응답 — known={known}, name={name}")
-    try:
-        ws.send(json.dumps(info.model_dump(), ensure_ascii=False))
-    except Exception as e:  # noqa: BLE001
-        print(f"  [통신] identity_info 전송 실패: {e}")
+    _send_to_socket(ws, info.model_dump(), "identity_info")
 
 
 # hospital_score 신뢰도 tier(문자열 라벨) -> "물어볼 당시 병원이 뭐라고 신고했나".
@@ -365,7 +417,7 @@ def _handle_dashboard_action(payload: dict) -> None:
         # 안 되므로, 수신구가 안 떠 있어도(fire-and-forget) 매번 보낸다.
         send_rejection_to_info(_build_rejection_payload(action))
 
-        ambulance_gps = _resolve_ambulance_gps(action.caseId)
+        ambulance_gps, _ = _resolve_ambulance_gps(action.caseId)
         expanded_result = engine.maybe_expand_zone(action.caseId, ambulance_gps)
 
     updated_result = expanded_result or engine.get_case_result(action.caseId)
@@ -386,7 +438,8 @@ def dashboard_socket(ws):
     (바이너리 프레임)는 화면 시각화 용도로만 쓰기로 했으므로 여기서는
     받기만 하고 버린다.
     """
-    _dashboard_sockets.add(ws)
+    with _sockets_lock:
+        _dashboard_sockets.add(ws)
     try:
         while True:
             message = ws.receive()
@@ -418,8 +471,101 @@ def dashboard_socket(ws):
             elif "action" in payload:
                 _handle_dashboard_action(payload)
     finally:
-        _dashboard_sockets.discard(ws)
+        with _sockets_lock:
+            _dashboard_sockets.discard(ws)
+
+
+# ── 백그라운드: 주기적 재계산 · 상태 저장 (2026-09-28) ───────────────────────
+
+_voice_addresses_dirty = False
+_refresh_future: Future | None = None
+
+
+def _mark_voice_addresses_dirty() -> None:
+    global _voice_addresses_dirty
+    _voice_addresses_dirty = True
+
+
+def _refresh_active_cases() -> None:
+    """진행 중인 사건을 다시 계산하고, 달라진 사건만 대시보드에 다시 보낸다(작업 스레드에서 돈다)."""
+    for case_id in engine.get_active_case_ids():
+        try:
+            ambulance_gps, _ = _resolve_ambulance_gps(case_id)
+            updated = engine.refresh_case(case_id, ambulance_gps)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [재계산] caseId={case_id} 실패: {e!r}")
+            continue
+        if updated is not None:
+            _send_to_dashboard(updated.model_dump())
+
+
+def save_state() -> None:
+    """엔진 상태 + voice 주소를 원자적으로(임시 파일 → 교체) 저장한다."""
+    global _voice_addresses_dirty
+    state = engine.export_state()
+    with _voice_addresses_lock:
+        state["voiceAddresses"] = dict(_voice_addresses)
+        _voice_addresses_dirty = False
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = STATE_PATH.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp_path, STATE_PATH)
+
+
+def load_state() -> None:
+    """저장된 상태가 있으면 복구한다. 파일이 깨졌어도 hub는 빈 상태로 뜬다."""
+    if not STATE_PATH.exists():
+        return
+    try:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"  [상태 복구] 상태 파일을 읽지 못해 빈 상태로 시작: {e}")
+        return
+    counts = engine.import_state(state)
+    with _voice_addresses_lock:
+        _voice_addresses.update(state.get("voiceAddresses") or {})
+    print(
+        f"  [상태 복구] {STATE_PATH.name} (저장 {state.get('savedAt')}) — 병원 {counts.get('hospitals', 0)}곳, "
+        f"구급차 {counts.get('ambulances', 0)}대, 사건 {counts.get('cases', 0)}건, voice 주소 {len(_voice_addresses)}곳"
+    )
+
+
+def _maintenance_loop() -> None:
+    global _refresh_future
+    last_refresh = time.monotonic()
+    while True:
+        time.sleep(MAINTENANCE_TICK_SEC)
+        try:
+            due = REFRESH_INTERVAL_SEC > 0 and time.monotonic() - last_refresh >= REFRESH_INTERVAL_SEC
+            # 앞선 재계산이 아직 안 끝났으면 쌓지 않는다.
+            if due and (_refresh_future is None or _refresh_future.done()):
+                last_refresh = time.monotonic()
+                _refresh_future = _match_executor.submit(_refresh_active_cases)
+            if PERSIST_STATE and (engine.take_dirty() or _voice_addresses_dirty):
+                save_state()
+        except Exception as e:  # noqa: BLE001
+            print(f"  [백그라운드] 오류(계속 진행): {e!r}")
+
+
+def start_background() -> None:
+    """상태 복구 + 재계산·저장 루프 시작. `python app.py`로 띄울 때만 부른다 — 테스트
+    (test_rejection_forward.py)가 app을 import해도 디스크 상태를 건드리지 않게."""
+    if PERSIST_STATE:
+        load_state()
+        atexit.register(save_state)
+        # 프로세스 관리자·kill이 보내는 SIGTERM은 기본 동작이 즉시 종료라 atexit이 안 돈다.
+        # 정상 종료(sys.exit)로 바꿔 마지막 상태를 저장하게 한다. 저장 루프가 5초마다 돌므로
+        # 이게 없어도 잃는 건 최대 몇 초분이다.
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    threading.Thread(target=_maintenance_loop, name="hub-maintenance", daemon=True).start()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    # debug=True면 코드 리로더가 켜져 파일이 바뀔 때마다 재시작되고(인메모리 상태 유실),
+    # 예외 화면이 외부에 노출된다(2026-09-28 기본값 변경). 개발 중에만 HUB_DEBUG=1로 켠다.
+    debug = os.environ.get("HUB_DEBUG") == "1"
+    # 리로더가 켜지면 이 블록이 감시용 부모 프로세스에서도 한 번 더 돈다 — 실제 서버(자식)
+    # 에서만 백그라운드를 시작해야 상태 파일을 두 프로세스가 같이 쓰지 않는다.
+    if not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        start_background()
+    app.run(host="0.0.0.0", port=5001, debug=debug)
