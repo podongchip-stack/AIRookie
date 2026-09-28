@@ -43,6 +43,8 @@ AUTHORITY_TTL_THRESHOLD = 0.8
 #: "3병상 이상 어긋나면 무효" 기준으로 학습된 모델이라는 뜻.
 _DEFAULT_MODEL = Path(__file__).resolve().parent / "model" / "aft_egen_theta3_ext0923.json"
 _DEFAULT_GAP_TABLE = Path(__file__).resolve().parent / "model" / "route_med_gap.json"
+#: 잔차 재보정 상수 (calibrate.py가 생성). 없으면 raw로 동작 — fail-soft.
+_DEFAULT_RECAL = Path(__file__).resolve().parent / "model" / "recalibration.json"
 _DEFAULT_SNAPSHOT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "snapshots_nationwide"
 )
@@ -55,11 +57,12 @@ _BED_OP = "getEmrrmRltmUsefulSckbdInfoInqire"
 class BedPrediction:
     """병원 1곳의 현재 claim-version에 대한 신뢰도 예측."""
 
-    pred_t_sec: float  #: 모델의 예측 생존시간(초)
+    pred_t_sec: float  #: 예측 생존시간(초) — 재보정 상수가 있으면 μR 반영된 값
     born: datetime  #: 현재 버전 탄생(값이 이 값으로 바뀐 게 관측된) 시각, aware UTC
     age_sec: float  #: 예측 시점 기준 버전 나이(초)
     authority: float  #: 지금 이 병상 숫자를 믿어도 될 확률
     ttl_sec: float  #: authority가 임계(0.8) 아래로 떨어질 때까지 남은 초
+    sigma: float  #: 생존곡선 척도 — raw면 1.0, 재보정이 있으면 σR
 
 
 class BedReliabilityEngine:
@@ -89,6 +92,23 @@ class BedReliabilityEngine:
             raise ValueError(
                 f"모델 피처와 서빙 피처가 다르다: model={loaded_names} serving={FEATURES}"
             )
+
+        # 잔차 재보정 상수 — raw 확률의 과신(과대 생존시간·과예리 분포)을 홀드아웃
+        # 실측으로 교정한 전역 상수 2개 (calibrate.py, ECE 0.272→0.114 실측).
+        self.mu_r = 0.0
+        self.sigma = 1.0
+        recal_suffix = ""
+        if _DEFAULT_RECAL.is_file():
+            recal = json.loads(_DEFAULT_RECAL.read_text(encoding="utf-8"))
+            if recal.get("modelTag") == self.model_tag:
+                self.mu_r = float(recal["muR"])
+                self.sigma = float(recal["sigmaR"])
+                recal_suffix = "+recal"
+            else:
+                # 모델은 바뀌었는데 재보정은 옛 모델 것 — 안 맞는 상수를 쓰느니 raw.
+                print(f"  [reliability] recalibration.json이 다른 모델({recal.get('modelTag')})"
+                      f" 것이라 무시 — calibrate.py 재실행 필요")
+        self.model_tag += recal_suffix
 
         table = json.loads(Path(gap_table_path).read_text(encoding="utf-8"))
         self._gap_by_hpid: dict[str, float] = {
@@ -216,13 +236,17 @@ class BedReliabilityEngine:
             pred = float(pred)
             if not math.isfinite(pred) or pred <= 0:
                 continue
+            # 재보정: 위치 이동(μR)은 예측 생존시간에 흡수하고, 척도(σR)는
+            # 생존곡선 계산에 넘긴다 — hub도 같은 σ를 받아 같은 곡선을 그린다.
+            pred = pred * math.exp(self.mu_r)
             state = self._tracker.get(hpid)
             age = max((now_utc - state.born).total_seconds(), 0.0)
             results[hpid] = BedPrediction(
                 pred_t_sec=pred,
                 born=state.born,
                 age_sec=age,
-                authority=float(serve.authority(pred, age)),
-                ttl_sec=float(serve.ttl(pred, age, AUTHORITY_TTL_THRESHOLD)),
+                authority=float(serve.authority(pred, age, sigma=self.sigma)),
+                ttl_sec=float(serve.ttl(pred, age, AUTHORITY_TTL_THRESHOLD, sigma=self.sigma)),
+                sigma=self.sigma,
             )
         return results

@@ -115,6 +115,9 @@ class BedReliabilityInput(BaseModel):
 
     predictedSurvivalSec: float
     bornAt: str
+    # 생존곡선 척도. raw면 1.0(기본값 — 구 info 데이터 하위호환), info가 잔차
+    # 재보정(σR)을 적용해 보내면 그 값 — hub가 같은 곡선을 재계산하는 데 쓴다.
+    sigma: float = 1.0
     authorityAtSend: float
     ttlSec: float
     modelTag: str
@@ -249,6 +252,13 @@ class BedReliabilityMatch(BaseModel):
     ttlSec: float
     modelTag: str
     source: Literal["ai"] = "ai"
+    # ── 실시간 감쇠 파라미터 (2026-09-28 추가) ──
+    # dashboard가 다음 브로드캐스트를 기다리지 않고 authority를 초 단위로 직접
+    # 감쇠시켜 그릴 수 있게, 곡선의 파라미터 자체를 같이 보낸다:
+    #   S(age) = 1 − Φ((ln age − ln predictedSurvivalSec) / sigma)
+    predictedSurvivalSec: Optional[float] = None
+    bornAt: Optional[str] = None
+    sigma: float = 1.0
 
 
 class SevereFreshness(BaseModel):

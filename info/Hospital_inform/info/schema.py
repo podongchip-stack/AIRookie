@@ -179,9 +179,16 @@ class BedReliability(Strict):
     hub가 매칭 시점에 재계산한 값이 항상 우선한다.
     """
 
-    predictedSurvivalSec: float = Field(gt=0.0, description="모델의 예측 생존시간(초)")
+    predictedSurvivalSec: float = Field(
+        gt=0.0, description="예측 생존시간(초) — 재보정 상수(μR)가 있으면 반영된 값"
+    )
     bornAt: str = Field(
         description="현재 claim-version 탄생(값이 이 값으로 바뀐 게 관측된) 시각, ISO 8601 UTC"
+    )
+    sigma: float = Field(
+        default=1.0, gt=0.0,
+        description="생존곡선 척도 — raw면 1.0, 잔차 재보정(σR)이 적용되면 그 값."
+        " hub가 같은 곡선을 재계산하는 데 필요하다",
     )
     authorityAtSend: float = Field(ge=0.0, le=1.0, description="전송 시점의 authority")
     ttlSec: float = Field(ge=0.0, description="authority가 0.8 아래로 떨어질 때까지 남은 초")

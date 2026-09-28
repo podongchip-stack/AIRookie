@@ -254,6 +254,7 @@ def _attach_reliability(
             update["bedReliability"] = BedReliability(
                 predictedSurvivalSec=round(prediction.pred_t_sec, 1),
                 bornAt=prediction.born.isoformat(timespec="seconds"),
+                sigma=round(prediction.sigma, 4),
                 authorityAtSend=round(prediction.authority, 4),
                 ttlSec=round(prediction.ttl_sec, 1),
                 modelTag=engine.model_tag,

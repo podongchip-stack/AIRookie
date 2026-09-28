@@ -130,7 +130,7 @@ def test_engine() -> bool:
     mono_bad = [
         h
         for h, p in preds.items()
-        if float(serve.at(p.pred_t_sec, p.age_sec, 600.0)) > p.authority + 1e-9
+        if float(serve.at(p.pred_t_sec, p.age_sec, 600.0, sigma=p.sigma)) > p.authority + 1e-9
     ]
     ok &= _check("10분 뒤 authority ≤ 지금 authority (단조 감소)", not mono_bad, f"위반 {len(mono_bad)}곳")
 
@@ -165,14 +165,24 @@ def test_hub_math_parity() -> bool:
     max_err_ttl = 0.0
     for pred_t in (60.0, 1200.0, 86400.0):
         for age in (1.0, 600.0, 3600.0, 100000.0):
-            # hub/bed_reliability.py와 같은 수식 (math.erfc / NormalDist.inv_cdf)
-            stdlib_auth = 0.5 * math.erfc(
-                (math.log(max(age, 1e-12)) - math.log(max(pred_t, 1e-12))) / math.sqrt(2)
-            )
-            max_err_auth = max(max_err_auth, abs(stdlib_auth - float(serve.authority(pred_t, age))))
-            thr = min(max(AUTHORITY_TTL_THRESHOLD, 1e-12), 1 - 1e-12)
-            stdlib_ttl = max(max(pred_t, 1e-12) * math.exp(nd.inv_cdf(1.0 - thr)) - age, 0.0)
-            max_err_ttl = max(max_err_ttl, abs(stdlib_ttl - float(serve.ttl(pred_t, age, thr))))
+            for sigma in (1.0, 1.7965):  # raw / 잔차 재보정(σR) 양쪽 모두 등가여야 함
+                # hub/bed_reliability.py와 같은 수식 (math.erfc / NormalDist.inv_cdf)
+                stdlib_auth = 0.5 * math.erfc(
+                    (math.log(max(age, 1e-12)) - math.log(max(pred_t, 1e-12)))
+                    / (sigma * math.sqrt(2))
+                )
+                max_err_auth = max(
+                    max_err_auth,
+                    abs(stdlib_auth - float(serve.authority(pred_t, age, sigma=sigma))),
+                )
+                thr = min(max(AUTHORITY_TTL_THRESHOLD, 1e-12), 1 - 1e-12)
+                stdlib_ttl = max(
+                    max(pred_t, 1e-12) * math.exp(sigma * nd.inv_cdf(1.0 - thr)) - age, 0.0
+                )
+                max_err_ttl = max(
+                    max_err_ttl,
+                    abs(stdlib_ttl - float(serve.ttl(pred_t, age, thr, sigma=sigma))),
+                )
     ok = _check("authority 최대 오차 < 1e-9", max_err_auth < 1e-9, f"{max_err_auth:.2e}")
     ok &= _check("ttl 최대 오차 < 1e-6초", max_err_ttl < 1e-6, f"{max_err_ttl:.2e}")
     return ok

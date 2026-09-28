@@ -56,11 +56,12 @@ def survival(pred_t_sec: float, t_sec: float, sigma: float = SIGMA) -> float:
 
 
 def ttl_sec(
-    pred_t_sec: float, age_sec: float, threshold: float = AUTHORITY_TTL_THRESHOLD
+    pred_t_sec: float, age_sec: float, threshold: float = AUTHORITY_TTL_THRESHOLD,
+    sigma: float = SIGMA,
 ) -> float:
     """authority가 threshold 아래로 떨어질 때까지 남은 초. 이미 아래면 0."""
     thr = min(max(threshold, 1e-12), 1.0 - 1e-12)
-    t_hit = max(pred_t_sec, 1e-12) * math.exp(SIGMA * _NORMAL.inv_cdf(1.0 - thr))
+    t_hit = max(pred_t_sec, 1e-12) * math.exp(sigma * _NORMAL.inv_cdf(1.0 - thr))
     return max(t_hit - age_sec, 0.0)
 
 
@@ -96,10 +97,15 @@ def evaluate(
         else distance_km / AVG_AMBULANCE_SPEED_KMH * 3600.0
     )
     pred_t = bed_reliability.predictedSurvivalSec
+    sigma = bed_reliability.sigma
     return BedReliabilityMatch(
-        authority=round(survival(pred_t, age), 4),
-        rArrive=round(survival(pred_t, age + horizon), 4),
+        authority=round(survival(pred_t, age, sigma), 4),
+        rArrive=round(survival(pred_t, age + horizon, sigma), 4),
         horizonSec=round(horizon, 1),
-        ttlSec=round(ttl_sec(pred_t, age), 1),
+        ttlSec=round(ttl_sec(pred_t, age, sigma=sigma), 1),
         modelTag=bed_reliability.modelTag,
+        # dashboard의 실시간 감쇠 렌더용 곡선 파라미터 (schema 주석 참고).
+        predictedSurvivalSec=pred_t,
+        bornAt=bed_reliability.bornAt,
+        sigma=sigma,
     )
