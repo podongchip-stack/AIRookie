@@ -118,6 +118,15 @@ _ACTION_TO_STATUS: dict[str, HospitalStatus] = {
     "final_approval": "confirmed",
 }
 
+# 액션마다 보낼 수 있는 주체(2026-09-28). 병원 승인·거절은 병원만, 이송 승인은 구급대원만.
+# dashboard는 이미 이 짝으로만 보낸다(병원 화면 role="hospital", 구급차 화면 이송 승인) —
+# 여기서는 짝이 어긋난 요청(조작·버그)을 막는 방어선이다.
+_ACTION_ACTOR: dict[str, str] = {
+    "hospital_approve": "hospital",
+    "hospital_reject": "hospital",
+    "final_approval": "paramedic",
+}
+
 
 # feature/info는 성인 응급실 병상 수를 bedsByType["ER_ADULT"]로 보내고, 미상이면
 # 그 키 자체를 넣지 않는다 (availableBedCount에는 보수적으로 0이 들어간다).
@@ -349,6 +358,9 @@ class HubEngine:
         self._case_group: dict[str, str | None] = {}
         # 사건별로 구급차 좌표가 기본 좌표로 대체됐는지. 재계산 결과에도 같은 표시를 싣는다.
         self._case_gps_fallback: dict[str, bool] = {}
+        # (caseId, hospitalId) -> 그 확정이 얹은 병상 차감의 만료 시각. 이송 병원을 다시
+        # 고르면 이전 병원의 차감을 이것으로 찾아 회수한다(2026-09-28).
+        self._case_overlay: dict[tuple[str, str], datetime] = {}
         # hospitalId -> 아직 유효한 차감 만료 시각 목록. final_approval마다 하나씩
         # 추가되고, effective_bed_count()가 조회 시점에 만료분을 걸러낸다.
         self._bed_overlay: dict[str, list[datetime]] = {}
@@ -453,6 +465,8 @@ class HubEngine:
                 self._case_group.pop(cid, None)
                 self._case_gps_fallback.pop(cid, None)
                 self._case_confirmed_at.pop(cid, None)
+            for key in [k for k in self._case_overlay if k[0] in stale]:
+                del self._case_overlay[key]
             if stale:
                 self._dirty = True
                 print(f"  [정리] 확정된 지 {CASE_RETENTION_MIN}분 지난 사건 {len(stale)}건 캐시에서 제거: {stale}")
@@ -536,12 +550,36 @@ class HubEngine:
             # 클릭, 네트워크 재시도 등) 병상을 두 번 깎지 않는다. 여러 사건이
             # 동시에 진행될 수 있어 (caseId, hospitalId) 조합으로 구분한다.
             status_key = (action.caseId, action.hospital_id)
-            if action.action == "final_approval" and self._approval_status.get(status_key) == "confirmed":
+            current = self._approval_status.get(status_key, "pending")
+            if action.action == "final_approval" and current == "confirmed":
                 decision_log.log_decision(
                     "approval_action_ignored_duplicate",
                     {"action": action.model_dump(), "reason": "already confirmed"},
                 )
                 return
+
+            # 순서·권한 검사(2026-09-28). 거부된 액션은 상태를 바꾸지 않고 사유만 남긴다.
+            # - 주체 짝: 병원 승인·거절은 병원, 이송 승인은 구급대원
+            # - 이송 승인은 병원이 이 사건에 승인(approved)한 병원에만 — "병원의 승인은 후보
+            #   등록, 구급대원의 이송 승인이 최종 확정"(CLAUDE.md) 순서를 지킨다
+            refuse_reason = None
+            if action.actor != _ACTION_ACTOR[action.action]:
+                refuse_reason = f"actor mismatch: {action.action} requires {_ACTION_ACTOR[action.action]}"
+            elif action.action == "final_approval" and current != "approved":
+                refuse_reason = f"final_approval requires hospital approval (current: {current})"
+            if refuse_reason is not None:
+                decision_log.log_decision(
+                    "approval_action_refused", {"action": action.model_dump(), "reason": refuse_reason}
+                )
+                return
+
+            if action.action == "final_approval":
+                # 재선택: 이 사건에서 이미 확정된 다른 병원이 있으면 확정을 풀고(approved로
+                # 되돌림 — 병원의 승인 자체는 유효) 그 확정이 얹은 병상 차감을 회수한다.
+                # 새 상태값을 만들지 않는 건 dashboard의 HospitalStatus 타입을 그대로 쓰기 위해서다.
+                for (cid, hid), status in list(self._approval_status.items()):
+                    if cid == action.caseId and hid != action.hospital_id and status == "confirmed":
+                        self._release_confirmation(cid, hid, action)
 
             new_status = _ACTION_TO_STATUS[action.action]
             self._approval_status[status_key] = new_status
@@ -584,6 +622,7 @@ class HubEngine:
 
             expires_at = _utcnow() + timedelta(minutes=BED_OVERLAY_TTL_MIN)
             self._bed_overlay.setdefault(info.hospitalId, []).append(expires_at)
+            self._case_overlay[status_key] = expires_at
             # 병상 차감(오버레이)이 실제로 얹힌 뒤에 패치해야 dashboard 캐시에도 새
             # 병상 수가 반영된다 — 얹기 전에 패치하면 status만 바뀌고 병상 배지는
             # 옛날 값 그대로 남는다.
@@ -600,6 +639,27 @@ class HubEngine:
                     },
                 },
             )
+
+    def _release_confirmation(self, case_id: str, hospital_id: str, action: ApprovalAction) -> None:
+        """재선택으로 밀려난 병원의 확정을 풀고 병상 차감을 회수한다(락 안에서만 호출)."""
+        self._approval_status[(case_id, hospital_id)] = "approved"
+        expires_at = self._case_overlay.pop((case_id, hospital_id), None)
+        overlay = self._bed_overlay.get(hospital_id, [])
+        reclaimed = expires_at in overlay  # 이미 만료돼 정리됐으면 회수할 것이 없다
+        if reclaimed:
+            overlay.remove(expires_at)
+            if not overlay:
+                del self._bed_overlay[hospital_id]
+        self._patch_case_result_status(case_id, hospital_id, "approved")
+        decision_log.log_decision(
+            "approval_released",
+            {
+                "caseId": case_id,
+                "hospitalId": hospital_id,
+                "reason": f"reselected: {action.hospital_id}",
+                "bedOverlayReclaimed": reclaimed,
+            },
+        )
 
     # ── 존 · 후보 ─────────────────────────────────────────────────────────────
 
@@ -899,6 +959,7 @@ class HubEngine:
                 "ambulances": [a.model_dump() for a in self._ambulances.values()],
                 "approvalStatus": [[cid, hid, status] for (cid, hid), status in self._approval_status.items()],
                 "bedOverlay": {hid: [t.isoformat() for t in times] for hid, times in self._bed_overlay.items()},
+                "caseOverlay": [[cid, hid, t.isoformat()] for (cid, hid), t in self._case_overlay.items()],
                 "cases": cases,
             }
 
@@ -926,6 +987,10 @@ class HubEngine:
                     continue
                 self._ambulances[amb.apid] = amb
                 counts["ambulances"] += 1
+            for cid, hid, at in state.get("caseOverlay", []):
+                parsed_at = _parse_iso(at)
+                if parsed_at is not None:
+                    self._case_overlay[(cid, hid)] = parsed_at
             for cid, hid, status in state.get("approvalStatus", []):
                 if status in _ACTION_TO_STATUS.values():
                     self._approval_status[(cid, hid)] = status
