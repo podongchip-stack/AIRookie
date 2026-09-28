@@ -32,6 +32,8 @@ reliability/
 ├── serve.py                  infosurv.serve 벤더링 사본 (수정 금지 — 원본 갱신 시 통째로 재복사)
 ├── features.py               claim-version 추적 + 피처 9종 실시간 구성 (신규 구현)
 ├── engine.py                 모델 로드·스냅샷 워밍업·예측 (신규 구현)
+├── severe.py                 중증질환 신고(MKioskTy) 추적 — 규칙 기반, 모델 없음 (아래 절)
+├── probe_severe.py           중증질환 확장 타당성 측정 CLI (Phase 0 실측 재현)
 ├── build_route_med_gap.py    병원별 리듬 테이블 재생성 CLI
 ├── selftest.py               자체검증 (API 호출 0회)
 └── model/
@@ -59,6 +61,28 @@ reliability/
 - **fail-soft**: 이 폴더는 바깥을 import하지 않고, `send_to_hub.py` 쪽 호출부는
   try/except로 감싸져 있다. 폴더를 통째로 지워도 `bedReliability` 없이 원본
   그대로 전송된다(hospital_score와 같은 원칙).
+
+## 중증질환 신고 신선도 (severe.py, 2026-09-28) — 왜 모델이 아니라 규칙인가
+
+infosurv를 중증질환 수용가능 28항목으로 확장하기 전에 타당성을 실측했다
+(`python -m reliability.probe_severe`, 스냅샷 47.3일 · 439곳):
+
+- 값 분포: 정보미제공 69.0% / Y 29.7% / 불가능 1.4%
+- 값 변화 사건 31,398건 중 **90%가 Y↔정보미제공 왕복**이고, 그 만료 수명의
+  **60.1%가 정확히 9.0시간** — 지배 성분이 병원 행동이 아니라 "신고 후 약
+  9시간 자동 만료"라는 시스템 규칙이다. 모델로 포장하면 hvidate 기각과 같은
+  오류가 된다(규칙으로 되는 것은 규칙으로)
+- 진짜 내용 변화(Y↔불가능)는 2,658건뿐 — 학습 최소 관문(2,000) 턱걸이에
+  사건 있는 병원이 106곳(상위 10곳이 39%)이라, **학습은 축적 후 재평가**
+
+대신 확실한 사실 하나를 규칙으로 서빙한다: E-Gen 중증질환 응답에는 신고
+시각 필드가 아예 없어서(실측 — hpid·dutyName·MKioskTy*뿐), **"이 Y/불가능
+신고가 언제부터 그 값이었는지"는 우리 스냅샷 추적만이 안다.** `severe.py`가
+병원×항목을 3상태로 추적해(미제공 전이를 봐야 재신고 시점이 잡힘) 질환군별
+현재 신고값·탄생시각·좌측검열 여부를 `HospitalInfo.severeDeclarations`
+(source: "rule")로 내보내고, hub가 매칭된 질환군의 신고 나이와 9h 규칙 잔여를
+`HospitalMatch.severeFreshness`로 환산한다. hospital_score의 24시간 stale
+절벽보다 훨씬 정밀한 신선도다.
 
 ## 학습·서빙 정의가 어긋나기 쉬운 함정 3가지 (모델링 프로젝트가 실제로 밟은 것)
 

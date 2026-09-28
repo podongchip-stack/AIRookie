@@ -59,7 +59,13 @@ sys.path.insert(0, str(HOSPITAL_INFORM_INFO_DIR))
 
 from egen.client import HttpEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
-from schema import AmbulanceInfo, BedReliability, HospitalInfo  # noqa: E402
+from schema import (  # noqa: E402
+    AmbulanceInfo,
+    BedReliability,
+    HospitalInfo,
+    SevereDeclarations,
+    SevereGroupDeclaration,
+)
 from hospital_score import dataset as hs_dataset  # noqa: E402
 from hospital_score import scoring as hs_scoring  # noqa: E402
 from hospital_score import vocabulary as hs_vocab  # noqa: E402
@@ -213,13 +219,14 @@ def _get_bed_engine():
     return _bed_engine
 
 
-def _attach_bed_reliability(
-    hospitals: list[HospitalInfo], bed_rows: list[dict]
+def _attach_reliability(
+    hospitals: list[HospitalInfo], bed_rows: list[dict], severe_rows: list[dict]
 ) -> list[HospitalInfo]:
-    """병원마다 reliability/(infosurv) 병상 정보 신뢰도 예측을 붙인다.
+    """병원마다 reliability/의 두 가지를 붙인다 — 병상 신뢰도 예측(infosurv
+    모델, bedReliability)과 중증질환 신고 신선도(규칙 기반, severeDeclarations).
 
     hospital_score(_attach_assessments)와 같은 fail-soft 패턴 — 엔진이 없거나
-    이번 사이클 예측이 실패해도 원래 HospitalInfo 그대로 전송한다.
+    이번 사이클 처리가 실패해도 원래 HospitalInfo 그대로 전송한다.
     """
     engine = _get_bed_engine()
     if engine is None:
@@ -230,33 +237,46 @@ def _attach_bed_reliability(
         # 넣는다 — 반대로 하면 tracker의 단조 규칙이 스냅샷 줄을 버린다.
         engine.ingest_snapshots()
         engine.observe_rows(bed_rows, now)
+        engine.observe_severe_rows(severe_rows, now)
         predictions = engine.predict(now)
-    except Exception as e:  # noqa: BLE001 — 신뢰도 예측 실패가 병원 목록 전송을 막으면 안 됨
-        print(f"  [reliability] 이번 주기 예측 실패, bedReliability 없이 전송: {e}")
+        severe_by_hpid = engine.severe.group_declarations()
+    except Exception as e:  # noqa: BLE001 — 신뢰도 처리 실패가 병원 목록 전송을 막으면 안 됨
+        print(f"  [reliability] 이번 주기 처리 실패, 신뢰도 필드 없이 전송: {e}")
         return hospitals
 
     enriched: list[HospitalInfo] = []
-    attached = 0
+    attached_bed = 0
+    attached_severe = 0
     for info in hospitals:
+        update: dict = {}
         prediction = predictions.get(info.hospitalId)
-        if prediction is None:
-            enriched.append(info)
-            continue
-        enriched.append(
-            info.model_copy(
-                update={
-                    "bedReliability": BedReliability(
-                        predictedSurvivalSec=round(prediction.pred_t_sec, 1),
-                        bornAt=prediction.born.isoformat(timespec="seconds"),
-                        authorityAtSend=round(prediction.authority, 4),
-                        ttlSec=round(prediction.ttl_sec, 1),
-                        modelTag=engine.model_tag,
+        if prediction is not None:
+            update["bedReliability"] = BedReliability(
+                predictedSurvivalSec=round(prediction.pred_t_sec, 1),
+                bornAt=prediction.born.isoformat(timespec="seconds"),
+                authorityAtSend=round(prediction.authority, 4),
+                ttlSec=round(prediction.ttl_sec, 1),
+                modelTag=engine.model_tag,
+            )
+            attached_bed += 1
+        declarations = severe_by_hpid.get(info.hospitalId)
+        if declarations:
+            update["severeDeclarations"] = SevereDeclarations(
+                groups={
+                    group: SevereGroupDeclaration(
+                        value=decl.value,
+                        bornAt=decl.born.isoformat(timespec="seconds"),
+                        ageIsMin=decl.age_is_min,
                     )
+                    for group, decl in declarations.items()
                 }
             )
-        )
-        attached += 1
-    print(f"  [reliability] {attached}/{len(hospitals)}곳에 병상 신뢰도 예측 첨부")
+            attached_severe += 1
+        enriched.append(info.model_copy(update=update) if update else info)
+    print(
+        f"  [reliability] 병상 신뢰도 {attached_bed}곳 · "
+        f"중증신고 신선도 {attached_severe}곳 / 전체 {len(hospitals)}곳 첨부"
+    )
     return enriched
 
 
@@ -283,7 +303,7 @@ def fetch_hospitals() -> list[HospitalInfo]:
     print(report.summary())
 
     hospitals = _attach_assessments(hospitals, location_rows, severe_rows, bed_rows)
-    hospitals = _attach_bed_reliability(hospitals, bed_rows)
+    hospitals = _attach_reliability(hospitals, bed_rows, severe_rows)
     return hospitals
 
 

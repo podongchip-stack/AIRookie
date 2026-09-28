@@ -162,6 +162,21 @@ log-normal AFT 생존함수를 표준 라이브러리로 재구현한 것이고(
 수치 등가성은 info의 `python -m reliability.selftest`가 검증한다. 이 필드 없이
 오는 구 feature/info 데이터는 `bedReliability=null`로 그대로 통과한다.
 
+### 중증질환 신고 신선도 (severeFreshness, 2026-09-28 신설 — 규칙 기반)
+
+같은 취지의 셋째 축인데 **모델이 아니라 규칙**이다. info의 실측(스냅샷 47일)
+에서 중증질환 수용가능 신고(MKioskTy)는 값 변화의 90%가 Y↔정보미제공 왕복
+이고 만료 수명의 60.1%가 정확히 9.0시간 — 시스템 자동 만료 규칙이 지배해서
+모델을 만들지 않기로 했다(info의 `reliability/README.md` 참고). E-Gen 응답에
+신고 시각 필드가 없어서 "이 신고가 언제 적 것인지"는 info의 스냅샷 추적
+(`HospitalInfo.severeDeclarations`)만이 알고, hub는 매칭된 질환군에 대해
+신고 나이(`ageSec`)와 9시간 규칙 잔여(`ruleRemainingSec`)를 계산해
+`HospitalMatch.severeFreshness`(source: "rule")로 내보낸다. `ageIsMin`이
+true면 추적 시작부터 그 값이었다는 뜻이라 "최소 X시간 전"으로 읽어야 하고,
+`ruleRemainingSec`이 0인데 신고가 여전히 떠 있으면 병원이 갱신을 지속 중
+이라는 뜻이지 신고가 죽었다는 뜻이 아니다. `reliability`(같은 신고를 심평원
+대조로 "믿을 만한가")와 상보적이며, 역시 순위에는 관여하지 않는다.
+
 ## 개발 환경 / 언어
 
 - 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
@@ -225,6 +240,7 @@ feature/hub는 `summary` 필드(부상 상태, 예상 병명, 중증도)는 매�
 | `updatedAt` | string (ISO 8601) | 이 정보가 마지막으로 갱신된 시각 |
 | `assessment` | object (optional) | info-v2(hospital_score)의 신뢰도 진단 — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
 | `bedReliability` | object (optional) | 병상 정보 신뢰도 예측(`predictedSurvivalSec`·`bornAt`·`authorityAtSend`·`ttlSec`·`modelTag`, source: "ai") — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `severeDeclarations` | object (optional) | 중증질환 수용가능 신고의 질환군별 현재 값·관측 기준 탄생시각(`groups.{질환군}.{value, bornAt, ageIsMin}`, source: "rule"). 정보미제공 그룹은 키가 없다 — 위 "중증질환 신고 신선도" 참고 |
 
 ### 입력 스키마 3: feature/dashboard로부터 (승인 액션)
 
@@ -426,6 +442,7 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
 | `hospitals[].reliability` | object \| null | info-v2 신뢰도 판정("왜 이 순위인지" 설명용, `group`·`score`·`confidence`·`basis`) — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
 | `hospitals[].bedReliability` | object \| null (2026-09-24 신설) | 병상 숫자 자체의 유효 확률(`authority`·`rArrive`·`horizonSec`·`ttlSec`·`modelTag`, source: "ai"). 매칭 시점에 hub가 재계산한 값. 순위에는 관여하지 않는 설명용 — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `hospitals[].severeFreshness` | object \| null (2026-09-28 신설) | 매칭된 질환군의 수용가능 신고가 언제 적 것인지(`group`·`value`·`ageSec`·`ageIsMin`·`ruleRemainingSec`, source: "rule"). `ageIsMin=true`면 "최소 X시간 전"으로 표시해야 한다. 순위 불변 — 위 "중증질환 신고 신선도" 참고 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `ambulanceName` | string \| null (2026-08-11 신설) | 구급차 대시보드 상단바 표시용. `hospitals[].name`(병원명)과 같은 패턴 — 이 사건의 apid를 `register_case()`로 기억해둔 값에서 찾아 구급차 레지스트리(`AmbulanceInfo.name`)를 그대로 채운다. apid를 못 찾으면(통화 시작 신호 없이 직접 `/voice/summary`를 부른 테스트 등) `null`이고, dashboard는 URL의 apid로 대체 표시한다. **병원명과 마찬가지로 그 구급차가 실제로 사건에 등장해야만 채워진다** — 사건이 아예 없는 상태(대시보드를 열었지만 아직 통화가 없음)에서는 아직 이 필드 자체를 못 받으므로 ID 폴백이 계속 보인다 |
 

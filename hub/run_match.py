@@ -14,7 +14,7 @@ from pathlib import Path
 import bed_reliability
 import decision_log
 import delivery
-from hub_engine import BED_OVERLAY_TTL_MIN, HubEngine
+from hub_engine import _ASSESSMENT_GROUPS, BED_OVERLAY_TTL_MIN, SEVERE_EXPIRY_RULE_SEC, HubEngine
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -24,6 +24,8 @@ from schema import (
     BedReliabilityInput,
     GpsPoint,
     HospitalInfo,
+    SevereDeclarations,
+    SevereGroupDeclaration,
     Specialty,
     VoiceCallSummaryMessage,
     VoiceSummary,
@@ -237,6 +239,7 @@ def main() -> None:
 
     test_declared_no_demotion()
     test_bed_reliability()
+    test_severe_freshness()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -380,6 +383,82 @@ def test_bed_reliability() -> None:
     order_without_demote = [h.hospitalId for h in result.hospitals]
     print(f"  [확인] 신선한 값 authority({b1.authority}) > 묵은 값 authority({b2.authority}), "
           f"rArrive ≤ authority, 구 데이터는 None 통과 (순위 불변: {order_without_demote})")
+
+
+def test_severe_freshness() -> None:
+    """feature/info가 severeDeclarations(중증질환 신고의 관측 기준 탄생 시각)를
+    보내면, hub가 매칭된 질환군의 신고 나이와 9시간 만료 규칙 잔여를 계산해
+    HospitalMatch.severeFreshness로 싣는지 확인한다. 매칭되는 질환군이 임베딩
+    결과에 따라 달라지므로 15개 그룹 전부에 신고를 넣어 결정성을 확보한다.
+    """
+    print("\n=== severeFreshness 환산 확인: 중증신고가 언제 적 것인지가 매칭 결과에 실리는지 ===")
+    engine = HubEngine()
+    now = datetime.now(timezone.utc)
+
+    def declarations(born: datetime, age_is_min: bool = False) -> SevereDeclarations:
+        return SevereDeclarations(
+            groups={
+                g: SevereGroupDeclaration(
+                    value="Y", bornAt=born.isoformat(timespec="seconds"), ageIsMin=age_is_min
+                )
+                for g in _ASSESSMENT_GROUPS
+            }
+        )
+
+    fresh = HospitalInfo(
+        hospitalId="S001", name="[테스트] 2시간 전 신고",
+        gps=GpsPoint(lat=35.1810, lng=128.1090), availableBedCount=5, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+        severeDeclarations=declarations(now - timedelta(hours=2)),
+    )
+    expired = HospitalInfo(
+        hospitalId="S002", name="[테스트] 10시간 전 신고(규칙상 만료 경과, 갱신 유지 중)",
+        gps=GpsPoint(lat=35.1950, lng=128.1200), availableBedCount=3, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+        severeDeclarations=declarations(now - timedelta(hours=10), age_is_min=True),
+    )
+    without = HospitalInfo(
+        hospitalId="S003", name="[테스트] severeDeclarations 없음 (구 데이터)",
+        gps=GpsPoint(lat=35.2000, lng=128.1300), availableBedCount=1, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+    )
+    for h in (fresh, expired, without):
+        engine.update_hospital_info(h)
+
+    voice = VoiceCallSummaryMessage(
+        caseId="case-severe-freshness-test",
+        transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+        summary=VoiceSummary(
+            patient="60대 남성", mechanism="급성 심근경색 의심",
+            symptoms=["흉통"], treatment=["산소 공급"], severity_tag="high",
+        ),
+        source="ai",
+    )
+    result = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    matches = {h.hospitalId: h for h in result.hospitals}
+    for h in result.hospitals:
+        sf = h.severeFreshness
+        desc = (
+            f"[{sf.group}] {sf.value} — {sf.ageSec / 3600:.1f}h 전{'(최소)' if sf.ageIsMin else ''}, "
+            f"규칙 잔여 {sf.ruleRemainingSec / 3600:.1f}h ({sf.source})"
+            if sf else "없음"
+        )
+        print(f"  {h.hospitalId} {h.name} — 신고 신선도 [{desc}]")
+
+    s1, s2 = matches["S001"].severeFreshness, matches["S002"].severeFreshness
+    assert s1 is not None and s2 is not None, "신고를 보낸 병원은 신선도가 실려야 한다"
+    assert matches["S003"].severeFreshness is None, "severeDeclarations 없이 온 구 데이터는 None으로 통과해야 한다"
+    assert abs(s1.ageSec - 2 * 3600) < 60, "신고 나이가 bornAt에서 계산돼야 한다"
+    assert abs(s1.ageSec + s1.ruleRemainingSec - SEVERE_EXPIRY_RULE_SEC) < 60, (
+        "잔여 = 9h 규칙 − 나이여야 한다"
+    )
+    assert s2.ruleRemainingSec == 0.0 and s2.ageIsMin, (
+        "만료 규칙 경과분은 잔여 0 + 좌측검열 플래그가 유지돼야 한다"
+    )
+    print("  [확인] 신고 나이·9h 규칙 잔여 계산, 좌측검열 플래그, 구 데이터 None 통과 전부 정상")
 
 
 if __name__ == "__main__":

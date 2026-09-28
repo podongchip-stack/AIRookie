@@ -194,6 +194,34 @@ class BedReliability(Strict):
         return _validate_iso8601(value)
 
 
+class SevereGroupDeclaration(Strict):
+    """질환군 하나의 현재 중증질환 수용가능 신고 상태 (reliability/severe.py)."""
+
+    value: Literal["Y", "불가능"]
+    bornAt: str = Field(description="이 값으로 바뀐 게 관측된 시각, ISO 8601 UTC")
+    ageIsMin: bool = Field(
+        description="True면 추적 시작부터 이 값이었다 — 실제 신고는 더 오래됐을"
+        " 수 있어 나이가 하한(좌측검열)이라는 뜻"
+    )
+
+    @field_validator("bornAt")
+    @classmethod
+    def _iso8601(cls, value: str) -> str:
+        return _validate_iso8601(value)
+
+
+class SevereDeclarations(Strict):
+    """reliability/severe.py의 중증질환 신고 신선도 추적 결과 — 규칙 기반(모델
+    없음). E-Gen 중증질환 응답에는 신고 시각 필드가 없어서, "이 Y/불가능
+    신고가 언제부터 그 값이었는지"는 우리 스냅샷 추적만이 안다. hub는 매칭된
+    질환군의 신고 나이·9시간 만료 규칙 잔여를 계산해 dashboard로 내보낸다.
+    현재 값이 정보미제공인 그룹은 키를 넣지 않는다(bedsByType의 미상 표현과
+    같은 방식)."""
+
+    groups: dict[str, SevereGroupDeclaration] = Field(default_factory=dict)
+    source: Literal["rule"] = "rule"
+
+
 class HospitalInfo(Strict):
     """병원 1곳의 정보. feature/hub로 보내는 단위."""
 
@@ -230,6 +258,11 @@ class HospitalInfo(Strict):
         description="reliability/(infosurv)의 병상 정보 신뢰도 예측. 모델·스냅샷이"
         " 없거나 예측에 실패하면 None으로 그대로 전송한다 — assessment와 같은"
         " fail-soft 패턴.",
+    )
+    severeDeclarations: Optional[SevereDeclarations] = Field(
+        default=None,
+        description="reliability/severe.py의 중증질환 신고 신선도(규칙 기반)."
+        " 추적 실패 시 None으로 그대로 전송 — bedReliability와 같은 fail-soft.",
     )
 
     @field_validator("updatedAt")

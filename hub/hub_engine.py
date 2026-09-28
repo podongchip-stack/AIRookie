@@ -21,6 +21,7 @@ from schema import (
     HubMatchResult,
     PatientInfo,
     ReliabilityInfo,
+    SevereFreshness,
     SpecialtyMatch,
     VoiceCallSummaryMessage,
 )
@@ -109,6 +110,35 @@ def _reliability_for(info: HospitalInfo, group: str) -> ReliabilityInfo | None:
         score=group_score.score,
         confidence=group_score.confidence,
         basis=group_score.basis,
+    )
+
+
+#: 중증질환 수용가능 신고의 통상 만료 규칙(초). feature/info의 실측(스냅샷
+#: 47일)에서 Y 신고가 정보미제공으로 꺼지는 수명의 60.1%가 정확히 9.0시간에
+#: 몰려 있었다 — 시스템 자동 만료로 해석되는 규칙이라 모델이 아닌 상수로
+#: 둔다(재현: info의 `python -m reliability.probe_severe`).
+SEVERE_EXPIRY_RULE_SEC = 9 * 3600
+
+
+def _severe_freshness_for(info: HospitalInfo, group: str | None) -> SevereFreshness | None:
+    """매칭된 질환군의 수용가능 신고 신선도 — 신고 나이와 9시간 만료 규칙
+    기준 잔여를 매칭 시점에 계산한다. 순위에는 관여하지 않는 설명용이고,
+    신고가 없거나(정보미제공) 구 feature/info 데이터면 None이다."""
+    if info.severeDeclarations is None or group is None:
+        return None
+    declaration = info.severeDeclarations.groups.get(group)
+    if declaration is None:
+        return None
+    born = datetime.fromisoformat(declaration.bornAt.replace("Z", "+00:00"))
+    if born.tzinfo is None:
+        born = born.replace(tzinfo=timezone.utc)
+    age = max((datetime.now(timezone.utc) - born).total_seconds(), 0.0)
+    return SevereFreshness(
+        group=group,
+        value=declaration.value,
+        ageSec=round(age, 1),
+        ageIsMin=declaration.ageIsMin,
+        ruleRemainingSec=round(max(SEVERE_EXPIRY_RULE_SEC - age, 0.0), 1),
     )
 
 
@@ -442,6 +472,8 @@ class HubEngine:
                 bedReliability=bed_reliability.evaluate(
                     item["info"].bedReliability, item["distanceKm"]
                 ),
+                # 매칭된 질환군의 수용가능 신고 신선도(규칙 기반, source: "rule").
+                severeFreshness=_severe_freshness_for(item["info"], best_assessment_group),
             )
             for item in rank(scored)
         ]

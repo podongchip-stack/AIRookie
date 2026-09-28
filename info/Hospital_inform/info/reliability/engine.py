@@ -33,6 +33,7 @@ import numpy as np
 
 from . import serve
 from .features import FEATURES, ClaimTracker
+from .severe import SEVERE_OP, SevereTracker
 
 #: Authority가 이 값 아래로 떨어질 때까지 남은 시간을 ttlSec으로 내보낸다
 #: (AIROOKIE-EGEN.md §5-1 예제의 임계값).
@@ -67,7 +68,10 @@ class BedReliabilityEngine:
         model_path: Path | str = _DEFAULT_MODEL,
         gap_table_path: Path | str = _DEFAULT_GAP_TABLE,
         snapshot_dir: Path | str = _DEFAULT_SNAPSHOT_DIR,
-        warmup_days: int = 3,
+        # 축적 전체를 읽는다(60일이면 현재 축적을 전부 덮고, 파싱 수 분).
+        # 예전 기본값 3일은 3일 넘게 이어진 세그먼트의 version_no를 절단해
+        # 학습 분포와 어긋나는 문제가 있었다(2026-09-28 검토에서 확인).
+        warmup_days: int = 60,
     ) -> None:
         # xgboost는 이 엔진에만 필요해서 모듈 최상단이 아니라 여기서 import한다
         # — 미설치 환경이면 엔진 생성만 실패하고, send_to_hub.py의 try/except가
@@ -96,6 +100,9 @@ class BedReliabilityEngine:
         self._gap_national: float = float(table["nationalMedianSec"])
 
         self._tracker = ClaimTracker()
+        #: 중증질환 수용가능 신고 추적 — 모델 없음, 규칙 기반 신선도 전용
+        #: (severe.py 모듈 docstring 참고). 같은 스냅샷 증분 패스에서 같이 읽는다.
+        self.severe = SevereTracker()
         self._snapshot_dir = Path(snapshot_dir)
         self._warmup_days = warmup_days
         self._offsets: dict[str, int] = {}  # 파일명 -> 읽은 바이트 수 (증분 읽기)
@@ -140,17 +147,26 @@ class BedReliabilityEngine:
             record = json.loads(raw_line)
         except json.JSONDecodeError:
             return 0
-        if record.get("operation") != _BED_OP or "error" in record:
+        operation = record.get("operation")
+        if operation not in (_BED_OP, SEVERE_OP) or "error" in record:
             return 0
         try:
             ts = datetime.fromisoformat(record["ts"]).astimezone(timezone.utc)
         except (KeyError, ValueError):
             return 0
-        return self._observe_items(record.get("items") or [], ts)
+        items = record.get("items") or []
+        if operation == _BED_OP:
+            return self._observe_items(items, ts)
+        return sum(self.severe.observe_row(row, ts) for row in items)
 
     def observe_rows(self, bed_rows: list[dict], ts: datetime) -> int:
         """이번 사이클에 실 API에서 받은 병상 rows를 관측으로 반영한다."""
         return self._observe_items(bed_rows, ts.astimezone(timezone.utc))
+
+    def observe_severe_rows(self, severe_rows: list[dict], ts: datetime) -> int:
+        """이번 사이클에 실 API에서 받은 중증질환 rows를 관측으로 반영한다."""
+        ts_utc = ts.astimezone(timezone.utc)
+        return sum(self.severe.observe_row(row, ts_utc) for row in severe_rows)
 
     def _observe_items(self, items: list[dict], ts: datetime) -> int:
         fed = 0

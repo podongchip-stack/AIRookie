@@ -20,6 +20,7 @@ from statistics import NormalDist
 from . import serve
 from .engine import AUTHORITY_TTL_THRESHOLD, BedReliabilityEngine
 from .features import FEATURES, ClaimTracker
+from .severe import SevereTracker
 
 UTC = timezone.utc
 
@@ -67,6 +68,50 @@ def test_tracker() -> bool:
     return ok
 
 
+def test_severe_tracker() -> bool:
+    print("1-1. SevereTracker 신고 추적 규칙")
+    t0 = datetime(2026, 9, 23, 3, 0, tzinfo=UTC)
+    tracker = SevereTracker()
+
+    # 항목 1(재관류중재술) Y — 첫 관측이라 나이는 하한(좌측검열)
+    tracker.observe_row({"hpid": "H1", "MKioskTy1": "Y"}, t0)
+    decls = tracker.group_declarations()
+    d = decls.get("H1", {}).get("재관류중재술")
+    ok = _check(
+        "첫 관측 Y: 그룹 등재 + ageIsMin=True",
+        d is not None and d.value == "Y" and d.born == t0 and d.age_is_min,
+    )
+
+    # Y → 정보미제공: 그룹에서 빠진다
+    tracker.observe_row({"hpid": "H1", "MKioskTy1": "정보미제공"}, t0 + timedelta(hours=9))
+    ok &= _check(
+        "Y→정보미제공: 그룹에서 제외",
+        "재관류중재술" not in tracker.group_declarations().get("H1", {}),
+    )
+
+    # 미제공 → Y 재신고: born이 재신고 시각으로 새로 잡히고 하한 아님.
+    # 재신고는 마지막 관측(9h의 미제공)에서 1시간(세그먼트 공백 규칙) 안에
+    # 넣는다 — 실제 스트림은 20분마다 관측이 이어져 공백이 생기지 않는다.
+    t_redeclare = t0 + timedelta(hours=9, minutes=40)
+    tracker.observe_row({"hpid": "H1", "MKioskTy1": "Y"}, t_redeclare)
+    d = tracker.group_declarations()["H1"]["재관류중재술"]
+    ok &= _check(
+        "재신고: born=재신고 시각, ageIsMin=False",
+        d.born == t_redeclare and not d.age_is_min,
+    )
+
+    # 같은 그룹에서 Y가 불가능보다 우선 (항목 3 Y, 항목 4 불가능 → 뇌출혈수술=Y)
+    tracker.observe_row({"hpid": "H1", "MKioskTy3": "Y", "MKioskTy4": "불가능"}, t_redeclare)
+    d = tracker.group_declarations()["H1"]["뇌출혈수술"]
+    ok &= _check("그룹 대표값: Y > 불가능", d.value == "Y")
+
+    # 불가능만 있으면 불가능으로 등재
+    tracker.observe_row({"hpid": "H2", "MKioskTy19": "불가능"}, t_redeclare)
+    d = tracker.group_declarations()["H2"]["중증화상"]
+    ok &= _check("불가능 단독 신고도 등재", d.value == "불가능")
+    return ok
+
+
 def test_engine() -> bool:
     print("2. 실데이터 워밍업 → 예측")
     engine = BedReliabilityEngine()
@@ -95,6 +140,21 @@ def test_engine() -> bool:
             f"    예시 {hpid}: pred_t={p.pred_t_sec:,.0f}s age={p.age_sec:,.0f}s "
             f"authority={p.authority:.3f} ttl={p.ttl_sec:,.0f}s"
         )
+
+    severe = engine.severe.group_declarations()
+    declared_hospitals = len(severe)
+    declared_groups = sum(len(g) for g in severe.values())
+    ok &= _check("중증신고 추적 병원 > 100", declared_hospitals > 100,
+                 f"{declared_hospitals}곳 · 그룹 신고 {declared_groups:,}건")
+    fresh = [
+        (h, g, d) for h, groups in severe.items() for g, d in groups.items()
+        if not d.age_is_min
+    ]
+    ok &= _check("좌측검열 아닌(추적 중 태어난) 신고 존재", len(fresh) > 0, f"{len(fresh):,}건")
+    if fresh:
+        h, g, d = max(fresh, key=lambda x: x[2].born)
+        age_h = (now - d.born).total_seconds() / 3600
+        print(f"    예시 {h} [{g}] {d.value} — 신고 나이 {age_h:.1f}h")
     return ok
 
 
@@ -119,7 +179,7 @@ def test_hub_math_parity() -> bool:
 
 
 def main() -> None:
-    results = [test_tracker(), test_engine(), test_hub_math_parity()]
+    results = [test_tracker(), test_severe_tracker(), test_engine(), test_hub_math_parity()]
     if all(results):
         print("\n전부 통과.")
     else:

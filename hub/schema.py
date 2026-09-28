@@ -121,6 +121,27 @@ class BedReliabilityInput(BaseModel):
     source: Literal["ai"] = "ai"
 
 
+class SevereGroupDeclaration(BaseModel):
+    """질환군 하나의 현재 중증질환 수용가능 신고 상태 (feature/info의
+    reliability/severe.py — 규칙 기반, 모델 아님)."""
+
+    value: Literal["Y", "불가능"]
+    bornAt: str
+    # True면 info의 추적 시작부터 이 값이었다 — 실제 신고는 더 오래됐을 수
+    # 있어 나이가 하한(좌측검열)이라는 뜻. dashboard는 "최소 X시간 전"으로
+    # 표현해야 한다.
+    ageIsMin: bool = False
+
+
+class SevereDeclarations(BaseModel):
+    """feature/info가 스냅샷 추적으로 알아낸 중증질환 신고의 탄생 시각.
+    E-Gen 응답에는 신고 시각 필드가 없어서 이 값은 info의 추적만이 안다.
+    현재 값이 정보미제공인 그룹은 키가 없다."""
+
+    groups: dict[str, SevereGroupDeclaration] = Field(default_factory=dict)
+    source: Literal["rule"] = "rule"
+
+
 class HospitalInfo(BaseModel):
     hospitalId: str
     name: str
@@ -144,6 +165,8 @@ class HospitalInfo(BaseModel):
     # reliability/(infosurv)의 병상 정보 신뢰도 예측. assessment와 같은 패턴 —
     # 이 필드 없이 오는 구 feature/info 데이터도 그대로 통과한다.
     bedReliability: Optional[BedReliabilityInput] = None
+    # 중증질환 신고 신선도(규칙 기반). 같은 Optional 패턴.
+    severeDeclarations: Optional[SevereDeclarations] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -227,6 +250,25 @@ class BedReliabilityMatch(BaseModel):
     source: Literal["ai"] = "ai"
 
 
+class SevereFreshness(BaseModel):
+    """매칭된 질환군의 중증질환 수용가능 신고가 얼마나 신선한지 — hub가 매칭
+    시점에 계산해 내보내는 설명용 필드(2026-09-28 신설, 규칙 기반).
+
+    ReliabilityInfo(같은 신고를 심평원 대조로 "믿을 만한가" 판정)와 상보적이다
+    — 이쪽은 "그 신고가 언제 적 것인가"를 본다. ruleRemainingSec은 실측된
+    통상 만료 규칙(신고 후 약 9시간, Phase 0 실측 60.1%가 9.0h)에 따른 잔여
+    초로, 0이면서 여전히 신고가 떠 있으면 병원이 갱신을 지속 중이라는 뜻이지
+    신고가 죽었다는 뜻이 아니다. 순위(finalScore)에는 관여하지 않는다.
+    """
+
+    group: str
+    value: Literal["Y", "불가능"]
+    ageSec: float
+    ageIsMin: bool = False
+    ruleRemainingSec: float
+    source: Literal["rule"] = "rule"
+
+
 class HospitalMatch(BaseModel):
     hospitalId: str
     name: str
@@ -242,6 +284,7 @@ class HospitalMatch(BaseModel):
     etaMin: Optional[int] = None
     reliability: Optional[ReliabilityInfo] = None
     bedReliability: Optional[BedReliabilityMatch] = None
+    severeFreshness: Optional[SevereFreshness] = None
 
 
 class HubMatchResult(BaseModel):
