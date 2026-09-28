@@ -1,0 +1,605 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>LiDAR_3D — 안드로이드 웹 촬영</title>
+<style>
+  :root{--bg:#0b0e13;--fg:#e8edf4;--muted:#8b97a8;--accent:#7de3ff;--ok:#6ee7a0;--warn:#ffb020;--bad:#ff6b6b;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,"Noto Sans KR",sans-serif;padding:16px;padding-bottom:40px}
+  h1{font-size:19px;margin:0 0 4px}
+  h2{font-size:15px;margin:22px 0 8px;color:var(--accent)}
+  .sub{color:var(--muted);font-size:13px}
+  .card{background:#131922;border:1px solid #1e2836;border-radius:12px;padding:14px;margin-top:12px}
+  button{width:100%;padding:14px;margin-top:8px;border-radius:10px;border:1px solid #2a3647;
+    background:#1b2431;color:var(--fg);font-size:16px;font-weight:600}
+  button:disabled{opacity:.45}
+  button.go{background:#17492f;border-color:#2c7a52}
+  button.stop{background:#4a1d1d;border-color:#7a2c2c}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #1a2230}
+  .row:last-child{border-bottom:0}
+  .k{color:var(--muted)} .v{font-weight:600;text-align:right}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  canvas{width:100%;border-radius:10px;background:#000;display:block;margin-top:10px;image-rendering:pixelated}
+  #log{white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;color:var(--muted);
+    max-height:200px;overflow:auto;margin-top:8px}
+  .big{font-size:26px;font-weight:700}
+</style>
+
+<h1>안드로이드 웹 촬영</h1>
+<div class="sub">WebXR로 뎁스·포즈·영상을 받아 아이폰 앱과 <b>같은 형식</b>으로 올립니다.<br><b style="color:var(--accent)">빌드 v8</b> — 이 표시가 v3가 아니면 캐시된 옛 화면입니다 (주소 끝에 <code>&amp;v=3</code>을 붙여 새로 여세요).</div>
+
+<div id="err" style="display:none;background:#3a1414;border:1px solid #7a2c2c;border-radius:10px;
+     padding:10px;margin-top:12px;white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace"></div>
+
+<div class="card">
+  <h2 style="margin-top:0">1. 기기 점검</h2>
+  <div class="sub">먼저 이 기기가 무엇을 줄 수 있는지 확인합니다. 여기서 막히면 그 아래는 의미가 없습니다.</div>
+  <div id="probe"></div>
+  <button id="btnProbe">점검하기</button>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">2. 뎁스 확인</h2>
+  <div class="sub"><b>바닥에 누운 사람</b>을 비춰 보세요. 사람 형체가 보이면 쓸 수 있습니다.</div>
+  <div style="display:flex;gap:8px;margin:10px 0;align-items:flex-start">
+    <div style="flex:1;min-width:0">
+      <div class="sub" style="text-align:center;margin-bottom:4px">카메라</div>
+      <video id="cam" autoplay playsinline muted
+             style="width:100%;border-radius:8px;background:#000;display:block"></video>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div class="sub" style="text-align:center;margin-bottom:4px">뎁스</div>
+      <canvas id="dv" width="96" height="128" style="width:100%;border-radius:8px"></canvas>
+    </div>
+  </div>
+  <button id="btnCam">카메라 미리보기 켜기</button>
+  <div class="row"><span class="k">뎁스 해상도</span><span class="v" id="dres">—</span></div>
+  <div class="row"><span class="k">가운데 거리</span><span class="v" id="dmid">—</span></div>
+  <div class="row"><span class="k">거리 분포(5~95%)</span><span class="v" id="drange">—</span></div>
+  <div class="row"><span class="k">유효 화소</span><span class="v" id="dval">—</span></div>
+  <div class="row"><span class="k">트래킹</span><span class="v" id="dtrk">—</span></div>
+  <div class="row"><span class="k">AR 카메라 읽기</span><span class="v" id="dcam">—</span></div>
+  <button id="btnAR" class="go" disabled>AR 세션 시작</button>
+  <button id="btnEnd" class="stop" disabled>AR 종료</button>
+  <div class="sub" id="arHint" style="margin-top:6px"></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">3. 촬영</h2>
+  <div class="row"><span class="k">세션 id</span><span class="v" id="sid">—</span></div>
+  <div class="row"><span class="k">경과</span><span class="v big" id="elapsed">0.0초</span></div>
+  <div class="row"><span class="k">포즈 / 뎁스</span><span class="v" id="cnt">0 / 0</span></div>
+  <button id="btnRec" class="go" disabled>촬영 시작</button>
+  <button id="btnStop" class="stop" disabled>촬영 정지 후 업로드</button>
+  <div class="sub" style="margin-top:6px">AR 세션 중에는 화면 아래 고정 막대로도 조작할 수 있습니다.</div>
+  <div id="log"></div>
+</div>
+
+<div id="bar" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:99;
+     background:rgba(11,14,19,.92);padding:8px;display:none;gap:8px">
+  <button id="bRec" class="go" style="margin:0">촬영 시작</button>
+  <button id="bStop" class="stop" style="margin:0" disabled>정지·업로드</button>
+  <button id="bEnd" style="margin:0">AR 종료</button>
+</div>
+
+<script>
+/* 오류를 화면에 남긴다. 휴대폰에는 개발자 도구가 없어 이게 없으면 원인을 볼 수 없다.
+   ⚠️ 탭이 "중단됨"으로 꺼지는 것은 JS 오류가 아니라 렌더러 죽음(주로 메모리)이다.
+      그 경우 여기에도 안 남으므로, 마지막으로 통과한 지점을 기록해 둔다. */
+window.__step = 'load';
+const mark = s => { window.__step = s;
+  try{ sessionStorage.setItem('cap_step', s + ' @' + new Date().toLocaleTimeString()); }catch{} };
+function showErr(where, e){
+  const d = document.getElementById('err');
+  if (!d) return;
+  d.style.display = 'block';
+  d.textContent += `[${where}] ${e && (e.message || e.reason && e.reason.message || e)}\n`;
+}
+window.addEventListener('error', e => showErr('오류', e.error || e.message));
+window.addEventListener('unhandledrejection', e => showErr('약속 거부', e));
+window.addEventListener('DOMContentLoaded', ()=>{
+  try{
+    const last = sessionStorage.getItem('cap_step');
+    if (last && last !== 'load'){
+      const d = document.getElementById('err');
+      d.style.display = 'block';
+      d.textContent += `이전 실행이 여기서 끊겼습니다: ${last}\n`;
+    }
+  }catch{}
+});
+</script>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const Q = new URLSearchParams(location.search);
+const TOKEN = Q.get('token') || '';
+const withToken = u => TOKEN ? u + (u.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN) : u;
+const log = m => { $('log').textContent += m + '\n'; $('log').scrollTop = 1e9; console.log(m); };
+
+/* ── 1. 점검 ───────────────────────────────────────────────────────────────
+   iOS Safari는 WebXR immersive-ar 자체가 없다. 안드로이드 Chrome만 여기를 통과한다.
+   depth-sensing 은 ARCore Depth API 이고, 기기에 ToF가 없으면 **움직임 기반 추정**이다.
+   그래서 "지원함"과 "쓸 만함"은 다르다 — 2번에서 눈으로 확인해야 한다. */
+const FEATURES = {
+  required: ['depth-sensing'],
+  // ⚠️ dom-overlay 가 없으면 몰입형 AR 에 들어가는 순간 이 페이지의 버튼·뎁스 미리보기가
+  //    전부 사라진다. 화면이 안 움직이는 것처럼 보이고 빠져나올 방법도 안 보인다.
+  optional: ['camera-access', 'local-floor', 'anchors', 'dom-overlay'],
+};
+let probed = null;
+
+async function probe(){
+  const rows = [];
+  const add = (k, ok, v) => rows.push(
+    `<div class="row"><span class="k">${k}</span>`
+    + `<span class="v ${ok===true?'ok':ok===false?'bad':'warn'}">${v}</span></div>`);
+
+  mark('probe:start');
+  const hasXR = !!navigator.xr;
+  add('navigator.xr', hasXR, hasXR ? '있음' : '없음 (iOS Safari는 여기서 끝)');
+  let arOK = false;
+  if (hasXR){
+    mark('probe:isSessionSupported');   // ARCore 초기화가 여기서 일어난다 — 죽는다면 여기다
+    try{
+      arOK = await Promise.race([
+        navigator.xr.isSessionSupported('immersive-ar'),
+        new Promise(r => setTimeout(()=>r('timeout'), 5000)),
+      ]);
+      if (arOK === 'timeout'){ add('immersive-ar 응답', null, '5초 내 응답 없음'); arOK = false; }
+    }catch(e){ showErr('isSessionSupported', e); }
+  }
+  mark('probe:done');
+  add('immersive-ar', arOK, arOK ? '지원' : '미지원');
+  add('WebCodecs / MediaRecorder', !!window.MediaRecorder, window.MediaRecorder ? '있음' : '없음');
+  add('안전한 컨텍스트(HTTPS)', isSecureContext, isSecureContext ? '예' : '아니오 — WebXR 차단됨');
+
+  $('probe').innerHTML = rows.join('');
+  probed = { hasXR, arOK };
+  if (arOK && isSecureContext){
+    $('btnAR').disabled = false;
+    log('점검 통과 — AR 세션을 시작해 뎁스를 확인하세요.');
+  } else {
+    log('이 기기/브라우저로는 웹 촬영을 할 수 없습니다. 안드로이드 Chrome + HTTPS 가 필요합니다.');
+  }
+  mark('idle');
+}
+$('btnProbe').onclick = probe;
+
+/* ── 2·3. AR 세션 ─────────────────────────────────────────────────────────── */
+let session = null, refSpace = null, gl = null, binding = null;
+let recording = false, t0 = 0;
+const poses = [];          // {t, px,py,pz, qx,qy,qz,qw, fx,fy,cx,cy, tracked}
+const depths = [];         // {t, w, h, buf(Float32Array)}
+let depthW = 0, depthH = 0;
+let recorder = null, chunks = [], camStream = null;
+let VID_W = 1280, VID_H = 720;   // 실제 카메라 설정값으로 덮어쓴다
+/* ⚠️ 몰입형 AR 중에는 ARCore 가 카메라를 점유해 getUserMedia 가 프레임을 주지 못한다.
+      실측: 갤럭시 S8 에서 세 번 연속 video.mov 가 비어서 올라왔다.
+      그래서 WebXR 의 camera-access 로 **AR 카메라 텍스처를 직접** 읽는다. */
+let CAM_ACCESS = false, camTried = false, camWhy = '', camCanvas = null, camCtx = null, camFB = null, camPix = null, lastCam = 0;
+
+function grabCamera(frame, view){
+  if (!binding){ camWhy = 'XRWebGLBinding 없음'; return false; }
+  if (!view.camera){ camWhy = 'view.camera 없음 (camera-access 미허용)'; return false; }
+  let tex = null;
+  try{ tex = binding.getCameraImage(view.camera); }
+  catch(e){ camWhy = 'getCameraImage 예외: ' + e.message; return false; }
+  if (!tex){ camWhy = 'getCameraImage 가 빈 값'; return false; }
+  const w = view.camera.width, h = view.camera.height;
+  if (!camCanvas){
+    camCanvas = document.createElement('canvas');
+    camCanvas.width = w; camCanvas.height = h;
+    camCtx = camCanvas.getContext('2d');
+    camFB = gl.createFramebuffer();
+    camPix = new Uint8Array(w*h*4);
+    VID_W = w; VID_H = h;
+    log(`AR 카메라 ${w}x${h}`);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, camFB);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); return false;
+  }
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, camPix);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  // GL 은 아래에서 위로 읽으므로 뒤집어 넣는다
+  const img = camCtx.createImageData(w, h), row = w*4;
+  for (let y=0; y<h; y++) img.data.set(camPix.subarray((h-1-y)*row, (h-y)*row), y*row);
+  camCtx.putImageData(img, 0, 0);
+  camWhy = ''; return true;
+}
+
+const dctx = $('dv').getContext('2d');
+
+function quatFromMatrix(m){                 // 열 우선 4x4 → 쿼터니언
+  const t = m[0]+m[5]+m[10];
+  let x,y,z,w;
+  if (t > 0){ const s = Math.sqrt(t+1)*2; w = .25*s; x = (m[6]-m[9])/s; y = (m[8]-m[2])/s; z = (m[1]-m[4])/s; }
+  else if (m[0] > m[5] && m[0] > m[10]){ const s = Math.sqrt(1+m[0]-m[5]-m[10])*2; w = (m[6]-m[9])/s; x = .25*s; y = (m[1]+m[4])/s; z = (m[8]+m[2])/s; }
+  else if (m[5] > m[10]){ const s = Math.sqrt(1+m[5]-m[0]-m[10])*2; w = (m[8]-m[2])/s; x = (m[1]+m[4])/s; y = .25*s; z = (m[6]+m[9])/s; }
+  else { const s = Math.sqrt(1+m[10]-m[0]-m[5])*2; w = (m[1]-m[4])/s; x = (m[8]+m[2])/s; y = (m[6]+m[9])/s; z = .25*s; }
+  return [x,y,z,w];
+}
+
+/* WebXR 투영행렬에서 fx,fy,cx,cy 를 뽑는다.
+   ⚠️ 아이폰은 ARKit이 **뎁스 해상도 기준** intrinsics를 직접 준다.
+      여기서는 뎁스 버퍼 크기 기준으로 환산해 같은 의미를 맞춘다. */
+function intrinsicsFrom(proj, w, h){
+  return { fx: proj[0]*w/2, fy: proj[5]*h/2,
+           cx: w*(1 - proj[8])/2, cy: h*(1 + proj[9])/2 };
+}
+
+async function startAR(){
+  mark('ar:requestSession');
+  try{
+    session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: Q.get('cam') === 'req'
+        ? FEATURES.required.concat(['camera-access']) : FEATURES.required,
+      optionalFeatures: FEATURES.optional,
+      domOverlay: { root: document.body },
+      depthSensing: { usagePreference: ['cpu-optimized'], dataFormatPreference: ['float32','luminance-alpha'] },
+    });
+  }catch(e){
+    log('AR 세션 실패: ' + e.message
+      + '\n  depth-sensing 을 지원하지 않는 기기일 수 있습니다.');
+    return;
+  }
+  const cvs = document.createElement('canvas');
+  // alpha:true 라야 우리가 아무것도 안 그렸을 때 **카메라 영상이 비쳐 보인다.**
+  gl = cvs.getContext('webgl2', { xrCompatible: true, alpha: true });
+  await gl.makeXRCompatible();
+  session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { alpha: true }) });
+  refSpace = await session.requestReferenceSpace('local');
+  try{ binding = new XRWebGLBinding(session, gl); }catch{ binding = null; }
+  session.addEventListener('end', ()=>{
+    session = null; recording = false;
+    $('btnRec').disabled = true; $('btnStop').disabled = true; $('btnEnd').disabled = true;
+    $('btnAR').disabled = false; $('dtrk').textContent = '종료됨';
+    log('AR 세션 종료');
+  });
+  /* ⚠️ session.enabledFeatures 로 판정하면 안 된다. 구형 Chrome 은 이 속성이 아예 없어
+        (실측: 갤럭시 S8/Android 9 → "목록 없음") 실제로는 되는데도 안 된다고 나온다.
+        그래서 **직접 getCameraImage 를 해 보고** 결과로 판정한다. */
+  try{
+    const en = session.enabledFeatures;
+    log('허용된 기능: ' + (en && en.length ? Array.from(en).join(', ') : '(이 브라우저는 목록을 주지 않음)'));
+  }catch{}
+  CAM_ACCESS = false; camTried = false;
+  log('AR 카메라 읽기를 시도합니다… (2번 칸의 "AR 카메라 읽기" 줄을 보세요)');
+  mark('ar:running');
+  $('btnRec').disabled = false;
+  $('btnEnd').disabled = false;
+  const ov = session.domOverlayState && session.domOverlayState.type;
+  $('arHint').innerHTML = ov
+    ? '<span class="ok">화면 위에 이 버튼들이 그대로 보입니다.</span>'
+    : '<span class="warn">이 기기는 dom-overlay 를 지원하지 않습니다 — '
+      + '몰입 화면에서는 버튼이 안 보입니다. <b>뒤로 가기</b>로 빠져나오세요.</span>';
+  log('AR 세션 시작' + (ov ? ' (dom-overlay: ' + ov + ')' : ' (dom-overlay 없음)'));
+  session.requestAnimationFrame(onFrame);
+}
+$('btnAR').onclick = startAR;
+$('btnEnd').onclick = ()=>{ if (session) session.end(); };
+
+/* 무엇을 비추는지와 뎁스를 **한 화면에서** 나란히 본다.
+   ⚠️ 이게 없으면 "주황 무늬만 보인다"가 센서 문제인지 책상을 비춘 건지 구분이 안 된다.
+      AR 세션이 카메라를 점유하는 기기에서는 실패할 수 있다 — 그때는 로그에 남긴다. */
+let previewStream = null;
+$('btnCam').onclick = async e => {
+  const b = e.currentTarget;
+  if (previewStream){
+    previewStream.getTracks().forEach(t=>t.stop()); previewStream = null;
+    $('cam').srcObject = null; b.textContent = '카메라 미리보기 켜기'; return;
+  }
+  try{
+    previewStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }, audio: false });
+    $('cam').srcObject = previewStream;
+    b.textContent = '카메라 미리보기 끄기';
+    const st = previewStream.getVideoTracks()[0].getSettings();
+    log(`카메라 미리보기 ${st.width}x${st.height}`);
+  }catch(err){
+    log('카메라 미리보기 실패: ' + err.message
+      + ' — AR 세션이 카메라를 쓰고 있으면 동시에 못 열 수 있습니다.');
+  }
+};
+
+/* 뎁스를 미터 단위 Float32Array 로 한 번에 읽는다.
+   ⚠️ 화소마다 getDepthInMeters()를 부르면 160x120에도 19,200번 호출이라 프레임이 밀린다.
+      원시 버퍼가 있으면 그걸 쓰고, 없을 때만 함수 호출로 물러난다. */
+/* 저장용 뎁스 격자. **영상과 같은 화면비**여야 한다.
+   ⚠️ 실측(갤럭시 S8): 뎁스 버퍼는 160x90(가로), 화면과 영상은 480x640(세로)였다.
+      뎁스를 160x90 배열에 담으면 stage1_masks.py 가 세로 영상의 마스크를
+      가로 배열로 줄이면서 **오류 없이 어긋난다**. intrinsics 도 fx/fy 가 3.65배로 벌어진다.
+      그래서 버퍼 크기가 아니라 영상 화면비를 따라 격자를 만든다. */
+let DW = 0, DH = 0;
+function setDepthGrid(){
+  const ar = VID_W / VID_H;                 // 영상 화면비 (세로면 <1)
+  const LONG = 192;                         // 긴 변 (아이폰 256x192 와 비슷한 규모)
+  if (ar >= 1){ DW = LONG; DH = Math.max(2, Math.round(LONG/ar)); }
+  else        { DH = LONG; DW = Math.max(2, Math.round(LONG*ar)); }
+}
+function depthToMeters(info){
+  if (!DW) setDepthGrid();
+  const w = DW, h = DH, out = new Float32Array(w*h);
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++){
+    let m = 0;
+    try{ m = info.getDepthInMeters((x+0.5)/w, (y+0.5)/h); }catch{}
+    out[y*w+x] = (m>0 && m<8) ? m : 0;
+  }
+  return out;
+}
+
+/* 미리보기는 **뷰 좌표계**에서 샘플링한다.
+   ⚠️ 뎁스 버퍼는 화면과 방향이 다를 수 있다(가로로 누운 버퍼 + 세로 화면).
+      info.data 를 그대로 행/열로 그리면 회전·전치되어 **무늬처럼** 보인다.
+      getDepthInMeters(u,v) 는 normDepthBufferFromNormView 를 내부에서 적용하므로
+      방향이 항상 맞는다. 미리보기는 작게 뜨니 느려도 괜찮다. */
+const PW = 96, PH = 128;                 // 세로 화면 비율로 샘플링
+function drawDepth(info){
+  if ($('dv').width !== PW){ $('dv').width = PW; $('dv').height = PH; }
+  const n = PW*PH, mm = new Float32Array(n);
+  let valid = 0;
+  for (let y=0; y<PH; y++) for (let x=0; x<PW; x++){
+    let m = 0;
+    try{ m = info.getDepthInMeters((x+0.5)/PW, (y+0.5)/PH); }catch{}
+    if (m > 0 && m < 8){ mm[y*PW+x] = m; valid++; }
+  }
+  const img = dctx.createImageData(PW, PH);
+  if (valid > 20){
+    // 색 범위를 **실제 분포에 맞춘다.** 0~4m 고정이면 바닥과 누운 사람의
+    // 30cm 차이가 색으로 거의 안 보인다 (주황~노랑만 나오는 이유).
+    const v = Array.from(mm).filter(x=>x>0).sort((a,b)=>a-b);
+    const lo = v[Math.floor(v.length*0.05)], hi = v[Math.floor(v.length*0.95)];
+    const span = Math.max(hi-lo, 0.15);
+    for (let k=0; k<n; k++){
+      const i4 = k*4;
+      if (!mm[k]){ img.data[i4+3] = 255; continue; }
+      const t = Math.min(Math.max((mm[k]-lo)/span, 0), 1);
+      // 가까움=흰색 … 멀어질수록 파랑. 단조로워야 형체가 눈에 들어온다.
+      img.data[i4]   = Math.round(255*(1-t));
+      img.data[i4+1] = Math.round(255*(1-t*0.7));
+      img.data[i4+2] = Math.round(60 + 195*t);
+      img.data[i4+3] = 255;
+    }
+    const med = v[v.length>>1];
+    $('dmid').textContent = `${mm[(PH>>1)*PW + (PW>>1)].toFixed(2)} m`;
+    $('drange').textContent = `${lo.toFixed(2)} ~ ${hi.toFixed(2)} m (중앙 ${med.toFixed(2)})`;
+  } else {
+    for (let k=0;k<n;k++) img.data[k*4+3] = 255;
+    $('dmid').textContent = '없음'; $('drange').textContent = '—';
+  }
+  dctx.putImageData(img, 0, 0);
+  $('dres').textContent = `${info.width} × ${info.height}`
+    + (info.dataFormat ? ` (${info.dataFormat})` : '');
+  $('dval').textContent = `${(valid/n*100).toFixed(0)}%`;
+  return { w: info.width, h: info.height };
+}
+
+let lastDraw = 0, lastDepth = 0;
+function onFrame(t, frame){
+  if (!session) return;
+  session.requestAnimationFrame(onFrame);
+  // 우리 레이어를 투명하게 지워야 뒤의 카메라 영상이 보인다.
+  const layer = session.renderState.baseLayer;
+  if (layer){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  }
+  const pose = frame.getViewerPose(refSpace);
+  $('dtrk').textContent = pose ? '정상' : '끊김';
+  if (!pose) return;
+  const view = pose.views[0];
+  let info = null;
+  try{ info = frame.getDepthInformation(view); }catch{}
+  if (!info) return;
+
+  if (t - lastDraw > 200){ const d = drawDepth(info); depthW = d.w; depthH = d.h; lastDraw = t; }
+
+  if (!recording) return;
+  const ts = (performance.now() - t0) / 1000;
+  const m = view.transform.matrix;
+  const q = quatFromMatrix(m);
+  if (!DW) setDepthGrid();
+  const K = intrinsicsFrom(view.projectionMatrix, DW, DH);
+  poses.push({ t: ts, px: m[12], py: m[13], pz: m[14],
+               qx: q[0], qy: q[1], qz: q[2], qw: q[3], ...K });
+
+  // 녹화 전에도 계속 시도해 **되는지 안 되는지 화면에 보여준다.**
+  if (t - lastCam >= (recording ? 100 : 700)){
+    lastCam = t;
+    const ok = grabCamera(frame, view);
+    if (ok && !CAM_ACCESS){ CAM_ACCESS = true; log('AR 카메라 읽기 성공 ✅ — 이걸로 녹화합니다'); }
+    if (!ok && !camTried){ camTried = true; log('AR 카메라 읽기 실패 — ' + camWhy); }
+    $('dcam').textContent = ok ? `성공 ${VID_W}x${VID_H}` : ('실패 — ' + (camWhy || '원인 불명'));
+    $('dcam').className = 'v ' + (ok ? 'ok' : 'bad');
+  }
+  // 뎁스는 15Hz 로만 뜬다 (아이폰과 같은 주기). 매 프레임 뜨면 화면이 밀리고 용량도 커진다.
+  if (t - lastDepth >= 66){
+    lastDepth = t;
+    const dm = depthToMeters(info);
+    depths.push({ t: ts, w: DW, h: DH, buf: dm });
+  }
+  $('cnt').textContent = `${poses.length} / ${depths.length}`;
+  $('elapsed').textContent = ts.toFixed(1) + '초';
+}
+
+/* ── 촬영 시작 / 정지 ─────────────────────────────────────────────────────── */
+function sessionId(){
+  const d = new Date();
+  const p = n => String(n).padStart(2,'0');
+  return `session_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}w${p(d.getHours())}${p(d.getMinutes())}_Android`;
+}
+let SID = '';
+
+$('btnRec').onclick = async ()=>{
+  SID = sessionId(); $('sid').textContent = SID;
+  poses.length = 0; depths.length = 0; chunks = [];
+  // 색 영상 — WebXR 카메라 텍스처를 직접 녹화할 수 없어 getUserMedia 후면 카메라를 쓴다.
+  // ⚠️ 그래서 영상 프레임과 뎁스 프레임의 시각이 정확히 같지 않다 (아래 보고 참고).
+  try{
+    if (CAM_ACCESS){
+      // 첫 프레임이 들어와 캔버스가 만들어질 때까지 잠깐 기다린다
+      for (let i=0; i<40 && !camCanvas; i++) await new Promise(r=>setTimeout(r,50));
+      if (!camCanvas) throw new Error('AR 카메라 이미지를 받지 못했습니다');
+      camStream = camCanvas.captureStream(10);
+      log(`AR 카메라 캔버스 녹화 ${VID_W}x${VID_H}`);
+    } else if (previewStream && previewStream.getVideoTracks().length){
+      // 미리보기가 이미 카메라를 잡고 있다. 한 번 더 열면 기기에 따라 실패한다.
+      camStream = previewStream;
+      const s0 = camStream.getVideoTracks()[0].getSettings();
+      VID_W = s0.width || 1280; VID_H = s0.height || 720;
+      log(`미리보기 스트림 재사용 ${VID_W}x${VID_H}`);
+    } else {
+    /* ⚠️ 영상 화면비를 **뎁스와 같게** 맞춘다.
+       stage1_masks.py 는 sx=뎁스폭/영상폭, sy=뎁스높이/영상높이 로 마스크를 줄인다.
+       뎁스가 160x90(16:9)인데 영상이 4:3이면 화각이 달라 마스크가 어긋난 채로
+       **오류 없이 조용히 틀린 3D**가 나온다. (갤럭시 실측: 뎁스 160x90) */
+    const ar = (depthW && depthH) ? depthW/depthH : 16/9;
+    const vw = 1280, vh = Math.round(vw/ar/2)*2;
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' },
+               width: { ideal: vw }, height: { ideal: vh },
+               aspectRatio: { ideal: ar } },
+      audio: false });
+    const st = camStream.getVideoTracks()[0].getSettings();
+    VID_W = st.width || vw; VID_H = st.height || vh;
+    log(`영상 ${VID_W}x${VID_H} (뎁스 ${depthW}x${depthH}, 화면비 ${(VID_W/VID_H).toFixed(2)} vs ${ar.toFixed(2)})`);
+    if (Math.abs(VID_W/VID_H - ar) > 0.05)
+      log('  ⚠️ 화면비가 다릅니다 — 마스크와 뎁스가 어긋날 수 있습니다');
+    }
+    const mime = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm']
+      .find(m => MediaRecorder.isTypeSupported(m)) || '';
+    recorder = new MediaRecorder(camStream, mime ? { mimeType: mime, videoBitsPerSecond: 6e6 } : {});
+    recorder.ondataavailable = e => {
+      if (e.data.size) chunks.push(e.data);
+      if (chunks.length === 1) log('  영상 데이터 수신 시작 ✅');
+    };
+    recorder.start(1000);
+    log('영상 녹화 시작: ' + (mime || '기본'));
+  }catch(e){ log('카메라 실패(영상 없이 계속): ' + e.message); }
+  setDepthGrid();
+  log(`뎁스 저장 격자 ${DW}x${DH} (영상 ${VID_W}x${VID_H}, 원본 버퍼 ${depthW}x${depthH})`);
+  t0 = performance.now(); recording = true;
+  $('btnRec').disabled = true; $('btnStop').disabled = false;
+};
+
+$('btnStop').onclick = async ()=>{
+  recording = false; $('btnStop').disabled = true;
+  if (recorder && recorder.state !== 'inactive'){
+    await new Promise(r => { recorder.onstop = r; recorder.stop(); });
+  }
+  if (camStream && camStream !== previewStream) camStream.getTracks().forEach(t => t.stop());
+  log(`수집 완료 — 포즈 ${poses.length}, 뎁스 ${depths.length}`);
+  await upload();
+  $('btnRec').disabled = false;
+};
+
+/* ── 아이폰과 같은 형식으로 묶어 업로드 ───────────────────────────────────── */
+async function post(path, form){
+  const r = await fetch(withToken(path), { method:'POST', body: form });
+  if (!r.ok) throw new Error(`${path} → ${r.status} ${(await r.text()).slice(0,120)}`);
+  return r.json();
+}
+async function put(name, blob){
+  const f = new FormData(); f.append('session_id', SID); f.append('file', blob, name);
+  const j = await post('/session/upload', f);
+  log(`  올림 ${name} ${(j.size/1e6).toFixed(1)}MB`);
+}
+
+async function upload(){
+  try{
+    const f0 = new FormData(); f0.append('session_id', SID);
+    await post('/session/start', f0);
+    log('세션 시작: ' + SID);
+
+    // arkit_pose.csv — 열 이름을 아이폰과 똑같이 맞춘다 (파이프라인이 이 이름으로 읽는다)
+    let csv = 'frame_index,timestamp,tx,ty,tz,qx,qy,qz,qw,tracking_state,tracking_state_reason,fx,fy,cx,cy\n';
+    poses.forEach((p,i)=>{ csv += `${i},${p.t.toFixed(6)},${p.px},${p.py},${p.pz},`
+      + `${p.qx},${p.qy},${p.qz},${p.qw},2,,${p.fx},${p.fy},${p.cx},${p.cy}\n`; });
+    await put('arkit_pose.csv', new Blob([csv], {type:'text/csv'}));
+
+    let vcsv = 'frame_index,timestamp\n';
+    poses.forEach((p,i)=>{ vcsv += `${i},${p.t.toFixed(6)}\n`; });
+    await put('video_frames.csv', new Blob([vcsv], {type:'text/csv'}));
+
+    // depth.zip — 무압축(store) zip 을 직접 만든다. 라이브러리를 안 쓰기 위해서다.
+    const files = [];
+    let idx = 'depth_index,timestamp,video_frame_index,depth_file,conf_file,smooth_depth_file,smooth_conf_file\n';
+    depths.forEach((d,i)=>{
+      const nm = `depth_${String(i).padStart(6,'0')}.bin`;
+      files.push({ name: nm, data: new Uint8Array(d.buf.buffer.slice(0)) });
+      idx += `${i},${d.t.toFixed(6)},${i},${nm},,,\n`;
+    });
+    files.push({ name:'index.csv', data: new TextEncoder().encode(idx) });
+    await put('depth.zip', makeZip(files));
+
+    if (chunks.length){
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      // ⚠️ 이름은 video.mov 지만 내용은 WebM 이다. 서버의 OpenCV(FFMPEG 백엔드)가
+      //    확장자가 아니라 내용을 보고 열기 때문에 그대로 동작한다 (맥에서 실측 확인).
+      await put('video.mov', blob);
+    } else {
+      log('  ⚠️ 영상이 없습니다 — YOLO 를 못 돌려 사람 검출이 아예 안 됩니다.');
+      log('     [카메라 미리보기 켜기] 를 먼저 눌렀는지 확인하세요.');
+    }
+
+    const meta = {
+      device_model: navigator.userAgent.slice(0,80),
+      capture_mode: 'webxr-android',
+      depth_width: DW, depth_height: DH,
+      depth_buffer_native: `${depthW}x${depthH}`,
+      video_frame_width: VID_W, video_frame_height: VID_H,
+      arkit_timestamp_type: 'performance.now-relative-seconds',
+      arkit_pose_unit: 'meters',
+      note: 'WebXR(ARCore) 촬영. 아이폰 ARKit 세션과 센서가 다르다.',
+    };
+    await put('metadata.json', new Blob([JSON.stringify(meta,null,1)], {type:'application/json'}));
+
+    const f1 = new FormData(); f1.append('session_id', SID);
+    await post('/session/stop', f1);
+    log('업로드 완료 ✅  맥 뷰어에서 [사람 찾기]를 누르세요.');
+  }catch(e){ log('업로드 실패: ' + e.message); }
+}
+
+/* 고정 막대 — 몰입 화면에서 아래로 스크롤하지 않아도 촬영을 조작할 수 있게 한다. */
+const bar = $('bar');
+function syncBar(){
+  bar.style.display = session ? 'flex' : 'none';
+  $('bRec').disabled = $('btnRec').disabled;
+  $('bStop').disabled = $('btnStop').disabled;
+}
+$('bRec').onclick = ()=> $('btnRec').click();
+$('bStop').onclick = ()=> $('btnStop').click();
+$('bEnd').onclick = ()=> $('btnEnd').click();
+setInterval(syncBar, 400);
+
+/* 무압축 ZIP (store). 뎁스는 float32 라 압축 이득이 적고, 라이브러리 의존을 피한다. */
+function makeZip(files){
+  const enc = new TextEncoder(); const parts = []; const central = [];
+  let off = 0;
+  const crcTable = (()=>{ const t = new Uint32Array(256);
+    for (let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c = c&1 ? 0xEDB88320^(c>>>1) : c>>>1; t[n]=c>>>0; }
+    return t; })();
+  const crc32 = u => { let c = 0xFFFFFFFF;
+    for (let i=0;i<u.length;i++) c = crcTable[(c ^ u[i]) & 0xFF] ^ (c>>>8);
+    return (c ^ 0xFFFFFFFF) >>> 0; };
+  const u16 = n => [n&255, (n>>8)&255];
+  const u32 = n => [n&255, (n>>8)&255, (n>>16)&255, (n>>>24)&255];
+  for (const f of files){
+    const nb = enc.encode(f.name); const c = crc32(f.data);
+    const lh = new Uint8Array([...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0), ...u32(c), ...u32(f.data.length), ...u32(f.data.length),
+      ...u16(nb.length), ...u16(0), ...nb]);
+    parts.push(lh, f.data);
+    central.push(new Uint8Array([...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0), ...u32(c), ...u32(f.data.length), ...u32(f.data.length),
+      ...u16(nb.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(off), ...nb]));
+    off += lh.length + f.data.length;
+  }
+  const cdSize = central.reduce((a,b)=>a+b.length, 0);
+  const end = new Uint8Array([...u32(0x06054b50), ...u16(0), ...u16(0),
+    ...u16(files.length), ...u16(files.length), ...u32(cdSize), ...u32(off), ...u16(0)]);
+  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+}
+</script>

@@ -1,4 +1,5 @@
 {
+  "type": "match_result",
   "caseId": "case-DrRomantic3v3",
   "patientInfo": {
     "injuryStatus": [
@@ -32,7 +33,12 @@
       "etaMin": null,
       "reliability": null,
       "bedReliability": null,
-      "severeFreshness": null
+      "severeFreshness": null,
+      "finalScore": 0.714,
+      "travelMin": 1.8,
+      "travelBasis": "estimate",
+      "demoteReasons": [],
+      "bedDataStale": true
     },
     {
       "hospitalId": "H001",
@@ -52,7 +58,12 @@
       "etaMin": null,
       "reliability": null,
       "bedReliability": null,
-      "severeFreshness": null
+      "severeFreshness": null,
+      "finalScore": 0.656102,
+      "travelMin": 3.0,
+      "travelBasis": "estimate",
+      "demoteReasons": [],
+      "bedDataStale": true
     },
     {
       "hospitalId": "H002",
@@ -72,9 +83,20 @@
       "etaMin": null,
       "reliability": null,
       "bedReliability": null,
-      "severeFreshness": null
+      "severeFreshness": null,
+      "finalScore": 0.310342,
+      "travelMin": 5.5,
+      "travelBasis": "estimate",
+      "demoteReasons": [],
+      "bedDataStale": true
     }
   ],
   "source": "rule",
-  "ambulanceName": null
+  "ambulanceName": null,
+  "apid": null,
+  "ambulanceGps": {
+    "lat": 35.18,
+    "lng": 128.108
+  },
+  "ambulanceGpsFallback": false
 }

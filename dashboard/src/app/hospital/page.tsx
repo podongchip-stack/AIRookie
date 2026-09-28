@@ -172,7 +172,11 @@ function HospitalDashboardContent() {
         </div>
         </div>
 
-        <MapPanel hospital={selected?.hospital ?? null} />
+        <MapPanel
+          hospital={selected?.hospital ?? null}
+          caseId={selected?.result.caseId ?? null}
+          ambulanceGps={selected?.result.ambulanceGps ?? null}
+        />
       </main>
 
       <p

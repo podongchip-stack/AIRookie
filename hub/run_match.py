@@ -14,7 +14,13 @@ from pathlib import Path
 import bed_reliability
 import decision_log
 import delivery
-from hub_engine import _ASSESSMENT_GROUPS, BED_OVERLAY_TTL_MIN, SEVERE_EXPIRY_RULE_SEC, HubEngine
+from hub_engine import (
+    _ASSESSMENT_GROUPS,
+    BED_OVERLAY_TTL_MIN,
+    CASE_RETENTION_MIN,
+    SEVERE_EXPIRY_RULE_SEC,
+    HubEngine,
+)
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -238,8 +244,15 @@ def main() -> None:
     print("  [확인] AmbulanceInfo 등록·조회, (caseId -> apid) 매핑 모두 정상 동작")
 
     test_declared_no_demotion()
+    test_case_eviction()
     test_bed_reliability()
     test_severe_freshness()
+    test_bed_full_and_rejected_ranking()
+    test_travel_time_ranking()
+    test_gps_fallback_and_message_type()
+    test_refresh_case()
+    test_state_roundtrip()
+    test_decision_log_chain()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -310,6 +323,71 @@ def test_declared_no_demotion() -> None:
     print("  [확인] D001이 거리 1위·진료과 동점임에도 declared_no라서 맨 뒤로 밀림 (specialtyMatch 값 자체는 안 바뀜)")
 
 
+def test_case_eviction() -> None:
+    """이송이 확정된 지 CASE_RETENTION_MIN이 지난 사건은 인메모리 캐시에서
+    걷어내지만(무한 누적 방지), 진행 중이거나 아직 확정 전인 사건은 그대로
+    남겨 다중 사건 격리·따라잡기(_send_catchup)를 깨지 않는다.
+    """
+    print("\n=== 사건 캐시 정리 확인: 오래 전 확정된 사건만 비우고 진행 중 사건은 남긴다 ===")
+    engine = HubEngine()
+
+    hospital = HospitalInfo(
+        hospitalId="E001", name="[테스트] 캐시 정리용 병원",
+        gps=GpsPoint(lat=35.1810, lng=128.1090), availableBedCount=5, nightDutyAvailable=True,
+        specialties=[Specialty(department="응급의학과", doctorCount=1)],
+        updatedAt="2026-09-10T00:00:00Z",
+    )
+    engine.update_hospital_info(hospital)
+
+    def _voice(case_id: str) -> VoiceCallSummaryMessage:
+        return VoiceCallSummaryMessage(
+            caseId=case_id,
+            transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+            summary=VoiceSummary(
+                patient="50대 남성", mechanism="복통", symptoms=["복통"],
+                treatment=["산소 공급"], severity_tag="medium",
+            ),
+            source="ai",
+        )
+
+    gps = GpsPoint(lat=35.1800, lng=128.1080)
+    old_case, live_case = "case-evict-old", "case-evict-live"
+
+    # 1) 오래된 사건: 매칭 → 확정 → 확정 시각을 CASE_RETENTION_MIN+5분 과거로 강제
+    engine.process_voice_summary(_voice(old_case), gps, max_zone=1)
+    engine.apply_approval_action(ApprovalAction(
+        caseId=old_case, action="final_approval", hospital_id="E001",
+        actor="paramedic", timestamp="2026-09-10T00:00:00Z",
+    ))
+    assert old_case in engine._case_confirmed_at, "final_approval인데 확정 시각이 기록되지 않았다"
+    engine._case_confirmed_at[old_case] = datetime.now(timezone.utc) - timedelta(minutes=CASE_RETENTION_MIN + 5)
+
+    # 2) 진행 중 사건: 매칭만 (확정 안 함)
+    engine.process_voice_summary(_voice(live_case), gps, max_zone=1)
+
+    # 3) 아무 사건이나 새로 처리되면 진입 시점에 정리가 돈다
+    engine.process_voice_summary(_voice("case-evict-trigger"), gps, max_zone=1)
+
+    assert engine.get_case_result(old_case) is None, "확정된 지 오래된 사건의 매칭 결과 캐시가 안 지워졌다"
+    assert old_case not in engine._case_voice, "오래된 사건의 voice 요약 캐시가 안 지워졌다"
+    assert any(k[0] == old_case for k in engine._approval_status), (
+        "승인 상태는 멱등성 가드용이라 정리하면 안 된다 — 중복 final_approval 시 병상이 두 번 깎인다"
+    )
+    assert engine.get_case_result(live_case) is not None, "아직 확정 전인 진행 중 사건이 잘못 지워졌다"
+    print(f"  [확인] {CASE_RETENTION_MIN}분 지난 확정 사건({old_case})의 큰 캐시는 제거, 승인 상태(멱등성)는 유지, 진행 중 사건({live_case})은 유지")
+
+    # 오래된 사건에 중복 final_approval이 와도 병상이 또 깎이면 안 된다 (멱등성 유지 확인)
+    engine.apply_approval_action(ApprovalAction(
+        caseId=old_case, action="final_approval", hospital_id="E001",
+        actor="paramedic", timestamp="2026-09-10T02:00:00Z",
+    ))
+    overlay_count = len(engine._bed_overlay.get("E001", []))
+    assert overlay_count == 1, (
+        f"오래된 확정 사건에 중복 final_approval이 왔는데 병상 오버레이가 {overlay_count}개다 (1개여야 함)"
+    )
+    print("  [확인] 캐시 정리 후에도 중복 final_approval은 멱등 — 병상이 두 번 안 깎임")
+
+
 def test_bed_reliability() -> None:
     """feature/info가 bedReliability(infosurv 병상 정보 신뢰도 예측)를 실어
     보내면, hub가 매칭 시점의 authority(지금 유효 확률)·rArrive(도착 시점
@@ -378,8 +456,11 @@ def test_bed_reliability() -> None:
     assert b2.ttlSec == 0.0 or b2.authority >= bed_reliability.AUTHORITY_TTL_THRESHOLD, (
         "authority가 임계(0.8) 아래인데 ttl이 남아 있으면 안 된다"
     )
-    expected_horizon = matches["B001"].distanceKm / bed_reliability.AVG_AMBULANCE_SPEED_KMH * 3600.0
-    assert abs(b1.horizonSec - expected_horizon) < 1.0, "horizonSec은 거리/평균속도에서 나와야 한다"
+    # 도착 시점(horizon)은 순위에 쓴 이동 시간과 같아야 한다(2026-09-28). 카카오 키가 없는
+    # 테스트라 기본 추정(직선 1.5분/km = 예전 40km/h 가정과 같은 값)이 쓰인다.
+    expected_horizon = matches["B001"].travelMin * 60.0
+    assert abs(b1.horizonSec - expected_horizon) < 6.0, "horizonSec은 순위에 쓴 이동 시간(travelMin)과 같아야 한다"
+    assert matches["B001"].travelBasis == "estimate", "카카오 키가 없으면 이동 시간은 추정치여야 한다"
     order_without_demote = [h.hospitalId for h in result.hospitals]
     print(f"  [확인] 신선한 값 authority({b1.authority}) > 묵은 값 authority({b2.authority}), "
           f"rArrive ≤ authority, 구 데이터는 None 통과 (순위 불변: {order_without_demote})")
@@ -459,6 +540,235 @@ def test_severe_freshness() -> None:
         "만료 규칙 경과분은 잔여 0 + 좌측검열 플래그가 유지돼야 한다"
     )
     print("  [확인] 신고 나이·9h 규칙 잔여 계산, 좌측검열 플래그, 구 데이터 None 통과 전부 정상")
+
+
+# ── 2026-09-28 hub 정비 검증 ──────────────────────────────────────────────────
+
+_TEST_GPS = GpsPoint(lat=35.1800, lng=128.1080)
+_shared_engine: HubEngine | None = None
+
+
+def _engine() -> HubEngine:
+    """임베딩 모델을 매 테스트마다 다시 올리지 않게 matcher만 공유한 새 엔진."""
+    global _shared_engine
+    if _shared_engine is None:
+        _shared_engine = HubEngine()
+        return _shared_engine
+    return HubEngine(specialty_matcher=_shared_engine._matcher)
+
+
+def _hospital(hid: str, name: str, lat: float, lng: float, beds: int, *, beds_by_type=None,
+              updated_at: str | None = None, bed_rel: BedReliabilityInput | None = None) -> HospitalInfo:
+    return HospitalInfo(
+        hospitalId=hid, name=name, gps=GpsPoint(lat=lat, lng=lng), availableBedCount=beds,
+        nightDutyAvailable=True, specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt=updated_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        bedsByType=beds_by_type, bedReliability=bed_rel,
+    )
+
+
+def _voice(case_id: str, raw_text: str = "x") -> VoiceCallSummaryMessage:
+    return VoiceCallSummaryMessage(
+        caseId=case_id,
+        transcript=VoiceTranscript(raw_text=raw_text, filtered_text=raw_text),
+        summary=VoiceSummary(
+            patient="50대 남성", mechanism="교통사고 흉부 충격",
+            symptoms=["호흡 곤란"], treatment=["산소 공급"], severity_tag="high",
+        ),
+        source="ai",
+    )
+
+
+def _action(case_id: str, action: str, hospital_id: str) -> ApprovalAction:
+    return ApprovalAction(
+        caseId=case_id, action=action, hospital_id=hospital_id,
+        actor="paramedic" if action == "final_approval" else "hospital",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def test_bed_full_and_rejected_ranking() -> None:
+    """확인된 만실은 뒤로, 미상·오래된 값은 그대로, 거절한 병원은 맨 뒤, 승인한 병원은 만실이어도
+    안 내린다. 승인 액션 뒤 캐시도 재정렬돼야 한다."""
+    print("\n=== 만실·거절 순위 확인: 확인된 만실은 뒤로, 미상·오래된 값은 유지, 거절은 맨 뒤 ===")
+    engine = _engine()
+    three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(timespec="seconds")
+    for h in (
+        _hospital("F001", "[테스트] 가장 가까움, 확인된 만실", 35.1805, 128.1085, 0, beds_by_type={"ER_ADULT": 0}),
+        _hospital("F002", "[테스트] 만실이지만 3일 묵은 값", 35.1850, 128.1120, 0, beds_by_type={"ER_ADULT": 0},
+                  updated_at=three_days_ago),
+        _hospital("F003", "[테스트] 병상 미상", 35.1900, 128.1160, 0),
+        _hospital("F004", "[테스트] 가장 멂, 병상 있음", 35.1950, 128.1200, 3, beds_by_type={"ER_ADULT": 3}),
+    ):
+        engine.update_hospital_info(h)
+
+    case_id = "case-bed-full-test"
+    result = engine.process_voice_summary(_voice(case_id), _TEST_GPS, max_zone=1)
+    order = [h.hospitalId for h in result.hospitals]
+    by_id = {h.hospitalId: h for h in result.hospitals}
+    print(f"  순위: {order} / F001 내림 이유 {by_id['F001'].demoteReasons}, F002 오래된 값 {by_id['F002'].bedDataStale}")
+    assert order == ["F002", "F003", "F004", "F001"], "확인된 만실(F001)만 뒤로 가고 나머지는 거리 순이어야 한다"
+    assert by_id["F001"].demoteReasons == ["beds_full"]
+    assert by_id["F002"].bedDataStale and not by_id["F002"].demoteReasons, "오래된 값의 0은 만실로 믿으면 안 된다"
+    assert by_id["F003"].bedCountUnknown and not by_id["F003"].demoteReasons, "미상은 순위를 막으면 안 된다"
+
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "F001"))
+    engine.apply_approval_action(_action(case_id, "hospital_reject", "F002"))
+    patched = engine.get_case_result(case_id)
+    order = [h.hospitalId for h in patched.hospitals]
+    print(f"  F001 승인·F002 거절 후 캐시 순위: {order}")
+    assert order[0] == "F001", "병원이 승인했으면 병상 0이어도 내리지 않는다(명시적 응답 우선)"
+    assert order[-1] == "F002" and patched.hospitals[-1].demoteReasons == ["rejected"], "거절한 병원은 맨 뒤"
+    print("  [확인] 확인된 만실만 뒤로, 승인 응답은 만실 판정보다 우선, 거절은 캐시에서도 즉시 맨 뒤로 재정렬")
+
+
+class _FakeRouter:
+    """routing.KakaoRouting 대역. hospitalId -> (초, 미터)만 돌려준다."""
+
+    def __init__(self, etas: dict[str, tuple[int, int]]) -> None:
+        self._etas = etas
+
+    def etas(self, origin, destinations):  # noqa: ANN001
+        return {hid: v for hid, v in self._etas.items() if hid in destinations}
+
+
+def test_travel_time_ranking() -> None:
+    """순위가 직선거리가 아니라 이동 시간(ETA 우선)으로 매겨지고, ETA 없는 먼 병원은 같은
+    사건의 ETA로 보정한 분/km로 추정하며, 20km 밖에서도 거리 차이가 살아 있어야 한다."""
+    print("\n=== 이동 시간 순위 확인: ETA 우선, 없는 병원은 보정 추정, 20km 밖도 구분 ===")
+    from scoring import TRAVEL_HALF_LIFE_MIN, travel_score
+
+    assert travel_score(25 * 1.5) > travel_score(40 * 1.5) > 0.0, "20km 밖 병원끼리도 가까운 쪽 점수가 높아야 한다"
+    assert abs(travel_score(TRAVEL_HALF_LIFE_MIN) - 0.5) < 1e-9
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    engine = HubEngine(
+        specialty_matcher=_engine()._matcher,
+        router=_FakeRouter({"R001": (20 * 60, 5000), "R002": (8 * 60, 4000)}),
+    )
+    for h in (
+        _hospital("R001", "[테스트] 직선 가깝지만 강 건너 (ETA 20분)", 35.1980, 128.1080, 3, beds_by_type={"ER_ADULT": 3}),
+        _hospital("R002", "[테스트] 직선 조금 멀지만 길 좋음 (ETA 8분)", 35.1800, 128.1520, 3, beds_by_type={"ER_ADULT": 3},
+                  bed_rel=BedReliabilityInput(predictedSurvivalSec=2400.0, bornAt=now_iso, authorityAtSend=1.0,
+                                              ttlSec=2400.0, modelTag="test")),
+        _hospital("R003", "[테스트] 반경 밖, ETA 없음", 35.1800, 128.2400, 3, beds_by_type={"ER_ADULT": 3}),
+    ):
+        engine.update_hospital_info(h)
+
+    result = engine.process_voice_summary(_voice("case-travel-test"), _TEST_GPS, max_zone=3)
+    by_id = {h.hospitalId: h for h in result.hospitals}
+    for h in result.hospitals:
+        print(f"  {h.hospitalId} 직선 {h.distanceKm}km → 이동 {h.travelMin}분({h.travelBasis}), 점수 {h.finalScore}")
+    assert [h.hospitalId for h in result.hospitals][:2] == ["R002", "R001"], "직선거리가 아니라 ETA로 앞서야 한다"
+    assert by_id["R001"].travelBasis == by_id["R002"].travelBasis == "eta"
+    assert by_id["R003"].travelBasis == "estimate" and by_id["R003"].etaMin is None
+    ratios = sorted([20 / by_id["R001"].distanceKm, 8 / by_id["R002"].distanceKm])
+    expected = by_id["R003"].distanceKm * (sum(ratios) / 2)
+    assert abs(by_id["R003"].travelMin - expected) < 0.5, "ETA 없는 병원은 같은 사건 ETA 비율 중앙값으로 추정해야 한다"
+    assert abs(by_id["R002"].bedReliability.horizonSec - 8 * 60) < 1.0, "rArrive의 도착 시점은 ETA여야 한다"
+    print("  [확인] ETA 기준 순위, ETA 없는 병원은 보정 추정, 병상 신뢰도 도착 시점 = ETA")
+
+
+def test_gps_fallback_and_message_type() -> None:
+    print("\n=== 위치 대체 표시·메시지 구분자 확인 ===")
+    engine = _engine()
+    engine.update_hospital_info(_hospital("G001", "[테스트] 병원", 35.1810, 128.1090, 2, beds_by_type={"ER_ADULT": 2}))
+    result = engine.process_voice_summary(_voice("case-gps-fallback"), _TEST_GPS, max_zone=1, gps_fallback=True)
+    dumped = result.model_dump()
+    assert dumped["type"] == "match_result", "HubMatchResult에 type 구분자가 실려야 한다"
+    assert dumped["ambulanceGpsFallback"] is True, "기본 좌표로 대체한 사실이 결과에 실려야 한다"
+    normal = engine.process_voice_summary(_voice("case-gps-normal"), _TEST_GPS, max_zone=1)
+    assert normal.ambulanceGpsFallback is False
+    print("  [확인] type=match_result, 대체 좌표 사건만 ambulanceGpsFallback=True")
+
+
+def test_refresh_case() -> None:
+    """진행 중 사건 재계산: 바뀐 게 없으면 None, 병상이 바뀌면 새 결과 + 의사결정 로그."""
+    print("\n=== 주기적 재계산 확인: 변화 없으면 조용히, 병상이 바뀌면 다시 보냄 ===")
+    engine = _engine()
+    engine.update_hospital_info(_hospital("P001", "[테스트] 병원", 35.1810, 128.1090, 4, beds_by_type={"ER_ADULT": 4}))
+    case_id = "case-refresh-test"
+    engine.process_voice_summary(_voice(case_id), _TEST_GPS, max_zone=1)
+    assert engine.get_active_case_ids() == [case_id]
+    assert engine.refresh_case(case_id, _TEST_GPS) is None, "아무것도 안 바뀌었으면 다시 보낼 필요 없다"
+
+    engine.update_hospital_info(_hospital("P001", "[테스트] 병원", 35.1810, 128.1090, 1, beds_by_type={"ER_ADULT": 1}))
+    updated = engine.refresh_case(case_id, _TEST_GPS)
+    assert updated is not None and updated.hospitals[0].availableBedCount == 1, "병상이 바뀌면 새 결과를 돌려줘야 한다"
+    with decision_log.LOG_PATH.open(encoding="utf-8") as f:
+        last = [line for line in f if line.strip()][-1]
+    assert '"eventType": "hub_match_refreshed"' in last, "순위·병상이 바뀐 재계산은 의사결정 로그에 남아야 한다"
+    print("  [확인] 변화 없음 → None, 병상 4→1 → 재전송 대상 + hub_match_refreshed 로그")
+
+
+def test_state_roundtrip() -> None:
+    """디스크 저장·복구: 병원·승인 상태·병상 오버레이·사건이 살아나고, 통화 원문은 저장 안 됨."""
+    print("\n=== 상태 저장·복구 확인: 재시작해도 병원·승인·병상 차감이 남고 통화 원문은 안 남음 ===")
+    import json
+
+    engine = _engine()
+    engine.update_hospital_info(_hospital("S001", "[테스트] 병원", 35.1810, 128.1090, 5, beds_by_type={"ER_ADULT": 5}))
+    engine.update_ambulance_info(AmbulanceInfo(apid="A9", name="구급 9호차", gps=_TEST_GPS, voicePort=5002,
+                                               updatedAt="2026-09-28T00:00:00Z"))
+    case_id = "case-state-test"
+    secret = "환자 홍길동 010-0000-0000 통화 원문"
+    engine.register_case(case_id, "A9")
+    engine.process_voice_summary(_voice(case_id, raw_text=secret), _TEST_GPS, max_zone=1)
+    engine.apply_approval_action(_action(case_id, "final_approval", "S001"))
+    assert engine.take_dirty() is True and engine.take_dirty() is False, "변경 표시는 한 번 읽으면 지워져야 한다"
+
+    serialized = json.dumps(engine.export_state(), ensure_ascii=False)
+    assert secret not in serialized, "통화 원문이 상태 파일에 들어가면 안 된다"
+
+    restored = HubEngine(specialty_matcher=engine._matcher)
+    counts = restored.import_state(json.loads(serialized))
+    print(f"  복구: {counts}")
+    assert counts == {"hospitals": 1, "ambulances": 1, "cases": 1}
+    info = restored.get_hospital("S001")
+    assert restored.effective_bed_count(info) == 4, "병상 차감(오버레이)이 복구돼야 한다"
+    result = restored.get_case_result(case_id)
+    assert result is not None and result.hospitals[0].status == "confirmed"
+    assert restored.get_case_apid(case_id) == "A9" and restored.get_ambulance("A9").name == "구급 9호차"
+    restored.apply_approval_action(_action(case_id, "final_approval", "S001"))
+    assert restored.effective_bed_count(info) == 4, "복구 뒤에도 중복 최종 승인은 멱등이어야 한다"
+    print("  [확인] 병원·구급차·사건·확정 상태·병상 차감 복구, 복구 뒤 멱등성 유지, 통화 원문 미저장")
+
+
+def test_decision_log_chain() -> None:
+    """해시 체인: 중간 줄 삭제·내용 수정 후 hash 재계산을 잡아내고, 체인 이전 기록은 통과."""
+    print("\n=== 의사결정 로그 해시 체인 확인 ===")
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "log.jsonl"
+        # 체인 이전(prevHash 없는) 기록 2줄 → 그 뒤로 체인 기록 3줄
+        legacy = []
+        for i in range(2):
+            ts, payload = f"2026-01-0{i + 1}T00:00:00Z", {"n": i}
+            legacy.append({"timestamp": ts, "eventType": "legacy", "payload": payload,
+                           "hash": decision_log._hash_entry(ts, "legacy", payload)})
+        path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in legacy), encoding="utf-8")
+        for i in range(3):
+            decision_log.log_decision("chained", {"n": i}, log_path=path)
+        assert decision_log.verify_log(path) == (True, 5), "체인 이전 기록 + 체인 기록이 함께 통과해야 한다"
+
+        lines = path.read_text(encoding="utf-8").splitlines()
+
+        path.write_text("\n".join(lines[:3] + lines[4:]) + "\n", encoding="utf-8")
+        assert decision_log.verify_log(path)[0] is False, "중간 줄 삭제를 잡아야 한다"
+
+        forged = json.loads(lines[3])
+        forged["payload"] = {"n": 999}
+        forged["hash"] = decision_log._hash_entry(forged["timestamp"], forged["eventType"], forged["payload"],
+                                                  forged["prevHash"])
+        path.write_text("\n".join(lines[:3] + [json.dumps(forged, ensure_ascii=False)] + lines[4:]) + "\n",
+                        encoding="utf-8")
+        assert decision_log.verify_log(path)[0] is False, "내용 수정 후 hash를 다시 계산해도 다음 줄에서 잡아야 한다"
+
+        path.write_text("\n".join(lines[:3] + [lines[0]] + lines[3:]) + "\n", encoding="utf-8")
+        assert decision_log.verify_log(path)[0] is False, "체인 시작 뒤 끼워 넣은 체인 밖 줄을 잡아야 한다"
+    print("  [확인] 체인 이전 기록 통과, 중간 삭제·수정 후 재해시·끼워 넣기 모두 탐지")
 
 
 if __name__ == "__main__":

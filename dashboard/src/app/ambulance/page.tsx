@@ -16,16 +16,63 @@ import type { CallSignalType } from "@/types/dashboard";
 // 병원과 달리 여러 사건을 동시에 다룰 필요가 없다. 다만 hub가 어느 구급차·
 // 사건인지 구분할 수 있어야 하므로, 자기 apid(URL의 ?id=)와 통화 시작마다
 // 새로 만드는 caseId를 실어 보낸다 (feature/hub 담당자 참고사항 참고).
+// caseId를 구급차(apid)별로 탭 세션에 보관한다. sessionStorage는 사생활 보호 모드 등에서
+// 예외를 던질 수 있어 실패해도 조용히 넘어간다(그 경우 새로고침 복원만 안 될 뿐이다).
+function caseIdKey(apid: string) {
+  return `goldenlink:caseId:${apid}`;
+}
+
+function loadCaseId(apid: string | null): string | null {
+  if (!apid || typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage.getItem(caseIdKey(apid));
+  } catch {
+    return null;
+  }
+}
+
+function saveCaseId(apid: string | null, caseId: string) {
+  if (!apid) return;
+  try {
+    window.sessionStorage.setItem(caseIdKey(apid), caseId);
+  } catch {
+    // 저장 실패는 무시 — 새로고침 복원만 안 된다
+  }
+}
+
+function alertNotSent() {
+  window.alert(
+    "hub와 연결이 끊겨 통화 신호를 보내지 못했습니다. 상단에 '실시간 연동'이 다시 뜨면 한 번 더 눌러주세요.",
+  );
+}
+
 function AmbulanceDashboardContent() {
   const searchParams = useSearchParams();
   const apid = searchParams.get("id");
   const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk } = useDashboardSocket(
     apid ? { role: "ambulance", id: apid } : null,
   );
-  const [confirmedHospitalId, setConfirmedHospitalId] = useState<string | null>(null);
-  const [myCaseId, setMyCaseId] = useState<string | null>(null);
+  const [localConfirmedId, setConfirmedHospitalId] = useState<string | null>(null);
+  // 통화 시작 때 만든 caseId는 탭 세션에 저장해 둔다 — 예전엔 메모리에만 있어서 새로고침
+  // 한 번에 사라졌고, 그러면 hub가 결과를 다시 보내줘도 화면에 못 띄웠다(2026-09-24).
+  const [myCaseId, setMyCaseIdState] = useState<string | null>(() => loadCaseId(apid));
+  const setMyCaseId = (caseId: string) => {
+    setMyCaseIdState(caseId);
+    saveCaseId(apid, caseId);
+  };
 
-  const myResult = myCaseId ? state.matchResults[myCaseId] ?? null : null;
+  // 기본은 내가 연 통화(myCaseId)의 결과다. 그 caseId조차 모를 때(새 탭 등)는 hub가 준
+  // 결과 중 이 구급차(apid)의 가장 최근 사건을 되찾아 쓴다 — hub는 연결 때 이 구급차의
+  // 진행 중인 사건을 따라잡기로 보내준다. myCaseId가 있으면(새 통화 진행 중) 예전
+  // 사건으로 대체하지 않는다: 새 결과가 오기 전에 지난 환자 정보를 띄우면 안 된다.
+  const ownResults = Object.values(state.matchResults).filter((r) => r.apid === apid);
+  const myResult = myCaseId
+    ? state.matchResults[myCaseId] ?? null
+    : ownResults[ownResults.length - 1] ?? null;
+  const activeCaseId = myResult?.caseId ?? myCaseId;
+  // 새로고침으로 로컬 선택이 사라져도 hub가 확정(confirmed)으로 기록한 병원은 복원한다.
+  const confirmedHospitalId =
+    localConfirmedId ?? myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
 
   function handleCallSignal(signal: CallSignalType) {
     if (!apid) return;
@@ -37,17 +84,17 @@ function AmbulanceDashboardContent() {
       const caseId = connectionMode === "mock" ? "case-mock-demo" : crypto.randomUUID();
       setMyCaseId(caseId);
       setConfirmedHospitalId(null);
-      sendCallSignal(signal, apid, caseId);
-    } else if (myCaseId) {
-      sendCallSignal(signal, apid, myCaseId);
+      if (!sendCallSignal(signal, apid, caseId)) alertNotSent();
+    } else if (activeCaseId) {
+      if (!sendCallSignal(signal, apid, activeCaseId)) alertNotSent();
     }
   }
 
   function handleApprove(hospitalId: string) {
-    if (!myCaseId) return;
+    if (!activeCaseId) return;
     setConfirmedHospitalId(hospitalId);
     sendAction({
-      caseId: myCaseId,
+      caseId: activeCaseId,
       action: "final_approval",
       hospital_id: hospitalId,
       actor: "paramedic",

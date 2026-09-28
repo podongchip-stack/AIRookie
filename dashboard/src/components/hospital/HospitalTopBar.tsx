@@ -1,7 +1,9 @@
 "use client";
 
 import { css } from "styled-system/css";
+import { CONNECTION_LABEL, type ConnectionMode } from "@/hooks/use-dashboard-socket";
 import { formatElapsed, useElapsedSeconds } from "@/hooks/use-elapsed-time";
+import { Viewer3DButton } from "@/components/hospital/Viewer3DButton";
 
 export function HospitalTopBar({
   caseCount,
@@ -14,7 +16,7 @@ export function HospitalTopBar({
   // status 대신 "본원이 후보로 걸린 사건이 몇 건인지"를 보여준다 — 개별 사건의
   // 상태는 각 카드(CaseMatchPanel)에 이미 표시된다.
   caseCount: number;
-  connectionMode: "live" | "mock";
+  connectionMode: ConnectionMode;
   since: string | null;
   hospitalId: string;
   // hub가 이번 사건의 병원 후보 목록에서 준 실제 병원명(E-Gen/Supabase 기반).
@@ -91,6 +93,7 @@ export function HospitalTopBar({
       </div>
 
       <div className={css({ display: "flex", alignItems: "center", gap: "4.5" })}>
+        <Viewer3DButton />
         <span
           className={css({
             display: "inline-flex",
@@ -115,10 +118,10 @@ export function HospitalTopBar({
         <span
           className={css({
             fontSize: "xs",
-            color: connectionMode === "live" ? "hospitalStatus.confirmed" : "ink2",
+            color: CONNECTION_LABEL[connectionMode].color,
           })}
         >
-          {connectionMode === "live" ? "● 실시간 연동" : "○ 목데이터 모드"}
+          {CONNECTION_LABEL[connectionMode].text}
         </span>
         <span className={css({ fontSize: "xs", color: "ink" })}>
           정보 수신 후{" "}

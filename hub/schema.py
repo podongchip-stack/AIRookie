@@ -239,7 +239,8 @@ class BedReliabilityMatch(BaseModel):
     ReliabilityInfo(assessment 기반, 중증질환군 수용 신고의 신뢰도)와는 다른
     축이다 — 이쪽은 "가용 병상 수 값 자체가 아직 유효한가"를 본다. 순위
     (finalScore)에는 관여하지 않는다. authority는 지금 시점, rArrive는
-    도착 시점(거리/평균속도로 추정한 horizonSec 뒤)의 유효 확률.
+    도착 시점(horizonSec 뒤)의 유효 확률. horizonSec는 순위에 쓴 이동 시간
+    (HospitalMatch.travelMin — 카카오 ETA, 없으면 보정 추정치)과 같다(2026-09-28).
     """
 
     authority: float
@@ -269,6 +270,17 @@ class SevereFreshness(BaseModel):
     source: Literal["rule"] = "rule"
 
 
+# 순위를 맨 뒤쪽으로 내린 이유(2026-09-28 신설). 후보에서 빼지는 않는다 — 뺑뺑이 방지 원칙.
+# declared_no: 관련 중증질환군을 병원이 "수용 불가"로 신고 / beds_full: 병상 0이 확인된 만실
+# (미상·오래된 값은 해당 안 됨) / rejected: 이 사건에 대해 병원이 명시적으로 거절.
+# 병원이 이 사건에 승인(approved)·확정(confirmed) 응답을 했으면 신고·병상 값보다 그 응답이
+# 우선이라 declared_no·beds_full로 내리지 않는다.
+DemoteReason = Literal["declared_no", "beds_full", "rejected"]
+# 순위 계산에 쓴 이동 시간의 출처. eta: 카카오 도로 기준 소요시간 / estimate: 직선거리 ×
+# (같은 사건에서 ETA가 있는 병원들로 보정한 분/km, 없으면 기본값)으로 추정.
+TravelBasis = Literal["eta", "estimate"]
+
+
 class HospitalMatch(BaseModel):
     hospitalId: str
     name: str
@@ -281,13 +293,31 @@ class HospitalMatch(BaseModel):
     # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
     bedCountUnknown: bool = False
     status: HospitalStatus = "pending"
+    # 도로 기준 도착 예상 시간(분, 올림). 카카오모빌리티 다중 목적지 길찾기로 채운다(routing.py,
+    # 2026-09-24). 키 없음·조회 실패·반경 10km 밖이면 None. 표시용 원값이고, 순위에는 아래
+    # travelMin(ETA가 있으면 같은 값의 올림 전 분)이 들어간다.
     etaMin: Optional[int] = None
     reliability: Optional[ReliabilityInfo] = None
     bedReliability: Optional[BedReliabilityMatch] = None
     severeFreshness: Optional[SevereFreshness] = None
+    # ── 순위 설명 필드 (2026-09-28 신설, 모두 source: "rule") ──
+    # 정렬에 쓴 가중합 점수(scoring.final_score). 승인 액션 뒤 재정렬에도 이 값을 쓴다.
+    finalScore: Optional[float] = None
+    # 순위 계산에 쓴 이동 시간(분)과 그 출처. etaMin은 표시용 올림값, 이건 계산용 원값이다.
+    travelMin: Optional[float] = None
+    travelBasis: Optional[TravelBasis] = None
+    # 순위를 뒤로 내린 이유. 비어 있으면 finalScore 순서 그대로다.
+    demoteReasons: list[DemoteReason] = Field(default_factory=list)
+    # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
+    # "확인된 만실"로 보지 않는다(beds_full로 안 내림). bedCountUnknown과는 별개 축이다.
+    bedDataStale: bool = False
 
 
 class HubMatchResult(BaseModel):
+    # 메시지 종류 구분자(2026-09-28 신설). dashboard로 나가는 메시지 중 이것만 type이 없어서
+    # dashboard가 `"type" in parsed`로 구분하고 있었다. 기존 판별(identity_info인지 먼저 확인)과
+    # 충돌하지 않는다.
+    type: Literal["match_result"] = "match_result"
     # 여러 사건(구급차)이 동시에 진행될 수 있어, dashboard가 이 결과를 어느
     # 사건 것인지 구분해 자기 화면에 맞는 것만 골라 쓸 수 있게 한다.
     caseId: str
@@ -300,6 +330,18 @@ class HubMatchResult(BaseModel):
     # apid를 못 찾으면(register_case 전에 process_voice_summary가 불린 등 예외
     # 상황) None으로 두고, dashboard는 URL의 apid로 대체 표시한다.
     ambulanceName: Optional[str] = None
+    # 이 사건을 연 구급차의 apid(2026-09-24 신설). 브로드캐스트는 모든 대시보드에 모든
+    # 사건을 보내므로, 구급차 대시보드가 새로고침 등으로 자기 caseId를 잊었을 때 "내
+    # 구급차의 사건"을 다시 골라내려면 이 값이 필요하다. ambulanceName과 같은 조회
+    # (register_case로 기억해둔 값)라 못 찾으면 None.
+    apid: Optional[str] = None
+    # 매칭에 쓴 구급차 좌표(2026-09-24 신설). 대시보드 지도가 구급차를 임시 위치가 아니라
+    # 실제 위치에 그리고, 도로 경로(GET /route)의 출발점과 맞추는 데 쓴다. 구급차 레지스트리에
+    # 없으면 hub의 기본 좌표(FALLBACK_AMBULANCE_GPS)가 들어간다.
+    ambulanceGps: Optional[GpsPoint] = None
+    # ambulanceGps가 실제 구급차 위치가 아니라 기본 좌표(서울시청)로 대체된 값인지(2026-09-28
+    # 신설). True면 거리·존·순위가 전부 엉뚱한 기준일 수 있다 — 예전엔 콘솔 로그에만 남았다.
+    ambulanceGpsFallback: bool = False
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
@@ -317,6 +359,24 @@ class ApprovalAction(BaseModel):
     hospital_id: str
     actor: Actor
     timestamp: str
+    # dashboard의 "수용 불가" 버튼이 함께 보내는 거절 사유(action == "hospital_reject"일
+    # 때만). hub는 이 값을 순위 계산에 쓰지 않고 feature/info의 거절 로그 수신구
+    # (POST /hub/rejection, hospital_score/ingest.py)로 그대로 중계한다 — 점수의
+    # 진짜 정답("병원이 실제로 받았는가")은 운영 로그가 쌓여야 나오고, 로그는
+    # 소급해서 만들 수 없어서다(CLAUDE.md "거절 로그" 절).
+    #
+    # 여기서 Literal로 막지 않고 Optional[str]로 두는 건 의도적이다 — 수신구가
+    # "관대하게 받는다"(모르는 코드도 UNSPECIFIED로 기록, 필드가 없어도 통과)를
+    # 원칙으로 하므로, dashboard가 어휘를 늘렸을 때 hub가 액션 전체를 거부해
+    # 그 사이 로그가 사라지는 게 더 나쁘다. 기대값은 아래 4축 어휘:
+    #   구조적  : NO_WARD | NO_DEPARTMENT | NO_EQUIPMENT
+    #   주기적  : ON_CALL_MISMATCH | NIGHT_UNAVAILABLE
+    #   순간적  : BEDS_FULL | OR_OCCUPIED | STAFF_BUSY
+    #   환자    : SEVERITY_EXCEEDED | AGE_LIMIT
+    #   미기재  : UNSPECIFIED
+    # (dashboard types/dashboard.ts의 RejectionReason, info hospital_score/rejection.py의
+    #  REASON_AXIS와 같은 어휘. 값이 없거나 hospital_reject가 아니면 None.)
+    reason: Optional[str] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 통화 시작/종료 신호) ─────────────
