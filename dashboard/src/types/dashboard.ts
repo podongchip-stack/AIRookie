@@ -41,6 +41,44 @@ export interface ReliabilityInfo {
   basis: string[];
 }
 
+// infosurv(XGBoost AFT 생존모델)가 계산한 "병상 숫자 자체가 아직 유효할 확률"
+// (source: "ai" — 생성형은 아니지만 학습 모델이라 규칙과 시각적으로 구분해야 함).
+// reliability(수용 신고를 믿을 만한가)와 다른 축 — 이쪽은 "가용 병상 수 값이
+// 낡지 않았는가"다. hub가 매칭 시점에 재계산한 스칼라(authority·rArrive)와,
+// 그 사이에도 화면이 초 단위로 감쇠를 그릴 수 있는 곡선 파라미터
+// (predictedSurvivalSec·bornAt·sigma — lib/bedReliability.ts 참고)를 같이 준다.
+// 순위에는 전혀 관여하지 않는 설명용이다(hub README "병상 정보 신뢰도" 절).
+export interface BedReliabilityMatch {
+  // 지금 이 병상 숫자를 믿어도 될 확률 (0~1, 매칭 시점 계산값)
+  authority: number;
+  // 도착 시점(순위에 쓴 이동 시간 horizonSec 뒤)에도 유효할 확률
+  rArrive: number;
+  horizonSec: number;
+  // authority가 0.8 아래로 떨어질 때까지 남은 초
+  ttlSec: number;
+  modelTag: string;
+  source: "ai";
+  // 실시간 감쇠용 곡선 파라미터. 구버전 hub면 없을 수 있다 — 그땐 위 스칼라를
+  // 정지값으로 그대로 표시한다.
+  predictedSurvivalSec?: number | null;
+  bornAt?: string | null;
+  sigma?: number;
+}
+
+// 매칭된 질환군의 중증질환 수용가능 신고가 언제 적 것인지 (source: "rule" —
+// E-Gen 응답에 신고 시각 필드가 없어 info의 스냅샷 추적만이 아는 값).
+// ruleRemainingSec은 실측된 통상 만료 규칙(신고 후 약 9시간) 기준 잔여 초 —
+// 0인데 신고가 여전히 떠 있으면 병원이 갱신을 지속 중이라는 뜻이지 신고가
+// 죽었다는 뜻이 아니다. ageIsMin이면 "최소 X시간 전"으로 표시해야 한다(좌측검열).
+export interface SevereFreshness {
+  group: string;
+  value: "Y" | "불가능";
+  ageSec: number;
+  ageIsMin: boolean;
+  ruleRemainingSec: number;
+  source: "rule";
+}
+
 export interface HospitalCandidate {
   hospitalId: string;
   name: string;
@@ -57,6 +95,10 @@ export interface HospitalCandidate {
   status: HospitalStatus;
   etaMin?: number;
   reliability?: ReliabilityInfo;
+  // 병상 숫자의 유효 확률(AI)·중증신고 신선도(규칙). 둘 다 순위 무관 설명용이고,
+  // 구버전 hub·구 feature/info 데이터면 필드 자체가 없다 — 칩을 숨기면 된다.
+  bedReliability?: BedReliabilityMatch;
+  severeFreshness?: SevereFreshness;
 }
 
 export interface HubMatchResult {
