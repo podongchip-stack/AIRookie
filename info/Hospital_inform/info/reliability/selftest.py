@@ -117,8 +117,17 @@ def test_engine() -> bool:
     engine = BedReliabilityEngine()
     print(f"  워밍업 관측 {engine.warmed_up_observations:,}건, 추적 병원 수 확인 중...")
     now = datetime.now(UTC)
-    preds = engine.predict(now)
-    ok = _check("예측 병원 수 > 300", len(preds) > 300, f"{len(preds)}곳")
+    all_preds = engine.predict(now)
+    ok = _check(
+        "다필드 서빙 로드 (hvec + 확장 3종)",
+        {"hvec", "hvoc", "hvgc", "hv28"} <= set(engine.fields),
+        f"필드: {engine.fields}",
+    )
+    preds = all_preds.get("hvec", {})
+    ok &= _check("hvec 예측 병원 수 > 300", len(preds) > 300, f"{len(preds)}곳")
+    for field in ("hvoc", "hvgc"):
+        n = len(all_preds.get(field, {}))
+        ok &= _check(f"{field} 예측 병원 수 > 300", n > 300, f"{n}곳")
     if not preds:
         return False
     bad = [

@@ -238,28 +238,40 @@ def _attach_reliability(
         engine.ingest_snapshots()
         engine.observe_rows(bed_rows, now)
         engine.observe_severe_rows(severe_rows, now)
-        predictions = engine.predict(now)
+        predictions = engine.predict(now)  # field -> (hpid -> BedPrediction)
         severe_by_hpid = engine.severe.group_declarations()
     except Exception as e:  # noqa: BLE001 — 신뢰도 처리 실패가 병원 목록 전송을 막으면 안 됨
         print(f"  [reliability] 이번 주기 처리 실패, 신뢰도 필드 없이 전송: {e}")
         return hospitals
 
+    def _payload(prediction) -> BedReliability:
+        return BedReliability(
+            predictedSurvivalSec=round(prediction.pred_t_sec, 1),
+            bornAt=prediction.born.isoformat(timespec="seconds"),
+            sigma=round(prediction.sigma, 4),
+            authorityAtSend=round(prediction.authority, 4),
+            ttlSec=round(prediction.ttl_sec, 1),
+            modelTag=prediction.model_tag,
+        )
+
+    hvec_predictions = predictions.get("hvec", {})
+    extra_fields = [f for f in predictions if f != "hvec"]
     enriched: list[HospitalInfo] = []
     attached_bed = 0
     attached_severe = 0
     for info in hospitals:
         update: dict = {}
-        prediction = predictions.get(info.hospitalId)
+        prediction = hvec_predictions.get(info.hospitalId)
         if prediction is not None:
-            update["bedReliability"] = BedReliability(
-                predictedSurvivalSec=round(prediction.pred_t_sec, 1),
-                bornAt=prediction.born.isoformat(timespec="seconds"),
-                sigma=round(prediction.sigma, 4),
-                authorityAtSend=round(prediction.authority, 4),
-                ttlSec=round(prediction.ttl_sec, 1),
-                modelTag=engine.model_tag,
-            )
+            update["bedReliability"] = _payload(prediction)
             attached_bed += 1
+        by_type = {
+            field: _payload(predictions[field][info.hospitalId])
+            for field in extra_fields
+            if info.hospitalId in predictions[field]
+        }
+        if by_type:
+            update["bedReliabilityByType"] = by_type
         declarations = severe_by_hpid.get(info.hospitalId)
         if declarations:
             update["severeDeclarations"] = SevereDeclarations(
@@ -276,6 +288,7 @@ def _attach_reliability(
         enriched.append(info.model_copy(update=update) if update else info)
     print(
         f"  [reliability] 병상 신뢰도 {attached_bed}곳 · "
+        f"확장 필드 {sorted(extra_fields)} · "
         f"중증신고 신선도 {attached_severe}곳 / 전체 {len(hospitals)}곳 첨부"
     )
     return enriched

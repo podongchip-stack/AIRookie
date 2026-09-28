@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,8 +33,9 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.stats import norm
 
-from .engine import _BED_OP, _DEFAULT_GAP_TABLE, _DEFAULT_MODEL, _DEFAULT_SNAPSHOT_DIR
-from .features import FEATURES, SEGMENT_GAP_SEC
+from .engine import _DEFAULT_GAP_TABLE, _DEFAULT_MODEL, _DEFAULT_SNAPSHOT_DIR
+from .features import FEATURES
+from .labeling import Version, build_versions
 
 #: 학습 파이프라인과 동일한 무효화 임계 (서빙 모델 aft_egen_theta3과 짝)
 THETA = 3
@@ -48,111 +48,6 @@ _RECAL_PATH = Path(__file__).resolve().parent / "model" / "recalibration.json"
 #: ECE 평가 지평(초). 30분 = DCA 실험의 주 지평이자 재조회 주기의 절반
 ECE_TAU_SEC = 1800.0
 
-
-@dataclass
-class Version:
-    features: list[float]
-    #: EVENT면 (lo, hi] 구간검열 나이(초), CENSOR면 (c, None)
-    lo: float
-    hi: float | None
-    event: bool
-
-
-def build_versions(snapshot_dir: Path, gap_by_hpid: dict[str, float], gap_national: float,
-                   since_utc: datetime) -> list[Version]:
-    """스냅샷에서 claim-version + FULL9 피처 + θ3 라벨을 재구성한다.
-
-    features.py의 실시간 규칙과 같은 의미를 배치로 재현한다 — 값 변화=새 버전,
-    공백 1h=세그먼트 분리, 첫 버전 리듬 피처 NaN, 시각 피처 UTC.
-    """
-    # hpid -> (last_obs, last_val, prev_obs_of_current_value 아님 — 아래 참조)
-    state: dict[str, tuple[datetime, int]] = {}
-    seg: dict[str, tuple[datetime, int, datetime, float, float]] = {}
-    # seg[hpid] = (first_born, version_no, born, prev_lifetime, delta)
-    open_versions: dict[str, Version] = {}  # 아직 라벨이 안 정해진 현재 버전
-    done: list[Version] = []
-
-    def close(hpid: str, lo: float, hi: float | None, event: bool) -> None:
-        v = open_versions.pop(hpid, None)
-        if v is None:
-            return
-        v.lo, v.hi, v.event = max(lo, 0.0), hi, event
-        if v.hi is not None and v.hi <= 0:
-            return  # 태어나자마자 기록 종료 — 정보 없음
-        if v.hi is None and v.lo <= 0:
-            return
-        done.append(v)
-
-    def open_version(hpid: str, ts: datetime, version_no: int, first_born: datetime,
-                     prev_lifetime: float, delta: float) -> None:
-        if ts < since_utc:
-            open_versions.pop(hpid, None)  # 홀드아웃 이전 탄생 — 적합에서 제외
-            return
-        t_since = (ts - first_born).total_seconds()
-        mean_interval = t_since / (version_no - 1) if version_no > 1 else math.nan
-        open_versions[hpid] = Version(
-            features=[
-                float(version_no), t_since, prev_lifetime, mean_interval,
-                math.nan, delta, float(ts.hour), float(ts.isoweekday()),
-                gap_by_hpid.get(hpid, gap_national),
-            ],
-            lo=0.0, hi=None, event=False,
-        )
-
-    for path in sorted(snapshot_dir.glob("*.jsonl")):
-        with path.open("rb") as f:
-            for raw_line in f:
-                try:
-                    rec = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
-                if rec.get("operation") != _BED_OP or "error" in rec:
-                    continue
-                ts = datetime.fromisoformat(rec["ts"]).astimezone(timezone.utc)
-                for item in rec.get("items") or []:
-                    hpid = (item.get("hpid") or "").strip()
-                    raw = item.get("hvec")
-                    if not hpid or raw is None or str(raw).strip() == "":
-                        continue
-                    try:
-                        value = int(str(raw).strip())
-                    except ValueError:
-                        continue
-                    prev = state.get(hpid)
-                    if prev is None or (ts - prev[0]).total_seconds() > SEGMENT_GAP_SEC:
-                        # 공백 — 진행 중이던 버전은 마지막 관측에서 우측검열
-                        if prev is not None and hpid in open_versions and hpid in seg:
-                            born = seg[hpid][2]
-                            close(hpid, (prev[0] - born).total_seconds(), None, False)
-                        else:
-                            open_versions.pop(hpid, None)
-                        seg[hpid] = (ts, 1, ts, math.nan, math.nan)
-                        open_version(hpid, ts, 1, ts, math.nan, math.nan)
-                        state[hpid] = (ts, value)
-                        continue
-                    last_obs, last_val = prev
-                    if ts <= last_obs:
-                        continue
-                    if value != last_val:
-                        first_born, version_no, born, _, _ = seg[hpid]
-                        delta = abs(value - last_val)
-                        age_lo = (last_obs - born).total_seconds()
-                        age_hi = (ts - born).total_seconds()
-                        if delta >= THETA:
-                            close(hpid, age_lo, age_hi, True)   # EVENT, 구간검열
-                        else:
-                            close(hpid, age_lo, None, False)    # 교체 — 우측검열
-                        prev_lifetime = age_hi
-                        seg[hpid] = (first_born, version_no + 1, ts, prev_lifetime, float(delta))
-                        open_version(hpid, ts, version_no + 1, first_born, prev_lifetime, float(delta))
-                    state[hpid] = (ts, value)
-
-    # 데이터 끝 — 진행 중 버전은 마지막 관측에서 우측검열
-    for hpid in list(open_versions):
-        if hpid in seg and hpid in state:
-            born = seg[hpid][2]
-            close(hpid, (state[hpid][0] - born).total_seconds(), None, False)
-    return done
 
 
 def fit_residual(pred_t: np.ndarray, versions: list[Version]) -> tuple[float, float]:
@@ -219,20 +114,46 @@ def ece_brier(pred_t: np.ndarray, versions: list[Version], mu: float, sigma: flo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--since", default=DEFAULT_SINCE,
-                        help="홀드아웃 시작(ISO 8601) — 서빙 모델 학습 데이터 이후여야 함")
+    parser.add_argument("--field", default="hvec",
+                        help="대상 필드. hvec 외에는 train_field.py 산출물 경로를 기본으로 쓴다")
+    parser.add_argument("--theta", type=int, default=THETA)
+    parser.add_argument("--since", default=None,
+                        help="홀드아웃 시작(ISO 8601) — 모델 학습 데이터 이후여야 함."
+                             " 기본: hvec은 ext0923 학습 상한 다음날, 그 외는 train_field cutoff."
+                             " ⚠ 확장 필드는 early stopping이 같은 창을 봤으므로 약간 낙관 편향"
+                             " — 다음 재학습부터 창을 분리할 것")
     parser.add_argument("--snapshots", type=Path, default=_DEFAULT_SNAPSHOT_DIR)
-    parser.add_argument("--model", type=Path, default=_DEFAULT_MODEL)
-    parser.add_argument("--out", type=Path, default=_RECAL_PATH)
+    parser.add_argument("--model", type=Path, default=None)
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
-    since_utc = datetime.fromisoformat(args.since).astimezone(timezone.utc)
-    table = json.loads(Path(_DEFAULT_GAP_TABLE).read_text(encoding="utf-8"))
+    model_dir = Path(__file__).resolve().parent / "model"
+    is_hvec = args.field == "hvec"
+    since = args.since or (DEFAULT_SINCE if is_hvec else "2026-09-22T00:00:00+09:00")
+    model_path = args.model or (
+        _DEFAULT_MODEL if is_hvec else model_dir / f"aft_egen_{args.field}_theta{args.theta}.json"
+    )
+    out_path = args.out or (
+        _RECAL_PATH if is_hvec else model_dir / f"recalibration_{args.field}.json"
+    )
+    gap_table_path = (
+        _DEFAULT_GAP_TABLE if is_hvec else model_dir / f"route_med_gap_{args.field}.json"
+    )
+
+    since_utc = datetime.fromisoformat(since).astimezone(timezone.utc)
+    table = json.loads(Path(gap_table_path).read_text(encoding="utf-8"))
     gap_by_hpid = {k: float(v) for k, v in table["hospitals"].items()}
     gap_national = float(table["nationalMedianSec"])
 
-    print(f"홀드아웃: {since_utc.isoformat()} 이후 탄생한 claim-version")
-    versions = build_versions(args.snapshots, gap_by_hpid, gap_national, since_utc)
+    print(f"필드 {args.field} · θ={args.theta} · 홀드아웃: {since_utc.isoformat()} 이후 탄생분")
+    versions = build_versions(
+        args.snapshots, field=args.field, theta=args.theta, since_utc=since_utc,
+        treat_minus_one_as_missing=not is_hvec,
+    )
+    # route_med_gap은 서빙과 같은 배포 테이블 값으로 채운다 — 재보정은 서빙
+    # 조건 그대로의 예측을 교정해야 하기 때문.
+    for v in versions:
+        v.features[8] = gap_by_hpid.get(v.hpid, gap_national)
     n_event = sum(1 for v in versions if v.event)
     print(f"버전 {len(versions):,}개 (EVENT {n_event:,} · 검열 {len(versions) - n_event:,})")
     if n_event < 500:
@@ -241,7 +162,7 @@ def main() -> None:
     import xgboost as xgb
 
     booster = xgb.Booster()
-    booster.load_model(str(args.model))
+    booster.load_model(str(model_path))
     matrix = xgb.DMatrix(
         np.asarray([v.features for v in versions], dtype=np.float32),
         missing=np.nan, feature_names=FEATURES,
@@ -257,13 +178,16 @@ def main() -> None:
     print(f"  raw   : ECE {ece_raw:.4f} · Brier {brier_raw:.4f}")
     print(f"  recal : ECE {ece_recal:.4f} · Brier {brier_recal:.4f}")
 
-    if ece_recal >= ece_raw:
-        print("⚠ 재보정이 ECE를 개선하지 못했다 — 산출물을 저장하지 않는다(정직 관문).")
+    if ece_recal >= ece_raw or brier_recal >= brier_raw:
+        # 한 지표만 좋아지고 다른 지표가 나빠지는 애매한 개선은 채택하지 않는다
+        # — raw가 이미 정직하면 상수를 얹을 이유가 없다(hvoc에서 실제로
+        # ECE −0.001 / Brier +0.007로 갈렸던 사례).
+        print("⚠ 재보정이 ECE·Brier를 모두 개선하지 못했다 — 저장하지 않는다(정직 관문).")
         raise SystemExit(1)
 
-    args.out.write_text(json.dumps({
+    out_path.write_text(json.dumps({
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "modelTag": Path(args.model).stem,
+        "modelTag": Path(model_path).stem,
         "muR": round(mu_r, 6),
         "sigmaR": round(sigma_r, 6),
         "fittedOn": {
@@ -278,7 +202,7 @@ def main() -> None:
             "evalSamples": n_eval,
         },
     }, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"저장: {args.out}")
+    print(f"저장: {out_path}")
 
 
 if __name__ == "__main__":

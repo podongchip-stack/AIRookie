@@ -170,6 +170,10 @@ class HospitalInfo(BaseModel):
     bedReliability: Optional[BedReliabilityInput] = None
     # 중증질환 신고 신선도(규칙 기반). 같은 Optional 패턴.
     severeDeclarations: Optional[SevereDeclarations] = None
+    # 응급실 일반(hvec) 외 확장 필드들의 신뢰도 예측 (2026-09-28 다필드 확장).
+    # 키는 E-Gen 필드명(hvoc 수술실·hvgc 입원실·hv28 소아 등), 값 구조는
+    # bedReliability와 동일. 같은 Optional 패턴.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityInput]] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -310,6 +314,9 @@ class HospitalMatch(BaseModel):
     reliability: Optional[ReliabilityInfo] = None
     bedReliability: Optional[BedReliabilityMatch] = None
     severeFreshness: Optional[SevereFreshness] = None
+    # 수술실·입원실·소아 등 확장 필드의 신뢰도 환산값 (키 = E-Gen 필드명).
+    # bedReliability(응급실 일반)와 같은 계산·같은 설명용 원칙.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
     # ── 순위 설명 필드 (2026-09-28 신설, 모두 source: "rule") ──
     # 정렬에 쓴 가중합 점수(scoring.final_score). 승인 액션 뒤 재정렬에도 이 값을 쓴다.
     finalScore: Optional[float] = None

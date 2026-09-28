@@ -731,6 +731,18 @@ class HubEngine:
                         ),
                         # 매칭된 질환군의 수용가능 신고 신선도(규칙 기반, source: "rule").
                         severeFreshness=_severe_freshness_for(info, best_group),
+                        # 수술실·입원실·소아 등 확장 필드의 유효 확률 — 응급실
+                        # 일반(bedReliability)과 같은 환산, 같은 horizon.
+                        bedReliabilityByType=(
+                            {
+                                field: bed_reliability.evaluate(
+                                    payload, distance, now=now, horizon_sec=travel_min * 60.0
+                                )
+                                for field, payload in info.bedReliabilityByType.items()
+                            }
+                            if info.bedReliabilityByType
+                            else None
+                        ),
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
                         finalScore=round(final_score(similarity, travel_min), 6),

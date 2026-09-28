@@ -246,6 +246,32 @@ function bedReliabilityChipStyle(rArrive: number): string {
   return bedRelLowStyle;
 }
 
+// 확장 필드(수술실·입원실·소아)의 E-Gen 필드명 → 한글 라벨.
+// info의 reliability/train_field.py FIELD_LABELS와 같은 값 — 모르는 필드가
+// 오면 필드명을 그대로 보여준다(조용히 숨기면 확장을 눈치채지 못한다).
+const BED_FIELD_LABEL: Record<string, string> = {
+  hvoc: "수술실",
+  hvicc: "중환자실",
+  hvgc: "입원실",
+  hv28: "소아",
+  hv29: "음압",
+};
+
+// 확장 필드 요약 칩 — 배후진료 역량(수술실·입원실)의 유효 확률을 한 칩에
+// 모아 보여준다. 개별 칩으로 펼치면 카드가 4~5칩으로 어지러워져 묶었다.
+const bedRelByTypeChipStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "medium",
+  color: "ink2",
+  backgroundColor: "surfaceSub",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+  fontVariantNumeric: "tabular-nums",
+});
+
 // 중증신고 신선도(규칙) 칩 — 확률이 아니라 사실(신고가 언제 적 것인지)이라 중립색.
 const severeFreshnessChipStyle = css({
   display: "inline-flex",
@@ -408,6 +434,21 @@ export function HospitalCandidateListPanel({
                         </span>
                       );
                     })()}
+                  {/* 배후진료 역량(수술실·입원실·소아)의 유효 확률 — 응급실
+                      일반 칩과 같은 모델 계열(AI), 같은 실시간 감쇠. */}
+                  {hospital.bedReliabilityByType &&
+                    Object.keys(hospital.bedReliabilityByType).length > 0 && (
+                      <span className={bedRelByTypeChipStyle}>
+                        AI ·{" "}
+                        {Object.entries(hospital.bedReliabilityByType)
+                          .map(([field, br]) => {
+                            const live = liveBedReliability(br, nowMs);
+                            const label = BED_FIELD_LABEL[field] ?? field;
+                            return `${label} ${Math.round(live.rArrive * 100)}%`;
+                          })
+                          .join(" · ")}
+                      </span>
+                    )}
                   {/* 매칭된 질환군의 수용가능 신고가 언제 적 것인지(규칙 — E-Gen엔
                       신고 시각이 없어 info의 스냅샷 추적만이 아는 값). */}
                   {hospital.severeFreshness && (

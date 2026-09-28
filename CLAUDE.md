@@ -363,9 +363,18 @@ Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-
   낮아질 뿐) — hospital_score와 같은 fail-soft 원칙으로, `reliability/` 폴더를
   통째로 지워도 `send_to_hub.py`는 `bedReliability` 없이 원본 그대로 보낸다
 - **hub로는 `HospitalInfo.bedReliability`**(predictedSurvivalSec·bornAt·
-  authorityAtSend·ttlSec·modelTag, source: "ai")로 나간다. authority는 정보
+  sigma·authorityAtSend·ttlSec·modelTag, source: "ai")로 나간다. authority는 정보
   나이에 따라 계속 떨어지는 값이라 info의 전송 시점 값은 스냅샷일 뿐이고,
   hub가 매칭 시점마다 재계산한다(아래 hub 참고사항)
+- **잔차 재보정 + 다필드 확장 (2026-09-28).** ① % 노출의 전제로 hvec raw
+  확률의 과신을 홀드아웃 실측으로 교정하는 재보정 상수(μR,σR)를 적합해
+  적용했다(`calibrate.py`, τ30분 ECE 0.272→0.114 — 확장 필드들은 raw가 이미
+  정직해 관문이 저장 거부). ② 학습을 저장소 안으로 자급화(`train_field.py`,
+  infosurv fit·evaluate 벤더링 + 관문: 리듬 단독 baseline 대비 시드 3종 전승)
+  해 **수술실(hvoc C 0.867)·입원실(hvgc 0.856)·소아(hv28 0.784)** 모델을
+  채택했다 — 배후진료 역량(Capacity)의 신뢰도 확장. 중환자실(hvicc)은 이벤트
+  부족으로 정직 기각(축적 후 재시도, `model/train_results_hvicc.json`).
+  `HospitalInfo.bedReliabilityByType`(키=E-Gen 필드명)로 hub에 전달
 - **중증질환 신고 신선도는 모델이 아니라 규칙이다(2026-09-28, `severe.py`).**
   infosurv를 중증질환 28항목으로 확장하려던 타당성 실측(`python -m
   reliability.probe_severe`, 47일)에서 값 변화의 90%가 Y↔정보미제공 왕복이고

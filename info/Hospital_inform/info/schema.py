@@ -271,6 +271,13 @@ class HospitalInfo(Strict):
         description="reliability/severe.py의 중증질환 신고 신선도(규칙 기반)."
         " 추적 실패 시 None으로 그대로 전송 — bedReliability와 같은 fail-soft.",
     )
+    bedReliabilityByType: Optional[dict[str, BedReliability]] = Field(
+        default=None,
+        description="응급실 일반(hvec) 외 확장 필드들의 신뢰도 예측"
+        " (2026-09-28 다필드 확장). 키는 E-Gen 필드명 — hvoc(수술실)·"
+        "hvgc(입원실)·hv28(소아) 등 train_field.py 관문을 통과한 필드만."
+        " 값 구조는 bedReliability와 동일.",
+    )
 
     @field_validator("updatedAt")
     @classmethod

@@ -1,19 +1,19 @@
 {
-  "generatedAt": "2026-09-28T13:55:04+00:00",
+  "generatedAt": "2026-09-28T14:11:36+00:00",
   "modelTag": "aft_egen_theta3_ext0923",
-  "muR": -0.431217,
-  "sigmaR": 1.796471,
+  "muR": -0.429953,
+  "sigmaR": 1.797189,
   "fittedOn": {
     "since": "2026-09-22T15:00:00+00:00",
-    "versions": 43068,
-    "events": 14663
+    "versions": 43163,
+    "events": 14691
   },
   "metrics": {
     "tauSec": 1800.0,
-    "eceRaw": 0.272,
-    "eceRecal": 0.11373,
-    "brierRaw": 0.27256,
-    "brierRecal": 0.20538,
-    "evalSamples": 23650
+    "eceRaw": 0.27185,
+    "eceRecal": 0.11375,
+    "brierRaw": 0.27243,
+    "brierRecal": 0.20537,
+    "evalSamples": 23711
   }
 }

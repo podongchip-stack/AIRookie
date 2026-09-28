@@ -409,6 +409,13 @@ def test_bed_reliability() -> None:
             predictedSurvivalSec=2400.0, bornAt=fresh_born,
             authorityAtSend=1.0, ttlSec=2400.0, modelTag="aft_egen_theta3_ext0923",
         ),
+        # 확장 필드(수술실) — bedReliability와 같은 환산이 byType으로도 나가는지 확인용
+        bedReliabilityByType={
+            "hvoc": BedReliabilityInput(
+                predictedSurvivalSec=9600.0, bornAt=fresh_born,
+                authorityAtSend=1.0, ttlSec=9600.0, modelTag="aft_egen_hvoc_theta3",
+            )
+        },
     )
     with_old = HospitalInfo(
         hospitalId="B002", name="[테스트] 30분 묵은 병상 값",
@@ -461,6 +468,11 @@ def test_bed_reliability() -> None:
     expected_horizon = matches["B001"].travelMin * 60.0
     assert abs(b1.horizonSec - expected_horizon) < 6.0, "horizonSec은 순위에 쓴 이동 시간(travelMin)과 같아야 한다"
     assert matches["B001"].travelBasis == "estimate", "카카오 키가 없으면 이동 시간은 추정치여야 한다"
+    by_type = matches["B001"].bedReliabilityByType
+    assert by_type is not None and "hvoc" in by_type, "확장 필드(byType) 환산이 실려야 한다"
+    assert 0.0 <= by_type["hvoc"].rArrive <= by_type["hvoc"].authority <= 1.0
+    assert by_type["hvoc"].modelTag == "aft_egen_hvoc_theta3"
+    assert matches["B002"].bedReliabilityByType is None, "byType 없이 온 병원은 None으로 통과해야 한다"
     order_without_demote = [h.hospitalId for h in result.hospitals]
     print(f"  [확인] 신선한 값 authority({b1.authority}) > 묵은 값 authority({b2.authority}), "
           f"rArrive ≤ authority, 구 데이터는 None 통과 (순위 불변: {order_without_demote})")

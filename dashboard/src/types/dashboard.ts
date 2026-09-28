@@ -99,6 +99,10 @@ export interface HospitalCandidate {
   // 구버전 hub·구 feature/info 데이터면 필드 자체가 없다 — 칩을 숨기면 된다.
   bedReliability?: BedReliabilityMatch;
   severeFreshness?: SevereFreshness;
+  // 응급실 일반 외 확장 필드(수술실 hvoc·입원실 hvgc·소아 hv28 등)의 유효
+  // 확률 — 배후진료 역량(Capacity)의 신뢰도. 키는 E-Gen 필드명이고 라벨
+  // 변환은 화면 쪽에서 한다(BED_FIELD_LABEL, HospitalCandidateListPanel).
+  bedReliabilityByType?: Record<string, BedReliabilityMatch>;
 }
 
 export interface HubMatchResult {
