@@ -31,7 +31,8 @@
       "status": "pending",
       "etaMin": null,
       "reliability": null,
-      "bedReliability": null
+      "bedReliability": null,
+      "severeFreshness": null
     },
     {
       "hospitalId": "H001",
@@ -50,7 +51,8 @@
       "status": "pending",
       "etaMin": null,
       "reliability": null,
-      "bedReliability": null
+      "bedReliability": null,
+      "severeFreshness": null
     },
     {
       "hospitalId": "H002",
@@ -69,7 +71,8 @@
       "status": "pending",
       "etaMin": null,
       "reliability": null,
-      "bedReliability": null
+      "bedReliability": null,
+      "severeFreshness": null
     }
   ],
   "source": "rule",
