@@ -263,6 +263,10 @@ class BedReliabilityMatch(BaseModel):
     predictedSurvivalSec: Optional[float] = None
     bornAt: Optional[str] = None
     sigma: float = 1.0
+    # 병원 대시보드가 "현재 정보 확인"을 누른 이력이 현재 claim에 유효하면,
+    # 그 확인 시점의 claim 나이(초). 있으면 확률이 조건부 생존 S(a)/S(u)로
+    # 계산된 것이고, dashboard의 로컬 감쇠도 같은 식을 써야 한다(2026-09-29).
+    confirmedAgeSec: Optional[float] = None
 
 
 class SevereFreshness(BaseModel):
@@ -436,6 +440,40 @@ class DashboardIdentify(BaseModel):
     role: DashboardRole
     # role="hospital"이면 hpid, role="ambulance"면 apid.
     id: str
+
+
+# ── feature/dashboard(병원) → feature/hub (입력, 현재 정보 확인) ─────────────
+# 병원 대시보드의 "현재 정보가 맞습니다" 버튼(2026-09-29). E-Gen 자기 신고
+# 밖에서 처음 생기는 유효 확인 관측으로, hub가 그 병원 병상 신뢰도를 조건부
+# 생존(S(a)/S(u))으로 되올리는 데 쓴다 — 값이 그대로여도 "방금 사람이 확인한
+# 정확한 값"임을 시스템이 알게 되는 유일한 경로다. 확인 이력은 의사결정
+# 로그에도 남아, 나중에 infosurv의 유효 확인(G1+) 라벨 재료가 된다.
+
+class HospitalInfoConfirm(BaseModel):
+    type: Literal["info_confirm"] = "info_confirm"
+    hospitalId: str
+    timestamp: str
+
+
+# ── feature/hub → feature/dashboard(병원) (출력, 자기 정보 현황) ─────────────
+# 병원 대시보드에 보내는 "귀원 정보 현황"(2026-09-29). identify 직후,
+# feature/info의 30분 주기 upsert 직후, 정보 확인 직후에 그 병원 소켓으로만
+# 보낸다. 데이터 공급자(병원)가 자기 정보의 신선도를 직접 보게 하는 피드백
+# 루프다 — E-Gen 포털엔 이런 피드백이 없어서 수년 묵은 값이 방치된다
+# (실측: 전국 가용병상 1위가 2,457일 묵은 값). bedReliability는 horizon 0
+# (자기 화면엔 이송 개념이 없으므로 rArrive==authority)으로 환산한 값이고,
+# 곡선 파라미터가 실려 있어 화면이 감쇠를 직접 그린다.
+
+class HospitalSelfInfo(BaseModel):
+    type: Literal["hospital_self_info"] = "hospital_self_info"
+    hospitalId: str
+    name: str
+    availableBedCount: int
+    bedCountUnknown: bool
+    updatedAt: str
+    bedReliability: Optional[BedReliabilityMatch] = None
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
+    severeDeclarations: Optional[SevereDeclarations] = None
 
 
 # ── feature/hub → feature/dashboard (출력, 자기소개에 대한 즉시 응답) ───────

@@ -477,6 +477,24 @@ def test_bed_reliability() -> None:
     print(f"  [확인] 신선한 값 authority({b1.authority}) > 묵은 값 authority({b2.authority}), "
           f"rArrive ≤ authority, 구 데이터는 None 통과 (순위 불변: {order_without_demote})")
 
+    # 병원의 "현재 정보 확인"(info_confirm)이 들어오면 조건부 생존으로 확률이
+    # 되올라간다 — 30분 묵어 0.61이던 B002가 방금 확인되면 1.0 근처로.
+    assert engine.confirm_hospital_info("B002", datetime.now(timezone.utc))
+    assert not engine.confirm_hospital_info("B999", datetime.now(timezone.utc)), (
+        "모르는 병원의 확인은 거부돼야 한다"
+    )
+    result2 = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    b2_after = next(h for h in result2.hospitals if h.hospitalId == "B002").bedReliability
+    assert b2_after is not None and b2_after.confirmedAgeSec is not None, (
+        "확인 이력이 현재 claim에 유효하면 confirmedAgeSec이 실려야 한다"
+    )
+    assert b2_after.authority > b2.authority + 0.3, (
+        f"확인 직후 authority가 조건부 생존으로 크게 되올라가야 한다 "
+        f"({b2.authority} -> {b2_after.authority})"
+    )
+    print(f"  [확인] 병원 정보 확인 후 B002 authority {b2.authority} -> {b2_after.authority} "
+          f"(조건부 생존, confirmedAgeSec={b2_after.confirmedAgeSec}s)")
+
 
 def test_severe_freshness() -> None:
     """feature/info가 severeDeclarations(중증질환 신고의 관측 기준 탄생 시각)를

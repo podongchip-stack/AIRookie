@@ -77,6 +77,7 @@ def evaluate(
     distance_km: float,
     now: datetime | None = None,
     horizon_sec: float | None = None,
+    confirmed_at: datetime | None = None,
 ) -> BedReliabilityMatch | None:
     """info가 보낸 예측을 매칭 시점의 authority/r_arrive로 환산한다.
 
@@ -84,6 +85,13 @@ def evaluate(
     dashboard는 이 경우 해당 표시를 안 하면 된다(reliability와 같은 패턴).
 
     horizon_sec(도착까지 걸릴 초)를 주면 그대로 쓰고, 없으면 거리/평균속도로 추정한다.
+
+    confirmed_at(병원 대시보드의 "현재 정보 확인" 시각, 2026-09-29)이 현재
+    claim의 탄생(bornAt) **이후**면 조건부 생존으로 갱신한다 — infosurv
+    serve.py와 같은 수식:  Authority(a) = S(a)/S(u),  u = 확인 시점의 나이.
+    "u까지 살아있음이 확인된 정보가 a까지도 유효할 확률"이라, 확인 직후엔
+    1.0으로 돌아가고 이후 다시 감쇠한다. 값이 바뀌어 claim이 새로 태어나면
+    (confirmed_at < bornAt) 확인은 자동으로 무효가 된다.
     """
     if bed_reliability is None:
         return None
@@ -98,14 +106,33 @@ def evaluate(
     )
     pred_t = bed_reliability.predictedSurvivalSec
     sigma = bed_reliability.sigma
+
+    confirmed_age: float | None = None
+    if confirmed_at is not None and confirmed_at > born:
+        confirmed_age = min(max((confirmed_at - born).total_seconds(), 0.0), age)
+
+    if confirmed_age is None:
+        authority = survival(pred_t, age, sigma)
+        r_arrive = survival(pred_t, age + horizon, sigma)
+        ttl = ttl_sec(pred_t, age, sigma=sigma)
+    else:
+        s_u = max(survival(pred_t, confirmed_age, sigma), 1e-12)
+        authority = min(survival(pred_t, age, sigma) / s_u, 1.0)
+        r_arrive = min(survival(pred_t, age + horizon, sigma) / s_u, 1.0)
+        # serve.ttl과 동일: S(t)/S(u) = thr  ⟺  S(t) = thr·S(u)
+        thr = min(max(AUTHORITY_TTL_THRESHOLD * s_u, 1e-12), 1.0 - 1e-12)
+        t_hit = max(pred_t, 1e-12) * math.exp(sigma * _NORMAL.inv_cdf(1.0 - thr))
+        ttl = max(t_hit - age, 0.0)
+
     return BedReliabilityMatch(
-        authority=round(survival(pred_t, age, sigma), 4),
-        rArrive=round(survival(pred_t, age + horizon, sigma), 4),
+        authority=round(authority, 4),
+        rArrive=round(r_arrive, 4),
         horizonSec=round(horizon, 1),
-        ttlSec=round(ttl_sec(pred_t, age, sigma=sigma), 1),
+        ttlSec=round(ttl, 1),
         modelTag=bed_reliability.modelTag,
         # dashboard의 실시간 감쇠 렌더용 곡선 파라미터 (schema 주석 참고).
         predictedSurvivalSec=pred_t,
         bornAt=bed_reliability.bornAt,
         sigma=sigma,
+        confirmedAgeSec=round(confirmed_age, 1) if confirmed_age is not None else None,
     )

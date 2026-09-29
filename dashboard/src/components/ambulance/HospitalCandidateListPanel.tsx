@@ -425,12 +425,16 @@ export function HospitalCandidateListPanel({
                   {hospital.bedReliability &&
                     (() => {
                       const live = liveBedReliability(hospital.bedReliability, nowMs);
+                      // 병원이 직접 "현재 정보 확인"을 누른 값이면 ✓로 표시 —
+                      // 모델 추정만이 아니라 사람의 확인이 얹힌 확률이라는 뜻.
+                      const confirmed = hospital.bedReliability.confirmedAgeSec != null;
                       return (
                         <span
                           className={bedReliabilityChipStyle(live.rArrive)}
-                          title={`지금 유효 ${Math.round(live.authority * 100)}% · ${hospital.bedReliability.modelTag}`}
+                          title={`지금 유효 ${Math.round(live.authority * 100)}%${confirmed ? " · 병원이 직접 확인한 값" : ""} · ${hospital.bedReliability.modelTag}`}
                         >
                           AI · 도착 시 유효 {Math.round(live.rArrive * 100)}%
+                          {confirmed ? " ✓" : ""}
                         </span>
                       );
                     })()}

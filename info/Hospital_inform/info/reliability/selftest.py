@@ -194,6 +194,32 @@ def test_hub_math_parity() -> bool:
                 )
     ok = _check("authority 최대 오차 < 1e-9", max_err_auth < 1e-9, f"{max_err_auth:.2e}")
     ok &= _check("ttl 최대 오차 < 1e-6초", max_err_ttl < 1e-6, f"{max_err_ttl:.2e}")
+
+    # 조건부 생존(confirmed_at — 병원 "정보 확인" 신호, hub/bed_reliability.py의
+    # 2026-09-29 확장)도 같은 수식이어야 한다: S(a)/S(u), ttl은 thr·S(u).
+    max_err_cond = 0.0
+    max_err_cond_ttl = 0.0
+    for pred_t, age, u in ((1200.0, 900.0, 300.0), (1200.0, 3600.0, 1800.0), (600.0, 500.0, 100.0)):
+        for sigma in (1.0, 1.7965):
+            def s(t: float) -> float:
+                return 0.5 * math.erfc(
+                    (math.log(max(t, 1e-12)) - math.log(pred_t)) / (sigma * math.sqrt(2))
+                )
+            stdlib_cond = min(s(age) / max(s(u), 1e-12), 1.0)
+            max_err_cond = max(
+                max_err_cond,
+                abs(stdlib_cond - float(serve.authority(pred_t, age, confirmed_at=u, sigma=sigma))),
+            )
+            thr = min(max(AUTHORITY_TTL_THRESHOLD * s(u), 1e-12), 1 - 1e-12)
+            stdlib_cond_ttl = max(pred_t * math.exp(sigma * nd.inv_cdf(1.0 - thr)) - age, 0.0)
+            max_err_cond_ttl = max(
+                max_err_cond_ttl,
+                abs(stdlib_cond_ttl
+                    - float(serve.ttl(pred_t, age, AUTHORITY_TTL_THRESHOLD,
+                                      confirmed_at=u, sigma=sigma))),
+            )
+    ok &= _check("조건부 authority(S(a)/S(u)) 최대 오차 < 1e-9", max_err_cond < 1e-9, f"{max_err_cond:.2e}")
+    ok &= _check("조건부 ttl 최대 오차 < 1e-6초", max_err_cond_ttl < 1e-6, f"{max_err_cond_ttl:.2e}")
     return ok
 
 

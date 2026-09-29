@@ -209,6 +209,26 @@ true면 추적 시작부터 그 값이었다는 뜻이라 "최소 X시간 전"�
 이라는 뜻이지 신고가 죽었다는 뜻이 아니다. `reliability`(같은 신고를 심평원
 대조로 "믿을 만한가")와 상보적이며, 역시 순위에는 관여하지 않는다.
 
+### 병원 정보 확인 루프 (info_confirm / hospital_self_info, 2026-09-29 신설)
+
+신뢰도 스택의 나머지가 전부 "낡음을 감지해 소비자에게 경고"하는 대증이라면,
+이건 **원인(공급자) 쪽 피드백 루프**다. E-Gen 포털엔 병원에게 "당신 정보가
+얼마나 낡았는지"를 보여주는 화면이 없어 수년 묵은 값이 방치된다(실측 2,457일).
+
+- **`hospital_self_info` (hub → 병원 대시보드)**: "귀원 정보 현황" — 병상 수·
+  자기 병상 신뢰도(horizon 0이라 rArrive==authority, 곡선 파라미터 포함)·
+  확장 필드·중증 신고 현황. identify 직후, info의 30분 upsert 직후, 정보 확인
+  직후에 그 병원 소켓으로만 보낸다(`_build_self_info()`/`_send_self_info_to_hospital()`).
+- **`info_confirm` (병원 대시보드 → hub)**: "현재 정보가 맞습니다" 버튼.
+  `HubEngine.confirm_hospital_info()`가 기록하고(상태 파일에 저장·복구),
+  `bed_reliability.evaluate()`가 **조건부 생존 S(a)/S(u)** 로 그 병원 확률을
+  되올린다 — infosurv serve의 `confirmed_at` 메커니즘이 처음으로 실신호를
+  받는 지점이다. 값이 바뀌어 claim이 새로 태어나면 확인은 자동 무효
+  (confirmedAt < bornAt). 확인은 의사결정 로그(`hospital_info_confirmed`)에도
+  남아 나중에 infosurv 유효 확인(G1+) 라벨 재료가 된다. 구급차 화면 칩에는
+  ✓로 표시(`BedReliabilityMatch.confirmedAgeSec`), 관련 사건은 즉시 재계산·
+  재브로드캐스트된다. 수식 등가성은 info의 selftest 3번(조건부 항목)이 검증.
+
 ## 개발 환경 / 언어
 
 - 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)

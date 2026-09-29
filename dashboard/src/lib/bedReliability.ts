@@ -71,9 +71,18 @@ export function liveBedReliability(
   }
   const sigma = br.sigma ?? 1.0;
   const ageSec = Math.max((nowMs - bornMs) / 1000, 0);
+  // 병원이 "현재 정보 확인"을 눌렀으면 조건부 생존 S(a)/S(u) — hub와 동일 수식.
+  // 확인 직후 확률이 1.0으로 돌아갔다가 다시 감쇠하는 모양이 된다.
+  const sU =
+    br.confirmedAgeSec != null
+      ? Math.max(survival(br.predictedSurvivalSec, br.confirmedAgeSec, sigma), 1e-12)
+      : 1.0;
   return {
-    authority: survival(br.predictedSurvivalSec, ageSec, sigma),
-    rArrive: survival(br.predictedSurvivalSec, ageSec + br.horizonSec, sigma),
+    authority: Math.min(survival(br.predictedSurvivalSec, ageSec, sigma) / sU, 1),
+    rArrive: Math.min(
+      survival(br.predictedSurvivalSec, ageSec + br.horizonSec, sigma) / sU,
+      1,
+    ),
     live: true,
   };
 }

@@ -27,9 +27,11 @@ from flask import Flask, jsonify, request
 from flask_sock import Sock
 from pydantic import ValidationError
 
+import bed_reliability
+import decision_log
 from delivery import LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
-from hub_engine import HubEngine
+from hub_engine import HubEngine, _is_bed_count_unknown
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -38,6 +40,8 @@ from schema import (
     DashboardIdentityInfo,
     GpsPoint,
     HospitalInfo,
+    HospitalInfoConfirm,
+    HospitalSelfInfo,
     VoiceCallSummaryMessage,
     VoiceRegistration,
 )
@@ -142,6 +146,9 @@ def receive_hospital_info():
         return jsonify({"error": "invalid HospitalInfo", "detail": exc.errors()}), 400
 
     engine.update_hospital_info(info)
+    # 그 병원 대시보드가 연결돼 있으면 "귀원 정보 현황"을 갱신해준다 —
+    # 30분 주기 재전송을 그대로 자기 화면 신선도 갱신으로 재사용.
+    _send_self_info_to_hospital(info.hospitalId)
     return jsonify({"status": "ok", "hospitalId": info.hospitalId}), 200
 
 
@@ -568,6 +575,99 @@ def _handle_dashboard_action(payload: dict) -> None:
         _send_to_dashboard(updated_result.model_dump())
 
 
+def _handle_info_confirm(confirm: HospitalInfoConfirm) -> None:
+    """병원 대시보드의 "현재 정보 확인" 신호 처리(2026-09-29).
+
+    E-Gen 자기 신고 밖에서 처음 생기는 유효 확인 관측이다 — 값이 그대로여도
+    "방금 사람이 확인한 정확한 값"임을 시스템이 알게 되는 유일한 경로.
+    엔진에 기록해 그 병원 병상 신뢰도가 조건부 생존(S(a)/S(u))으로 되올라가게
+    하고, 의사결정 로그에도 남긴다(나중에 infosurv 유효 확인 라벨 재료).
+    """
+    try:
+        ts = datetime.fromisoformat(confirm.timestamp.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+    except ValueError:
+        ts = datetime.now(timezone.utc)
+
+    if not engine.confirm_hospital_info(confirm.hospitalId, ts):
+        print(f"  [통신] 모르는 병원({confirm.hospitalId})의 정보 확인 — 무시")
+        return
+    decision_log.log_decision(
+        "hospital_info_confirmed",
+        {"hospitalId": confirm.hospitalId, "timestamp": confirm.timestamp},
+    )
+    print(f"  [통신] {confirm.hospitalId} 정보 확인 수신 — 관련 사건 신뢰도 재계산")
+    # 확인 효과(확률 상승)가 다음 주기(60초)를 기다리지 않고 화면에 바로
+    # 반영되게 관련 사건을 즉시 재계산한다. 임베딩·카카오 호출이 낄 수 있어
+    # 소켓 스레드를 막지 않도록 작업 스레드로 넘긴다.
+    _match_executor.submit(_refresh_cases_for_hospital, confirm.hospitalId)
+    # 병원 자신의 화면(귀원 정보 현황)에도 ✓·확률 리셋이 즉시 뜨게 한다.
+    _send_self_info_to_hospital(confirm.hospitalId)
+
+
+def _build_self_info(hospital_id: str) -> HospitalSelfInfo | None:
+    """병원 대시보드용 "귀원 정보 현황"(2026-09-29). 신뢰도는 horizon 0으로
+    환산한다 — 자기 화면엔 이송(도착 시점) 개념이 없으므로 rArrive==authority."""
+    info = engine.get_hospital(hospital_id)
+    if info is None:
+        return None
+    now = datetime.now(timezone.utc)
+    confirmed = engine.get_info_confirmation(hospital_id)
+    return HospitalSelfInfo(
+        hospitalId=hospital_id,
+        name=info.name,
+        availableBedCount=engine.effective_bed_count(info),
+        bedCountUnknown=_is_bed_count_unknown(info),
+        updatedAt=info.updatedAt,
+        bedReliability=bed_reliability.evaluate(
+            info.bedReliability, 0.0, now=now, horizon_sec=0.0, confirmed_at=confirmed
+        ),
+        bedReliabilityByType=(
+            {
+                field: bed_reliability.evaluate(
+                    payload, 0.0, now=now, horizon_sec=0.0, confirmed_at=confirmed
+                )
+                for field, payload in info.bedReliabilityByType.items()
+            }
+            if info.bedReliabilityByType
+            else None
+        ),
+        severeDeclarations=info.severeDeclarations,
+    )
+
+
+def _send_self_info_to_hospital(hospital_id: str) -> None:
+    """그 병원(hpid)으로 identify한 모든 소켓에 자기 정보 현황을 보낸다.
+    연결이 없으면 조용히 넘어간다."""
+    with _sockets_lock:
+        targets = [
+            sock
+            for sock, (role, hid) in _socket_identity.items()
+            if role == "hospital" and hid == hospital_id and sock in _dashboard_sockets
+        ]
+    if not targets:
+        return
+    payload = _build_self_info(hospital_id)
+    if payload is None:
+        return
+    data = payload.model_dump()
+    for sock in targets:
+        _send_to_socket(sock, data, "self_info")
+
+
+def _refresh_cases_for_hospital(hospital_id: str) -> None:
+    for result in engine.get_cases_for_hospital(hospital_id):
+        try:
+            ambulance_gps, _ = _resolve_ambulance_gps(result.caseId)
+            updated = engine.refresh_case(result.caseId, ambulance_gps)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [재계산] caseId={result.caseId} 실패: {e!r}")
+            continue
+        if updated is not None:
+            _send_to_dashboard(updated.model_dump())
+
+
 @sock.route("/ws/dashboard")
 def dashboard_socket(ws):
     """dashboard와의 WebSocket 연결. 구급차 대시보드 여러 개 + 병원 대시보드
@@ -613,6 +713,18 @@ def dashboard_socket(ws):
                     _socket_identity[ws] = (identify.role, identify.id)
                 _send_identity_info(ws, identify)
                 _send_catchup(ws, identify)
+                # 병원이면 사건 유무와 무관하게 "귀원 정보 현황"도 바로 준다.
+                if identify.role == "hospital":
+                    self_info = _build_self_info(identify.id)
+                    if self_info is not None:
+                        _send_to_socket(ws, self_info.model_dump(), "self_info")
+            elif payload.get("type") == "info_confirm":
+                try:
+                    confirm = HospitalInfoConfirm.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 HospitalInfoConfirm 수신: {exc.errors()}")
+                    continue
+                _handle_info_confirm(confirm)
             elif "action" in payload:
                 _handle_dashboard_action(payload)
     finally:

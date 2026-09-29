@@ -63,6 +63,48 @@ export interface BedReliabilityMatch {
   predictedSurvivalSec?: number | null;
   bornAt?: string | null;
   sigma?: number;
+  // 병원이 "현재 정보 확인"을 누른 이력이 현재 claim에 유효하면 그 시점의
+  // claim 나이(초). 있으면 확률은 조건부 생존 S(a)/S(u)이고, 로컬 감쇠도
+  // 같은 식을 써야 한다(lib/bedReliability.ts). 2026-09-29 신설.
+  confirmedAgeSec?: number | null;
+}
+
+// 중증질환 수용가능 신고의 질환군별 현재 상태 (hub HospitalSelfInfo가 그대로
+// 전달 — 병원 자기 화면용). 정보미제공 그룹은 키가 없다.
+export interface SevereGroupDeclaration {
+  value: "Y" | "불가능";
+  bornAt: string;
+  ageIsMin: boolean;
+}
+
+export interface SevereDeclarations {
+  groups: Record<string, SevereGroupDeclaration>;
+  source: "rule";
+}
+
+// hub → 병원 대시보드: "귀원 정보 현황"(2026-09-29). identify 직후·info 30분
+// 갱신 직후·정보 확인 직후에 그 병원 소켓으로만 온다. 데이터 공급자(병원)가
+// 자기 정보의 신선도를 직접 보게 하는 피드백 루프 — bedReliability는 horizon
+// 0으로 환산돼 rArrive==authority이고, 곡선 파라미터로 로컬 감쇠를 그린다.
+export interface HospitalSelfInfo {
+  type: "hospital_self_info";
+  hospitalId: string;
+  name: string;
+  availableBedCount: number;
+  bedCountUnknown: boolean;
+  updatedAt: string;
+  bedReliability?: BedReliabilityMatch | null;
+  bedReliabilityByType?: Record<string, BedReliabilityMatch> | null;
+  severeDeclarations?: SevereDeclarations | null;
+}
+
+// 병원 대시보드 → hub: "현재 정보가 맞습니다" 확인 신호(2026-09-29). hub가
+// 그 병원 병상 신뢰도를 조건부 생존으로 되올리고(구급차 화면 ✓), 의사결정
+// 로그에 유효 확인 관측으로 남긴다.
+export interface HospitalInfoConfirm {
+  type: "info_confirm";
+  hospitalId: string;
+  timestamp: string;
 }
 
 // 매칭된 질환군의 중증질환 수용가능 신고가 언제 적 것인지 (source: "rule" —
@@ -234,6 +276,9 @@ export interface DashboardState {
   // 이 소켓(=이 apid/hpid)의 신원 확인 결과. matchResults와 분리해서 관리하는
   // 이유는 사건과 무관하게 항상 표시돼야 하기 때문이다.
   identity: IdentityState;
+  // 병원 대시보드 전용 — hub가 보내주는 "귀원 정보 현황". 구급차 화면·mock
+  // 모드·구버전 hub에서는 null로 남는다.
+  selfInfo: HospitalSelfInfo | null;
 }
 
-export type InboundMessage = HubMatchResult | DashboardIdentityInfo;
+export type InboundMessage = HubMatchResult | DashboardIdentityInfo | HospitalSelfInfo;

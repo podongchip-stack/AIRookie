@@ -387,6 +387,12 @@ class HubEngine:
         # CASE_RETENTION_MIN이 지난 사건을 골라 모든 사건 dict에서 걷어낸다
         # (_prune_old_cases). _bed_overlay와 같은 "조회 시점 lazy 정리" 패턴이다.
         self._case_confirmed_at: dict[str, datetime] = {}
+        # hospitalId -> 병원 대시보드가 "현재 정보 확인"을 누른 시각(2026-09-29).
+        # infosurv의 조건부 생존 갱신 S(a)/S(u)에 쓰는 유효 확인 이력 —
+        # E-Gen 자기 신고 바깥에서 처음 생기는 관측이다. 값이 바뀌면(새 claim
+        # 탄생) 자동으로 무효가 된다: bed_reliability.evaluate()가 확인 시각이
+        # 현재 bornAt보다 뒤일 때만 적용하기 때문.
+        self._info_confirmations: dict[str, datetime] = {}
         # 디스크 저장(app.py 백그라운드)이 필요한 변경이 있었는지.
         self._dirty = False
 
@@ -405,6 +411,20 @@ class HubEngine:
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
         with self._lock:
             return self._hospitals.get(hospital_id)
+
+    def confirm_hospital_info(self, hospital_id: str, ts: datetime) -> bool:
+        """병원 대시보드의 "현재 정보 확인" 신호를 기록한다(2026-09-29).
+        모르는 병원이면 False — 잘못된 hpid의 확인이 조용히 쌓이지 않게."""
+        with self._lock:
+            if hospital_id not in self._hospitals:
+                return False
+            self._info_confirmations[hospital_id] = ts
+            self._dirty = True
+            return True
+
+    def get_info_confirmation(self, hospital_id: str) -> datetime | None:
+        with self._lock:
+            return self._info_confirmations.get(hospital_id)
 
     def update_ambulance_info(self, info: AmbulanceInfo) -> None:
         """feature/info로부터 받은 구급차 정보를 apid 기준으로 upsert한다."""
@@ -713,6 +733,9 @@ class HubEngine:
                 beds = self.effective_bed_count(info)
                 unknown = _is_bed_count_unknown(info)
                 stale = _is_bed_data_stale(info, now)
+                # 병원의 "현재 정보 확인" 이력 — 현재 claim에 유효한지는
+                # evaluate()가 bornAt과 대조해 판단한다.
+                confirmed = self._info_confirmations.get(info.hospitalId)
                 matches.append(
                     HospitalMatch(
                         hospitalId=info.hospitalId,
@@ -727,7 +750,8 @@ class HubEngine:
                         # 병상 숫자 자체의 유효 확률(infosurv 모델, source: "ai"). 설명용 —
                         # 도착 시점(horizon)은 순위에 쓴 이동 시간과 같은 값을 쓴다.
                         bedReliability=bed_reliability.evaluate(
-                            info.bedReliability, distance, now=now, horizon_sec=travel_min * 60.0
+                            info.bedReliability, distance, now=now,
+                            horizon_sec=travel_min * 60.0, confirmed_at=confirmed,
                         ),
                         # 매칭된 질환군의 수용가능 신고 신선도(규칙 기반, source: "rule").
                         severeFreshness=_severe_freshness_for(info, best_group),
@@ -736,7 +760,8 @@ class HubEngine:
                         bedReliabilityByType=(
                             {
                                 field: bed_reliability.evaluate(
-                                    payload, distance, now=now, horizon_sec=travel_min * 60.0
+                                    payload, distance, now=now,
+                                    horizon_sec=travel_min * 60.0, confirmed_at=confirmed,
                                 )
                                 for field, payload in info.bedReliabilityByType.items()
                             }
@@ -943,6 +968,7 @@ class HubEngine:
                 "ambulances": [a.model_dump() for a in self._ambulances.values()],
                 "approvalStatus": [[cid, hid, status] for (cid, hid), status in self._approval_status.items()],
                 "bedOverlay": {hid: [t.isoformat() for t in times] for hid, times in self._bed_overlay.items()},
+                "infoConfirmations": {hid: t.isoformat() for hid, t in self._info_confirmations.items()},
                 "cases": cases,
             }
 
@@ -977,6 +1003,10 @@ class HubEngine:
                 parsed = [t for t in (_parse_iso(x) for x in times) if t is not None]
                 if parsed:
                     self._bed_overlay[hid] = parsed
+            for hid, raw_ts in state.get("infoConfirmations", {}).items():
+                ts = _parse_iso(raw_ts)
+                if ts is not None:
+                    self._info_confirmations[hid] = ts
             for cid, case in state.get("cases", {}).items():
                 try:
                     if case.get("apid"):
