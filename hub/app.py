@@ -64,6 +64,16 @@ _dashboard_sockets: set = set()
 # (NO_RESPONSE) 기록에서 "요청을 보고도 무시"와 "대시보드 미접속(미도달)"을
 # 구분하는 데 쓴다 — 둘을 섞으면 원인 축 분리라는 거절 로그 설계가 깨진다.
 _socket_identity: dict = {}
+# caseId -> 그 사건의 매칭 결과가 실제로 병원 대시보드에 도달했던 hpid 집합.
+# 브로드캐스트·따라잡기 시점마다 누적한다. 무응답 기록의 "당시 요청을 받았는가"
+# (reachedAtBroadcast)를 확정 순간의 연결 여부가 아니라 **도달 이력**으로 판정하기
+# 위함 — 확정 순간 기준만 쓰면 그 사이 끊긴 병원이 미도달로 오분류된다(2026-09-29).
+_case_reach: dict[str, set[str]] = {}
+# 사건별 마지막 활동(매칭 전송·승인 액션) 시각. 확정 없이 방치된 사건의
+# 무응답 정리(sweep) 판단에 쓴다.
+_case_last_activity: dict[str, datetime] = {}
+# 무응답 기록을 이미 마친 사건 — 중복 기록 방지(중복 final_approval·sweep 재방문).
+_case_swept: set[str] = set()
 # 연결 집합은 소켓 스레드들(추가·제거)과 매칭 작업 스레드(브로드캐스트)가 같이 건드린다.
 # 한 소켓에 두 스레드가 동시에 send하면 프레임이 섞일 수 있어 전송도 같은 락으로 묶는다.
 _sockets_lock = threading.RLock()
@@ -271,6 +281,18 @@ def _send_to_dashboard(payload: dict) -> None:
                 dead.add(ws)
         _dashboard_sockets.difference_update(dead)
 
+        # 매칭 결과라면 "이 사건이 어느 병원 대시보드에 실제로 도달했나"를
+        # 누적 기록한다 (무응답 로그의 reachedAtBroadcast 판정 재료).
+        if payload.get("type") == "match_result" and payload.get("caseId"):
+            case_id = payload["caseId"]
+            hospital_ids = {h.get("hospitalId") for h in payload.get("hospitals") or []}
+            connected = {
+                hid for sock, (role, hid) in _socket_identity.items()
+                if role == "hospital" and sock in _dashboard_sockets
+            }
+            _case_reach.setdefault(case_id, set()).update(hospital_ids & connected)
+            _case_last_activity[case_id] = datetime.now(timezone.utc)
+
 
 def _send_to_socket(ws, payload: dict, label: str) -> None:
     """소켓 하나에만 보낸다(따라잡기·신원 확인 응답). 브로드캐스트와 같은 락을 쓴다."""
@@ -324,6 +346,13 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
     print(f"  [통신] {identify.role} {identify.id} 연결 — 진행 중인 사건 {len(cases)}건 따라잡기 전송")
     for result in cases:
         _send_to_socket(ws, result.model_dump(), "따라잡기")
+        # 따라잡기로 받아 본 것도 "도달"이다 — 뒤늦게 연결한 병원이 요청을
+        # 봤는데 무응답이면 미도달이 아니라 무시로 분류돼야 한다.
+        if identify.role == "hospital" and any(
+            h.hospitalId == identify.id for h in result.hospitals
+        ):
+            with _sockets_lock:
+                _case_reach.setdefault(result.caseId, set()).add(identify.id)
 
 
 def _resolve_identity(role: str, id_: str) -> tuple[str | None, bool]:
@@ -431,31 +460,71 @@ def _build_rejection_payload(action: ApprovalAction) -> dict:
     )
 
 
-def _log_no_responses(action: ApprovalAction) -> None:
-    """이송 확정(final_approval) 시점에 여전히 무응답(pending)인 후보들을 거절
-    로그에 남긴다 — CLAUDE.md 거절 로그 절의 "무응답(NO_RESPONSE)도 반드시
-    남길 것"(없으면 낮은 점수가 낮은 점수를 재생산하는 되먹임이 생긴다).
+#: 확정 없이 이 시간(분) 넘게 활동이 없는 사건은 "미결 종료"로 보고 무응답을
+#: 정리 기록한다. 로그만 남기고 엔진의 사건 자체는 건드리지 않는다(미확정
+#: 사건은 지우지 않는다는 기존 보존 정책 유지). 0 이하면 끈다.
+UNRESOLVED_CASE_TIMEOUT_MIN = float(os.environ.get("HUB_UNRESOLVED_TIMEOUT_MIN", "120"))
 
-    "요청을 보고도 무시"와 "대시보드 미접속이라 애초에 못 받음(미도달)"은 다른
-    사건이므로 `hospitalDashboardConnected`로 구분해 싣는다 — 수신구는 모르는
-    필드를 extra에 보존하므로 그대로 축적된다.
+
+def _log_no_responses(case_id: str, timestamp: str, finalized_to: str | None) -> None:
+    """사건이 결말(이송 확정 또는 미결 방치)에 이른 시점에, 여전히 무응답
+    (pending)인 후보들을 거절 로그에 남긴다 — CLAUDE.md 거절 로그 절의
+    "무응답(NO_RESPONSE)도 반드시 남길 것"(없으면 낮은 점수가 낮은 점수를
+    재생산하는 되먹임이 생긴다).
+
+    ⚠ 소비 주의 — 무응답은 거절과 **다른 축**의 신호다: 수용 능력이 아니라
+    채널에 대한 정보라, 수용성 판정(G2 라벨·assessment 검증)에는 쓰지 말고
+    보급(미도달)·응답성(무시) 지표로만 분리 집계해야 한다. 그 구분을 위해:
+    - `reachedAtBroadcast`: 사건 진행 중 이 병원 대시보드에 요청이 실제로
+      도달한 이력이 있는가 (_case_reach — 도달했는데 무응답 = 무시)
+    - `hospitalDashboardConnected`: 기록 순간의 연결 여부 (보조 신호)
+    - `caseFinalized`: 확정된 사건인가, 확정 없이 방치된 사건인가 — 미결
+      사건의 무응답은 요청 자체가 유효했는지 모호하므로(데모·중단 포함)
+      분석에서 따로 걸러야 한다
     """
-    result = engine.get_case_result(action.caseId)
+    with _sockets_lock:
+        if case_id in _case_swept:
+            return  # 이미 기록한 사건 (중복 final_approval·sweep 재방문 방지)
+        _case_swept.add(case_id)
+        reach = _case_reach.pop(case_id, set())
+        _case_last_activity.pop(case_id, None)
+
+    result = engine.get_case_result(case_id)
     if result is None:
         return
     logged = 0
     for match in result.hospitals:
-        if match.hospitalId == action.hospital_id or match.status != "pending":
+        if match.hospitalId == finalized_to or match.status != "pending":
             continue
-        payload = _rejection_payload(
-            action.caseId, match.hospitalId, action.timestamp, "NO_RESPONSE"
-        )
+        payload = _rejection_payload(case_id, match.hospitalId, timestamp, "NO_RESPONSE")
+        payload["reachedAtBroadcast"] = match.hospitalId in reach
         payload["hospitalDashboardConnected"] = _hospital_dashboard_connected(match.hospitalId)
-        payload["finalizedTo"] = action.hospital_id
+        payload["caseFinalized"] = finalized_to is not None
+        if finalized_to is not None:
+            payload["finalizedTo"] = finalized_to
         send_rejection_to_info(payload)
         logged += 1
     if logged:
-        print(f"  [통신] 이송 확정 — 무응답 후보 {logged}곳을 NO_RESPONSE로 거절 로그에 기록")
+        kind = "이송 확정" if finalized_to is not None else "미결 종료(sweep)"
+        print(f"  [통신] {kind} — 무응답 후보 {logged}곳을 NO_RESPONSE로 거절 로그에 기록")
+
+
+def _sweep_unresolved_cases(now: datetime | None = None) -> int:
+    """확정 없이 방치된 사건들의 무응답을 정리 기록한다(_maintenance_loop에서
+    주기 호출). 정리한 사건 수를 돌려준다."""
+    if UNRESOLVED_CASE_TIMEOUT_MIN <= 0:
+        return 0
+    now = now or datetime.now(timezone.utc)
+    with _sockets_lock:
+        due = [
+            case_id
+            for case_id, last in _case_last_activity.items()
+            if case_id not in _case_swept
+            and (now - last).total_seconds() >= UNRESOLVED_CASE_TIMEOUT_MIN * 60
+        ]
+    for case_id in due:
+        _log_no_responses(case_id, now.isoformat(timespec="seconds"), finalized_to=None)
+    return len(due)
 
 
 def _handle_dashboard_action(payload: dict) -> None:
@@ -470,6 +539,11 @@ def _handle_dashboard_action(payload: dict) -> None:
     except ValidationError as exc:
         print(f"  [통신] 잘못된 ApprovalAction 수신: {exc.errors()}")
         return
+
+    # 승인 액션도 사건의 "활동"이다 — 미결 sweep의 유휴 판정 기준을 갱신한다.
+    with _sockets_lock:
+        if action.caseId not in _case_swept:
+            _case_last_activity[action.caseId] = datetime.now(timezone.utc)
 
     engine.apply_approval_action(action)
 
@@ -487,7 +561,7 @@ def _handle_dashboard_action(payload: dict) -> None:
         expanded_result = engine.maybe_expand_zone(action.caseId, ambulance_gps)
     elif action.action == "final_approval":
         # 확정 순간 여전히 응답 없던 후보들도 로그에 남긴다 (NO_RESPONSE).
-        _log_no_responses(action)
+        _log_no_responses(action.caseId, action.timestamp, finalized_to=action.hospital_id)
 
     updated_result = expanded_result or engine.get_case_result(action.caseId)
     if updated_result is not None:
@@ -613,6 +687,8 @@ def _maintenance_loop() -> None:
             if due and (_refresh_future is None or _refresh_future.done()):
                 last_refresh = time.monotonic()
                 _refresh_future = _match_executor.submit(_refresh_active_cases)
+            # 확정 없이 방치된 사건의 무응답 정리(로그만 — 사건 자체는 안 지움).
+            _sweep_unresolved_cases()
             if PERSIST_STATE and (engine.take_dirty() or _voice_addresses_dirty):
                 save_state()
         except Exception as e:  # noqa: BLE001
