@@ -1,12 +1,14 @@
-"""통화 텍스트 -> 필드별 점수(logits)를 내는 다중과제 모델. C:\\Dev\\HMM\\model_HMM\\model.py에서 가져왔다.
+"""통화 텍스트 -> v2 필드별 점수(logits)를 내는 다중과제 모델.
 
     인코더   H^(0..L) = Encoder(x)                        사전학습 한국어 인코더 (기본 KLUE RoBERTa-large)
     층 혼합  h_t = gamma * sum_j softmax(w)_j H^(j)_t     마지막 N층, 문장용·토큰용 두 그룹, layer dropout
     풀링     alpha_t = softmax_t(q_k . h_t / sqrt(d))     문장 헤드 k마다 query 하나 (패딩은 제외)
-    문장 헤드 원인·부위·중증도·나이대·성별(단일 선택) + 처치(다중 선택), RoBERTa 분류 헤드
-    증상 태거 토큰별 선형 한 겹 -> 5태그
+    문장 헤드 단일 선택 8개(labels.SINGLE_CHOICE_HEADS) + 다중 선택 7개(labels.MULTI_LABEL_HEADS), RoBERTa 분류 헤드
+    구간 태거 토큰별 선형 한 겹 -> 11태그 (VITALS·AGE·ONSET·DX·MED의 BIO)
 
-모듈 구성과 이름이 곧 체크포인트(best.pt)의 state_dict 키라서, 추론에서 안 쓰는 dropout 층도 그대로 둔다.
+새 층은 초기값에서 기존 함수와 같게 시작한다(w=0, gamma=1이면 마지막 N층 단순 평균, q=0이면 패딩 뺀 토큰 평균).
+dropout은 새로 만든 층(헤드·태거)에, encoder_dropout은 인코더 내부 hidden dropout에 걸린다(None이면 사전학습 설정 그대로).
+구조는 model_HMM(v1)과 같고 출력층만 다르다.
 """
 
 from __future__ import annotations
@@ -17,22 +19,22 @@ from transformers import AutoConfig, AutoModel
 
 from . import labels as L
 
+#: 구간 태거 출력의 로짓 키
+SPAN_HEAD = "spans"
+
 DEFAULT_ENCODER = "klue/roberta-large"
 DEFAULT_LAST_N_LAYERS = 4
 DEFAULT_LAYER_DROPOUT = 0.1
 DEFAULT_MAX_TOKENS = 2048
 
-TREATMENT_HEAD = "treatment"
-SYMPTOM_HEAD = "symptoms"
-
-SENTENCE_HEADS: tuple[str, ...] = tuple(head.name for head in L.SINGLE_CHOICE_HEADS) + (TREATMENT_HEAD,)
+SENTENCE_HEADS: tuple[str, ...] = tuple(head.name for head in L.SINGLE_CHOICE_HEADS) + tuple(L.MULTI_LABEL_HEADS)
 
 
 def resize_position_embeddings(encoder, target_tokens: int) -> None:
     """RoBERTa 절대 포지션 임베딩을 target_tokens 기준으로 늘린다.
 
     포지션 0·1은 패딩용이라 실제 토큰은 인덱스 2부터 쓴다 -> 테이블 크기는 target_tokens + padding_idx + 1.
-    새 자리는 사전학습된 실제 토큰 구간(512자리)을 반복해 초기화한다. 추론에서는 곧바로 best.pt 값으로 덮인다.
+    새 자리는 사전학습된 실제 토큰 구간(512자리)을 반복해 초기화한다. 긴 텍스트로 파인튜닝해야 의미가 생긴다.
     """
     embeddings = encoder.embeddings
     old_embedding = embeddings.position_embeddings
@@ -56,6 +58,11 @@ def resize_position_embeddings(encoder, target_tokens: int) -> None:
     if hasattr(embeddings, "token_type_ids"):
         embeddings.register_buffer("token_type_ids", torch.zeros((1, new_size), dtype=torch.long), persistent=False)
     encoder.config.max_position_embeddings = new_size
+
+
+def masked_mean_pool(token_vectors: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    mask = attention_mask.unsqueeze(-1).to(token_vectors.dtype)
+    return (token_vectors * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
 
 
 class LayerMix(nn.Module):
@@ -120,9 +127,14 @@ class CallExtractor(nn.Module):
         layer_dropout: float = DEFAULT_LAYER_DROPOUT,
         head_hidden_size: int | None = None,
         max_position_embeddings: int | None = DEFAULT_MAX_TOKENS,
+        encoder_dropout: float | None = None,
     ) -> None:
         super().__init__()
         config = AutoConfig.from_pretrained(encoder_name)
+        if encoder_dropout is not None:
+            if not 0.0 <= encoder_dropout < 1.0:
+                raise ValueError("encoder_dropout must be in [0, 1)")
+            config.hidden_dropout_prob = encoder_dropout
         load_options = {"config": config}
         if config.model_type == "roberta":
             load_options["add_pooling_layer"] = False
@@ -138,15 +150,15 @@ class CallExtractor(nn.Module):
 
         inner = head_hidden_size or hidden
         output_sizes = {head.name: head.size for head in L.SINGLE_CHOICE_HEADS}
-        output_sizes[TREATMENT_HEAD] = len(L.TREATMENTS)
+        output_sizes.update({name: len(options) for name, options in L.MULTI_LABEL_HEADS.items()})
         self.heads = nn.ModuleDict(
             {name: ClassificationHead(hidden, inner, output_sizes[name], dropout) for name in SENTENCE_HEADS}
         )
-        self.symptom_tagger = nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden, len(L.SYMPTOM_TAGS)))
+        self.span_tagger = nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden, len(L.SPAN_TAGS)))
 
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> dict[str, torch.Tensor]:
         encoded = self.encoder(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True)
         pooled = self.pool(self.sentence_mix(encoded.hidden_states), attention_mask)
         logits = {name: self.heads[name](pooled[:, index]) for index, name in enumerate(SENTENCE_HEADS)}
-        logits[SYMPTOM_HEAD] = self.symptom_tagger(self.token_mix(encoded.hidden_states))
+        logits[SPAN_HEAD] = self.span_tagger(self.token_mix(encoded.hidden_states))
         return logits

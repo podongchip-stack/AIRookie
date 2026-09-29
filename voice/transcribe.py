@@ -1,14 +1,15 @@
 """통화 음성 -> STT(Qwen3-ASR) -> 구조화(HMM) -> feature/hub 전달용 JSON. 파이프라인 본체이자 배치 CLI.
 
-    ASR   Qwen3-ASR-1.7B + LoRA (asr.py)          음성 -> 발화 구간 텍스트   (AI 처리)
-    HMM   KLUE RoBERTa-large 다중과제 (hmm/)       텍스트 -> 필드별 점수      (AI 처리)
-          + 규칙 조립기 (hmm/assemble.py)          -> summary 6필드            (규칙 기반)
+    ASR   Qwen3-ASR-0.6B + LoRA (asr.py)          음성 -> 발화 구간 텍스트   (AI 처리)
+    HMM   KLUE RoBERTa-large 다중과제 v2 (hmm/)    텍스트 -> 필드별 점수      (AI 처리)
+          + 점수 해석·숫자 파싱 (hmm/decode.py)    -> summary(v2 17필드)       (규칙 기반)
 
 app.py·call_capture.py는 통화 중에 발화 단위로 미리 인식해(live_transcriber.py) 구간 목록을 넘기고,
 이 파일의 CLI는 이미 녹음된 파일을 통째로 인식한다. 이후 과정(emit_call_summary)은 같다.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -62,7 +63,7 @@ def send_to_hub(message: CallSummaryMessage) -> None:
     try:
         response = requests.post(
             HUB_VOICE_SUMMARY_URL,
-            json=message.model_dump(exclude_none=True),
+            json=message.to_payload(),
             timeout=10,
         )
         response.raise_for_status()
@@ -86,7 +87,7 @@ def build_call_summary_message(
     summary: dict,
     case_id: str | None = None,
 ) -> CallSummaryMessage:
-    """발화 구간 + summary 6필드 -> hub로 보낼 CallSummaryMessage (pydantic 검증 포함). 저장·전송은 하지 않는다.
+    """발화 구간 + summary(v2 17필드) -> hub로 보낼 CallSummaryMessage (pydantic 검증 포함). 저장·전송은 하지 않는다.
 
     실제 통화 시작 시각 메타데이터가 없으므로, 처리 시점에서 오디오 길이만큼 거슬러
     올라간 시각을 통화 시작 시각으로 근사한다.
@@ -150,7 +151,7 @@ def emit_call_summary(
     print(f"구조화 완료 ({extract_elapsed:.2f}초)")
 
     message = build_call_summary_message(segments, duration_sec, name, summary, case_id)
-    output_json = message.model_dump_json(exclude_none=True, indent=2)
+    output_json = json.dumps(message.to_payload(), ensure_ascii=False, indent=2)
     SUMMARY_TEXT_DIR.mkdir(parents=True, exist_ok=True)
     summary_path = SUMMARY_TEXT_DIR / f"{name}_call_summary.json"
     summary_path.write_text(output_json, encoding="utf-8")
