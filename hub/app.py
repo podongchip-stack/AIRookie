@@ -996,8 +996,13 @@ def _maintenance_loop() -> None:
             if due and (_refresh_future is None or _refresh_future.done()):
                 last_refresh = time.monotonic()
                 _refresh_future = _match_executor.submit(_refresh_active_cases)
-            # 확정 없이 방치된 사건의 무응답 정리(로그만 — 사건 자체는 안 지움).
+            # 확정 없이 방치된 사건: 무응답 기록 뒤 사건을 닫는다(case_closed).
             _sweep_unresolved_cases()
+            # 확정된 지 CASE_RETENTION_MIN 지난 사건을 지우고, 열린 탭에서도 카드를 지우게 한다.
+            for case_id in engine.prune_expired_cases():
+                with _sockets_lock:
+                    _case_audience.pop(case_id, None)
+                _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": "retention_expired"})
             if PERSIST_STATE and (engine.take_dirty() or _voice_addresses_dirty):
                 save_state()
         except Exception as e:  # noqa: BLE001
