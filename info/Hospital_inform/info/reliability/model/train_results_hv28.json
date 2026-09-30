@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-09-28T14:08:51+00:00",
+  "field": "hv28",
+  "label": "응급실 소아",
+  "theta": 2,
+  "cutoff": "2026-09-21T15:00:00+00:00",
+  "train": {
+    "versions": 13912,
+    "events": 3322
+  },
+  "test": {
+    "versions": 5905,
+    "events": 1634
+  },
+  "seeds": {
+    "42": {
+      "cFull": 0.7841,
+      "cInterval": 0.741,
+      "win": true
+    },
+    "43": {
+      "cFull": 0.7832,
+      "cInterval": 0.7417,
+      "win": true
+    },
+    "44": {
+      "cFull": 0.7846,
+      "cInterval": 0.7432,
+      "win": true
+    }
+  },
+  "meanCFull": 0.784,
+  "adopted": true,
+  "reason": "관문 통과 (시드 3종 전승, 평균 FULL C 0.7840)"
+}

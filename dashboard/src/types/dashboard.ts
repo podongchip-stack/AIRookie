@@ -22,6 +22,10 @@ export interface PatientInfo {
 export interface SpecialtyMatch {
   department: string;
   score: number;
+  // hub 2026-10-01~: voice의 필요 진료과와 정확 일치("exact") / 임베딩 유사도("embedding") / 진료과 없음("none")
+  basis?: "exact" | "embedding" | "none";
+  // 매칭된 진료과의 전문의 수(심평원). 모르면 null.
+  doctorCount?: number | null;
 }
 
 export type HospitalStatus = "pending" | "approved" | "rejected" | "confirmed";
@@ -41,6 +45,86 @@ export interface ReliabilityInfo {
   basis: string[];
 }
 
+// infosurv(XGBoost AFT 생존모델)가 계산한 "병상 숫자 자체가 아직 유효할 확률"
+// (source: "ai" — 생성형은 아니지만 학습 모델이라 규칙과 시각적으로 구분해야 함).
+// reliability(수용 신고를 믿을 만한가)와 다른 축 — 이쪽은 "가용 병상 수 값이
+// 낡지 않았는가"다. hub가 매칭 시점에 재계산한 스칼라(authority·rArrive)와,
+// 그 사이에도 화면이 초 단위로 감쇠를 그릴 수 있는 곡선 파라미터
+// (predictedSurvivalSec·bornAt·sigma — lib/bedReliability.ts 참고)를 같이 준다.
+// 순위에는 전혀 관여하지 않는 설명용이다(hub README "병상 정보 신뢰도" 절).
+export interface BedReliabilityMatch {
+  // 지금 이 병상 숫자를 믿어도 될 확률 (0~1, 매칭 시점 계산값)
+  authority: number;
+  // 도착 시점(순위에 쓴 이동 시간 horizonSec 뒤)에도 유효할 확률
+  rArrive: number;
+  horizonSec: number;
+  // authority가 0.8 아래로 떨어질 때까지 남은 초
+  ttlSec: number;
+  modelTag: string;
+  source: "ai";
+  // 실시간 감쇠용 곡선 파라미터. 구버전 hub면 없을 수 있다 — 그땐 위 스칼라를
+  // 정지값으로 그대로 표시한다.
+  predictedSurvivalSec?: number | null;
+  bornAt?: string | null;
+  sigma?: number;
+  // 병원이 "현재 정보 확인"을 누른 이력이 현재 claim에 유효하면 그 시점의
+  // claim 나이(초). 있으면 확률은 조건부 생존 S(a)/S(u)이고, 로컬 감쇠도
+  // 같은 식을 써야 한다(lib/bedReliability.ts). 2026-09-29 신설.
+  confirmedAgeSec?: number | null;
+}
+
+// 중증질환 수용가능 신고의 질환군별 현재 상태 (hub HospitalSelfInfo가 그대로
+// 전달 — 병원 자기 화면용). 정보미제공 그룹은 키가 없다.
+export interface SevereGroupDeclaration {
+  value: "Y" | "불가능";
+  bornAt: string;
+  ageIsMin: boolean;
+}
+
+export interface SevereDeclarations {
+  groups: Record<string, SevereGroupDeclaration>;
+  source: "rule";
+}
+
+// hub → 병원 대시보드: "귀원 정보 현황"(2026-09-29). identify 직후·info 30분
+// 갱신 직후·정보 확인 직후에 그 병원 소켓으로만 온다. 데이터 공급자(병원)가
+// 자기 정보의 신선도를 직접 보게 하는 피드백 루프 — bedReliability는 horizon
+// 0으로 환산돼 rArrive==authority이고, 곡선 파라미터로 로컬 감쇠를 그린다.
+export interface HospitalSelfInfo {
+  type: "hospital_self_info";
+  hospitalId: string;
+  name: string;
+  availableBedCount: number;
+  bedCountUnknown: boolean;
+  updatedAt: string;
+  bedReliability?: BedReliabilityMatch | null;
+  bedReliabilityByType?: Record<string, BedReliabilityMatch> | null;
+  severeDeclarations?: SevereDeclarations | null;
+}
+
+// 병원 대시보드 → hub: "현재 정보가 맞습니다" 확인 신호(2026-09-29). hub가
+// 그 병원 병상 신뢰도를 조건부 생존으로 되올리고(구급차 화면 ✓), 의사결정
+// 로그에 유효 확인 관측으로 남긴다.
+export interface HospitalInfoConfirm {
+  type: "info_confirm";
+  hospitalId: string;
+  timestamp: string;
+}
+
+// 매칭된 질환군의 중증질환 수용가능 신고가 언제 적 것인지 (source: "rule" —
+// E-Gen 응답에 신고 시각 필드가 없어 info의 스냅샷 추적만이 아는 값).
+// ruleRemainingSec은 실측된 통상 만료 규칙(신고 후 약 9시간) 기준 잔여 초 —
+// 0인데 신고가 여전히 떠 있으면 병원이 갱신을 지속 중이라는 뜻이지 신고가
+// 죽었다는 뜻이 아니다. ageIsMin이면 "최소 X시간 전"으로 표시해야 한다(좌측검열).
+export interface SevereFreshness {
+  group: string;
+  value: "Y" | "불가능";
+  ageSec: number;
+  ageIsMin: boolean;
+  ruleRemainingSec: number;
+  source: "rule";
+}
+
 export interface HospitalCandidate {
   hospitalId: string;
   name: string;
@@ -57,9 +141,23 @@ export interface HospitalCandidate {
   status: HospitalStatus;
   etaMin?: number;
   reliability?: ReliabilityInfo;
+  // 병상 숫자의 유효 확률(AI)·중증신고 신선도(규칙). 둘 다 순위 무관 설명용이고,
+  // 구버전 hub·구 feature/info 데이터면 필드 자체가 없다 — 칩을 숨기면 된다.
+  bedReliability?: BedReliabilityMatch;
+  severeFreshness?: SevereFreshness;
+  // 응급실 일반 외 확장 필드(수술실 hvoc·입원실 hvgc·소아 hv28 등)의 유효
+  // 확률 — 배후진료 역량(Capacity)의 신뢰도. 키는 E-Gen 필드명이고 라벨
+  // 변환은 화면 쪽에서 한다(BED_FIELD_LABEL, HospitalCandidateListPanel).
+  bedReliabilityByType?: Record<string, BedReliabilityMatch>;
+  // hub 2026-10-01~: 응급의료기관 등급과 전문성·등급 가산(이동시간에서 뺀 분, 이유). 규칙 기반.
+  emergencyLevel?: string | null;
+  travelBonusMin?: number;
+  bonusReasons?: string[];
 }
 
 export interface HubMatchResult {
+  // hub가 2026-09-28부터 붙이는 구분자. 그 전 hub는 이 필드 없이 보냈다.
+  type?: "match_result";
   // 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 결과를 어느 사건
   // 것인지 구분하는 값. dashboard는 이 값을 키로 여러 사건을 동시에 들고
   // 있는다(DashboardState.matchResults 참고) — 구급차 대시보드는 자기
@@ -78,6 +176,9 @@ export interface HubMatchResult {
   // 대시보드가 새로고침으로 자기 caseId를 잊었을 때 "내 구급차의 사건"을 되찾는 데 쓴다.
   // hub가 못 찾으면 null, 구버전 hub면 필드 자체가 없다.
   apid?: string | null;
+  // 매칭에 쓴 구급차 좌표(hub HubMatchResult.ambulanceGps, 2026-09-24 신설). 지도가 구급차를
+  // 임시 위치 대신 실제 위치에 그리는 데 쓴다. 구버전 hub면 없어서 임시 위치로 대체한다.
+  ambulanceGps?: { lat: number; lng: number } | null;
 }
 
 export type ApprovalActionType =
@@ -165,6 +266,8 @@ export interface DashboardIdentityInfo {
   id: string;
   name: string | null;
   known: boolean;
+  // hub 2026-10-01~: 출동 시뮬레이션이 켜져 있는지. 구급차 화면의 [이동]·[현장 종료] 버튼 표시 여부.
+  simDispatch?: boolean;
 }
 
 // 신원 확인 결과. known=null은 "아직 hub 응답을 못 받음(확인 중)" —
@@ -172,6 +275,7 @@ export interface DashboardIdentityInfo {
 export interface IdentityState {
   name: string | null;
   known: boolean | null;
+  simDispatch?: boolean;
 }
 
 export interface DashboardState {
@@ -179,12 +283,83 @@ export interface DashboardState {
   // 구급차 대시보드는 자기 caseId 하나만 꺼내 쓰고, 병원 대시보드는 자기
   // hospitalId가 후보로 들어있는 사건을 전부 걸러 카드로 나열한다.
   matchResults: Record<string, HubMatchResult>;
+  // caseId -> 매칭 전 현장 후보(구급차 탭만 받는다).
+  sceneCandidates: Record<string, SceneCandidates>;
+  // apid -> 출동 시뮬레이션 상태. 위치 메시지엔 경로가 없어서 직전 경로를 이어 쓴다.
+  ambulanceSim: Record<string, AmbulanceSimState>;
   // hub 메시지 자체엔 타임스탬프가 없어서, "정보 수신 후 경과" 표시를 위해
   // 대시보드가 최초 수신 시각을 로컬에서 기록해 둔다.
   receivedAt: string | null;
   // 이 소켓(=이 apid/hpid)의 신원 확인 결과. matchResults와 분리해서 관리하는
   // 이유는 사건과 무관하게 항상 표시돼야 하기 때문이다.
   identity: IdentityState;
+  // 병원 대시보드 전용 — hub가 보내주는 "귀원 정보 현황". 구급차 화면·mock
+  // 모드·구버전 hub에서는 null로 남는다.
+  selfInfo: HospitalSelfInfo | null;
 }
 
-export type InboundMessage = HubMatchResult | DashboardIdentityInfo;
+// hub → dashboard: 확정 없이 끝난 사건(방치 정리·현장 종료, 2026-10-01). 받으면 그 사건을
+// 화면에서 지운다 — 예전엔 취소·중단된 사건 카드가 병원 대시보드에 계속 남았다.
+export interface CaseClosed {
+  type: "case_closed";
+  caseId: string;
+  reason: "unresolved_timeout" | "scene_ended" | string;
+}
+
+// hub → 구급차 탭만: 환자 정보가 오기 전 구급차 위치 기준 거리순 후보(규칙 기반, 2026-10-01).
+// 통화 시작 때(출동 시뮬레이션이면 현장 도착 때) 온다. 매칭 결과가 오면 그것으로 대체한다.
+export interface SceneCandidate {
+  hospitalId: string;
+  name: string;
+  distanceKm: number;
+  gps: { lat: number; lng: number };
+  availableBedCount: number;
+  bedCountUnknown: boolean;
+}
+
+export interface SceneCandidates {
+  type: "scene_candidates";
+  caseId: string;
+  apid: string;
+  ambulanceGps: { lat: number; lng: number };
+  ambulanceGpsFallback: boolean;
+  zoneActive: number[];
+  hospitals: SceneCandidate[];
+  source: "rule";
+}
+
+// hub → dashboard: 구급차 출동 시뮬레이션(시연용 가짜 위치, 2026-10-01). ambulance_phase는 상태가
+// 바뀔 때(경로 포함), ambulance_position은 움직이는 동안 1초마다(경로 없음) 온다. 구급차 탭은 전부,
+// 병원 탭은 자기가 확정 병원일 때 이송 중에만 받는다. 항상 simulated=true.
+export type AmbulancePhase = "idle" | "dispatching" | "on_scene" | "transporting" | "at_hospital" | "returning";
+
+export interface AmbulanceSimState {
+  type: "ambulance_phase" | "ambulance_position";
+  apid: string;
+  caseId: string | null;
+  phase: AmbulancePhase;
+  gps: { lat: number; lng: number } | null;
+  heading: number;
+  etaSec: number | null;
+  path?: [number, number][] | null;
+  base: { lat: number; lng: number };
+  incident: { lat: number; lng: number } | null;
+  hospitalId: string | null;
+  simulated: true;
+}
+
+// dashboard → hub: [이동] · [현장 종료]
+export interface DispatchCommand {
+  type: "dispatch" | "scene_end";
+  apid: string;
+  caseId: string;
+  timestamp: string;
+}
+
+export type InboundMessage =
+  | HubMatchResult
+  | DashboardIdentityInfo
+  | HospitalSelfInfo
+  | CaseClosed
+  | SceneCandidates
+  | AmbulanceSimState;

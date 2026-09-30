@@ -52,9 +52,12 @@ function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
 export function CallDemoPanel({
   onCallSignal,
   onAudioChunk,
+  startBlockedReason,
 }: {
   onCallSignal: (signal: CallSignalType) => void;
   onAudioChunk: (chunk: Blob) => void;
+  // 값이 있으면 통화 시작을 막고 이유를 보여준다(출동 시뮬레이션: 현장 도착 전, 2026-10-01).
+  startBlockedReason?: string | null;
 }) {
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -326,14 +329,19 @@ export function CallDemoPanel({
           })}
         >
           <span className={css({ fontSize: "xs", color: "ink2" })}>
-            {active ? "통화 중 · 실시간 전송" : "통화 대기 중"}
+            {active ? "통화 중 · 실시간 전송" : startBlockedReason ?? "통화 대기 중"}
           </span>
           {active ? (
             <button type="button" className={dangerButtonStyle} onClick={handleEnd}>
               통화 종료
             </button>
           ) : (
-            <button type="button" className={primaryButtonStyle} onClick={handleStart}>
+            <button
+              type="button"
+              className={primaryButtonStyle}
+              onClick={handleStart}
+              disabled={Boolean(startBlockedReason)}
+            >
               통화 시작
             </button>
           )}

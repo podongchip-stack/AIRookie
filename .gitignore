@@ -56,3 +56,6 @@ simulation/settings.json
 # Misc
 *.tmp
 .cache/
+
+# 개인 정리 문서 (저장소 루트의 documents/ 만. lidar3d/documents/ 는 계속 추적)
+/documents/

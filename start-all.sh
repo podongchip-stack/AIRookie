@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 골든링크 전체 실행 — hub + info + dashboard + lidar3d(3D 뷰어) + Cloudflare 터널을 한 번에 띄운다.
+# 골든링크 전체 실행 — hub + info + dashboard + Cloudflare 터널을 한 번에 띄운다 (lidar3d는 --lidar로만).
 #
 # 도메인 하나(rookie-goldenlink.xyz)를 Cloudflare named 터널 하나로 나눠 쓴다:
 #
-#   https://app.rookie-goldenlink.xyz     /ws/dashboard, /identity  → hub       (127.0.0.1:5001)
+#   https://app.rookie-goldenlink.xyz     /ws/dashboard, /identity, /route → hub      (127.0.0.1:5001)
 #                                         그 밖의 모든 경로           → dashboard (127.0.0.1:3000)
 #   https://lidar.rookie-goldenlink.xyz   전체                        → lidar3d   (127.0.0.1:8000)
 #
@@ -18,8 +18,11 @@
 #   ./start-all.sh                    공개 모드 (도메인 주소로 접속)
 #   ./start-all.sh --local            터널 없이 로컬 주소로만 (같은 Wi-Fi 시연·개발용)
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
-#   ./start-all.sh --no-info          info(병원 정보 주기 전송) 생략
-#   ./start-all.sh --no-lidar         lidar3d(3D 뷰어) 생략 — 병원 대시보드의 3D 버튼도 숨겨진다
+#   ./start-all.sh --no-info          info(병원 정보 주기 전송)와 E-Gen 스냅샷 수집 생략
+#   ./start-all.sh --no-snapshot      E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델의 관측 기록)만 생략
+#   ./start-all.sh --sim-dispatch     구급차 출동 시뮬레이션(시연용 가짜 위치) — 구급차 화면에 [이동] 버튼
+#   ./start-all.sh --lidar            lidar3d(3D 뷰어·아이폰 앱 업로드 서버)도 함께 — 병원 대시보드에 3D 버튼이 생긴다
+#                                     (기본은 끔: 3D는 당분간 시연에서 뺀다. 끄면 버튼도 자동으로 숨겨진다)
 #
 # voice는 구급차 노트북마다 따로 뜨므로 여기서 띄우지 않는다(voice/app.py, HUB_BASE_URL로 이 hub를 가리킴).
 # Ctrl-C 한 번으로 띄운 것 전부를 함께 끈다. 로그는 $LOG_DIR 아래에 서버별로 남는다.
@@ -41,13 +44,16 @@ DASH_PORT="${DASH_PORT:-3000}"
 LIDAR_PORT="${LIDAR_PORT:-8000}"
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
-MODE=public; BUILD=1; RUN_INFO=1; RUN_LIDAR=1
+MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0; SIM_DISPATCH=0
 for a in "$@"; do
   case "$a" in
     --local)      MODE=local ;;
     --skip-build) BUILD=0 ;;
     --no-info)    RUN_INFO=0 ;;
-    --no-lidar)   RUN_LIDAR=0 ;;
+    --no-snapshot) RUN_SNAPSHOT=0 ;;
+    --sim-dispatch) SIM_DISPATCH=1 ;;
+    --lidar)      RUN_LIDAR=1 ;;
+    --no-lidar)   RUN_LIDAR=0 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
     --setup-dns)
       command -v cloudflared >/dev/null || { echo "❌ cloudflared가 없습니다: brew install cloudflared"; exit 1; }
       echo "터널 '$TUNNEL_NAME'에 $APP_HOST 를 연결합니다 (Cloudflare DNS에 CNAME 생성)..."
@@ -132,11 +138,14 @@ VIEWER_URL=""
 [ "$RUN_LIDAR" = 1 ] && VIEWER_URL="$VIEWER_BASE/viewer/?token=$LIDAR_TOKEN"
 
 # ── 1. hub ──
-# app.py의 __main__은 debug=True라서 그대로 쓰지 않는다 — 디버그 모드가 외부에 닿으면
-# 원격 코드 실행 위험이 있다. 0.0.0.0은 유지한다: 구급차 노트북의 voice가 LAN으로 붙어야 한다.
+# 포트를 이 스크립트가 정하려고 app.py의 __main__ 대신 직접 띄운다. debug는 끈다 — 디버그 모드가
+# 외부에 닿으면 원격 코드 실행 위험이 있다. 0.0.0.0은 유지한다: 구급차 노트북의 voice가 LAN으로 붙어야 한다.
 need "$HUB_PY" hub HUB_PY
 echo "hub 시작 (포트 $HUB_PORT, 임베딩 모델 로드에 시간이 걸릴 수 있음)..."
-(cd hub && exec "$HUB_PY" -u -c "import app; app.app.run(host='0.0.0.0', port=$HUB_PORT, debug=False)") \
+# start_background(): 60초 재계산·상태 저장/복구·방치 사건 정리(와 출동 시뮬레이션) 루프. 예전엔
+# app.app.run()만 불러서 이 루프들이 start-all로 띄운 실서버에서는 한 번도 돌지 않았다(2026-10-01 수정).
+(cd hub && HUB_SIM_DISPATCH="$SIM_DISPATCH" exec "$HUB_PY" -u -c \
+    "import app; app.start_background(); app.app.run(host='0.0.0.0', port=$HUB_PORT, debug=False)") \
   > "$LOG_DIR/hub.log" 2>&1 &
 HUB_PID=$!; PIDS+=("$HUB_PID")
 wait_http hub "http://127.0.0.1:$HUB_PORT/identity?role=hospital&id=_" "$HUB_PID" "$LOG_DIR/hub.log" 180
@@ -147,6 +156,15 @@ if [ "$RUN_INFO" = 1 ]; then
   echo "info 시작 (병원 정보 → hub, 기본 30분 주기)..."
   "$INFO_PY" -u info/send_to_hub.py > "$LOG_DIR/info.log" 2>&1 &
   PIDS+=("$!")
+  # E-Gen은 과거 이력을 주지 않아서, 병상 신뢰도 모델(reliability/)과 중증신고 신선도가 쓰는
+  # 관측 기록은 직접 찍어 쌓아야 한다. Windows에선 작업 스케줄러(snapshot_nationwide.bat)로
+  # 돌리던 것을 여기서 같이 띄운다 — 전국 1회 호출 × 20분 = 하루 약 145회(서울만 받을 때와 같음).
+  if [ "$RUN_SNAPSHOT" = 1 ]; then
+    echo "E-Gen 스냅샷 수집 시작 (전국, 20분 주기)..."
+    (cd info/Hospital_inform && PYTHONIOENCODING=utf-8 exec "$INFO_PY" -u info/snapshot.py --stage1 "" \
+        --interval 1200 --dir info/data/snapshots_nationwide) > "$LOG_DIR/snapshot.log" 2>&1 &
+    PIDS+=("$!")
+  fi
 fi
 
 # ── 3. lidar3d (3D 뷰어) ──
@@ -194,7 +212,7 @@ if [ "$MODE" = public ]; then
     echo "# start-all.sh가 실행할 때마다 새로 쓴다 — 직접 고치지 말고 스크립트를 고칠 것"
     echo "ingress:"
     echo "  - hostname: $APP_HOST"
-    echo "    path: ^/(ws/dashboard|identity)"
+    echo "    path: ^/(ws/dashboard|identity|route)"
     echo "    service: http://127.0.0.1:$HUB_PORT"
     echo "  - hostname: $APP_HOST"
     echo "    service: http://127.0.0.1:$DASH_PORT"
@@ -236,7 +254,7 @@ fi
 cat <<BANNER
 
   voice(구급차 노트북)는 HUB_BASE_URL=http://<이 맥의 LAN IP>:$HUB_PORT 로 따로 실행하세요.
-  로그: $LOG_DIR/{hub,info,lidar3d,dashboard,cloudflared}.log
+  로그: $LOG_DIR/{hub,info,snapshot,lidar3d,dashboard,cloudflared}.log
   Ctrl-C 로 전부 종료합니다.
 ==============================================================
 

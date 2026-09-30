@@ -15,8 +15,8 @@ class TranscriptTurn(BaseModel):
     timestamp: str
     text: str
     # dashboard 쪽 TranscriptTurn.excludedFromSummary와 이름을 그대로 맞춤 (camelCase).
-    # 필터링에서 제외된 턴에만 True로 채우고, 그 외에는 아예 필드를 내보내지 않는다
-    # (원본 로그는 raw_text/turns에 그대로 남기고 "요약 제외" 표시만 하는 CLAUDE.md 원칙).
+    # 발화 필터링 단계가 없어져 지금은 채우는 곳이 없고 항상 필드가 빠진 채 나간다.
+    # dashboard 타입과 1:1 계약이라 필드 자체는 남겨둔다.
     excludedFromSummary: Optional[bool] = None
 
 

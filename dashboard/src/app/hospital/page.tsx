@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { css, cx } from "styled-system/css";
 import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
+import { HospitalSelfInfoPanel } from "@/components/hospital/HospitalSelfInfoPanel";
 import { Legend } from "@/components/hospital/Legend";
 import { CaseMatchPanel } from "@/components/hospital/CaseMatchPanel";
 import { MapPanel } from "@/components/hospital/MapPanel";
@@ -18,7 +19,7 @@ import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 function HospitalDashboardContent() {
   const searchParams = useSearchParams();
   const MY_HOSPITAL_ID = searchParams.get("id");
-  const { state, connectionMode, sendAction } = useDashboardSocket(
+  const { state, connectionMode, sendAction, sendInfoConfirm } = useDashboardSocket(
     MY_HOSPITAL_ID ? { role: "hospital", id: MY_HOSPITAL_ID } : null,
   );
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
@@ -89,6 +90,15 @@ function HospitalDashboardContent() {
         hospitalName={state.identity.name ?? selected?.hospital.name ?? null}
       />
       <Legend />
+
+      {/* 귀원 정보 현황 + "현재 정보가 맞습니다" 확인 버튼 (2026-09-29).
+          hub가 이 병원 정보를 알 때만 온다 — mock 모드·구버전 hub면 숨긴다. */}
+      {state.selfInfo && (
+        <HospitalSelfInfoPanel
+          selfInfo={state.selfInfo}
+          onConfirm={() => sendInfoConfirm(MY_HOSPITAL_ID)}
+        />
+      )}
 
       <main
         className={css({
@@ -172,7 +182,18 @@ function HospitalDashboardContent() {
         </div>
         </div>
 
-        <MapPanel hospital={selected?.hospital ?? null} />
+        <MapPanel
+          hospital={selected?.hospital ?? null}
+          caseId={selected?.result.caseId ?? null}
+          ambulanceGps={selected?.result.ambulanceGps ?? null}
+          sim={
+            selected?.result.apid &&
+            state.ambulanceSim[selected.result.apid]?.hospitalId === MY_HOSPITAL_ID &&
+            state.ambulanceSim[selected.result.apid]?.caseId === selected.result.caseId
+              ? state.ambulanceSim[selected.result.apid]
+              : null
+          }
+        />
       </main>
 
       <p

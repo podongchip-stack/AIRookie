@@ -8,6 +8,7 @@ import {
   mockHubMatchResultOngoing,
 } from "@/lib/mock-data";
 import type {
+  AmbulanceSimState,
   ApprovalAction,
   ApprovalActionType,
   CallSignal,
@@ -16,9 +17,13 @@ import type {
   DashboardIdentityInfo,
   DashboardRole,
   DashboardState,
+  DispatchCommand,
+  HospitalInfoConfirm,
+  HospitalSelfInfo,
   HospitalStatus,
   HubMatchResult,
   InboundMessage,
+  SceneCandidates,
 } from "@/types/dashboard";
 
 // hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
@@ -40,8 +45,11 @@ const RECONNECT_MAX_MS = 10000;
 
 const INITIAL_STATE: DashboardState = {
   matchResults: {},
+  sceneCandidates: {},
+  ambulanceSim: {},
   receivedAt: null,
   identity: { name: null, known: null },
+  selfInfo: null,
 };
 
 // feature/hub가 dashboard와 직접 통신하는 유일한 브랜치다 (CLAUDE.md). voice/info는
@@ -72,8 +80,38 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     }));
   }, []);
 
+  const applyCaseClosed = useCallback((caseId: string) => {
+    setState((prev) => {
+      if (!(caseId in prev.matchResults) && !(caseId in prev.sceneCandidates)) return prev;
+      const matchResults = { ...prev.matchResults };
+      const sceneCandidates = { ...prev.sceneCandidates };
+      delete matchResults[caseId];
+      delete sceneCandidates[caseId];
+      return { ...prev, matchResults, sceneCandidates };
+    });
+  }, []);
+
+  const applySceneCandidates = useCallback((scene: SceneCandidates) => {
+    setState((prev) => ({ ...prev, sceneCandidates: { ...prev.sceneCandidates, [scene.caseId]: scene } }));
+  }, []);
+
   const applyIdentityInfo = useCallback((info: DashboardIdentityInfo) => {
-    setState((prev) => ({ ...prev, identity: { name: info.name, known: info.known } }));
+    setState((prev) => ({
+      ...prev,
+      identity: { name: info.name, known: info.known, simDispatch: info.simDispatch ?? false },
+    }));
+  }, []);
+
+  const applyAmbulanceSim = useCallback((sim: AmbulanceSimState) => {
+    setState((prev) => {
+      const before = prev.ambulanceSim[sim.apid];
+      const path = sim.type === "ambulance_phase" ? sim.path ?? null : before?.path ?? null;
+      return { ...prev, ambulanceSim: { ...prev.ambulanceSim, [sim.apid]: { ...sim, path } } };
+    });
+  }, []);
+
+  const applySelfInfo = useCallback((info: HospitalSelfInfo) => {
+    setState((prev) => ({ ...prev, selfInfo: info }));
   }, []);
 
   useEffect(() => {
@@ -155,12 +193,30 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
       socket.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data) as InboundMessage;
-          // HubMatchResult엔 type 필드 자체가 없어서 "type" in parsed로 구분한다
-          // (parsed.type만 비교하면 두 타입 모두에 type이 있어야 좁혀지지 않는다).
-          if ("type" in parsed && parsed.type === "identity_info") {
-            applyIdentityInfo(parsed);
-          } else {
-            applyMatchResult(parsed as HubMatchResult);
+          // type으로 구분한다(2026-10-01). type이 없으면 2026-09-28 이전 hub의 매칭 결과다.
+          // 모르는 type은 버린다 — 예전엔 나머지를 전부 매칭 결과로 취급해서, hub가 새 메시지
+          // 종류를 보내기 시작하면 사건 목록이 깨졌다.
+          switch (parsed.type) {
+            case "identity_info":
+              applyIdentityInfo(parsed);
+              break;
+            case "hospital_self_info":
+              applySelfInfo(parsed);
+              break;
+            case "ambulance_phase":
+            case "ambulance_position":
+              applyAmbulanceSim(parsed);
+              break;
+            case "scene_candidates":
+              applySceneCandidates(parsed);
+              break;
+            case "case_closed":
+              applyCaseClosed(parsed.caseId);
+              break;
+            case "match_result":
+            case undefined:
+              applyMatchResult(parsed);
+              break;
           }
         } catch {
           // 파싱 불가능한 메시지는 무시
@@ -178,7 +234,7 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyIdentityInfo, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
@@ -250,7 +306,51 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     }
   }, []);
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk };
+  // 병원 대시보드의 "현재 정보가 맞습니다" 확인(2026-09-29). hub가 이 병원의
+  // 병상 신뢰도를 조건부 생존으로 되올리고, 갱신된 자기 정보(hospital_self_info)와
+  // 관련 사건 재계산 결과를 곧바로 되돌려준다. 실제로 보냈는지를 돌려준다.
+  const sendInfoConfirm = useCallback((hospitalId: string): boolean => {
+    const payload: HospitalInfoConfirm = {
+      type: "info_confirm",
+      hospitalId,
+      timestamp: new Date().toISOString(),
+    };
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+      return true;
+    }
+    if (!process.env.NEXT_PUBLIC_DASHBOARD_WS_URL) {
+      // mock 모드 — hub가 없으니 확인 효과(✓·확률 리셋)를 로컬로 흉내낸다.
+      console.info("[mock] 정보 확인 전송(WS 미연결):", payload);
+      setState((prev) => {
+        const br = prev.selfInfo?.bedReliability;
+        if (!prev.selfInfo || !br?.bornAt) return prev;
+        const ageSec = Math.max((Date.now() - Date.parse(br.bornAt)) / 1000, 0);
+        return {
+          ...prev,
+          selfInfo: {
+            ...prev.selfInfo,
+            bedReliability: { ...br, authority: 1, rArrive: 1, confirmedAgeSec: ageSec },
+          },
+        };
+      });
+      return true;
+    }
+    console.warn("[골든링크] hub 연결이 끊겨 정보 확인을 보내지 못했습니다:", payload);
+    return false;
+  }, []);
+
+  // [이동] · [현장 종료] (출동 시뮬레이션). 끊겨 있으면 보내지 않고 false.
+  const sendSimCommand = useCallback((type: DispatchCommand["type"], apid: string, caseId: string): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    const payload: DispatchCommand = { type, apid, caseId, timestamp: new Date().toISOString() };
+    socket.send(JSON.stringify(payload));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.
