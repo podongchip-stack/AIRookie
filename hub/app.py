@@ -152,6 +152,21 @@ def receive_hospital_info():
     return jsonify({"status": "ok", "hospitalId": info.hospitalId}), 200
 
 
+@app.post("/info/hospitals/roster")
+def receive_hospital_roster():
+    """feature/info가 한 주기에 보낸 병원 전체 목록(2026-10-01). 여기 없는 병원을 레지스트리에서
+    뺀다 — 진행 중 사건 후보는 남기고, 목록이 급감하면 아무것도 안 뺀다(HubEngine.apply_hospital_roster)."""
+    body = request.get_json(force=True, silent=True) or {}
+    ids = body.get("hospitalIds")
+    if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+        return jsonify({"error": "hospitalIds(list[str])가 필요합니다"}), 400
+    removed, kept = engine.apply_hospital_roster(ids)
+    if removed or kept:
+        decision_log.log_decision("hospital_roster_applied", {"removed": removed, "kept": kept, "rosterSize": len(ids)})
+        print(f"  [통신] 병원 목록 반영 — 피드에서 빠진 병원 {len(removed)}곳 제거, {len(kept)}곳 보류(진행 중 사건 후보이거나 목록 급감)")
+    return jsonify({"status": "ok", "removed": removed, "kept": kept}), 200
+
+
 @app.post("/info/ambulances")
 def receive_ambulance_info():
     """feature/info로부터 구급차 정보(AmbulanceInfo, Supabase ambulances

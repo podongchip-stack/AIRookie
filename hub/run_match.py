@@ -258,6 +258,7 @@ def main() -> None:
     test_decision_log_chain()
     test_approval_order_and_reselection()
     test_expertise_bonus_and_exact_match()
+    test_hospital_roster()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -879,6 +880,21 @@ def test_expertise_bonus_and_exact_match() -> None:
     assert top.specialtyMatch.doctorCount == 12 and top.travelBonusMin > 0 and top.bonusReasons
     assert result.hospitals[1].specialtyMatch.basis == "embedding", "일치하는 과가 없으면 임베딩으로 남는다(제외 안 함)"
     print(f"  [확인] 최대 가산 {MAX_BONUS_MIN}분 불변식, 정확 일치 1.0 · 가산 {top.travelBonusMin}분 {top.bonusReasons}")
+
+
+def test_hospital_roster() -> None:
+    """피드에서 사라진 병원 제거(2026-10-01): 진행 중 사건 후보는 남기고, 목록 급감이면 안 뺀다."""
+    print("\n=== 병원 목록 동기화: 피드에서 빠진 병원 제거 ===")
+    engine = _engine()
+    for i in range(4):
+        engine.update_hospital_info(_hospital(f"R00{i}", f"[테스트] 병원 {i}", 35.18 + i * 0.001, 128.109, 3))
+    engine.update_hospital_info(_hospital("R_FAR", "[테스트] 먼 병원", 37.9, 127.9, 3))
+    engine.process_voice_summary(_voice("case-roster"), _TEST_GPS, max_zone=1)  # R000~R003이 후보
+    assert engine.apply_hospital_roster(["R000"]) == ([], ["R001", "R002", "R003", "R_FAR"]), "목록 급감이면 안 뺀다"
+    removed, kept = engine.apply_hospital_roster(["R000", "R001", "R002"])
+    assert removed == ["R_FAR"] and kept == ["R003"], (removed, kept)
+    assert engine.get_hospital("R_FAR") is None and engine.get_hospital("R003") is not None
+    print("  [확인] 후보 아닌 병원만 제거, 진행 중 사건 후보는 보류, 목록 급감 시 제거 안 함")
 
 
 if __name__ == "__main__":

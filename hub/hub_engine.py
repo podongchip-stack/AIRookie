@@ -425,6 +425,30 @@ class HubEngine:
             self._hospitals[info.hospitalId] = info
             self._dirty = True
 
+    def apply_hospital_roster(self, hospital_ids: list[str]) -> tuple[list[str], list[str]]:
+        """info가 한 주기에 보낸 전체 병원 목록에 없는 병원을 뺀다(2026-10-01).
+
+        - 진행 중인 사건의 후보에 있는 병원은 이번엔 남긴다(이송 중 확정 병원이 사라지면 안 된다).
+          사건이 끝난 뒤 다음 주기에 빠진다.
+        - 목록이 지금 아는 병원의 절반도 안 되면 E-Gen 조회가 일부만 성공한 것으로 보고 아무것도
+          안 뺀다(부분 실패가 병원 대량 삭제로 이어지지 않게).
+        (지운 목록, 남긴 목록)을 돌려준다."""
+        roster = set(hospital_ids)
+        with self._lock:
+            missing = [hid for hid in self._hospitals if hid not in roster]
+            if not missing or len(roster) < len(self._hospitals) / 2:
+                return [], missing
+            in_use = {h.hospitalId for r in self._case_results.values() for h in r.hospitals}
+            removed = [hid for hid in missing if hid not in in_use]
+            kept = [hid for hid in missing if hid in in_use]
+            for hid in removed:
+                del self._hospitals[hid]
+                self._bed_overlay.pop(hid, None)
+                self._info_confirmations.pop(hid, None)
+            if removed:
+                self._dirty = True
+            return removed, kept
+
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
         with self._lock:
             return self._hospitals.get(hospital_id)

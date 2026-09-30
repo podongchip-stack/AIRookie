@@ -82,6 +82,7 @@ load_dotenv(HOSPITAL_INFORM_INFO_DIR.parent / ".env")
 
 HUB_HOSPITALS_URL = os.environ.get("HUB_HOSPITALS_URL", "http://127.0.0.1:5001/info/hospitals")
 HUB_AMBULANCES_URL = os.environ.get("HUB_AMBULANCES_URL", "http://127.0.0.1:5001/info/ambulances")
+HUB_ROSTER_URL = os.environ.get("HUB_ROSTER_URL", "http://127.0.0.1:5001/info/hospitals/roster")
 
 AMBULANCE_SUPABASE_URL = os.environ.get("AMBULANCE_SUPABASE_URL")
 AMBULANCE_SUPABASE_KEY = os.environ.get("AMBULANCE_SUPABASE_KEY")
@@ -378,6 +379,17 @@ def send_to_hub(hospital: HospitalInfo) -> None:
     print(f"  [통신] {hospital.hospitalId} {hospital.name} 전송 완료 -> {HUB_HOSPITALS_URL}")
 
 
+def send_roster_to_hub(hospital_ids: list[str]) -> None:
+    """이번 주기에 보낸 병원 전체 목록(2026-10-01). hub는 여기 없는 병원을 레지스트리에서 뺀다 —
+    예전엔 upsert만 해서 E-Gen에서 빠진 병원도 옛 정보로 계속 후보에 나왔다. 병원을 전부 보낸
+    뒤에만 부른다(도중에 실패하면 raise로 여기까지 안 온다)."""
+    response = requests.post(HUB_ROSTER_URL, json={"hospitalIds": hospital_ids}, timeout=10)
+    response.raise_for_status()
+    body = response.json()
+    print(f"  [통신] 병원 목록 {len(hospital_ids)}곳 전송 — hub 제거 {len(body.get('removed', []))}곳, "
+          f"보류 {len(body.get('kept', []))}곳 -> {HUB_ROSTER_URL}")
+
+
 def send_ambulance_to_hub(ambulance: AmbulanceInfo) -> None:
     response = requests.post(
         HUB_AMBULANCES_URL,
@@ -394,6 +406,8 @@ def sync_once() -> None:
     print(f"\n=== 병원 정보 {len(hospitals)}건을 feature/hub로 전송 ===")
     for hospital in hospitals:
         send_to_hub(hospital)
+    if hospitals:
+        send_roster_to_hub([h.hospitalId for h in hospitals])
 
     ambulances = fetch_ambulances()
     if ambulances:
