@@ -134,14 +134,30 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 "결과 저장 및 전송 방식" 참고), 로그가 쌓이기 시작하면 tier·거리·진료과매칭이
 실제 승인율과 어떤 관계인지 역산해 가중합으로 승격할지 재검토할 수 있다.
 
-## 순위 규칙 (2026-09-28 정비)
+## 순위 규칙 (2026-09-28 정비, 2026-10-01 보강)
 
-`finalScore = 0.6 × 진료과 유사도 + 0.4 × 이동시간 점수`로 매기고, 아래 순서로 정렬한다
-(`scoring.rank_key()`). 후보에서 빼는 병원은 없다 — 뒤로 내릴 뿐이다.
+`finalScore = 0.6 × 진료과 점수 + 0.4 × 이동시간 점수(이동분 − 가산분)`으로 매기고, 아래 순서로
+정렬한다(`scoring.rank_key()`). 후보에서 빼는 병원은 없다 — 뒤로 내릴 뿐이다. **순위는 hub 한 곳에서만
+정한다** — dashboard는 받은 `hospitals[]` 순서를 그대로 쓴다(2026-10-01, 그 전엔 dashboard가 자체
+정렬로 이 규칙을 덮어써서 화면에 반영되지 않았다).
 
-1. 나머지 병원: `finalScore` 내림차순 (같으면 가까운 순 → ID 순)
-2. 그 뒤: `declared_no`(관련 질환군 수용 불가 신고) · `beds_full`(병상 0이 **확인된** 만실)
-3. 맨 뒤: 이 사건에서 거절(`rejected`)한 병원
+1. 이 사건의 이송 확정(`confirmed`) 병원 → 병원이 승인(`approved`)한 병원
+2. 나머지 병원: `finalScore` 내림차순 (같으면 가까운 순 → ID 순)
+3. 그 뒤: `declared_no`(관련 질환군 수용 불가 신고) · `beds_full`(병상 0이 **확인된** 만실)
+4. 맨 뒤: 이 사건에서 거절(`rejected`)한 병원
+
+**진료과 점수** (2026-10-01): voice의 `summary.required_department`(심평원 과목 표기)가 병원 진료과에
+있으면 **정확 일치 1.0**(`specialtyMatch.basis = "exact"`), 없으면 예상 병명과 진료과명의 임베딩
+유사도(`"embedding"`). 진료과는 info가 E-Gen 역량 4개 과 + 심평원 전문과목별 전문의 수로 채운다.
+
+**전문성·등급 가산** (2026-10-01, `scoring.expertise_bonus_min()`): 점수에 더하지 않고 **이동시간에서
+분을 뺀다.** 점수에 더하면 같은 가산이 가까운 병원 사이에선 4분, 먼 병원 사이에선 20분의 가치가 되어
+버린다. 분 단위라 불변식이 정확히 선다 — **가산을 다 받아도 `MAX_BONUS_MIN`(8)분 넘게 먼 병원은
+가까운 병원을 이길 수 없다**(`run_match.py`가 3/10/30/60분에서 검사).
+- 매칭된 진료과 전문의 수: 최대 3분 (log 스케일 — 1명 0.7분, 5명 1.8분, 20명 이상 3분)
+- 중증(`severity_tag = "high"`)일 때만 응급의료기관 등급: 권역응급의료센터 5분, 지역응급의료센터 2분
+- 모르는 값은 0분(불리하게 두지 않음). 쓴 값과 이유는 `travelBonusMin`·`bonusReasons`로 나간다
+- 값은 수용 결과 데이터 없이 정한 보수적 초기값이다 — 거절 로그가 쌓이면 재보정한다
 
 내린 이유는 `hospitals[].demoteReasons`로 나간다. 세부 규칙:
 
@@ -162,6 +178,8 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
   오버레이로 0이 된 병원이 자기 사건에서 만실로 밀려나지 않게 한다.
 - 승인 액션이 오면 캐시된 결과를 **재정렬**해서 다시 보낸다. 예전엔 status만 바꿔서 거절한
   병원이 1위 자리에 그대로 남았다.
+- **이송이 확정된 사건은 60초 재계산에서 재정렬하지 않는다**(2026-10-01). 목적지가 정해졌는데
+  목록이 뒤섞이고 후보 전체 ETA를 다시 부를 이유가 없다. 승인 액션 뒤 패치는 그대로 된다.
 - `nightDutyAvailable`은 순위에 쓰지 않는다. info가 `bool(capabilities)`(E-Gen에 역량을 하나라도
   신고했는가)로 채우는 프록시라 실제 야간 당직 정보가 아니고, 진료과 점수와 같은 신호를
   두 번 반영하게 된다.
@@ -720,6 +738,34 @@ HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화�
 | 상태 저장·복구 | 병원·구급차 레지스트리, 승인 상태, 병상 오버레이, 사건(구조화 요약·결과), voice 주소를 5초마다(변경 있을 때만) 저장하고 뜰 때 복구한다. 재시작 뒤 info의 다음 전송(최대 30분)까지 병원이 0곳이던 문제를 없앤다. **통화 원문은 저장하지 않는다** — 복구된 사건은 원문 자리에 안내 문구가 뜬다. 종료(Ctrl+C·SIGTERM) 때도 저장한다 | `HUB_STATE_PATH` (기본 `data/state/hub_state.json`), `HUB_PERSIST_STATE=0`이면 끔 |
 | 스레드 안전 | 엔진 상태는 락 안에서만 읽고 쓰되, 임베딩·카카오 호출은 락 밖에서 한다(그동안 승인 액션이 막히지 않게). 소켓 집합·전송, voice 주소, 의사결정 로그 쓰기도 락으로 보호한다 | — |
 | debug | 기본 꺼짐. 켜면 코드 리로더가 파일 변경마다 재시작해 인메모리 상태가 날아가고 예외 화면이 외부에 노출된다 | `HUB_DEBUG=1` |
+| 백그라운드 시작 | 위 재계산·저장·방치 사건 정리 루프는 `start_background()`가 띄운다. `start-all.sh`가 예전엔 `app.app.run()`만 불러 **실서버에서 이 루프들이 한 번도 돌지 않았다**(2026-10-01 수정) | — |
+| 역할별 전송 | 매칭 결과는 그 구급차(apid) 탭과 후보에 오른 적 있는 병원(hpid) 탭에만 보낸다(2026-10-01). identify 전 소켓은 따라잡기로 받는다 | — |
+| 방치 사건 닫기 | 확정 없이 120분 활동이 없으면 무응답(`NO_RESPONSE`)을 기록한 뒤 사건을 닫고 `{"type":"case_closed"}`를 보낸다 — 대시보드가 카드를 지운다(2026-10-01) | `HUB_UNRESOLVED_TIMEOUT_MIN` |
+| 현장 후보 | 통화 시작(출동 시뮬레이션이면 현장 도착) 때 거리순 후보를 `{"type":"scene_candidates"}`로 그 구급차 탭에만 보낸다(규칙 기반, 환자 정보 전이라 병원 탭엔 안 보냄) | — |
+| 병원 목록 동기화 | info가 한 주기 끝에 `POST /info/hospitals/roster {"hospitalIds": [...]}`를 보내면 목록에 없는 병원을 뺀다. 진행 중 사건 후보는 보류, 목록이 절반 아래로 급감하면 부분 조회 실패로 보고 안 뺀다 | — |
+| 출동 시뮬레이션 | 아래 "출동 시뮬레이션" 절 | `HUB_SIM_DISPATCH=1` |
+
+### 출동 시뮬레이션 (2026-10-01, 시연용 가짜 위치)
+
+`start-all.sh --sim-dispatch`(= `HUB_SIM_DISPATCH=1`)일 때만 켜진다. 구급차 대시보드의 [이동]을 누를 때만
+구급차가 움직인다(`ambulance_sim.py`, 설계는 `documents/1001v1_0134_...`).
+
+```
+idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─15초→ returning ─도착→ idle
+                                    └─[현장 종료]→ returning          (returning 중 [이동] = 재출동)
+```
+
+- 환자 발생 위치: 기지(Supabase 등록 좌표)에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오
+  다중 목적지 ETA로 골라 `data/sim/incident_points_<apid>.json`에 저장(이후 호출 0회)
+- 구간마다 도로 경로 1회, `HUB_SIM_SPEEDUP`(기본 5)배속으로 따라감. 남은 ETA는 실제 도로 기준
+- 위치는 레지스트리 GPS를 덮어쓰지 않고 조회 시점에 얹는다 — info의 30분 재전송과 안 부딪히고, 재시작하면 기지 대기
+- 통화 시작은 `on_scene`이고 caseId가 같을 때만 voice로 중계한다(아니면 `call_start_refused`)
+- dashboard ↔ hub 메시지
+  - 받음: `{"type":"dispatch"|"scene_end","apid","caseId","timestamp"}`
+  - 보냄: `ambulance_phase`(상태 바뀔 때, 경로 포함) · `ambulance_position`(움직이는 동안 1초마다) — 모두
+    `simulated: true`. 그 구급차 탭 전부 + 이송 중·병원 도착일 때만 확정 병원 탭. `identity_info.simDispatch`
+- 의사결정 로그: `sim_dispatch_enabled`, `ambulance_dispatched`/`dispatch_refused`, `ambulance_phase`, `case_closed`
+- 검증: `python ambulance_sim.py`(상태 머신·보간), `python test_dispatch_sim.py`(앱 레이어 전체 흐름)
 
 ## 폴더 구조
 
@@ -731,7 +777,8 @@ hub/                        (저장소 루트의 .gitignore, CLAUDE.md는 브랜
 ├── schema.py            입출력 pydantic 모델 (voice/info/dashboard 스키마와 1:1 대응)
 ├── geo.py                GPS 거리 계산, 존(Zone) 분류·확장 판단
 ├── specialty_matcher.py  임베딩 기반 예상 병명 ↔ 진료과 매칭
-├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
+├── scoring.py             이동시간·진료과 점수 가중합, 전문성·등급 가산(분), 순위 결정
+├── ambulance_sim.py       구급차 출동 시뮬레이션(시연용 가짜 위치) 상태 머신·경로 보간
 ├── hub_engine.py         2단계 매칭 오케스트레이션 + 승인 액션 반영(상태 보관 + 재처리)
 ├── decision_log.py       의사결정 로그 (타임스탬프 + SHA-256 해시, 위변조 검증 가능)
 ├── delivery.py           결과 저장 + dashboard로의 실제 통신 — 파일명을 voice 입력에서 이어받음
@@ -739,6 +786,7 @@ hub/                        (저장소 루트의 .gitignore, CLAUDE.md는 브랜
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
 ├── test_app_background.py   app 레이어 검사 (비동기 매칭·재계산·상태 저장)
 ├── test_rejection_forward.py 거절 사유 중계 검사
+├── test_dispatch_sim.py   출동 시뮬레이션 앱 레이어 검사
 └── data/                 (.gitignore 대상)
     ├── test/
     │   ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
@@ -747,6 +795,7 @@ hub/                        (저장소 루트의 .gitignore, CLAUDE.md는 브랜
     │       └── DrRomantic3v3_hub_match_result.json  매칭 결과 (delivery.py가 생성)
     ├── live/output/      실서버 매칭 결과 사본 (app.py)
     ├── state/hub_state.json  재시작 복구용 상태 (app.py, 통화 원문 제외)
+    ├── sim/              출동 시뮬레이션 환자 발생 위치 후보 (ambulance_sim.py)
     └── logs/
         └── decision_log.jsonl   의사결정 로그 (decision_log.py가 생성, append-only, 해시 체인)
 ```
@@ -801,9 +850,12 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 - 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`),
   이동시간 반감기(`TRAVEL_HALF_LIFE_MIN`)는 `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다(대회 데모 단계라
-  구급차가 실제로 이동하지 않아 서울 랜드마크로 고정) — 진짜 실시간 GPS 연동은
-  이번 범위가 아니다
+- 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다. 시연에서는 출동
+  시뮬레이션(`--sim-dispatch`)이 가짜 위치를 얹는다. 진짜 실시간 GPS(브라우저 geolocation 등)
+  수신 경로는 아직 없다
+- **WebSocket에 인증이 없다.** 주소를 아는 누구나 접속해 승인 액션(`final_approval` 포함)과 출동
+  명령을 보낼 수 있다. 시연 범위에선 허용하되, 공개 운영 전에는 Cloudflare Access 같은 로그인을
+  도메인 앞에 두거나 소켓별 토큰을 붙여야 한다
 - voice 자가등록(`/voice/register`)이 온 apid의 `AmbulanceInfo`가 아직 없으면(즉
   feature/info가 그 구급차 정보를 아직 안 보냈으면) 409로 거부하고 재시도 큐 없이
   그냥 실패한다 — voice 쪽에서 재시도 로직을 두거나, info가 먼저 뜨는 걸 운영 순서로

@@ -385,6 +385,14 @@ Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-
   `HospitalInfo.severeDeclarations`(source: "rule", 미제공 그룹은 키 없음)로
   내보낸다 — hub가 신고 나이·9h 규칙 잔여로 환산(`severeFreshness`)
 
+### 진료과 확장 · 등급 · 병원 목록 동기화 (2026-10-01)
+
+- **진료과를 심평원 전문의 수로 채운다.** `egen/mapper.build_specialties()`가 E-Gen 역량 4개 과에 `data/hira/specialists.json`의 전문과목별 전문의 수를 합친다(응급 수용 과만 — `ACUTE_HIRA_DEPARTMENTS`, 영상의학과·마취통증의학과·진단검사의학과·치과·한방 등 제외). `doctorCount`에 실제 인원, 분과(순환기내과)는 대분류(내과) 인원을 빌린다. 캐시가 없거나 조인 안 된 병원은 기존 4개 과 그대로(fail-soft). 실측: 415곳 중 403곳 반영. 예전엔 438곳 중 186곳(42%)이 진료과 0개였다
+- `HospitalInfo.emergencyLevel`: E-Gen 목록의 `dutyEmclsName`(권역/지역응급의료센터 등). hub가 중증 환자 가산에 쓴다
+- `send_to_hub.py`가 한 주기 병원을 다 보낸 뒤 `POST /info/hospitals/roster`로 전체 hpid 목록을 보낸다 — hub가 피드에서 빠진 병원을 지운다
+- **스냅샷 수집은 이제 `start-all.sh`가 info와 함께 20분 주기로 띄운다**(`--no-snapshot`으로 끔). Windows 작업 스케줄러(`snapshot_nationwide.bat`)로만 돌아서 이 맥에선 8월 13일 이후 멈춰 있었다
+- ⚠️ `info/requirements.txt`의 `xgboost==3.4.1`·`numpy==2.5.1`·`scipy==1.18.0`은 Python 3.12 이상용이라 파일 머리의 "3.11" 환경엔 안 깔린다. 3.11 환경은 호환 버전(xgboost 3.2 등)을 깔면 되고, 모델 로드·selftest 통과를 확인했다(2026-10-01). 이게 빠지면 `[reliability] 엔진 초기화 실패` 한 줄만 남기고 `bedReliability` 없이 조용히 보내진다
+
 ### 거절 로그 — dashboard·hub·info 연동 (2026-08-12 인터페이스, 2026-09-10 배선 완료)
 
 info 수신구(`POST /hub/rejection`) → **완성.** dashboard 사유 선택 UI → **완성**
@@ -486,6 +494,13 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **의사결정 로그 해시 체인**: 기록마다 `prevHash`(앞 기록 hash). 예전엔 줄마다 자기 내용만 해시해 수정 후 재해시·삭제·순서 변경을 못 잡았다. 체인 이전 기록은 기존 방식으로 검증
   - 실서버 결과 사본 경로를 `data/test/output/`에서 `data/live/output/`으로 분리
   - **승인 흐름**: 병원 승인·거절은 `hospital`, 이송 승인은 `paramedic`만 받고, 이송 승인은 병원이 `approved`한 병원에만 허용한다(어긋나면 `approval_action_refused` 로그만 남김). 이송 병원을 재선택하면 이전 확정 병원을 `approved`로 되돌리고 병상 차감을 회수한다(`approval_released`). dashboard는 이미 이 규칙대로 버튼을 열어 수정 불필요
+- **hub 정비 2차(2026-10-01, dashboard·info·start-all 함께 변경)** — 자세한 것은 hub/README.md "순위 규칙"·"서버 운영 동작"·"출동 시뮬레이션"
+  - **순위는 hub 한 곳에서만 정한다.** 정렬은 이 사건의 확정 병원 → 병원 승인 병원 → 나머지(finalScore) → `declared_no`·`beds_full` → `rejected`. dashboard의 자체 정렬(병상 → 상태 → 진료과 점수 → 직선거리)을 없앴다 — 그동안 이 자체 정렬이 9월 28일 순위 규칙(카카오 ETA 이동시간 등)을 화면에서 전부 덮어쓰고 있었다
+  - **진료과**: voice `required_department`가 병원 진료과에 있으면 정확 일치 1.0(`specialtyMatch.basis="exact"`), 없으면 임베딩(후보에서 안 뺌). **전문성·등급 가산은 점수가 아니라 이동시간에서 분을 뺀다** — 전문의 수 최대 3분 + 중증(high)일 때 권역센터 5분/지역센터 2분. 가산을 다 받아도 8분(`MAX_BONUS_MIN`) 넘게 먼 병원은 못 이긴다는 불변식을 테스트로 고정. `travelBonusMin`·`bonusReasons`·`emergencyLevel`로 설명 노출
+  - **역할별 전송**: 매칭 결과는 그 구급차 탭과 후보에 오른 적 있는 병원 탭에만. **방치 사건 닫기**: 무응답 sweep(120분) 뒤 사건을 캐시에서 지우고 `case_closed` 전송. **현장 후보**: 통화 시작 때 거리순 후보(`scene_candidates`, 규칙)를 구급차 탭에만. **병원 목록 동기화**: `POST /info/hospitals/roster`로 피드에서 빠진 병원 제거(진행 중 사건 후보 보류, 목록 급감 시 안 뺌). **질환군 어휘**: info가 보낸 `assessment.groups`에서 만든다(hub 목록은 폴백). 확정된 사건은 60초 재계산에서 재정렬하지 않는다
+  - **출동 시뮬레이션**(`start-all.sh --sim-dispatch`, 시연용 가짜 위치): [이동] → 현장(기지 5~12분 거리) → 통화·승인 → 확정 병원 → 15초 → 기지 복귀. `ambulance_sim.py`, 메시지 `dispatch`·`scene_end`(받음) / `ambulance_phase`·`ambulance_position`(보냄, `simulated: true`). 위치는 레지스트리 GPS를 덮지 않고 조회 시점에 얹는다
+  - **start-all이 hub 백그라운드 루프를 안 띄우던 버그 수정** — `app.app.run()`만 불러서 60초 재계산·상태 저장·sweep이 실서버에서 한 번도 돌지 않았다. 이제 `app.start_background()`를 먼저 부른다
+  - WebSocket 인증은 여전히 없다(시연 범위 허용, hub/README.md 한계에 명시)
 
 ## feature/dashboard 담당자 참고사항
 
@@ -550,10 +565,15 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   `hospitals[].reliability`(질환군·score·confidence·basis)를 보내주면
   구급차 대시보드 병원 후보 카드에 칩+근거 문장으로 노출한다
   (`HospitalCandidateListPanel.tsx`). 이 값은 순위 정렬에는 안 쓰이는 순수
-  설명용 정보라 — 실제 순위는 여전히 `specialtyMatch`(진료과 임베딩)와
-  `distanceKm`로만 정해진다. `reliability` 필드 자체가 없는 병원(구
+  설명용 정보다. ~~실제 순위는 여전히 `specialtyMatch`와 `distanceKm`로만 정해진다~~ →
+  2026-10-01부터 순위는 hub가 보낸 `hospitals[]` 순서 그대로다(아래 항목). `reliability` 필드 자체가 없는 병원(구
   feature/info 데이터 등)은 칩이 안 뜨는 것으로 자연히 처리된다(Optional
   필드라 별도 분기 불필요).
+- **hub 순서 그대로 · 출동 시뮬레이션 화면 (2026-10-01)**
+  - 후보 목록은 **hub가 보낸 순서를 그대로** 쓴다(자체 정렬 제거). 이송 승인을 누르면 즉시 "확정"이 아니라 "확정 요청 중"으로 두고, hub가 `confirmed`로 돌려줄 때만 확정 표시(mock 모드는 예전대로)
+  - hub 메시지는 `type`으로 구분하고 모르는 `type`은 버린다(type 없는 메시지 = 구 hub의 매칭 결과). 새로 받는 것: `case_closed`(사건 카드 지움), `scene_candidates`(매칭 전 거리순 후보 — 구급차 화면), `ambulance_phase`·`ambulance_position`(출동 시뮬레이션)
+  - 후보 카드: "필요 진료과 일치"/적합도, 전문의 수, 권역·지역센터 칩, 순위 가산 이유(툴팁)
+  - `identity_info.simDispatch`가 true면 구급차 화면에 출동 조작부([이동]·[현장 종료], "시뮬레이션 위치" 배지). caseId는 [이동] 때 만들고 통화 시작은 현장 도착 뒤에만 열린다. 지도는 상태가 바뀔 때만 경로·기지·환자 발생 위치를 다시 그리고 1초 위치엔 마커만 옮긴다. 병원 지도도 우리 병원으로 이송 중인 구급차를 보여준다
 
 ---
 
