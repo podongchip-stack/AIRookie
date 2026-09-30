@@ -369,12 +369,12 @@ def test_case_eviction() -> None:
     ))
     assert old_case in engine._case_confirmed_at, "final_approval인데 확정 시각이 기록되지 않았다"
     engine._case_confirmed_at[old_case] = datetime.now(timezone.utc) - timedelta(minutes=CASE_RETENTION_MIN + 5)
+    # 새 사건이 없어도 주기 루프의 정리(prune_expired_cases)가 지운다(2026-10-01)
+    assert engine.prune_expired_cases() == [old_case], "새 사건 없이도 주기 정리로 지워져야 한다"
 
     # 2) 진행 중 사건: 매칭만 (확정 안 함)
     engine.process_voice_summary(_voice(live_case), gps, max_zone=1)
 
-    # 3) 아무 사건이나 새로 처리되면 진입 시점에 정리가 돈다
-    engine.process_voice_summary(_voice("case-evict-trigger"), gps, max_zone=1)
 
     assert engine.get_case_result(old_case) is None, "확정된 지 오래된 사건의 매칭 결과 캐시가 안 지워졌다"
     assert old_case not in engine._case_voice, "오래된 사건의 voice 요약 캐시가 안 지워졌다"

@@ -543,6 +543,11 @@ class HubEngine:
 
     # ── 정리 · 병상 오버레이 ──────────────────────────────────────────────────
 
+    def prune_expired_cases(self) -> list[str]:
+        """주기 루프가 부른다(2026-10-01). 예전엔 새 통화 요약·승인 액션이 들어올 때만 정리해서,
+        새 사건이 없으면 확정된 지 60분 넘은 사건이 따라잡기로 계속 화면에 떴다."""
+        return self._prune_old_cases()
+
     def _prune_old_cases(self, now: datetime | None = None) -> list[str]:
         """이송이 확정된 지 CASE_RETENTION_MIN이 지난 사건의 **큰 캐시**
         (매칭 결과·voice 요약)를 걷어낸다. 진행 중이거나 아직 확정 전인 사건
