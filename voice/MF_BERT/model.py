@@ -1,14 +1,18 @@
-"""통화 텍스트 -> v2 필드별 점수(logits)를 내는 다중과제 모델.
+"""통화 텍스트 -> v2 필드별 점수(logits)를 내는 다중과제 모델. 이전에 쓰던 HMM v2와 출력층이 같다.
+원본은 BERT_Multiclass Classification/BERT/mf_bert/model.py (학습 코드와 같은 파일이어야 체크포인트가 맞는다).
 
-    인코더   H^(0..L) = Encoder(x)                        사전학습 한국어 인코더 (기본 KLUE RoBERTa-large)
-    층 혼합  h_t = gamma * sum_j softmax(w)_j H^(j)_t     마지막 N층, 문장용·토큰용 두 그룹, layer dropout
-    풀링     alpha_t = softmax_t(q_k . h_t / sqrt(d))     문장 헤드 k마다 query 하나 (패딩은 제외)
-    문장 헤드 단일 선택 8개(labels.SINGLE_CHOICE_HEADS) + 다중 선택 7개(labels.MULTI_LABEL_HEADS), RoBERTa 분류 헤드
-    구간 태거 토큰별 선형 한 겹 -> 11태그 (VITALS·AGE·ONSET·DX·MED의 BIO)
+    조각 인코딩 H^(0..L)_c = Encoder(chunk_c)                 512토큰 조각마다 사전학습 한국어 인코더 (기본 KLUE RoBERTa-large)
+    토큰 복원   H^(j) = concat_c H^(j)_c[keep_c]               겹친 토큰은 한 조각 것만 남겨 원문 토큰 줄로 이어 붙임 (chunking.py)
+    층 혼합     h_t = gamma * sum_j softmax(w)_j H^(j)_t        마지막 N층, 문장용·토큰용 두 그룹, layer dropout
+    풀링        alpha_t = softmax_t(q_k . h_t / sqrt(d))        문장 헤드 k마다 query 하나, 통화 전체 토큰 대상 (패딩은 제외)
+    문장 헤드   단일 선택 8개(labels.SINGLE_CHOICE_HEADS) + 다중 선택 7개(labels.MULTI_LABEL_HEADS), RoBERTa 분류 헤드
+    구간 태거   토큰별 선형 한 겹 -> 11태그 (VITALS·AGE·ONSET·DX·MED의 BIO)
+
+HMM v2는 포지션 임베딩을 2048칸으로 늘려 긴 통화를 한 번에 넣지만, 여기서는 포지션을 늘리지 않고 조각으로 나눠
+사전학습된 512칸만 쓴다. 조각이 하나뿐인 통화는 HMM v2와 계산이 같다.
 
 새 층은 초기값에서 기존 함수와 같게 시작한다(w=0, gamma=1이면 마지막 N층 단순 평균, q=0이면 패딩 뺀 토큰 평균).
 dropout은 새로 만든 층(헤드·태거)에, encoder_dropout은 인코더 내부 hidden dropout에 걸린다(None이면 사전학습 설정 그대로).
-구조는 model_HMM(v1)과 같고 출력층만 다르다.
 """
 
 from __future__ import annotations
@@ -25,44 +29,8 @@ SPAN_HEAD = "spans"
 DEFAULT_ENCODER = "klue/roberta-large"
 DEFAULT_LAST_N_LAYERS = 4
 DEFAULT_LAYER_DROPOUT = 0.1
-DEFAULT_MAX_TOKENS = 2048
 
 SENTENCE_HEADS: tuple[str, ...] = tuple(head.name for head in L.SINGLE_CHOICE_HEADS) + tuple(L.MULTI_LABEL_HEADS)
-
-
-def resize_position_embeddings(encoder, target_tokens: int) -> None:
-    """RoBERTa 절대 포지션 임베딩을 target_tokens 기준으로 늘린다.
-
-    포지션 0·1은 패딩용이라 실제 토큰은 인덱스 2부터 쓴다 -> 테이블 크기는 target_tokens + padding_idx + 1.
-    새 자리는 사전학습된 실제 토큰 구간(512자리)을 반복해 초기화한다. 긴 텍스트로 파인튜닝해야 의미가 생긴다.
-    """
-    embeddings = encoder.embeddings
-    old_embedding = embeddings.position_embeddings
-    old_size, hidden = old_embedding.weight.shape
-    padding_idx = old_embedding.padding_idx
-    new_size = target_tokens + padding_idx + 1
-    if new_size <= old_size:
-        return
-
-    old_weight = old_embedding.weight.data
-    new_weight = old_weight.new_empty((new_size, hidden))
-    new_weight[:old_size] = old_weight
-    real_pattern = old_weight[padding_idx + 1 :]
-    repeats = (new_size - old_size + real_pattern.shape[0] - 1) // real_pattern.shape[0]
-    new_weight[old_size:] = real_pattern.repeat(repeats, 1)[: new_size - old_size]
-
-    new_embedding = nn.Embedding(new_size, hidden, padding_idx=padding_idx)
-    new_embedding.weight.data.copy_(new_weight)
-    embeddings.position_embeddings = new_embedding
-    embeddings.register_buffer("position_ids", torch.arange(new_size).unsqueeze(0), persistent=False)
-    if hasattr(embeddings, "token_type_ids"):
-        embeddings.register_buffer("token_type_ids", torch.zeros((1, new_size), dtype=torch.long), persistent=False)
-    encoder.config.max_position_embeddings = new_size
-
-
-def masked_mean_pool(token_vectors: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    mask = attention_mask.unsqueeze(-1).to(token_vectors.dtype)
-    return (token_vectors * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
 
 
 class LayerMix(nn.Module):
@@ -126,26 +94,26 @@ class CallExtractor(nn.Module):
         last_n_layers: int = DEFAULT_LAST_N_LAYERS,
         layer_dropout: float = DEFAULT_LAYER_DROPOUT,
         head_hidden_size: int | None = None,
-        max_position_embeddings: int | None = DEFAULT_MAX_TOKENS,
         encoder_dropout: float | None = None,
+        pretrained: bool = True,
     ) -> None:
+        """pretrained=False면 사전학습 가중치를 받지 않고 구조만 만든다(학습한 체크포인트를 덮어 불러올 때)."""
         super().__init__()
         config = AutoConfig.from_pretrained(encoder_name)
         if encoder_dropout is not None:
             if not 0.0 <= encoder_dropout < 1.0:
                 raise ValueError("encoder_dropout must be in [0, 1)")
             config.hidden_dropout_prob = encoder_dropout
-        load_options = {"config": config}
-        if config.model_type == "roberta":
-            load_options["add_pooling_layer"] = False
-        self.encoder = AutoModel.from_pretrained(encoder_name, **load_options)
-        if max_position_embeddings is not None and config.model_type == "roberta":
-            resize_position_embeddings(self.encoder, max_position_embeddings)
+        load_options = {"add_pooling_layer": False} if config.model_type == "roberta" else {}
+        if pretrained:
+            self.encoder = AutoModel.from_pretrained(encoder_name, config=config, **load_options)
+        else:
+            self.encoder = AutoModel.from_config(config, **load_options)
         hidden = self.encoder.config.hidden_size
-        layer_count = min(last_n_layers, self.encoder.config.num_hidden_layers)
+        self.layer_count = min(last_n_layers, self.encoder.config.num_hidden_layers)
 
-        self.sentence_mix = LayerMix(layer_count, layer_dropout)
-        self.token_mix = LayerMix(layer_count, layer_dropout)
+        self.sentence_mix = LayerMix(self.layer_count, layer_dropout)
+        self.token_mix = LayerMix(self.layer_count, layer_dropout)
         self.pool = AttentionPool(hidden, len(SENTENCE_HEADS))
 
         inner = head_hidden_size or hidden
@@ -156,9 +124,36 @@ class CallExtractor(nn.Module):
         )
         self.span_tagger = nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden, len(L.SPAN_TAGS)))
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> dict[str, torch.Tensor]:
-        encoded = self.encoder(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True)
-        pooled = self.pool(self.sentence_mix(encoded.hidden_states), attention_mask)
+    def encode_chunks(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        chunk_mask: torch.Tensor,
+        keep_mask: torch.Tensor,
+        token_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, ...]:
+        """조각 (B, C, L) -> 마지막 N층의 복원된 토큰 줄 N개, 각각 (B, T, H). 빈 조각은 인코더에 넣지 않는다."""
+        encoded = self.encoder(
+            input_ids=input_ids[chunk_mask],
+            attention_mask=attention_mask[chunk_mask],
+            output_hidden_states=True,
+        )
+        layers = torch.stack(encoded.hidden_states[-self.layer_count :])  # (N, 조각 수, L, H)
+        kept = layers[:, keep_mask[chunk_mask]]                          # (N, 남긴 토큰 수, H) — 통화·조각·위치 순서
+        restored = kept.new_zeros(self.layer_count, *token_mask.shape, kept.size(-1))
+        restored[:, token_mask] = kept
+        return tuple(restored)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        chunk_mask: torch.Tensor,
+        keep_mask: torch.Tensor,
+        token_mask: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        hidden_states = self.encode_chunks(input_ids, attention_mask, chunk_mask, keep_mask, token_mask)
+        pooled = self.pool(self.sentence_mix(hidden_states), token_mask)
         logits = {name: self.heads[name](pooled[:, index]) for index, name in enumerate(SENTENCE_HEADS)}
-        logits[SPAN_HEAD] = self.span_tagger(self.token_mix(encoded.hidden_states))
+        logits[SPAN_HEAD] = self.span_tagger(self.token_mix(hidden_states))  # (B, T, 태그 수)
         return logits

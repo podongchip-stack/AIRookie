@@ -28,7 +28,7 @@ class Transcript(BaseModel):
 
 
 class Summary(BaseModel):
-    """HMM v2 출력 그대로 — C:\Dev\HMM\data_v3\필드_설명.md의 v2 스키마 17개 필드 + meta.
+    """MF_BERT 출력 그대로 — C:\Dev\HMM\data_v3\필드_설명.md의 v2 스키마 17개 필드 + meta.
 
     값이 null인 것도 의미가 있다(모델이 안 배운 필드, 통화에 없는 정보). 중첩 구조는 모델 출력을 그대로
     두고 여기서는 검증하지 않는다 — hub 담당자가 필요한 필드부터 타입을 좁힌다.

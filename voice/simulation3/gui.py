@@ -1,12 +1,12 @@
-r"""Qwen3-ASR -> HMM 실험용 데스크톱 시뮬레이터 (tkinter).
+r"""Qwen3-ASR -> MF_BERT 실험용 데스크톱 시뮬레이터 (tkinter).
 
 장비 마이크로 말하면 발화 단위로 인식하고, v2 17필드·hub로 갈 JSON을 보여준다.
 실운영 경로가 아니다. 처리는 전부 voice/의 실운영 모듈을 import해서 쓴다 — 마이크(MicRecorder)·무음 감지
-(LiveTranscriber)·ASR·HMM·JSON 조립까지 app.py와 같은 코드라, 여기서 맞춘 무음 기준을 환경변수로 그대로
+(LiveTranscriber)·ASR·MF_BERT·JSON 조립까지 app.py와 같은 코드라, 여기서 맞춘 무음 기준을 환경변수로 그대로
 옮기면 된다. 사본이 없으니 화면 결과와 실제 hub 전송값이 달라질 일도 없다.
 
     마이크 -> MicRecorder -> LiveTranscriber (발화 단위 ASR)
-                               -> 발화가 늘 때마다 HmmExtractor.extract() -> v2 17필드
+                               -> 발화가 늘 때마다 MfBertExtractor.extract() -> v2 17필드
                                -> build_call_summary_message() -> hub JSON (전송·저장은 안 함)
 
     conda activate AIRookieProject
@@ -29,7 +29,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from asr import SAMPLE_RATE, AsrModel, Segment  # noqa: E402
-from hmm import HmmExtractor  # noqa: E402
+from MF_BERT import MfBertExtractor  # noqa: E402
 from live_transcriber import SILENCE_RMS, UTTERANCE_HOLD_SEC, LiveTranscriber  # noqa: E402
 from mic_recorder import MicRecorder  # noqa: E402
 from transcribe import build_call_summary_message, load_models  # noqa: E402
@@ -67,7 +67,7 @@ def show(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def render(extractor: HmmExtractor, segments: list[Segment], duration_sec: float) -> dict | None:
+def render(extractor: MfBertExtractor, segments: list[Segment], duration_sec: float) -> dict | None:
     """구간 목록 -> 화면에 채울 값. 인식된 말이 없으면 None."""
     text = "\n".join(s.text for s in segments)
     if not text:
@@ -112,14 +112,14 @@ class SimulatorApp:
         self.root = root
         self.device = device
         self.asr_model: AsrModel | None = None
-        self.extractor: HmmExtractor | None = None
+        self.extractor: MfBertExtractor | None = None
         self.recorder: MicRecorder | None = None
         self.live: LiveTranscriber | None = None
         self.shown = 0
         self.meter_pos = 0
         self.results: queue.Queue = queue.Queue()
 
-        root.title("Qwen3-ASR → HMM v2 시뮬레이터")
+        root.title("Qwen3-ASR → MF_BERT 시뮬레이터")
         root.geometry("1400x860")
         self._build()
         self._set_status("모델 로딩 중… (약 15~20초)")
@@ -268,7 +268,7 @@ class SimulatorApp:
         fill_table(self.fields_table, view["fields"])
         self.json_text.delete("1.0", "end")
         self.json_text.insert("1.0", view["json"])
-        self._set_status(f"{note} · 발화 {len(segments)}건 · 통화 {duration:.1f}초 · HMM {view['seconds']:.2f}초")
+        self._set_status(f"{note} · 발화 {len(segments)}건 · 통화 {duration:.1f}초 · MF_BERT {view['seconds']:.2f}초")
 
 
 def main() -> None:

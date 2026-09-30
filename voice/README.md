@@ -1,4 +1,4 @@
-# feature/voice — 음성 STT(Qwen3-ASR) · 정보 구조화(HMM) 파이프라인
+# feature/voice — 음성 STT(Qwen3-ASR) · 정보 구조화(MF_BERT) 파이프라인
 
 > **폴더 구조 안내(모노레포)**: 이 저장소는 `feature/voice`·`feature/hub`·
 > `feature/info`·`feature/dashboard`가 하나의 저장소를 공유하며, 각 브랜치는
@@ -44,11 +44,12 @@ pip install -r requirements.txt
 | Hub 저장소 · 경로 | 내용 | 로컬 폴더로 대신 쓰려면 |
 | --- | --- | --- |
 | [`Playedwell03/qwen3-asr-0.6b-119ko-tiny`](https://huggingface.co/Playedwell03/qwen3-asr-0.6b-119ko-tiny) | Qwen3-ASR-0.6B LoRA 어댑터 (`adapter_config.json`, `adapter_model.safetensors`) | `ASR_ADAPTER_DIR` |
-| [`podongchip/goldenlink-voice-models`](https://huggingface.co/podongchip/goldenlink-voice-models) `hmm_v2/` | HMM v2 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` | `HMM_RUN_DIR` |
+| [`podongchip/MF_BERT`](https://huggingface.co/podongchip/MF_BERT) | MF_BERT 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` | `MF_BERT_DIR` |
 
 환경변수를 주면 Hub에서 받지 않고 그 폴더를 쓴다(재학습한 가중치를 올리기 전에 시험할 때 등, `weights.py`).
-ASR 베이스 모델(`Qwen/Qwen3-ASR-0.6B-hf`)과 HMM 인코더 설정(`klue/roberta-large`)도
-같은 캐시로 자동으로 내려받는다. `podongchip/goldenlink-voice-models`의 `hmm/`·`asr_adapter/`는 이전 버전(v1) 가중치로, 더 이상 쓰지 않는다.
+ASR 베이스 모델(`Qwen/Qwen3-ASR-0.6B-hf`)과 MF_BERT 인코더 설정(`klue/roberta-large`의 config만 — 인코더 가중치는
+체크포인트에 들어 있어 받지 않는다)도 같은 캐시로 자동으로 내려받는다. 이전 구조화 모델 저장소
+`podongchip/goldenlink-voice-models`(HMM v1·v2 가중치)는 더 이상 쓰지 않는다.
 
 **3. 실행** — 마이크로 바로 시작해볼 수 있다 (`voice/` 안에서):
 
@@ -67,13 +68,17 @@ Ctrl+C를 누르면(통화 종료) 남은 발화를 인식한 뒤 구조화 → 
 dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 
 ```
-마이크 ─▶ [STT] Qwen3-ASR + LoRA ─▶ 발화 텍스트 ─▶ [구조화] HMM v2 ─▶ summary(v2 17필드) ─▶ feature/hub
+마이크 ─▶ [STT] Qwen3-ASR + LoRA ─▶ 발화 텍스트 ─▶ [구조화] MF_BERT ─▶ summary(v2 17필드) ─▶ feature/hub
           통화 중 발화 단위로 인식                    분류·태깅 모델 (생성형 아님)
 ```
 
 > **2026-09-24 교체.** 이전 경로(faster-whisper → `corrections.json` 오인식 교정 →
 > Ollama `qwen3:14b` SBAR 구조화)는 코드째 삭제했다. 두 모델은 팀이 따로
-> 파인튜닝한 것으로(`C:\Dev\HMM`), 추론 코드만 이 폴더(`asr.py`, `hmm/`)에 복사해 넣었다.
+> 파인튜닝한 것으로, 추론 코드만 이 폴더(`asr.py`, `MF_BERT/`)에 복사해 넣었다.
+>
+> **2026-10-01 구조화 모델 교체.** HMM v2(`hmm/`)를 지우고 MF_BERT(`MF_BERT/`)로 바꿨다. 출력층·디코더·
+> 라벨이 같아 `summary`(v2 17필드) 형식은 그대로다. 바뀐 것은 긴 통화를 512토큰 조각으로 나눠 넣는 입력 처리와
+> 가중치 저장소다([구조화 — MF_BERT](#구조화--mf_bert-mf_bert) 참고).
 
 **진입점은 3개**다. 셋 다 같은 모델·같은 후처리(`transcribe.emit_call_summary()`)를 쓰고
 출력 JSON 스키마도 같다.
@@ -156,7 +161,7 @@ VOICE_APID=A0000001 VOICE_PORT=6000 python app.py
 | `VOICE_DEVICE` | `auto` | 연산 장치 |
 | `VOICE_SILENCE_RMS` | `0.01` | 이보다 작은 소리는 말이 아닌 것으로 본다. [발화 단위 인식](#발화-단위-인식-live_transcriberpy) 참고 |
 | `VOICE_UTTERANCE_HOLD_SEC` | `0.4` | 이만큼 조용하면 한 발화가 끝난 것으로 본다 |
-| `ASR_ADAPTER_DIR` / `HMM_RUN_DIR` | (없음 — Hub에서 받음) | 가중치를 로컬 폴더로 대신 쓸 때. [빠른 시작](#빠른-시작) 참고 |
+| `ASR_ADAPTER_DIR` / `MF_BERT_DIR` | (없음 — Hub에서 받음) | 가중치를 로컬 폴더로 대신 쓸 때. [빠른 시작](#빠른-시작) 참고 |
 
 **동작 순서**
 1. 서버가 뜨기 전에 두 모델을 한 번 올린다(약 15~20초). 통화마다 올리면 그만큼 늦어지므로 프로세스가 살아있는 동안 재사용한다
@@ -192,7 +197,7 @@ POST /call/end    (hub 중계)
 │                                                                  │
 │ transcribe.emit_call_summary()                                   │
 │   발화들을 줄바꿈으로 이어 붙임 → origin_text/<세션>.txt 저장     │
-│   HmmExtractor.extract()        HMM 점수 → v2 17필드 (decode)    │
+│   MfBertExtractor.extract()     MF_BERT 점수 → v2 17필드 (decode)│
 │   CallSummaryMessage 조립       pydantic 검증                    │
 │   summary_text/<세션>_call_summary.json 저장                     │
 │   send_to_hub()                 POST /voice/summary              │
@@ -239,18 +244,20 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 
 | 단계 | 소요 |
 | --- | --- |
-| 모델 로딩 (ASR + HMM) | 14~20초 *(프로세스당 1회)* |
+| 모델 로딩 (ASR + 구조화 모델) | 14~20초 *(프로세스당 1회, HMM v2 때 측정)* |
 | **통화 종료 → hub 수신** (`app.py`, 발화 단위 인식) | **3.7초** |
 | 참고: 같은 통화를 끝나고 한 번에 인식 (`transcribe.py`) | ASR 61.1초 |
-| 구조화 (HMM) | 0.1초 |
+| 구조화 (MF_BERT) | 0.01~0.03초 *(프로세스 첫 호출만 약 0.3초)* |
 
-`app.py` 수치는 실제 마이크 대신 파일을 실시간 속도로 흘려 넣어 잰 값이다.
+`app.py` 수치는 실제 마이크 대신 파일을 실시간 속도로 흘려 넣어 잰 값이고, 구조화 모델이 HMM v2였을 때 쟀다.
+MF_BERT만 따로 잰 값(Linux · RTX 5080 · 텍스트 입력)은 캐시에서 올리는 데 5.7초, GPU 메모리 1.41GB다.
+구조화는 두 모델 모두 1초 미만이라 종료 → hub 수신 시간은 거의 그대로일 것으로 보지만, 교체 후 다시 재지는 않았다.
 
 ### 실패해도 죽지 않는 지점 / 죽는 지점
 
 | 상황 | 동작 |
 | --- | --- |
-| GPU 없음 | **계속** — ASR은 mps/cpu, HMM은 cpu로 (매우 느림, 미검증) |
+| GPU 없음 | **계속** — ASR은 mps/cpu, MF_BERT는 cpu로 (매우 느림, 미검증) |
 | 가중치를 못 받음(오프라인 첫 실행) / 환경변수 폴더 없음 | **시작 실패** — 다운로드 오류나 `FileNotFoundError`로 서버가 뜨지 않는다 |
 | 통화 중 인식 예외 | **계속** — 종료 시 남은 소리를 한꺼번에 다시 인식 |
 | 인식된 발화가 없음(무음 통화) | 구조화·전송을 **건너뜀** (원문 `.txt`는 빈 파일로 남음) |
@@ -279,12 +286,16 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 - 학습 데이터의 개인정보 마스킹 표기 때문에 `***[개인정보]`를 출력하는 경우가 있다 (처리 방법 보류 중)
 - 검증은 신고자↔119 통화로 했다. **구급대원↔병원 통화, 소음이 큰 현장에서의 성능은 측정하지 않았다**
 
-### 구조화 — HMM v2 (`hmm/`)
+### 구조화 — MF_BERT (`MF_BERT/`)
 
 KLUE RoBERTa-large 인코더에 출력층 여러 개를 붙인 다중과제 모델이 필드별 점수를 내고(AI),
 `decode.py`가 그 점수를 v2 스키마로 푼다. 활력징후·나이·발생 시점의 숫자는 모델이 찾은 구간을
 규칙(`parse.py`)으로 읽는다. **생성형 모델이 아니라** 출력 형식이 깨질 일이 없고, 같은 입력에는
 항상 같은 결과가 나온다. 필드 정의는 `C:\Dev\HMM\data_v3\필드_설명.md`가 원본이다.
+
+긴 통화는 512토큰 조각(128토큰씩 겹침)으로 나눠 인코딩하고, 겹친 토큰은 한 조각 것만 남겨 원문 토큰
+줄로 다시 이어 붙인다(`chunking.py`). 이전 HMM v2는 포지션 임베딩을 2048칸으로 늘려 한 번에 넣었지만,
+MF_BERT는 사전학습된 512칸만 쓴다. 조각이 하나뿐인 짧은 통화는 두 방식의 계산이 같다.
 
 | 출력층 | 하는 일 | v2 필드 |
 | --- | --- | --- |
@@ -294,22 +305,25 @@ KLUE RoBERTa-large 인코더에 출력층 여러 개를 붙인 다중과제 모�
 
 `call_type`·`ktas_evidence`·`notes`는 모델이 배우는 항목이 아니라 항상 `null`이고, 그 사실이 `summary.meta.not_predicted`에 들어 있다.
 
-**성능** (`data_v3` 9,677건 중 `edge`·119 신고 제외, 5-fold 교차검증 — `C:\Dev\HMM\model_v2\train_kfold.py`)
+**성능** (합성 통화 대본 8,990건, 5-fold 교차검증 — `/mnt/D/Project/BERT_Multiclass Classification/BERT/train_kfold.py`, 실행 `2026-09-30_183446`)
 
 | 항목 | 값 (5-fold 평균 ± 표준편차) |
 | --- | --- |
-| 종합 score | 0.7312 ± 0.0034 (배포 체크포인트 fold00: 0.7341) |
-| 성별 / 복용약 유무 / 주 기전 정확도 | 0.998 / 0.969 / 0.934 |
-| KTAS 정확도 · macro-F1 | 0.776 · 0.760 |
-| 주 호소 대분류 / 소분류 정확도 | 0.920 / 0.862 |
-| 증상 micro-F1 · macro-F1 | 0.624 · 0.341 |
-| 처치 micro-F1 · macro-F1 | 0.667 · 0.310 |
-| 손상 micro-F1 (좌우 포함 0.241) | 0.343 — **가장 약함** |
-| 구간 token 정확도 · span F1 | 0.972 · 0.468 |
+| 종합 score | 0.6912 ± 0.0041 (배포 체크포인트 fold00: 0.6934) |
+| 긴 통화(조각 2개 이상)만 종합 score | 0.6346 ± 0.0153 |
+| 성별 / 복용약 유무 / 주 기전 정확도 | 0.996 / 0.975 / 0.950 |
+| KTAS 정확도 · macro-F1 | 0.791 · 0.779 |
+| 주 호소 대분류 / 소분류 정확도 | 0.923 / 0.872 |
+| 증상 micro-F1 · macro-F1 | 0.672 · 0.431 |
+| 처치 micro-F1 · macro-F1 | 0.730 · 0.384 |
+| 손상 micro-F1 (좌우 포함 0.309) | 0.482 — **가장 약함** |
+| 구간 span F1 | 0.696 |
 
-- 배포 체크포인트는 전체 데이터로 다시 학습한 모델이 아니라 5개 fold 중 검증 점수가 가장 높은 fold00이다. 이 fold의 검증 데이터는 다른 fold 학습에 쓰였으므로 위 수치는 평균값을 기준으로 읽는다
+- 배포 체크포인트는 전체 데이터로 다시 학습한 모델이 아니라 fold00이다. 5개 fold 중 검증 score가 가장 높은 건 fold04(0.6977)이고 fold00은 두 번째다. 이 fold의 검증 데이터는 다른 fold 학습에 쓰였으므로 위 수치는 평균값을 기준으로 읽는다
+- **이전 HMM v2의 수치(score 0.7312)와 직접 비교할 수 없다** — 학습·검증 데이터가 다르다(HMM v2는 `data_v3` 9,677건 중 `edge`·119 신고 제외)
+- 학습 데이터는 전부 합성 통화 대본이고 라벨도 Claude로 자동 생성했다(일부 레코드 meta에 "사람 검수 전"으로 표시)
 - 학습 데이터는 "줄바꿈 = 화자 전환"인 대본 형태다. 여기 입력은 "줄바꿈 = 발화 경계"라 완전히 같은 형태가 아니고, **실제 음성 입력에서의 성능은 측정하지 않았다**
-- 복사해 온 코드가 원본 `model_v2/infer.py`와 같은 결과를 내는지 eval 5건으로 대조했다(전부 동일)
+- 복사해 온 코드가 원본 `mf_bert/infer.py`의 `predict()`와 같은 결과를 내는지 fold00 검증 데이터 15건(조각 3개짜리 긴 통화 5건 포함)으로 대조했다(전부 동일)
 
 ---
 
@@ -318,8 +332,8 @@ KLUE RoBERTa-large 인코더에 출력층 여러 개를 붙인 다중과제 모�
 | 구분 | 모델 | 처리 방식 |
 | --- | --- | --- |
 | STT | Qwen3-ASR-0.6B + LoRA (`Playedwell03/qwen3-asr-0.6b-119ko-tiny`) | AI 처리 |
-| 정보 구조화 — 필드 판정 | KLUE RoBERTa-large 다중과제 모델 HMM v2 (팀 학습) | AI 처리 (분류·태깅, 생성형 아님) |
-| 정보 구조화 — 점수 해석·숫자 파싱 | *(모델 없음, `hmm/decode.py`·`hmm/parse.py`)* | 규칙 기반 |
+| 정보 구조화 — 필드 판정 | KLUE RoBERTa-large 다중과제 모델 MF_BERT (팀 학습, `podongchip/MF_BERT`) | AI 처리 (분류·태깅, 생성형 아님) |
+| 정보 구조화 — 점수 해석·숫자 파싱 | *(모델 없음, `MF_BERT/decode.py`·`MF_BERT/parse.py`)* | 규칙 기반 |
 
 **개발 환경**: Python 3.11, torch 2.11 (CUDA 12.8), transformers 5.17, peft, flask.
 Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌아가며 외부 API로 음성·텍스트가 나가지 않는다.
@@ -332,7 +346,7 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
 
 **출력**: `feature/hub`로 전달되는 JSON. dashboard로는 직접 보내지 않는다.
 `feature/dashboard`의 `CallSummaryMessage` 타입과 1:1 대응하며(`schema.py`),
-**`summary`는 2026-09-29에 v1(6필드)에서 HMM v2 스키마(17필드 + `meta`)로 바뀌었다. hub·dashboard 쪽 수정은 담당자가 따로 진행한다.**
+**`summary`는 2026-09-29에 v1(6필드)에서 v2 스키마(17필드 + `meta`)로 바뀌었다(2026-10-01 구조화 모델을 MF_BERT로 바꿨어도 형식은 같다). hub·dashboard 쪽 수정은 담당자가 따로 진행한다.**
 
 ```json
 {
@@ -361,7 +375,7 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
     },
     "suspected_diagnosis": [
       {
-        "text": "경색 의심"
+        "text": "심근경색 의심"
       }
     ],
     "vitals": [
@@ -404,19 +418,14 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
     ],
     "disease_category": "심장질환",
     "injuries": [],
-    "treatments": [
-      {
-        "category": "ECG",
-        "status": "시행",
-        "detail": null
-      }
-    ],
+    "treatments": [],
     "age": {
       "years": 62,
       "months": null,
       "band": null,
       "evidence": [
-        "62세 남성이"
+        "62세 남성이",
+        "요"
       ]
     },
     "sex": "남성",
@@ -436,7 +445,7 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
   "source": "ai",
   "model_used": {
     "stt": "qwen3-asr-0.6b-119ko-tiny",
-    "llm": "hmm-v2-klue-roberta-large"
+    "llm": "mf-bert-klue-roberta-large"
   }
 }
 ```
@@ -450,7 +459,7 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 (처리 시점에서 통화 길이만큼 거슬러 올라간 근사값) |
 | `transcript.duration_sec` | number | 통화 길이(초) |
 | `transcript.turns` | array | 발화별 원본 로그 (`speaker`는 화자 분리가 없어 `"미분리"` 고정, `excludedFromSummary`는 채우는 곳이 없어 항상 빠짐) |
-| `summary` | object | HMM v2 출력 그대로 — 17개 필드(`call_type` `ktas_level` `ktas_evidence` `chief_complaint` `suspected_diagnosis` `vitals` `consciousness` `symptoms` `onset` `incidents` `disease_category` `injuries` `treatments` `age` `sex` `medications` `notes`)와 `meta`. 각 필드의 뜻은 `C:\Dev\HMM\data_v3\필드_설명.md`. 값이 없는 필드도 `null`·빈 목록으로 **빠지지 않고 나간다** |
+| `summary` | object | MF_BERT 출력 그대로(v2 스키마) — 17개 필드(`call_type` `ktas_level` `ktas_evidence` `chief_complaint` `suspected_diagnosis` `vitals` `consciousness` `symptoms` `onset` `incidents` `disease_category` `injuries` `treatments` `age` `sex` `medications` `notes`)와 `meta`. 각 필드의 뜻은 `C:\Dev\HMM\data_v3\필드_설명.md`. 값이 없는 필드도 `null`·빈 목록으로 **빠지지 않고 나간다** |
 | `summary.ktas_level` | 1~5 | Pre-KTAS 중증도. 1이 가장 위급. 항상 값이 있다 |
 | `summary.call_type` `ktas_evidence` `notes` | null | 모델이 예측하지 않는 항목이라 항상 `null` |
 | `source` | `"ai"` | AI 처리 결과 고정값 |
@@ -478,9 +487,10 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 │   ├── mic_recorder.py          [녹음]   마이크 입력 → numpy 버퍼 → WAV
 │   ├── live_transcriber.py      [녹음→STT] 통화 중 무음 감지로 발화를 잘라 바로 인식
 │   ├── asr.py                   [STT]    Qwen3-ASR + LoRA, 오디오 읽기·5초 분할
-│   ├── hmm/                     [구조화] HMM v2 모델 + 디코더
-│   │   ├── __init__.py          HmmExtractor — 체크포인트 로딩, 텍스트 → v2 17필드
+│   ├── MF_BERT/                 [구조화] MF_BERT 모델 + 디코더
+│   │   ├── __init__.py          MfBertExtractor — 체크포인트 로딩, 텍스트 → v2 17필드
 │   │   ├── model.py             모델 정의 (체크포인트 state_dict와 구조가 같아야 함)
+│   │   ├── chunking.py          긴 통화 → 512토큰 조각, 조각 → 원문 토큰 줄 복원
 │   │   ├── labels.py            출력층 보기 목록 (순서를 바꾸면 체크포인트와 안 맞음)
 │   │   ├── decode.py            점수 → v2 필드 (주 호소는 대분류에 속한 소분류만, 구간은 BIO 태그)
 │   │   └── parse.py             활력징후·나이·발생 시점 구간 → 숫자 (규칙)
@@ -516,16 +526,16 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
                        │
         ┌──────────────┼──────────────┐
         ▼              ▼              ▼
-   hmm.HmmExtractor  schema      send_to_hub()
+MF_BERT.MfBertExtractor schema   send_to_hub()
    (model→decode)    (pydantic)      hub POST
 ```
 
-화살표가 한 방향뿐이고 순환이 없다. `hmm/`·`schema.py`·`mic_recorder.py`는 다른 로컬
+화살표가 한 방향뿐이고 순환이 없다. `MF_BERT/`·`schema.py`·`mic_recorder.py`는 다른 로컬
 모듈에 의존하지 않아, 모델을 바꿔도 영향 범위가 그 폴더·파일로 묶인다.
 
 ### 경로 규칙
 
-모든 파이썬 코드가 `voice/` 한 폴더에 평평하게 있어(`hmm/`만 패키지) 상호 import가
+모든 파이썬 코드가 `voice/` 한 폴더에 평평하게 있어(`MF_BERT/`만 패키지) 상호 import가
 그대로 동작한다. 데이터 경로는 파일 위치(`__file__`) 기준으로 계산되므로 어디서 실행하든
 결과는 저장소 루트의 `data/voice_data/`로 모인다. 설치·실행은 `requirements.txt`가 있는
 `voice/` 안에서 하는 쪽으로 통일했다.
@@ -535,12 +545,12 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 ## 알려진 제약사항 / TODO
 
 - **실제 마이크(sounddevice)로 발화 단위 인식을 검증하지 않았다.** 파일을 실시간 속도로 흘려 넣어 확인했다. 무음 판정 기본값은 장비 마이크에서 다시 맞춰야 할 수 있다
-- 화자 분리(diarization)가 없어 모든 턴의 `speaker`는 `"미분리"`로 고정. HMM 입력의 줄바꿈도 화자 전환이 아니라 발화 경계다
+- 화자 분리(diarization)가 없어 모든 턴의 `speaker`는 `"미분리"`로 고정. MF_BERT 입력의 줄바꿈도 화자 전환이 아니라 발화 경계다
 - 파이프라인이 중간에 실패하거나 인식된 발화가 없으면 hub로 알리는 경로가 없어 hub가 계속 기다린다
 - **hub·dashboard가 아직 v1 `summary`(6필드)를 기대한다.** `patient`·`mechanism`·`symptoms`(문자열 목록)·`treatment`·`severity_tag`·`required_department`가 사라져 hub가 이 메시지를 그대로는 처리하지 못한다 — hub 담당자가 v2 17필드를 읽도록 고쳐야 한다
 - v2에는 진료과(`required_department`)를 내는 규칙이 없다. 예전 원인·부위 → 전문과목 대응표는 v1 라벨 기준이라 함께 삭제했다
 - ASR이 `***[개인정보]`를 출력하는 경우의 처리 보류 중
-- HMM v2에서 손상(injury micro-F1 0.34)·처치·증상의 희귀 라벨 성능이 낮다
+- MF_BERT에서 손상(injury micro-F1 0.48)·처치·증상의 희귀 라벨 성능이 낮다(macro-F1 각각 0.30·0.38·0.43)
 - Mac(MPS)·CPU 실행은 두 모델 모두 검증하지 않았다. ASR은 CPU에서 느리다
 - 마이크 권한 설정 필수 (macOS: 시스템 설정 > 개인정보 보호 > 마이크)
 - `data/voice_data/` 하위 전 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음

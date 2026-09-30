@@ -2,7 +2,7 @@
 HTTP 레이어. call_capture.py와 같은 흐름(통화 중 발화 단위 인식 -> 종료 시
 구조화·전송)을 Ctrl+C 대신 HTTP 요청으로 트리거하도록 감싼 것이다.
 
-두 모델(ASR·HMM)은 서버가 뜰 때 한 번만 올려두고 통화마다 재사용한다. 통화 중에는
+두 모델(ASR·MF_BERT)은 서버가 뜰 때 한 번만 올려두고 통화마다 재사용한다. 통화 중에는
 live_transcriber.py가 말이 끊길 때마다 그 발화를 바로 인식해 두므로, 종료 신호 뒤에는
 마지막 발화 인식과 구조화(1초 미만)만 남는다.
 
@@ -29,7 +29,7 @@ import requests
 from flask import Flask, jsonify, request
 
 from asr import AsrModel
-from hmm import HmmExtractor
+from MF_BERT import MfBertExtractor
 from live_transcriber import LiveTranscriber
 from mic_recorder import MicRecorder
 from transcribe import ORIGIN_DATA_DIR, emit_call_summary, load_models
@@ -57,7 +57,7 @@ VOICE_PORT = int(os.environ.get("VOICE_PORT", 6000))
 
 # 서버 시작 시 __main__에서 한 번 채운다
 _asr_model: AsrModel | None = None
-_extractor: HmmExtractor | None = None
+_extractor: MfBertExtractor | None = None
 
 _recorder: MicRecorder | None = None
 _live: LiveTranscriber | None = None

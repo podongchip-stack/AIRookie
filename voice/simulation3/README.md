@@ -1,4 +1,4 @@
-# simulation3 — Qwen3-ASR → HMM v2 실험용 시뮬레이터
+# simulation3 — Qwen3-ASR → MF_BERT 실험용 시뮬레이터
 
 장비 마이크로 말하면 **말이 끊길 때마다** 그 발화를 인식하고, 지금까지의 통화로 v2 17필드를 다시 뽑아
 보여주는 데스크톱 화면(tkinter)이다. 통화를 끝내면 남은 발화까지 인식한 최종 결과와 hub로 갈 JSON을
@@ -44,7 +44,7 @@ python app.py
 ## 실운영 코드와의 관계
 
 사본이 없다. 녹음(`mic_recorder.MicRecorder`)·발화 단위 인식(`live_transcriber.LiveTranscriber`)·
-ASR(`asr.py`)·구조화(`hmm/`)·JSON 조립(`transcribe.build_call_summary_message`)을 전부 voice/에서
+ASR(`asr.py`)·구조화(`MF_BERT/`)·JSON 조립(`transcribe.build_call_summary_message`)을 전부 voice/에서
 import한다. 화면과 스레드만 이 파일(`gui.py`)이 담당한다.
 
 | | `app.py` (실운영) | `simulation3/gui.py` |
