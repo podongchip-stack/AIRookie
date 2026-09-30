@@ -260,26 +260,54 @@ def build_capabilities(severe_row: dict | None, bed_row: dict | None = None) -> 
     return sorted(set(codes))
 
 
-def build_specialties(capabilities: list[str]) -> list[Specialty]:
-    """역량 코드에서 진료과 목록을 만든다.
+#: 심평원 전문과목 중 응급 환자를 받아 치료하는 과만 hub로 보낸다(2026-10-01). 영상의학과·
+#: 마취통증의학과·진단검사의학과·병리과·핵의학과·방사선종양학과·예방의학과·직업환경의학과·
+#: 재활의학과·가정의학과·결핵과, 치과(구강악안면외과 제외)·한방 계열은 뺀다 — 거의 모든 병원에
+#: 있거나(영상의학과 477곳) 응급 수용 과가 아니라서, 넣으면 진료과 매칭이 흐려진다.
+#: voice의 required_department(voice/hmm/department_mapping.json) 값은 전부 여기 들어 있다.
+ACUTE_HIRA_DEPARTMENTS = frozenset({
+    "내과", "외과", "정형외과", "신경외과", "신경과", "산부인과", "소아청소년과", "응급의학과",
+    "비뇨의학과", "심장혈관흉부외과", "정신건강의학과", "이비인후과", "성형외과", "안과", "피부과",
+    "구강악안면외과",
+})
 
-    hub가 아직 `capabilities`를 안 읽고 진료과명을 임베딩으로 대조하기 때문에,
-    같은 근거로 진료과도 채워줘야 매칭이 작동한다. `recentProcedureTags`에는
-    역량의 한글 라벨을 넣는다 — hub의 임베딩이 이 텍스트도 참고한다.
+#: E-Gen 역량에서 뽑은 분과의 전문의 수는 심평원 대분류 과에서 빌려 온다(심평원엔 분과가 없다).
+#: 순환기내과 = PCI 가능이 확인된 내과라, 내과 전문의 수로 규모를 가늠한다.
+_SUBSPECIALTY_PARENT = {"순환기내과": "내과"}
+
+
+def build_specialties(capabilities: list[str], hira_rows: list[dict] | None = None) -> list[Specialty]:
+    """진료과 목록을 만든다: E-Gen 역량 코드 4개 과 + 심평원 전문과목별 전문의 수(2026-10-01).
+
+    예전엔 E-Gen 역량에서 뽑은 4개 과(순환기내과·신경과·신경외과·산부인과)뿐이라 전국 438곳 중
+    186곳(42%)이 진료과 0개였고, 가중치 60%인 진료과 점수가 통째로 빠졌다. `hira_rows`는
+    `data/hira/specialists.json`의 그 병원 목록(dgsbjtCdNm·dtlSdrCnt)이고, 없으면(캐시 없음·조인 안 됨)
+    기존 4개 과만 보낸다. `recentProcedureTags`에는 역량의 한글 라벨을 넣는다.
     """
-    by_dept: dict[str, list[str]] = {}
+    counts: dict[str, int] = {}
+    for row in hira_rows or []:
+        name = (row.get("dgsbjtCdNm") or "").strip()
+        try:
+            n = int(row.get("dtlSdrCnt") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if name in ACUTE_HIRA_DEPARTMENTS and n > 0:
+            counts[name] = counts.get(name, 0) + n
+
+    tags: dict[str, list[str]] = {}
     for code in capabilities:
         dept = CAPABILITY_TO_DEPARTMENT.get(code)
         if dept:
-            by_dept.setdefault(dept, []).append(label_ko(code))
+            tags.setdefault(dept, []).append(label_ko(code))
 
+    departments = sorted(set(counts) | set(tags))
     return [
         Specialty(
             department=dept,
-            doctorCount=0,  # 공개 API에 인력 수가 없다. OCR 또는 병원 입력으로만 채울 수 있다
-            recentProcedureTags=sorted(tags),
+            doctorCount=counts.get(dept, counts.get(_SUBSPECIALTY_PARENT.get(dept, ""), 0)),
+            recentProcedureTags=sorted(tags.get(dept, [])),
         )
-        for dept, tags in sorted(by_dept.items())
+        for dept in departments
     ]
 
 
@@ -317,6 +345,7 @@ def map_hospital(
     location_row: dict | None,
     severe_row: dict | None,
     fallback_ts: str,
+    hira_rows: list[dict] | None = None,
 ) -> HospitalInfo | None:
     """병원 1곳을 `HospitalInfo`로 변환한다. 좌표가 없으면 `None`을 돌려준다.
 
@@ -345,7 +374,8 @@ def map_hospital(
         # 공개 API에 당직 전문의 정보가 없다. 중증질환 수용가능을 프록시로 쓴다 —
         # "재관류가 지금 가능하다"는 곧 해당 과 전문의가 대응 가능하다는 뜻이다.
         nightDutyAvailable=bool(capabilities),
-        specialties=build_specialties(capabilities),
+        specialties=build_specialties(capabilities, hira_rows),
+        emergencyLevel=(location_row.get("dutyEmclsName") or "").strip() or None,
         updatedAt=parse_hvidate(bed_row.get("hvidate")) or fallback_ts,
         bedsByType=beds_by_type or None,
         capabilities=capabilities,
@@ -357,6 +387,7 @@ def map_all(
     location_rows: list[dict],
     severe_rows: list[dict],
     now: datetime | None = None,
+    specialists: dict[str, list[dict]] | None = None,
 ) -> tuple[list[HospitalInfo], MappingReport]:
     """세 오퍼레이션의 응답을 합쳐 `HospitalInfo` 목록을 만든다.
 
@@ -389,7 +420,9 @@ def map_all(
         if hpid not in severes:
             report.no_severe_illness_row.append(name)
 
-        info = map_hospital(bed_row, locations.get(hpid), severes.get(hpid), fallback_ts)
+        info = map_hospital(
+            bed_row, locations.get(hpid), severes.get(hpid), fallback_ts, (specialists or {}).get(hpid)
+        )
         if info is None:
             report.skipped_no_location.append(name)
             continue

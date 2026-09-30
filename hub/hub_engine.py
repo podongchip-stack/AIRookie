@@ -33,7 +33,7 @@ from schema import (
     SpecialtyMatch,
     VoiceCallSummaryMessage,
 )
-from scoring import calibrate_min_per_km, final_score, rank_key
+from scoring import calibrate_min_per_km, expertise_bonus_min, final_score, rank_key
 from specialty_matcher import SpecialtyMatcher
 
 if TYPE_CHECKING:
@@ -818,9 +818,22 @@ class HubEngine:
         with self._lock:
             now = _utcnow()
             matches = []
+            required = voice.summary.required_department
             for (info, distance), (best_dept, similarity) in zip(candidates, specialty_results):
                 eta = etas.get(info.hospitalId)
                 travel_min = eta[0] / 60.0 if eta is not None else distance * min_per_km
+                # voice가 필요 진료과(심평원 과목 표기)를 알려줬고 병원에 그 과가 있으면 정확 일치,
+                # 아니면 임베딩 유사도 그대로(2026-10-01). 일치하지 않아도 후보에서 빼지 않는다.
+                by_dept = {s.department: s for s in info.specialties}
+                if required and required in by_dept:
+                    best_dept, similarity, basis = required, 1.0, "exact"
+                else:
+                    basis = "embedding" if best_dept is not None else "none"
+                matched = by_dept.get(best_dept) if best_dept else None
+                doctor_count = matched.doctorCount if matched is not None and matched.doctorCount > 0 else None
+                bonus_min, bonus_reasons = expertise_bonus_min(
+                    doctor_count, info.emergencyLevel, voice.summary.severity_tag
+                )
                 status = self._approval_status.get((voice.caseId, info.hospitalId), "pending")
                 beds = self.effective_bed_count(info)
                 unknown = _is_bed_count_unknown(info)
@@ -834,7 +847,9 @@ class HubEngine:
                         name=info.name,
                         gps=info.gps,
                         distanceKm=round(distance, 2),
-                        specialtyMatch=SpecialtyMatch(department=best_dept, score=round(similarity, 4)),
+                        specialtyMatch=SpecialtyMatch(
+                            department=best_dept, score=round(similarity, 4), basis=basis, doctorCount=doctor_count
+                        ),
                         availableBedCount=beds,
                         bedCountUnknown=unknown,
                         status=status,
@@ -862,7 +877,10 @@ class HubEngine:
                         ),
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
-                        finalScore=round(final_score(similarity, travel_min), 6),
+                        finalScore=round(final_score(similarity, travel_min, bonus_min), 6),
+                        emergencyLevel=info.emergencyLevel,
+                        travelBonusMin=round(bonus_min, 1),
+                        bonusReasons=bonus_reasons,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
                         demoteReasons=_demote_reasons(info, best_group, status, beds, unknown, stale),

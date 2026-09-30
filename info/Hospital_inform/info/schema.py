@@ -246,6 +246,11 @@ class HospitalInfo(Strict):
     updatedAt: str = Field(description="ISO 8601 문자열. 예: '2026-07-30T09:55:00Z'")
 
     # --- 확장 필드 (팀 합의로 추가. 전부 선택 사항) ---
+    emergencyLevel: Optional[str] = Field(
+        default=None,
+        description="E-Gen 응급의료기관 등급(dutyEmclsName): 권역응급의료센터/지역응급의료센터/"
+        "지역응급의료기관/응급실운영신고기관. hub가 중증 환자 가산에 쓴다(2026-10-01)",
+    )
     bedsByType: Optional[dict[str, int]] = Field(
         default=None,
         description="병상 종류별 가용 수. 성인/소아 분기의 핵심. 미상인 종류는 키를 넣지 않는다",

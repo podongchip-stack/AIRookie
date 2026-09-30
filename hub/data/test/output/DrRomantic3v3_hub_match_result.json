@@ -25,7 +25,9 @@
       "distanceKm": 1.22,
       "specialtyMatch": {
         "department": "외상외과",
-        "score": 0.5776
+        "score": 0.5776,
+        "basis": "embedding",
+        "doctorCount": 2
       },
       "availableBedCount": 5,
       "bedCountUnknown": false,
@@ -35,11 +37,16 @@
       "bedReliability": null,
       "severeFreshness": null,
       "bedReliabilityByType": null,
-      "finalScore": 0.714,
+      "finalScore": 0.733161,
       "travelMin": 1.8,
       "travelBasis": "estimate",
       "demoteReasons": [],
-      "bedDataStale": true
+      "bedDataStale": true,
+      "emergencyLevel": null,
+      "travelBonusMin": 1.1,
+      "bonusReasons": [
+        "전문의 2명 −1.1분"
+      ]
     },
     {
       "hospitalId": "H001",
@@ -51,7 +58,9 @@
       "distanceKm": 2.0,
       "specialtyMatch": {
         "department": "흉부외과",
-        "score": 0.5132
+        "score": 0.5132,
+        "basis": "embedding",
+        "doctorCount": 3
       },
       "availableBedCount": 12,
       "bedCountUnknown": false,
@@ -61,11 +70,16 @@
       "bedReliability": null,
       "severeFreshness": null,
       "bedReliabilityByType": null,
-      "finalScore": 0.656103,
+      "finalScore": 0.679372,
       "travelMin": 3.0,
       "travelBasis": "estimate",
       "demoteReasons": [],
-      "bedDataStale": true
+      "bedDataStale": true,
+      "emergencyLevel": null,
+      "travelBonusMin": 1.4,
+      "bonusReasons": [
+        "전문의 3명 −1.4분"
+      ]
     },
     {
       "hospitalId": "H002",
@@ -77,7 +91,9 @@
       "distanceKm": 3.66,
       "specialtyMatch": {
         "department": null,
-        "score": 0.0
+        "score": 0.0,
+        "basis": "none",
+        "doctorCount": null
       },
       "availableBedCount": 0,
       "bedCountUnknown": false,
@@ -91,7 +107,10 @@
       "travelMin": 5.5,
       "travelBasis": "estimate",
       "demoteReasons": [],
-      "bedDataStale": true
+      "bedDataStale": true,
+      "emergencyLevel": null,
+      "travelBonusMin": 0.0,
+      "bonusReasons": []
     }
   ],
   "source": "rule",

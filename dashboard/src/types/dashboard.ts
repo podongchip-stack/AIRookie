@@ -22,6 +22,10 @@ export interface PatientInfo {
 export interface SpecialtyMatch {
   department: string;
   score: number;
+  // hub 2026-10-01~: voice의 필요 진료과와 정확 일치("exact") / 임베딩 유사도("embedding") / 진료과 없음("none")
+  basis?: "exact" | "embedding" | "none";
+  // 매칭된 진료과의 전문의 수(심평원). 모르면 null.
+  doctorCount?: number | null;
 }
 
 export type HospitalStatus = "pending" | "approved" | "rejected" | "confirmed";
@@ -145,6 +149,10 @@ export interface HospitalCandidate {
   // 확률 — 배후진료 역량(Capacity)의 신뢰도. 키는 E-Gen 필드명이고 라벨
   // 변환은 화면 쪽에서 한다(BED_FIELD_LABEL, HospitalCandidateListPanel).
   bedReliabilityByType?: Record<string, BedReliabilityMatch>;
+  // hub 2026-10-01~: 응급의료기관 등급과 전문성·등급 가산(이동시간에서 뺀 분, 이유). 규칙 기반.
+  emergencyLevel?: string | null;
+  travelBonusMin?: number;
+  bonusReasons?: string[];
 }
 
 export interface HubMatchResult {

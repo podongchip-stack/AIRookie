@@ -40,6 +40,7 @@ Supabase 대체 DB에 남겨뒀었다 — E-Gen이 조회 전용이라 hub의 �
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -294,6 +295,22 @@ def _attach_reliability(
     return enriched
 
 
+#: 심평원 전문과목별 전문의 수 캐시(`python -m hospital_score.hira --build-join`이 만든다).
+HIRA_SPECIALISTS_PATH = HOSPITAL_INFORM_INFO_DIR / "data" / "hira" / "specialists.json"
+
+
+def _load_hira_specialists() -> dict[str, list[dict]]:
+    """hpid -> 심평원 전문과목 목록. 캐시가 없거나 깨졌으면 빈 dict — 그러면 진료과는 예전처럼
+    E-Gen 역량 4개 과만 나간다(2026-10-01, 진료과 확장). 새 장비에서 hira --build-join을
+    안 돌렸으면 조용히 줄어드는 것이라, 그 사실만 한 줄 남긴다."""
+    try:
+        data = json.loads(HIRA_SPECIALISTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"  [진료과] 심평원 전문의 캐시를 못 읽어 E-Gen 역량 4개 과만 보냄: {e}")
+        return {}
+    return {hpid: rows for hpid, rows in data.items() if isinstance(rows, list)}
+
+
 def fetch_hospitals() -> list[HospitalInfo]:
     """목록·병상·중증질환 수용가능정보를 전부 실 E-Gen API에서 가져와 합치고,
     병원마다 info-v2 신뢰도 진단을 붙인다.
@@ -313,7 +330,10 @@ def fetch_hospitals() -> list[HospitalInfo]:
         print(f"  [E-Gen] 실 API 조회 실패, 이번 주기는 건너뛰고 다음 주기에 재시도: {e}")
         return []
 
-    hospitals, report = map_all(bed_rows, location_rows, severe_rows)
+    specialists = _load_hira_specialists()
+    hospitals, report = map_all(bed_rows, location_rows, severe_rows, specialists=specialists)
+    with_hira = sum(1 for h in hospitals if h.hospitalId in specialists)
+    print(f"  [진료과] 심평원 전문의 수 반영 {with_hira}/{len(hospitals)}곳 (나머지는 E-Gen 역량 과만)")
     print(report.summary())
 
     hospitals = _attach_assessments(hospitals, location_rows, severe_rows, bed_rows)

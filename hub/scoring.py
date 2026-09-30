@@ -1,6 +1,7 @@
 """이동 시간·진료과 점수를 가중합해 병원 순위를 매긴다. 숫자 계산만 하는 순수 규칙 기반 모듈."""
 from __future__ import annotations
 
+import math
 import statistics
 
 W_SPECIALTY = 0.6
@@ -26,8 +27,40 @@ def travel_score(travel_min: float, half_life_min: float = TRAVEL_HALF_LIFE_MIN)
     return 0.5 ** (max(travel_min, 0.0) / half_life_min)
 
 
-def final_score(specialty_score: float, travel_min: float) -> float:
-    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(travel_min)
+# ── 전문성·응급의료기관 등급 가산 (2026-10-01) ─────────────────────────────────────
+# 가산은 점수에 더하지 않고 **"이동시간을 몇 분 줄여 준 것으로 친다"**로 환산한다. 점수에 더하면
+# 같은 0.05점이 가까운 병원 사이에선 4분, 먼 병원 사이에선 20분의 가치가 되어 "전문성이 거리를
+# 얼마나 이길 수 있나"가 거리에 따라 달라진다. 분 단위로 두면 불변식이 정확히 선다:
+#   **가산을 다 받아도 MAX_BONUS_MIN분 넘게 먼 병원은 가까운 병원을 이길 수 없다**(같은 진료과 점수일 때).
+# 값은 근거 데이터(실제 수용 결과)가 쌓이기 전의 보수적 초기값이다 — 거절 로그로 재보정한다.
+DEPTH_BONUS_MAX_MIN = 3.0     # 매칭된 진료과 전문의가 많을수록 최대 3분
+DEPTH_FULL_DOCTORS = 20       # 이 인원이면 최대치(log 스케일 — 1명→0.7분, 5명→1.8분, 20명→3분)
+LEVEL_BONUS_MIN = {           # 중증(high) 환자에게만: 권역·지역응급의료센터의 최종치료 역량
+    "권역응급의료센터": 5.0,
+    "지역응급의료센터": 2.0,
+}
+MAX_BONUS_MIN = DEPTH_BONUS_MAX_MIN + max(LEVEL_BONUS_MIN.values())
+
+
+def expertise_bonus_min(
+    doctor_count: int | None, emergency_level: str | None, severity: str | None
+) -> tuple[float, list[str]]:
+    """(이동시간에서 뺄 분, 설명 문구들). 전문의 수·등급을 모르면 0분이다(불리하게 두지 않음)."""
+    bonus, reasons = 0.0, []
+    if doctor_count:
+        depth = min(1.0, math.log1p(doctor_count) / math.log1p(DEPTH_FULL_DOCTORS))
+        minutes = round(DEPTH_BONUS_MAX_MIN * depth, 1)
+        bonus += minutes
+        reasons.append(f"전문의 {doctor_count}명 −{minutes}분")
+    level_minutes = LEVEL_BONUS_MIN.get(emergency_level or "") if severity == "high" else None
+    if level_minutes:
+        bonus += level_minutes
+        reasons.append(f"중증 · {emergency_level} −{level_minutes:g}분")
+    return bonus, reasons
+
+
+def final_score(specialty_score: float, travel_min: float, bonus_min: float = 0.0) -> float:
+    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(max(0.0, travel_min - bonus_min))
 
 
 def calibrate_min_per_km(samples: list[tuple[float, float]]) -> float:

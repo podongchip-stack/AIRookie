@@ -154,6 +154,9 @@ class HospitalInfo(BaseModel):
     specialties: list[Specialty] = Field(default_factory=list)
     source: Literal["rule"] = "rule"
     updatedAt: str
+    # E-Gen 응급의료기관 등급(dutyEmclsName, 2026-10-01): 권역응급의료센터/지역응급의료센터/
+    # 지역응급의료기관/응급실운영신고기관. 중증 환자 가산(scoring.LEVEL_BONUS_MIN)에 쓴다.
+    emergencyLevel: Optional[str] = None
     # feature/info는 병상 수가 미상일 때 availableBedCount에 0을 넣되, bedsByType에
     # 해당 코드(ER_ADULT 등) 키를 넣지 않는 것으로 "미상"과 "확인된 만실"을 구분한다
     # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
@@ -219,6 +222,11 @@ class PatientInfo(BaseModel):
 class SpecialtyMatch(BaseModel):
     department: Optional[str] = None
     score: float = 0.0
+    # 어떻게 맞췄나(2026-10-01): voice의 required_department와 정확히 같은 과가 있으면 "exact"
+    # (score 1.0), 없으면 예상 병명과 진료과명의 임베딩 유사도("embedding"), 진료과가 없으면 "none".
+    basis: Literal["exact", "embedding", "none"] = "embedding"
+    # 매칭된 진료과의 전문의 수(심평원). 모르면 None — 가산점 없음.
+    doctorCount: Optional[int] = None
 
 
 class ReliabilityInfo(BaseModel):
@@ -332,6 +340,10 @@ class HospitalMatch(BaseModel):
     # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
     # "확인된 만실"로 보지 않는다(beds_full로 안 내림). bedCountUnknown과는 별개 축이다.
     bedDataStale: bool = False
+    # 전문성·등급 가산(2026-10-01, scoring.expertise_bonus_min). 이동시간에서 뺀 분과 그 이유.
+    emergencyLevel: Optional[str] = None
+    travelBonusMin: float = 0.0
+    bonusReasons: list[str] = Field(default_factory=list)
 
 
 class HubMatchResult(BaseModel):

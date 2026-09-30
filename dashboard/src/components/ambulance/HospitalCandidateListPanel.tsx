@@ -395,9 +395,19 @@ export function HospitalCandidateListPanel({
                   {hospital.etaMin != null ? ` · ETA ${hospital.etaMin}분` : ""}
                 </span>
                 <div className={css({ display: "flex", gap: "1", flexWrap: "wrap" })}>
-                  <span className={deptChipStyle}>
-                    {hospital.specialtyMatch.department} · 적합도 {Math.round(hospital.specialtyMatch.score * 100)}%
+                  <span
+                    className={deptChipStyle}
+                    title={hospital.bonusReasons?.length ? `순위 가산: ${hospital.bonusReasons.join(" · ")}` : undefined}
+                  >
+                    {hospital.specialtyMatch.department} ·{" "}
+                    {hospital.specialtyMatch.basis === "exact"
+                      ? "필요 진료과 일치"
+                      : `적합도 ${Math.round(hospital.specialtyMatch.score * 100)}%`}
+                    {hospital.specialtyMatch.doctorCount ? ` · 전문의 ${hospital.specialtyMatch.doctorCount}명` : ""}
                   </span>
+                  {hospital.emergencyLevel && hospital.emergencyLevel.endsWith("센터") && (
+                    <span className={deptChipStyle}>{hospital.emergencyLevel}</span>
+                  )}
                   <span
                     className={
                       hospital.bedCountUnknown

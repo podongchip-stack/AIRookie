@@ -257,6 +257,7 @@ def main() -> None:
     test_state_roundtrip()
     test_decision_log_chain()
     test_approval_order_and_reselection()
+    test_expertise_bonus_and_exact_match()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -845,6 +846,39 @@ def test_approval_order_and_reselection() -> None:
     assert sum('"approval_action_refused"' in e for e in events) == 2, "거부된 액션 2건은 사유와 함께 로그에 남아야 한다"
     assert sum('"approval_released"' in e for e in events) == 1, "재선택 해제는 의사결정 로그에 남아야 한다"
     print("  [확인] 승인 전 이송 승인·주체 불일치 거부, 재선택 시 A 해제(병상 4→5)·B 확정(5→4), 순서 확정→승인")
+
+
+def test_expertise_bonus_and_exact_match() -> None:
+    """진료과 정확 일치 + 전문의 수·응급의료기관 등급 가산(2026-10-01).
+    불변식: 가산을 다 받아도 MAX_BONUS_MIN분 넘게 먼 병원은 가까운 병원을 이길 수 없다."""
+    from scoring import MAX_BONUS_MIN, expertise_bonus_min, final_score
+
+    print("\n=== 전문성·등급 가산: 분 단위 불변식 + 필요 진료과 정확 일치 ===")
+    full, _ = expertise_bonus_min(999, "권역응급의료센터", "high")
+    assert full == MAX_BONUS_MIN, f"최대 가산은 {MAX_BONUS_MIN}분이어야 한다 ({full})"
+    for near in (3.0, 10.0, 30.0, 60.0):
+        far = near + MAX_BONUS_MIN + 0.1
+        assert final_score(0.8, near) > final_score(0.8, far, full), f"{near}분 vs {far}분: 가산이 불변식을 넘었다"
+    assert expertise_bonus_min(None, "권역응급의료센터", "medium") == (0.0, []), "중증이 아니면 등급 가산 없음"
+    assert expertise_bonus_min(None, None, "high") == (0.0, []), "모르는 값은 0분(불리하게 두지 않음)"
+
+    engine = _engine()
+    ortho = _hospital("X001", "[테스트] 정형외과 있음", 35.1810, 128.1090, 5, beds_by_type={"ER_ADULT": 5})
+    ortho = ortho.model_copy(update={
+        "specialties": [Specialty(department="정형외과", doctorCount=12), Specialty(department="내과", doctorCount=30)],
+        "emergencyLevel": "권역응급의료센터",
+    })
+    other = _hospital("X002", "[테스트] 정형외과 없음", 35.1812, 128.1091, 5, beds_by_type={"ER_ADULT": 5})
+    for h in (ortho, other):
+        engine.update_hospital_info(h)
+    voice = _voice("case-exact")
+    voice = voice.model_copy(update={"summary": voice.summary.model_copy(update={"required_department": "정형외과"})})
+    result = engine.process_voice_summary(voice, _TEST_GPS, max_zone=1)
+    top = result.hospitals[0]
+    assert top.hospitalId == "X001" and top.specialtyMatch.basis == "exact" and top.specialtyMatch.score == 1.0
+    assert top.specialtyMatch.doctorCount == 12 and top.travelBonusMin > 0 and top.bonusReasons
+    assert result.hospitals[1].specialtyMatch.basis == "embedding", "일치하는 과가 없으면 임베딩으로 남는다(제외 안 함)"
+    print(f"  [확인] 최대 가산 {MAX_BONUS_MIN}분 불변식, 정확 일치 1.0 · 가산 {top.travelBonusMin}분 {top.bonusReasons}")
 
 
 if __name__ == "__main__":
