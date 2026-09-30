@@ -272,6 +272,8 @@ export interface DashboardState {
   // 구급차 대시보드는 자기 caseId 하나만 꺼내 쓰고, 병원 대시보드는 자기
   // hospitalId가 후보로 들어있는 사건을 전부 걸러 카드로 나열한다.
   matchResults: Record<string, HubMatchResult>;
+  // caseId -> 매칭 전 현장 후보(구급차 탭만 받는다).
+  sceneCandidates: Record<string, SceneCandidates>;
   // hub 메시지 자체엔 타임스탬프가 없어서, "정보 수신 후 경과" 표시를 위해
   // 대시보드가 최초 수신 시각을 로컬에서 기록해 둔다.
   receivedAt: string | null;
@@ -291,4 +293,31 @@ export interface CaseClosed {
   reason: "unresolved_timeout" | "scene_ended" | string;
 }
 
-export type InboundMessage = HubMatchResult | DashboardIdentityInfo | HospitalSelfInfo | CaseClosed;
+// hub → 구급차 탭만: 환자 정보가 오기 전 구급차 위치 기준 거리순 후보(규칙 기반, 2026-10-01).
+// 통화 시작 때(출동 시뮬레이션이면 현장 도착 때) 온다. 매칭 결과가 오면 그것으로 대체한다.
+export interface SceneCandidate {
+  hospitalId: string;
+  name: string;
+  distanceKm: number;
+  gps: { lat: number; lng: number };
+  availableBedCount: number;
+  bedCountUnknown: boolean;
+}
+
+export interface SceneCandidates {
+  type: "scene_candidates";
+  caseId: string;
+  apid: string;
+  ambulanceGps: { lat: number; lng: number };
+  ambulanceGpsFallback: boolean;
+  zoneActive: number[];
+  hospitals: SceneCandidate[];
+  source: "rule";
+}
+
+export type InboundMessage =
+  | HubMatchResult
+  | DashboardIdentityInfo
+  | HospitalSelfInfo
+  | CaseClosed
+  | SceneCandidates;

@@ -184,6 +184,7 @@ function AmbulanceDashboardContent() {
           data={myResult}
           confirmedHospitalId={confirmedHospitalId}
           pendingHospitalId={pendingConfirmId}
+          scene={activeCaseId ? state.sceneCandidates[activeCaseId] ?? null : null}
           onApprove={handleApprove}
         />
 

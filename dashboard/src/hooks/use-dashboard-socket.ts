@@ -21,6 +21,7 @@ import type {
   HospitalStatus,
   HubMatchResult,
   InboundMessage,
+  SceneCandidates,
 } from "@/types/dashboard";
 
 // hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
@@ -42,6 +43,7 @@ const RECONNECT_MAX_MS = 10000;
 
 const INITIAL_STATE: DashboardState = {
   matchResults: {},
+  sceneCandidates: {},
   receivedAt: null,
   identity: { name: null, known: null },
   selfInfo: null,
@@ -77,11 +79,17 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
 
   const applyCaseClosed = useCallback((caseId: string) => {
     setState((prev) => {
-      if (!(caseId in prev.matchResults)) return prev;
-      const rest = { ...prev.matchResults };
-      delete rest[caseId];
-      return { ...prev, matchResults: rest };
+      if (!(caseId in prev.matchResults) && !(caseId in prev.sceneCandidates)) return prev;
+      const matchResults = { ...prev.matchResults };
+      const sceneCandidates = { ...prev.sceneCandidates };
+      delete matchResults[caseId];
+      delete sceneCandidates[caseId];
+      return { ...prev, matchResults, sceneCandidates };
     });
+  }, []);
+
+  const applySceneCandidates = useCallback((scene: SceneCandidates) => {
+    setState((prev) => ({ ...prev, sceneCandidates: { ...prev.sceneCandidates, [scene.caseId]: scene } }));
   }, []);
 
   const applyIdentityInfo = useCallback((info: DashboardIdentityInfo) => {
@@ -181,6 +189,9 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
             case "hospital_self_info":
               applySelfInfo(parsed);
               break;
+            case "scene_candidates":
+              applySceneCandidates(parsed);
+              break;
             case "case_closed":
               applyCaseClosed(parsed.caseId);
               break;
@@ -205,7 +216,7 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyCaseClosed, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;

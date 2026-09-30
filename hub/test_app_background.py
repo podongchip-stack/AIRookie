@@ -26,7 +26,7 @@ os.environ["HUB_STATE_PATH"] = str(Path(_TMP.name) / "hub_state.json")
 
 import app  # noqa: E402
 from hub_engine import TRANSCRIPT_NOT_PERSISTED, HubEngine  # noqa: E402
-from schema import GpsPoint, HospitalInfo, Specialty  # noqa: E402
+from schema import AmbulanceInfo, CallSignal, GpsPoint, HospitalInfo, Specialty  # noqa: E402
 
 
 class _FakeSocket:
@@ -111,7 +111,24 @@ def main() -> None:
         app.engine = original
     print("  [확인] 병원·사건·voice 주소 복구, 통화 원문은 저장·복구되지 않음")
 
-    app._dashboard_sockets.discard(socket)
+    print("=== 통화 시작: 매칭 전 현장 후보를 그 구급차 탭에만 ===")
+    ambulance_tab = _FakeSocket()
+    app._dashboard_sockets.add(ambulance_tab)
+    app._socket_identity[ambulance_tab] = ("ambulance", "A_SCENE")
+    socket.sent.clear()
+    app.engine.update_ambulance_info(
+        AmbulanceInfo(apid="A_SCENE", name="[테스트] 구급차", gps=GpsPoint(lat=37.5665, lng=126.9780), voicePort=6000,
+                      updatedAt="2026-10-01T00:00:00Z")
+    )
+    app._relay_call_signal(CallSignal(
+        type="call_signal", signal="call_started", timestamp="2026-10-01T00:00:00Z", apid="A_SCENE", caseId="case-scene",
+    ))
+    scene = [m for m in ambulance_tab.sent if m.get("type") == "scene_candidates"]
+    assert len(scene) == 1 and scene[0]["hospitals"][0]["hospitalId"] == "T001" and scene[0]["source"] == "rule"
+    assert not any(m.get("type") == "scene_candidates" for m in socket.sent), "병원 탭은 현장 후보를 받지 않는다"
+    print("  [확인] 거리순 후보가 구급차 탭에만 전송됨")
+
+    app._dashboard_sockets.difference_update({socket, stranger, ambulance_tab})
     print("\n모든 검사 통과")
 
 

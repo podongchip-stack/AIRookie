@@ -765,7 +765,14 @@ class HubEngine:
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
         candidates.sort(key=lambda pair: pair[1])
         return [
-            {"hospitalId": info.hospitalId, "name": info.name, "distanceKm": round(distance, 2)}
+            {
+                "hospitalId": info.hospitalId,
+                "name": info.name,
+                "distanceKm": round(distance, 2),
+                "gps": info.gps.model_dump(),
+                "availableBedCount": self.effective_bed_count(info),
+                "bedCountUnknown": _is_bed_count_unknown(info),
+            }
             for info, distance in candidates
         ]
 

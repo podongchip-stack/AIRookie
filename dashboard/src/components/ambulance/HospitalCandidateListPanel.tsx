@@ -7,7 +7,7 @@ import { Tag } from "@/components/hospital/Tag";
 import { mintButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { formatDeclarationAge, liveBedReliability } from "@/lib/bedReliability";
-import type { HospitalStatus, HubMatchResult, ReliabilityConfidence } from "@/types/dashboard";
+import type { HospitalStatus, HubMatchResult, ReliabilityConfidence, SceneCandidates } from "@/types/dashboard";
 
 // 공용 Panel은 height:100%만 두고 minHeight/overflow는 안 잡아서, 그리드 셀이
 // 콘텐츠(병원 몇 개)만큼 계속 늘어나는 걸 막지 못했다 — maxHeight를 목록에
@@ -275,9 +275,12 @@ export function HospitalCandidateListPanel({
   data,
   confirmedHospitalId,
   pendingHospitalId,
+  scene,
   onApprove,
 }: {
   data: HubMatchResult | null;
+  // 매칭 결과가 오기 전 보여줄 현장 주변 후보(거리순, 규칙). 매칭 결과가 오면 쓰지 않는다.
+  scene?: SceneCandidates | null;
   // hub가 confirmed로 돌려준 병원. 버튼을 누른 즉시가 아니라 hub 응답 기준이다(2026-10-01).
   confirmedHospitalId: string | null;
   // 이송 승인을 눌렀지만 hub 응답을 아직 못 받은 병원 — "확정 요청 중"으로 보여준다.
@@ -292,6 +295,44 @@ export function HospitalCandidateListPanel({
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  if (!data && scene) {
+    return (
+      <ListPanelShell subtitle={`Zone ${scene.zoneActive.join(", ")} · 환자 정보 전 거리순`}>
+        <p className={css({ color: "ink3", fontSize: "xs", marginBottom: "2" })}>
+          통화가 끝나면 진료과·이동시간 기준 순위와 병원 응답으로 바뀝니다.
+        </p>
+        <ul
+          className={cx(
+            css({ display: "flex", flexDirection: "column", gap: "1.5", flex: "1", minHeight: "0", overflowY: "auto" }),
+            thinScrollbarStyle,
+          )}
+        >
+          {scene.hospitals.map((h) => (
+            <li
+              key={h.hospitalId}
+              className={css({
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "2",
+                paddingX: "3",
+                paddingY: "2",
+                borderWidth: "1px",
+                borderColor: "line",
+                borderRadius: "field",
+                fontSize: "sm",
+              })}
+            >
+              <span className={css({ fontWeight: "semibold", color: "ink" })}>{h.name}</span>
+              <span className={css({ color: "ink3", fontVariantNumeric: "tabular-nums", flexShrink: "0" })}>
+                {h.distanceKm}km · 병상 {h.bedCountUnknown ? "미상" : h.availableBedCount}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </ListPanelShell>
+    );
+  }
 
   if (!data) {
     return (

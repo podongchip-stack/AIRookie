@@ -336,6 +336,29 @@ def _send_to_socket(ws, payload: dict, label: str) -> None:
             print(f"  [통신] {label} 전송 실패: {e}")
 
 
+def _send_scene_candidates(case_id: str, apid: str) -> None:
+    """환자 정보가 오기 전, 구급차 위치 기준 거리순 후보를 그 구급차 탭에만 보낸다
+    (2026-10-01, 통화 시작 시·출동 시뮬레이션의 현장 도착 시). 예전엔 통화가 끝나 매칭 결과가
+    올 때까지 병원 목록이 비어 있었다. 규칙 기반(거리)이고 진료과 매칭·승인은 아직 없어서,
+    병원 탭에는 보내지 않는다 — 환자 정보 없는 요청이 병원 화면에 쌓이지 않게."""
+    gps, fallback = _resolve_ambulance_gps(case_id)
+    zone = engine.resolve_start_zone(gps)
+    payload = {
+        "type": "scene_candidates",
+        "caseId": case_id,
+        "apid": apid,
+        "ambulanceGps": gps.model_dump(),
+        "ambulanceGpsFallback": fallback,
+        "zoneActive": list(range(1, zone + 1)),
+        "hospitals": engine.build_zone_candidates(gps, max_zone=zone),
+        "source": "rule",
+    }
+    with _sockets_lock:
+        targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and id_ == apid]
+    for ws in targets:
+        _send_to_socket(ws, payload, "현장 후보")
+
+
 def _relay_call_signal(signal: CallSignal) -> None:
     """dashboard의 통화 시작/종료 신호를 그 apid로 등록된 feature/voice
     인스턴스로 중계한다. call_started 시점에 (caseId -> apid)를 hub_engine에
@@ -344,6 +367,7 @@ def _relay_call_signal(signal: CallSignal) -> None:
     dashboard 쪽 흐름은 끊기면 안 되므로 예외를 흡수한다."""
     if signal.signal == "call_started":
         engine.register_case(signal.caseId, signal.apid)
+        _send_scene_candidates(signal.caseId, signal.apid)
 
     with _voice_addresses_lock:
         voice_base_url = _voice_addresses.get(signal.apid)
