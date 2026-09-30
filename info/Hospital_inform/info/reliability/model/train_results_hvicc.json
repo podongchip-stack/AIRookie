@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-09-28T14:08:40+00:00",
+  "field": "hvicc",
+  "label": "중환자실 일반",
+  "theta": 2,
+  "cutoff": "2026-09-21T15:00:00+00:00",
+  "train": {
+    "versions": 17704,
+    "events": 1578
+  },
+  "test": {
+    "versions": 5723,
+    "events": 541
+  },
+  "seeds": {},
+  "adopted": false,
+  "reason": "이벤트 부족 (train 1578 < 2000 또는 test 541 < 100)"
+}

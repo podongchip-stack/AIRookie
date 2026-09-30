@@ -202,6 +202,41 @@ log-normal AFT 생존함수를 표준 라이브러리로 재구현한 것이고(
 수치 등가성은 info의 `python -m reliability.selftest`가 검증한다. 이 필드 없이
 오는 구 feature/info 데이터는 `bedReliability=null`로 그대로 통과한다.
 
+### 중증질환 신고 신선도 (severeFreshness, 2026-09-28 신설 — 규칙 기반)
+
+같은 취지의 셋째 축인데 **모델이 아니라 규칙**이다. info의 실측(스냅샷 47일)
+에서 중증질환 수용가능 신고(MKioskTy)는 값 변화의 90%가 Y↔정보미제공 왕복
+이고 만료 수명의 60.1%가 정확히 9.0시간 — 시스템 자동 만료 규칙이 지배해서
+모델을 만들지 않기로 했다(info의 `reliability/README.md` 참고). E-Gen 응답에
+신고 시각 필드가 없어서 "이 신고가 언제 적 것인지"는 info의 스냅샷 추적
+(`HospitalInfo.severeDeclarations`)만이 알고, hub는 매칭된 질환군에 대해
+신고 나이(`ageSec`)와 9시간 규칙 잔여(`ruleRemainingSec`)를 계산해
+`HospitalMatch.severeFreshness`(source: "rule")로 내보낸다. `ageIsMin`이
+true면 추적 시작부터 그 값이었다는 뜻이라 "최소 X시간 전"으로 읽어야 하고,
+`ruleRemainingSec`이 0인데 신고가 여전히 떠 있으면 병원이 갱신을 지속 중
+이라는 뜻이지 신고가 죽었다는 뜻이 아니다. `reliability`(같은 신고를 심평원
+대조로 "믿을 만한가")와 상보적이며, 역시 순위에는 관여하지 않는다.
+
+### 병원 정보 확인 루프 (info_confirm / hospital_self_info, 2026-09-29 신설)
+
+신뢰도 스택의 나머지가 전부 "낡음을 감지해 소비자에게 경고"하는 대증이라면,
+이건 **원인(공급자) 쪽 피드백 루프**다. E-Gen 포털엔 병원에게 "당신 정보가
+얼마나 낡았는지"를 보여주는 화면이 없어 수년 묵은 값이 방치된다(실측 2,457일).
+
+- **`hospital_self_info` (hub → 병원 대시보드)**: "귀원 정보 현황" — 병상 수·
+  자기 병상 신뢰도(horizon 0이라 rArrive==authority, 곡선 파라미터 포함)·
+  확장 필드·중증 신고 현황. identify 직후, info의 30분 upsert 직후, 정보 확인
+  직후에 그 병원 소켓으로만 보낸다(`_build_self_info()`/`_send_self_info_to_hospital()`).
+- **`info_confirm` (병원 대시보드 → hub)**: "현재 정보가 맞습니다" 버튼.
+  `HubEngine.confirm_hospital_info()`가 기록하고(상태 파일에 저장·복구),
+  `bed_reliability.evaluate()`가 **조건부 생존 S(a)/S(u)** 로 그 병원 확률을
+  되올린다 — infosurv serve의 `confirmed_at` 메커니즘이 처음으로 실신호를
+  받는 지점이다. 값이 바뀌어 claim이 새로 태어나면 확인은 자동 무효
+  (confirmedAt < bornAt). 확인은 의사결정 로그(`hospital_info_confirmed`)에도
+  남아 나중에 infosurv 유효 확인(G1+) 라벨 재료가 된다. 구급차 화면 칩에는
+  ✓로 표시(`BedReliabilityMatch.confirmedAgeSec`), 관련 사건은 즉시 재계산·
+  재브로드캐스트된다. 수식 등가성은 info의 selftest 3번(조건부 항목)이 검증.
+
 ## 개발 환경 / 언어
 
 - 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
@@ -264,7 +299,9 @@ feature/hub는 `summary` 필드(부상 상태, 예상 병명, 중증도)는 매�
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `updatedAt` | string (ISO 8601) | 이 정보가 마지막으로 갱신된 시각 |
 | `assessment` | object (optional) | info-v2(hospital_score)의 신뢰도 진단 — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
-| `bedReliability` | object (optional) | 병상 정보 신뢰도 예측(`predictedSurvivalSec`·`bornAt`·`authorityAtSend`·`ttlSec`·`modelTag`, source: "ai") — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `bedReliability` | object (optional) | 병상 정보 신뢰도 예측(`predictedSurvivalSec`·`bornAt`·`sigma`·`authorityAtSend`·`ttlSec`·`modelTag`, source: "ai"). `sigma`는 잔차 재보정(σR)이 적용된 생존곡선 척도(raw면 1.0, 2026-09-28) — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `bedReliabilityByType` | object (optional, 2026-09-28 다필드 확장) | 응급실 일반 외 확장 필드의 신뢰도 예측. 키는 E-Gen 필드명(`hvoc` 수술실·`hvgc` 입원실·`hv28` 소아 — info의 `train_field.py` 관문 통과분), 값 구조는 `bedReliability`와 동일 |
+| `severeDeclarations` | object (optional) | 중증질환 수용가능 신고의 질환군별 현재 값·관측 기준 탄생시각(`groups.{질환군}.{value, bornAt, ageIsMin}`, source: "rule"). 정보미제공 그룹은 키가 없다 — 위 "중증질환 신고 신선도" 참고 |
 
 ### 입력 스키마 3: feature/dashboard로부터 (승인 액션)
 
@@ -477,7 +514,9 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `hospitals[].demoteReasons` | (`"declared_no"`\|`"beds_full"`\|`"rejected"`)[] (2026-09-28) | 순위를 뒤로 내린 이유. 비면 `finalScore` 순서 그대로 |
 | `hospitals[].bedDataStale` | boolean (2026-09-28) | 병상 값이 1일 넘게 갱신 안 됐거나 실시간 피드에 없음. 이 경우 0이어도 만실로 보지 않는다 |
 | `hospitals[].reliability` | object \| null | info-v2 신뢰도 판정("왜 이 순위인지" 설명용, `group`·`score`·`confidence`·`basis`) — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
-| `hospitals[].bedReliability` | object \| null (2026-09-24 신설) | 병상 숫자 자체의 유효 확률(`authority`·`rArrive`·`horizonSec`·`ttlSec`·`modelTag`, source: "ai"). 매칭 시점에 hub가 재계산한 값. 순위에는 관여하지 않는 설명용 — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `hospitals[].bedReliability` | object \| null (2026-09-24 신설) | 병상 숫자 자체의 유효 확률(`authority`·`rArrive`·`horizonSec`·`ttlSec`·`modelTag`, source: "ai"). 매칭 시점에 hub가 재계산한 값이고, dashboard가 브로드캐스트 사이에도 초 단위로 감쇠를 직접 그릴 수 있게 곡선 파라미터(`predictedSurvivalSec`·`bornAt`·`sigma`, 2026-09-28)도 같이 실린다. 순위에는 관여하지 않는 설명용 — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `hospitals[].bedReliabilityByType` | object \| null (2026-09-28 다필드 확장) | 수술실(`hvoc`)·입원실(`hvgc`)·소아(`hv28`) 등 확장 필드의 유효 확률 환산. 키는 E-Gen 필드명, 값 구조는 `bedReliability`와 동일(같은 horizon) |
+| `hospitals[].severeFreshness` | object \| null (2026-09-28 신설) | 매칭된 질환군의 수용가능 신고가 언제 적 것인지(`group`·`value`·`ageSec`·`ageIsMin`·`ruleRemainingSec`, source: "rule"). `ageIsMin=true`면 "최소 X시간 전"으로 표시해야 한다. 순위 불변 — 위 "중증질환 신고 신선도" 참고 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `ambulanceGpsFallback` | boolean (2026-09-28 신설) | `ambulanceGps`가 실제 구급차 위치가 아니라 기본 좌표(서울시청)로 대체된 값인지. true면 거리·존·순위가 엉뚱한 기준일 수 있다 |
 | `ambulanceName` | string \| null (2026-08-11 신설) | 구급차 대시보드 상단바 표시용. `hospitals[].name`(병원명)과 같은 패턴 — 이 사건의 apid를 `register_case()`로 기억해둔 값에서 찾아 구급차 레지스트리(`AmbulanceInfo.name`)를 그대로 채운다. apid를 못 찾으면(통화 시작 신호 없이 직접 `/voice/summary`를 부른 테스트 등) `null`이고, dashboard는 URL의 apid로 대체 표시한다. **병원명과 마찬가지로 그 구급차가 실제로 사건에 등장해야만 채워진다** — 사건이 아예 없는 상태(대시보드를 열었지만 아직 통화가 없음)에서는 아직 이 필드 자체를 못 받으므로 ID 폴백이 계속 보인다 |
@@ -593,11 +632,20 @@ GET /identity?role=hospital&id=S0000001
   `send_to_info()` 전부 없앴다 — 위 "출력 스키마 5" 참고. 병상 차감은 이제
   파일로도 안 남기고 `HubEngine._bed_overlay`(메모리)에만 있다가 TTL이
   지나면 조용히 사라진다.
-- **`send_rejection_to_info()` (2026-09-10 추가)**: `app.py`의
-  `_handle_dashboard_action()`이 `hospital_reject`일 때 `_build_rejection_payload()`로
-  `{hospitalId, caseId, timestamp, reasonCode}`(+ 사건 캐시가 있으면
-  `severity`·`diseaseGroup`·`declaredAtRequest`)를 만들어 `HUB_REJECTION_URL`
-  (기본 `http://127.0.0.1:5003/hub/rejection`)로 POST한다. fire-and-forget —
+- **`send_rejection_to_info()` (2026-09-10 추가, 09-28~29 확충)**: `app.py`의
+  `_handle_dashboard_action()`이 `hospital_reject`일 때 `_rejection_payload()`로
+  `{hospitalId, caseId, timestamp, reasonCode}` + 사건 캐시가 있으면
+  `severity`·`diseaseGroup`·`declaredAtRequest`에 더해 **결정 시점 스냅샷**
+  (`availableBedCountAtRequest`·`bedCountUnknownAtRequest`·`bedDataStaleAtRequest`·
+  `travelMinAtRequest`·`finalScoreAtRequest`·`bedAuthorityAtRequest`·
+  `bedRArriveAtRequest` — G2 라벨·확률 운영 검증 재료)를 만들어 `HUB_REJECTION_URL`
+  (기본 `http://127.0.0.1:5003/hub/rejection`)로 POST한다. **무응답도 기록한다**:
+  사건이 결말에 이르는 두 시점(`final_approval` 확정 / 확정 없이
+  `HUB_UNRESOLVED_TIMEOUT_MIN` 기본 120분 유휴 시 sweep)에 pending 후보들을
+  `reasonCode=NO_RESPONSE`로 일괄 전송하며, `reachedAtBroadcast`(도달 이력 —
+  미도달=보급 지표 / 도달했는데 무응답=응답성 지표)·`hospitalDashboardConnected`·
+  `caseFinalized`(미결 종료 구분)를 실어 소비 축을 분리한다(CLAUDE.md 소비 지침
+  참고 — 무응답은 수용성 판정에 쓰지 않는다). fire-and-forget —
   수신구(`hospital_score/ingest.py`, 별도 기동하는 선택적 서버)가 안 떠 있어도
   예외를 삼키고 계속한다. 병상 갱신과 달리 이건 E-Gen이 아니라 info가 쓰기
   가능한 자체 운영 로그라 왕복이 성립한다. 회귀 테스트: `test_rejection_forward.py`.

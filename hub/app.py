@@ -27,9 +27,11 @@ from flask import Flask, jsonify, request
 from flask_sock import Sock
 from pydantic import ValidationError
 
+import bed_reliability
+import decision_log
 from delivery import LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
-from hub_engine import HubEngine
+from hub_engine import HubEngine, _is_bed_count_unknown
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -38,6 +40,8 @@ from schema import (
     DashboardIdentityInfo,
     GpsPoint,
     HospitalInfo,
+    HospitalInfoConfirm,
+    HospitalSelfInfo,
     VoiceCallSummaryMessage,
     VoiceRegistration,
 )
@@ -60,6 +64,20 @@ engine = HubEngine(router=router)
 # 여러 개가 동시에 붙을 수 있어 연결을 집합으로 관리하고 전체에 브로드캐스트한다
 # (예전엔 전역 변수 하나라 마지막 연결만 갱신을 받는 버그가 있었다).
 _dashboard_sockets: set = set()
+# 소켓 -> (role, id). identify를 보낸 소켓만 등록된다. 거절 로그의 무응답
+# (NO_RESPONSE) 기록에서 "요청을 보고도 무시"와 "대시보드 미접속(미도달)"을
+# 구분하는 데 쓴다 — 둘을 섞으면 원인 축 분리라는 거절 로그 설계가 깨진다.
+_socket_identity: dict = {}
+# caseId -> 그 사건의 매칭 결과가 실제로 병원 대시보드에 도달했던 hpid 집합.
+# 브로드캐스트·따라잡기 시점마다 누적한다. 무응답 기록의 "당시 요청을 받았는가"
+# (reachedAtBroadcast)를 확정 순간의 연결 여부가 아니라 **도달 이력**으로 판정하기
+# 위함 — 확정 순간 기준만 쓰면 그 사이 끊긴 병원이 미도달로 오분류된다(2026-09-29).
+_case_reach: dict[str, set[str]] = {}
+# 사건별 마지막 활동(매칭 전송·승인 액션) 시각. 확정 없이 방치된 사건의
+# 무응답 정리(sweep) 판단에 쓴다.
+_case_last_activity: dict[str, datetime] = {}
+# 무응답 기록을 이미 마친 사건 — 중복 기록 방지(중복 final_approval·sweep 재방문).
+_case_swept: set[str] = set()
 # 연결 집합은 소켓 스레드들(추가·제거)과 매칭 작업 스레드(브로드캐스트)가 같이 건드린다.
 # 한 소켓에 두 스레드가 동시에 send하면 프레임이 섞일 수 있어 전송도 같은 락으로 묶는다.
 _sockets_lock = threading.RLock()
@@ -128,6 +146,9 @@ def receive_hospital_info():
         return jsonify({"error": "invalid HospitalInfo", "detail": exc.errors()}), 400
 
     engine.update_hospital_info(info)
+    # 그 병원 대시보드가 연결돼 있으면 "귀원 정보 현황"을 갱신해준다 —
+    # 30분 주기 재전송을 그대로 자기 화면 신선도 갱신으로 재사용.
+    _send_self_info_to_hospital(info.hospitalId)
     return jsonify({"status": "ok", "hospitalId": info.hospitalId}), 200
 
 
@@ -267,6 +288,18 @@ def _send_to_dashboard(payload: dict) -> None:
                 dead.add(ws)
         _dashboard_sockets.difference_update(dead)
 
+        # 매칭 결과라면 "이 사건이 어느 병원 대시보드에 실제로 도달했나"를
+        # 누적 기록한다 (무응답 로그의 reachedAtBroadcast 판정 재료).
+        if payload.get("type") == "match_result" and payload.get("caseId"):
+            case_id = payload["caseId"]
+            hospital_ids = {h.get("hospitalId") for h in payload.get("hospitals") or []}
+            connected = {
+                hid for sock, (role, hid) in _socket_identity.items()
+                if role == "hospital" and sock in _dashboard_sockets
+            }
+            _case_reach.setdefault(case_id, set()).update(hospital_ids & connected)
+            _case_last_activity[case_id] = datetime.now(timezone.utc)
+
 
 def _send_to_socket(ws, payload: dict, label: str) -> None:
     """소켓 하나에만 보낸다(따라잡기·신원 확인 응답). 브로드캐스트와 같은 락을 쓴다."""
@@ -320,6 +353,13 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
     print(f"  [통신] {identify.role} {identify.id} 연결 — 진행 중인 사건 {len(cases)}건 따라잡기 전송")
     for result in cases:
         _send_to_socket(ws, result.model_dump(), "따라잡기")
+        # 따라잡기로 받아 본 것도 "도달"이다 — 뒤늦게 연결한 병원이 요청을
+        # 봤는데 무응답이면 미도달이 아니라 무시로 분류돼야 한다.
+        if identify.role == "hospital" and any(
+            h.hospitalId == identify.id for h in result.hospitals
+        ):
+            with _sockets_lock:
+                _case_reach.setdefault(result.caseId, set()).add(identify.id)
 
 
 def _resolve_identity(role: str, id_: str) -> tuple[str | None, bool]:
@@ -356,40 +396,142 @@ def _send_identity_info(ws, identify: DashboardIdentify) -> None:
 _TIER_TO_DECLARED = {"declared_yes": "Y", "declared_no": "불가능"}
 
 
-def _build_rejection_payload(action: ApprovalAction) -> dict:
-    """dashboard의 hospital_reject 액션을 feature/info 거절 로그 수신구가 받는
-    형태로 조립한다. 필수는 hospitalId 하나뿐이고(수신구가 관대하게 받는다),
-    나머지는 사건 캐시에서 best-effort로 채운다 — 조회가 실패하면 그 필드만
-    빠지고 전달 자체는 계속된다(거절 로그는 소급 생성이 안 되므로 부분 정보라도
-    남기는 게 낫다).
+def _hospital_dashboard_connected(hospital_id: str) -> bool:
+    """이 병원의 대시보드 소켓이 지금 연결돼 있는가 (identify 기준)."""
+    with _sockets_lock:
+        return any(
+            role == "hospital" and hid == hospital_id
+            for role, hid in _socket_identity.values()
+        )
+
+
+def _rejection_payload(case_id: str, hospital_id: str, timestamp: str, reason_code: str) -> dict:
+    """feature/info 거절 로그 수신구가 받는 형태로 조립한다. 필수는 hospitalId
+    하나뿐이고(수신구가 관대하게 받는다), 나머지는 사건 캐시에서 best-effort로
+    채운다 — 조회가 실패하면 그 필드만 빠지고 전달 자체는 계속된다(거절 로그는
+    소급 생성이 안 되므로 부분 정보라도 남기는 게 낫다).
+
+    `*AtRequest` 필드들은 **결정 시점의 스냅샷**(2026-09-28 확충)이다 — 그때
+    화면에 뭐가 보였고 시스템이 뭘 믿었는지가 로그에 없으면, 나중에 "가능이라
+    떠 있었는데 거절"(신고 정확도)이나 "authority 90%였는데 만실 거절"(확률의
+    운영 검증, G2 라벨)을 소급해서 셀 방법이 없다.
     """
     payload: dict = {
-        "hospitalId": action.hospital_id,
-        "caseId": action.caseId,
-        "timestamp": action.timestamp,
-        "reasonCode": action.reason or "UNSPECIFIED",
+        "hospitalId": hospital_id,
+        "caseId": case_id,
+        "timestamp": timestamp,
+        "reasonCode": reason_code,
     }
 
-    result = engine.get_case_result(action.caseId)
-    if result is not None:
-        payload["severity"] = result.patientInfo.severityTag
-        match = next(
-            (h for h in result.hospitals if h.hospitalId == action.hospital_id), None
+    result = engine.get_case_result(case_id)
+    if result is None:
+        return payload
+    payload["severity"] = result.patientInfo.severityTag
+    match = next((h for h in result.hospitals if h.hospitalId == hospital_id), None)
+    if match is None:
+        return payload
+
+    # 결정 시점 스냅샷 — 그때 대시보드에 보였던 병상·이동시간·순위 점수와
+    # 병상 신뢰도 확률. BEDS_FULL 거절과 대조하면 정보 무효의 독립 관측
+    # (infosurv G2 라벨)이 된다.
+    payload["availableBedCountAtRequest"] = match.availableBedCount
+    payload["bedCountUnknownAtRequest"] = match.bedCountUnknown
+    payload["bedDataStaleAtRequest"] = match.bedDataStale
+    if match.travelMin is not None:
+        payload["travelMinAtRequest"] = match.travelMin
+    if match.finalScore is not None:
+        payload["finalScoreAtRequest"] = match.finalScore
+    if match.bedReliability is not None:
+        payload["bedAuthorityAtRequest"] = match.bedReliability.authority
+        payload["bedRArriveAtRequest"] = match.bedReliability.rArrive
+
+    if match.reliability is not None:
+        group = match.reliability.group
+        payload["diseaseGroup"] = group
+        info = engine.get_hospital(hospital_id)
+        group_score = (
+            info.assessment.groups.get(group)
+            if info is not None and info.assessment is not None
+            else None
         )
-        if match is not None and match.reliability is not None:
-            group = match.reliability.group
-            payload["diseaseGroup"] = group
-            info = engine.get_hospital(action.hospital_id)
-            group_score = (
-                info.assessment.groups.get(group)
-                if info is not None and info.assessment is not None
-                else None
-            )
-            declared = _TIER_TO_DECLARED.get(getattr(group_score, "tier", None))
-            if declared is not None:
-                payload["declaredAtRequest"] = declared
+        declared = _TIER_TO_DECLARED.get(getattr(group_score, "tier", None))
+        if declared is not None:
+            payload["declaredAtRequest"] = declared
 
     return payload
+
+
+def _build_rejection_payload(action: ApprovalAction) -> dict:
+    return _rejection_payload(
+        action.caseId, action.hospital_id, action.timestamp, action.reason or "UNSPECIFIED"
+    )
+
+
+#: 확정 없이 이 시간(분) 넘게 활동이 없는 사건은 "미결 종료"로 보고 무응답을
+#: 정리 기록한다. 로그만 남기고 엔진의 사건 자체는 건드리지 않는다(미확정
+#: 사건은 지우지 않는다는 기존 보존 정책 유지). 0 이하면 끈다.
+UNRESOLVED_CASE_TIMEOUT_MIN = float(os.environ.get("HUB_UNRESOLVED_TIMEOUT_MIN", "120"))
+
+
+def _log_no_responses(case_id: str, timestamp: str, finalized_to: str | None) -> None:
+    """사건이 결말(이송 확정 또는 미결 방치)에 이른 시점에, 여전히 무응답
+    (pending)인 후보들을 거절 로그에 남긴다 — CLAUDE.md 거절 로그 절의
+    "무응답(NO_RESPONSE)도 반드시 남길 것"(없으면 낮은 점수가 낮은 점수를
+    재생산하는 되먹임이 생긴다).
+
+    ⚠ 소비 주의 — 무응답은 거절과 **다른 축**의 신호다: 수용 능력이 아니라
+    채널에 대한 정보라, 수용성 판정(G2 라벨·assessment 검증)에는 쓰지 말고
+    보급(미도달)·응답성(무시) 지표로만 분리 집계해야 한다. 그 구분을 위해:
+    - `reachedAtBroadcast`: 사건 진행 중 이 병원 대시보드에 요청이 실제로
+      도달한 이력이 있는가 (_case_reach — 도달했는데 무응답 = 무시)
+    - `hospitalDashboardConnected`: 기록 순간의 연결 여부 (보조 신호)
+    - `caseFinalized`: 확정된 사건인가, 확정 없이 방치된 사건인가 — 미결
+      사건의 무응답은 요청 자체가 유효했는지 모호하므로(데모·중단 포함)
+      분석에서 따로 걸러야 한다
+    """
+    with _sockets_lock:
+        if case_id in _case_swept:
+            return  # 이미 기록한 사건 (중복 final_approval·sweep 재방문 방지)
+        _case_swept.add(case_id)
+        reach = _case_reach.pop(case_id, set())
+        _case_last_activity.pop(case_id, None)
+
+    result = engine.get_case_result(case_id)
+    if result is None:
+        return
+    logged = 0
+    for match in result.hospitals:
+        if match.hospitalId == finalized_to or match.status != "pending":
+            continue
+        payload = _rejection_payload(case_id, match.hospitalId, timestamp, "NO_RESPONSE")
+        payload["reachedAtBroadcast"] = match.hospitalId in reach
+        payload["hospitalDashboardConnected"] = _hospital_dashboard_connected(match.hospitalId)
+        payload["caseFinalized"] = finalized_to is not None
+        if finalized_to is not None:
+            payload["finalizedTo"] = finalized_to
+        send_rejection_to_info(payload)
+        logged += 1
+    if logged:
+        kind = "이송 확정" if finalized_to is not None else "미결 종료(sweep)"
+        print(f"  [통신] {kind} — 무응답 후보 {logged}곳을 NO_RESPONSE로 거절 로그에 기록")
+
+
+def _sweep_unresolved_cases(now: datetime | None = None) -> int:
+    """확정 없이 방치된 사건들의 무응답을 정리 기록한다(_maintenance_loop에서
+    주기 호출). 정리한 사건 수를 돌려준다."""
+    if UNRESOLVED_CASE_TIMEOUT_MIN <= 0:
+        return 0
+    now = now or datetime.now(timezone.utc)
+    with _sockets_lock:
+        due = [
+            case_id
+            for case_id, last in _case_last_activity.items()
+            if case_id not in _case_swept
+            and (now - last).total_seconds() >= UNRESOLVED_CASE_TIMEOUT_MIN * 60
+        ]
+    for case_id in due:
+        _log_no_responses(case_id, now.isoformat(timespec="seconds"), finalized_to=None)
+    return len(due)
 
 
 def _handle_dashboard_action(payload: dict) -> None:
@@ -405,6 +547,11 @@ def _handle_dashboard_action(payload: dict) -> None:
         print(f"  [통신] 잘못된 ApprovalAction 수신: {exc.errors()}")
         return
 
+    # 승인 액션도 사건의 "활동"이다 — 미결 sweep의 유휴 판정 기준을 갱신한다.
+    with _sockets_lock:
+        if action.caseId not in _case_swept:
+            _case_last_activity[action.caseId] = datetime.now(timezone.utc)
+
     engine.apply_approval_action(action)
 
     # maybe_expand_zone()은 거절 액션에만 부른다 — reject_ratio가 누적 계산이라
@@ -419,10 +566,106 @@ def _handle_dashboard_action(payload: dict) -> None:
 
         ambulance_gps, _ = _resolve_ambulance_gps(action.caseId)
         expanded_result = engine.maybe_expand_zone(action.caseId, ambulance_gps)
+    elif action.action == "final_approval":
+        # 확정 순간 여전히 응답 없던 후보들도 로그에 남긴다 (NO_RESPONSE).
+        _log_no_responses(action.caseId, action.timestamp, finalized_to=action.hospital_id)
 
     updated_result = expanded_result or engine.get_case_result(action.caseId)
     if updated_result is not None:
         _send_to_dashboard(updated_result.model_dump())
+
+
+def _handle_info_confirm(confirm: HospitalInfoConfirm) -> None:
+    """병원 대시보드의 "현재 정보 확인" 신호 처리(2026-09-29).
+
+    E-Gen 자기 신고 밖에서 처음 생기는 유효 확인 관측이다 — 값이 그대로여도
+    "방금 사람이 확인한 정확한 값"임을 시스템이 알게 되는 유일한 경로.
+    엔진에 기록해 그 병원 병상 신뢰도가 조건부 생존(S(a)/S(u))으로 되올라가게
+    하고, 의사결정 로그에도 남긴다(나중에 infosurv 유효 확인 라벨 재료).
+    """
+    try:
+        ts = datetime.fromisoformat(confirm.timestamp.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+    except ValueError:
+        ts = datetime.now(timezone.utc)
+
+    if not engine.confirm_hospital_info(confirm.hospitalId, ts):
+        print(f"  [통신] 모르는 병원({confirm.hospitalId})의 정보 확인 — 무시")
+        return
+    decision_log.log_decision(
+        "hospital_info_confirmed",
+        {"hospitalId": confirm.hospitalId, "timestamp": confirm.timestamp},
+    )
+    print(f"  [통신] {confirm.hospitalId} 정보 확인 수신 — 관련 사건 신뢰도 재계산")
+    # 확인 효과(확률 상승)가 다음 주기(60초)를 기다리지 않고 화면에 바로
+    # 반영되게 관련 사건을 즉시 재계산한다. 임베딩·카카오 호출이 낄 수 있어
+    # 소켓 스레드를 막지 않도록 작업 스레드로 넘긴다.
+    _match_executor.submit(_refresh_cases_for_hospital, confirm.hospitalId)
+    # 병원 자신의 화면(귀원 정보 현황)에도 ✓·확률 리셋이 즉시 뜨게 한다.
+    _send_self_info_to_hospital(confirm.hospitalId)
+
+
+def _build_self_info(hospital_id: str) -> HospitalSelfInfo | None:
+    """병원 대시보드용 "귀원 정보 현황"(2026-09-29). 신뢰도는 horizon 0으로
+    환산한다 — 자기 화면엔 이송(도착 시점) 개념이 없으므로 rArrive==authority."""
+    info = engine.get_hospital(hospital_id)
+    if info is None:
+        return None
+    now = datetime.now(timezone.utc)
+    confirmed = engine.get_info_confirmation(hospital_id)
+    return HospitalSelfInfo(
+        hospitalId=hospital_id,
+        name=info.name,
+        availableBedCount=engine.effective_bed_count(info),
+        bedCountUnknown=_is_bed_count_unknown(info),
+        updatedAt=info.updatedAt,
+        bedReliability=bed_reliability.evaluate(
+            info.bedReliability, 0.0, now=now, horizon_sec=0.0, confirmed_at=confirmed
+        ),
+        bedReliabilityByType=(
+            {
+                field: bed_reliability.evaluate(
+                    payload, 0.0, now=now, horizon_sec=0.0, confirmed_at=confirmed
+                )
+                for field, payload in info.bedReliabilityByType.items()
+            }
+            if info.bedReliabilityByType
+            else None
+        ),
+        severeDeclarations=info.severeDeclarations,
+    )
+
+
+def _send_self_info_to_hospital(hospital_id: str) -> None:
+    """그 병원(hpid)으로 identify한 모든 소켓에 자기 정보 현황을 보낸다.
+    연결이 없으면 조용히 넘어간다."""
+    with _sockets_lock:
+        targets = [
+            sock
+            for sock, (role, hid) in _socket_identity.items()
+            if role == "hospital" and hid == hospital_id and sock in _dashboard_sockets
+        ]
+    if not targets:
+        return
+    payload = _build_self_info(hospital_id)
+    if payload is None:
+        return
+    data = payload.model_dump()
+    for sock in targets:
+        _send_to_socket(sock, data, "self_info")
+
+
+def _refresh_cases_for_hospital(hospital_id: str) -> None:
+    for result in engine.get_cases_for_hospital(hospital_id):
+        try:
+            ambulance_gps, _ = _resolve_ambulance_gps(result.caseId)
+            updated = engine.refresh_case(result.caseId, ambulance_gps)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [재계산] caseId={result.caseId} 실패: {e!r}")
+            continue
+        if updated is not None:
+            _send_to_dashboard(updated.model_dump())
 
 
 @sock.route("/ws/dashboard")
@@ -466,13 +709,28 @@ def dashboard_socket(ws):
                 except ValidationError as exc:
                     print(f"  [통신] 잘못된 DashboardIdentify 수신: {exc.errors()}")
                     continue
+                with _sockets_lock:
+                    _socket_identity[ws] = (identify.role, identify.id)
                 _send_identity_info(ws, identify)
                 _send_catchup(ws, identify)
+                # 병원이면 사건 유무와 무관하게 "귀원 정보 현황"도 바로 준다.
+                if identify.role == "hospital":
+                    self_info = _build_self_info(identify.id)
+                    if self_info is not None:
+                        _send_to_socket(ws, self_info.model_dump(), "self_info")
+            elif payload.get("type") == "info_confirm":
+                try:
+                    confirm = HospitalInfoConfirm.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 HospitalInfoConfirm 수신: {exc.errors()}")
+                    continue
+                _handle_info_confirm(confirm)
             elif "action" in payload:
                 _handle_dashboard_action(payload)
     finally:
         with _sockets_lock:
             _dashboard_sockets.discard(ws)
+            _socket_identity.pop(ws, None)
 
 
 # ── 백그라운드: 주기적 재계산 · 상태 저장 (2026-09-28) ───────────────────────
@@ -541,6 +799,8 @@ def _maintenance_loop() -> None:
             if due and (_refresh_future is None or _refresh_future.done()):
                 last_refresh = time.monotonic()
                 _refresh_future = _match_executor.submit(_refresh_active_cases)
+            # 확정 없이 방치된 사건의 무응답 정리(로그만 — 사건 자체는 안 지움).
+            _sweep_unresolved_cases()
             if PERSIST_STATE and (engine.take_dirty() or _voice_addresses_dirty):
                 save_state()
         except Exception as e:  # noqa: BLE001

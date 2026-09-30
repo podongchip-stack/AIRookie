@@ -363,9 +363,27 @@ Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-
   낮아질 뿐) — hospital_score와 같은 fail-soft 원칙으로, `reliability/` 폴더를
   통째로 지워도 `send_to_hub.py`는 `bedReliability` 없이 원본 그대로 보낸다
 - **hub로는 `HospitalInfo.bedReliability`**(predictedSurvivalSec·bornAt·
-  authorityAtSend·ttlSec·modelTag, source: "ai")로 나간다. authority는 정보
+  sigma·authorityAtSend·ttlSec·modelTag, source: "ai")로 나간다. authority는 정보
   나이에 따라 계속 떨어지는 값이라 info의 전송 시점 값은 스냅샷일 뿐이고,
   hub가 매칭 시점마다 재계산한다(아래 hub 참고사항)
+- **잔차 재보정 + 다필드 확장 (2026-09-28).** ① % 노출의 전제로 hvec raw
+  확률의 과신을 홀드아웃 실측으로 교정하는 재보정 상수(μR,σR)를 적합해
+  적용했다(`calibrate.py`, τ30분 ECE 0.272→0.114 — 확장 필드들은 raw가 이미
+  정직해 관문이 저장 거부). ② 학습을 저장소 안으로 자급화(`train_field.py`,
+  infosurv fit·evaluate 벤더링 + 관문: 리듬 단독 baseline 대비 시드 3종 전승)
+  해 **수술실(hvoc C 0.867)·입원실(hvgc 0.856)·소아(hv28 0.784)** 모델을
+  채택했다 — 배후진료 역량(Capacity)의 신뢰도 확장. 중환자실(hvicc)은 이벤트
+  부족으로 정직 기각(축적 후 재시도, `model/train_results_hvicc.json`).
+  `HospitalInfo.bedReliabilityByType`(키=E-Gen 필드명)로 hub에 전달
+- **중증질환 신고 신선도는 모델이 아니라 규칙이다(2026-09-28, `severe.py`).**
+  infosurv를 중증질환 28항목으로 확장하려던 타당성 실측(`python -m
+  reliability.probe_severe`, 47일)에서 값 변화의 90%가 Y↔정보미제공 왕복이고
+  만료 수명의 60.1%가 정확히 9.0시간 = **시스템 자동 만료 규칙**임이 드러나
+  AFT 학습은 보류했다(진짜 내용 변화 Y↔불가능은 2,658건뿐 — 축적 후 재평가).
+  대신 E-Gen 응답에 신고 시각 필드가 없다는 점을 파고들어, 스냅샷 추적으로만
+  알 수 있는 "이 신고가 언제부터 이 값이었는지"를
+  `HospitalInfo.severeDeclarations`(source: "rule", 미제공 그룹은 키 없음)로
+  내보낸다 — hub가 신고 나이·9h 규칙 잔여로 환산(`severeFreshness`)
 
 ### 거절 로그 — dashboard·hub·info 연동 (2026-08-12 인터페이스, 2026-09-10 배선 완료)
 
@@ -391,6 +409,12 @@ info 수신구(`POST /hub/rejection`) → **완성.** dashboard 사유 선택 UI
   셀 수 있어, 신고 정확도를 운영 데이터로 직접 측정할 수 있다
 - **무응답(`NO_RESPONSE`)도 반드시 남길 것.** 거절 로그는 우리가 후보로 올린 병원에서만
   생기므로, 그것마저 없으면 낮은 점수가 낮은 점수를 재생산하는 되먹임이 생긴다
+- **데모 도구 (2026-09-29)**: 거절 로그는 실서비스가 돌아야 쌓이는 데이터라 시범운영
+  전에는 통계 근거가 될 수 없다 — 대신 배선의 시연용으로 `python -m
+  hospital_score.demo_rejections`(고정 시나리오 10건, 전부 `demo: true` 마커)와
+  확장 집계 `python -m hospital_score.rejection_report`(4축 + 결정 시점 스냅샷 기반
+  "정보 무효 관측 후보" + 무응답 3분해)가 있다. 실 로그가 쌓이기 시작하면
+  `--exclude-demo`로 완전 분리된다
 
 ### ~~hub로 흐르는 병원이 7곳뿐인 문제~~ → 2026-08-13 해결됨
 
@@ -450,6 +474,10 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **finalScore(거리·진료과 가중합) 계산식 자체는 안 건드렸다** — `reliability`는 여전히 "왜 이 순위인지" 설명 근거다. 다만 **2026-08-14부로 정렬 순서에는 예외가 하나 생겼다**: 관련 질환군이 `declared_no`(병원이 명시적으로 "수용 불가"라고 신고)면 finalScore와 무관하게 순위 맨 뒤로 밀린다(`scoring.rank()`의 `demote` 키, `hub_engine.py`의 `_should_demote()`). 가중합으로 점수에 섞지 않은 이유는 실험(민감도 분석)으로 확인됐다 — 모든 경우에 역전을 막으려면 신뢰도 가중치가 70%대까지 필요해서 거리·진료과 반영이 무의미해지므로, hospital_score/README.md의 "제거하지 말고 아래로 내릴 것" 지침을 순서 조정으로만 구현했다. 거절 로그가 쌓여 실측 기반 가중치를 낼 수 있게 되면 가중합으로 승격하는 걸 재검토한다
   - hub의 `hub/schema.py`가 `extra="forbid"`로 막혀 있다는 서술이 hospital_score/README.md에 있었는데, 실제로는 아니다(pydantic BaseModel 기본값은 `extra="ignore"`) — `assessment` 필드가 없어도 파싱은 안 깨졌을 것이나, hub가 그 값을 실제로 읽어 쓰려면 어차피 스키마에 명시적으로 선언해야 해서 이번에 추가했다
 - ~~**`feature/info-v2`가 develop에 머지됐다(2026-08-13).** ... `send_to_hub.py` 상시 파이프라인은 여전히 이 폴더를 import하지 않는다~~ → **같은 날 상시 파이프라인 연결까지 완료.** `feature/info-v2`를 `feature/info`에도 머지해 한 브랜치로 합쳤고, `send_to_hub.py`가 병원마다 `hospital_score.scoring`을 호출해 `assessment`를 붙여 보낸다. info-v2가 제안했던 TTL 오버레이도 hub 쪽에 구현 완료 — 위 "hub로 흐르는 병원이 7곳뿐인 문제" 절 참고
+- **거절 로그가 결정 시점 스냅샷과 무응답까지 담는다(2026-09-28 보강, 09-29 정밀화).** hub→info 거절 중계 페이로드에 그 순간 화면에 보였던 값들(`availableBedCountAtRequest`·`bedCountUnknownAtRequest`·`bedDataStaleAtRequest`·`travelMinAtRequest`·`finalScoreAtRequest`)과 병상 신뢰도 확률(`bedAuthorityAtRequest`·`bedRArriveAtRequest`)을 동봉한다 — BEDS_FULL 거절과 대조하면 정보 무효의 독립 관측(infosurv G2 라벨)이 되고, 확률의 운영 검증 재료가 된다(소급 생성 불가라 지금부터 담는 게 핵심). 무응답(`NO_RESPONSE`)은 사건이 결말에 이르는 두 시점 — `final_approval` 확정, 또는 확정 없이 `HUB_UNRESOLVED_TIMEOUT_MIN`(기본 120분) 유휴 시 sweep(로그만, 사건은 안 지움) — 에 일괄 기록한다(`app.py`의 `_log_no_responses()`/`_sweep_unresolved_cases()`, 검증 `test_rejection_forward.py`)
+  - **⚠ 무응답의 소비 지침 — 거절과 다른 축이다.** 거절은 "수용 능력"에 대한 정보지만 무응답은 "채널"에 대한 정보라, **수용성 판정(G2 라벨·assessment 검증)에는 쓰지 않고** 분리 집계한다: `reachedAtBroadcast`(사건 진행 중 그 병원 대시보드에 요청이 실제 도달했던 이력 — `_case_reach`가 브로드캐스트·따라잡기 시점마다 누적) false = **미도달 → 보급 지표**(병원 탓 아님), true인데 무응답 = **무시 → 응답성 지표**(반복되면 거절보다 심각 — 소비처는 순위 강등이 아니라 "전화 확인 우선 대상" 플래그, 제거 금지 원칙 유지). `caseFinalized` false(미결 종료)는 요청 유효성이 모호(데모·중단 포함)하므로 분석에서 따로 거른다
+- **병원 정보 확인 루프(2026-09-29 신설)** — 공급자 쪽 피드백. 병원 대시보드에 "귀원 정보 현황"(`hospital_self_info` — 자기 병상 신뢰도·신고 신선도, identify/30분 upsert/확인 직후 전송)을 보여주고, "현재 정보가 맞습니다"(`info_confirm`) 버튼을 받는다. 확인이 오면 그 병원 병상 신뢰도를 **조건부 생존 S(a)/S(u)**로 되올린다(infosurv `confirmed_at` 메커니즘의 첫 실신호원 — 값이 그대로여도 "방금 사람이 확인한 값"임을 시스템이 알게 되는 유일한 경로). 새 claim이 태어나면 자동 무효, 의사결정 로그에 유효 확인 관측으로 기록(향후 G1+ 라벨 재료), 구급차 칩에 ✓ 표시. hub README "병원 정보 확인 루프" 참고
+- **중증질환 신고 신선도를 수신·환산한다(2026-09-28).** info의 `severeDeclarations`(질환군별 현재 신고값·관측 기준 탄생시각, 규칙 기반)를 받아, 매칭된 질환군에 대해 신고 나이와 9시간 만료 규칙 잔여를 `HospitalMatch.severeFreshness`(source: "rule")로 dashboard에 전달한다(`hub_engine.py`의 `_severe_freshness_for()`, 상수 `SEVERE_EXPIRY_RULE_SEC` — 실측 근거는 info의 `probe_severe`). `reliability`(같은 신고를 심평원 대조로 "믿을 만한가" 판정)와 상보적 — 이쪽은 "언제 적 것인가". 순위 불변, Optional 하위호환, 검증은 `run_match.py`의 `test_severe_freshness()`
 - **병상 정보 신뢰도 예측(infosurv 모델)을 수신·전달한다(2026-09-24).** feature/info의 `reliability/` 모듈이 `HospitalInfo.bedReliability`(Optional — 이 필드 없이 오는 구 데이터도 그대로 통과)로 보내면, hub가 매칭 시점마다 `hub/bed_reliability.py`의 `evaluate()`로 **authority**(지금 이 병상 숫자를 믿어도 될 확률)와 **rArrive**(도착 시점 — 2026-09-28부터 순위에 쓰는 이동 시간 `travelMin`과 같은 horizon 뒤 — 에도 유효할 확률)를 재계산해 `HospitalMatch.bedReliability`로 dashboard에 전달한다. **finalScore·순위에는 관여하지 않는 설명용이다** — `reliability`(hospital_score)와 같은 원칙이되, 이쪽은 서수 티어가 아니라 캘리브레이트된 확률이라 거절 로그로 효과가 실측되면 rArrive의 랭킹 가중치 승격을 재검토한다(AIROOKIE-EGEN.md §5-1). 생존함수는 info 쪽 벤더링 사본(scipy)과 동일 수식을 hub에서 표준 라이브러리로 재구현했고(브랜치 폴더 원칙상 info/를 import 못 함 + scipy 의존 회피), 수치 등가성은 info의 `python -m reliability.selftest`가 검증한다. 검증 시나리오는 `run_match.py`의 `test_bed_reliability()`
 - **hub 내부 정비(2026-09-28, 다른 브랜치 변경 없음)** — 자세한 것은 hub/README.md "순위 규칙"·"서버 운영 동작"
   - **순위**: `finalScore = 0.6×진료과 + 0.4×이동시간 점수`. 이동시간은 카카오 ETA 우선, 없으면 직선거리 × 같은 사건 ETA로 보정한 분/km. 점수는 `0.5^(분/15)`라 20km 밖에서도 0이 되지 않는다(예전 `1-km/20`은 20km 밖을 전부 0으로 봤다). 정렬은 일반 → `declared_no`·`beds_full`(**확인된** 만실만, 미상·1일 넘은 값 제외) → `rejected` 순이고, 병원이 이 사건에 승인·확정했으면 내리지 않는다. 승인 액션 뒤 캐시도 재정렬한다. `nightDutyAvailable`은 info가 `bool(capabilities)`로 채우는 프록시라 순위에 쓰지 않는다
@@ -517,6 +545,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
     자체의 전체 화면 차단은 제거했다 — 직접 URL로 들어온 경우엔 상단바
     이름이 ID 폴백으로 남는 정도로만 티가 난다(랜딩 페이지 우회는 이번
     범위에서 막지 않기로 함).
+- **병원 자기 정보 현황 + 정보 확인 버튼 (2026-09-29)**: 병원 대시보드 상단에 `HospitalSelfInfoPanel`이 hub의 `hospital_self_info`(자기 병상 신뢰도 — 실시간 감쇠, 수술실·입원실, 중증 신고 요약)를 표시하고, "현재 정보가 맞습니다" 버튼이 `info_confirm`을 보낸다. 확인 즉시 자기 화면과 구급차 화면(✓) 양쪽에 반영된다. mock 모드·구버전 hub면 패널 자체가 숨는다(Optional 패턴)
 - **info-v2 신뢰도 판정("왜 이 순위인지") 설명 표시 (2026-08-13)**: hub가
   `hospitals[].reliability`(질환군·score·confidence·basis)를 보내주면
   구급차 대시보드 병원 후보 카드에 칩+근거 문장으로 노출한다

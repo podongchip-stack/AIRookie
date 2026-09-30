@@ -14,7 +14,13 @@ from pathlib import Path
 import bed_reliability
 import decision_log
 import delivery
-from hub_engine import BED_OVERLAY_TTL_MIN, CASE_RETENTION_MIN, HubEngine
+from hub_engine import (
+    _ASSESSMENT_GROUPS,
+    BED_OVERLAY_TTL_MIN,
+    CASE_RETENTION_MIN,
+    SEVERE_EXPIRY_RULE_SEC,
+    HubEngine,
+)
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -24,6 +30,8 @@ from schema import (
     BedReliabilityInput,
     GpsPoint,
     HospitalInfo,
+    SevereDeclarations,
+    SevereGroupDeclaration,
     Specialty,
     VoiceCallSummaryMessage,
     VoiceSummary,
@@ -241,6 +249,7 @@ def main() -> None:
     test_declared_no_demotion()
     test_case_eviction()
     test_bed_reliability()
+    test_severe_freshness()
     test_bed_full_and_rejected_ranking()
     test_travel_time_ranking()
     test_gps_fallback_and_message_type()
@@ -405,6 +414,13 @@ def test_bed_reliability() -> None:
             predictedSurvivalSec=2400.0, bornAt=fresh_born,
             authorityAtSend=1.0, ttlSec=2400.0, modelTag="aft_egen_theta3_ext0923",
         ),
+        # 확장 필드(수술실) — bedReliability와 같은 환산이 byType으로도 나가는지 확인용
+        bedReliabilityByType={
+            "hvoc": BedReliabilityInput(
+                predictedSurvivalSec=9600.0, bornAt=fresh_born,
+                authorityAtSend=1.0, ttlSec=9600.0, modelTag="aft_egen_hvoc_theta3",
+            )
+        },
     )
     with_old = HospitalInfo(
         hospitalId="B002", name="[테스트] 30분 묵은 병상 값",
@@ -457,9 +473,108 @@ def test_bed_reliability() -> None:
     expected_horizon = matches["B001"].travelMin * 60.0
     assert abs(b1.horizonSec - expected_horizon) < 6.0, "horizonSec은 순위에 쓴 이동 시간(travelMin)과 같아야 한다"
     assert matches["B001"].travelBasis == "estimate", "카카오 키가 없으면 이동 시간은 추정치여야 한다"
+    by_type = matches["B001"].bedReliabilityByType
+    assert by_type is not None and "hvoc" in by_type, "확장 필드(byType) 환산이 실려야 한다"
+    assert 0.0 <= by_type["hvoc"].rArrive <= by_type["hvoc"].authority <= 1.0
+    assert by_type["hvoc"].modelTag == "aft_egen_hvoc_theta3"
+    assert matches["B002"].bedReliabilityByType is None, "byType 없이 온 병원은 None으로 통과해야 한다"
     order_without_demote = [h.hospitalId for h in result.hospitals]
     print(f"  [확인] 신선한 값 authority({b1.authority}) > 묵은 값 authority({b2.authority}), "
           f"rArrive ≤ authority, 구 데이터는 None 통과 (순위 불변: {order_without_demote})")
+
+    # 병원의 "현재 정보 확인"(info_confirm)이 들어오면 조건부 생존으로 확률이
+    # 되올라간다 — 30분 묵어 0.61이던 B002가 방금 확인되면 1.0 근처로.
+    assert engine.confirm_hospital_info("B002", datetime.now(timezone.utc))
+    assert not engine.confirm_hospital_info("B999", datetime.now(timezone.utc)), (
+        "모르는 병원의 확인은 거부돼야 한다"
+    )
+    result2 = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    b2_after = next(h for h in result2.hospitals if h.hospitalId == "B002").bedReliability
+    assert b2_after is not None and b2_after.confirmedAgeSec is not None, (
+        "확인 이력이 현재 claim에 유효하면 confirmedAgeSec이 실려야 한다"
+    )
+    assert b2_after.authority > b2.authority + 0.3, (
+        f"확인 직후 authority가 조건부 생존으로 크게 되올라가야 한다 "
+        f"({b2.authority} -> {b2_after.authority})"
+    )
+    print(f"  [확인] 병원 정보 확인 후 B002 authority {b2.authority} -> {b2_after.authority} "
+          f"(조건부 생존, confirmedAgeSec={b2_after.confirmedAgeSec}s)")
+
+
+def test_severe_freshness() -> None:
+    """feature/info가 severeDeclarations(중증질환 신고의 관측 기준 탄생 시각)를
+    보내면, hub가 매칭된 질환군의 신고 나이와 9시간 만료 규칙 잔여를 계산해
+    HospitalMatch.severeFreshness로 싣는지 확인한다. 매칭되는 질환군이 임베딩
+    결과에 따라 달라지므로 15개 그룹 전부에 신고를 넣어 결정성을 확보한다.
+    """
+    print("\n=== severeFreshness 환산 확인: 중증신고가 언제 적 것인지가 매칭 결과에 실리는지 ===")
+    engine = HubEngine()
+    now = datetime.now(timezone.utc)
+
+    def declarations(born: datetime, age_is_min: bool = False) -> SevereDeclarations:
+        return SevereDeclarations(
+            groups={
+                g: SevereGroupDeclaration(
+                    value="Y", bornAt=born.isoformat(timespec="seconds"), ageIsMin=age_is_min
+                )
+                for g in _ASSESSMENT_GROUPS
+            }
+        )
+
+    fresh = HospitalInfo(
+        hospitalId="S001", name="[테스트] 2시간 전 신고",
+        gps=GpsPoint(lat=35.1810, lng=128.1090), availableBedCount=5, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+        severeDeclarations=declarations(now - timedelta(hours=2)),
+    )
+    expired = HospitalInfo(
+        hospitalId="S002", name="[테스트] 10시간 전 신고(규칙상 만료 경과, 갱신 유지 중)",
+        gps=GpsPoint(lat=35.1950, lng=128.1200), availableBedCount=3, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+        severeDeclarations=declarations(now - timedelta(hours=10), age_is_min=True),
+    )
+    without = HospitalInfo(
+        hospitalId="S003", name="[테스트] severeDeclarations 없음 (구 데이터)",
+        gps=GpsPoint(lat=35.2000, lng=128.1300), availableBedCount=1, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+    )
+    for h in (fresh, expired, without):
+        engine.update_hospital_info(h)
+
+    voice = VoiceCallSummaryMessage(
+        caseId="case-severe-freshness-test",
+        transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+        summary=VoiceSummary(
+            patient="60대 남성", mechanism="급성 심근경색 의심",
+            symptoms=["흉통"], treatment=["산소 공급"], severity_tag="high",
+        ),
+        source="ai",
+    )
+    result = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    matches = {h.hospitalId: h for h in result.hospitals}
+    for h in result.hospitals:
+        sf = h.severeFreshness
+        desc = (
+            f"[{sf.group}] {sf.value} — {sf.ageSec / 3600:.1f}h 전{'(최소)' if sf.ageIsMin else ''}, "
+            f"규칙 잔여 {sf.ruleRemainingSec / 3600:.1f}h ({sf.source})"
+            if sf else "없음"
+        )
+        print(f"  {h.hospitalId} {h.name} — 신고 신선도 [{desc}]")
+
+    s1, s2 = matches["S001"].severeFreshness, matches["S002"].severeFreshness
+    assert s1 is not None and s2 is not None, "신고를 보낸 병원은 신선도가 실려야 한다"
+    assert matches["S003"].severeFreshness is None, "severeDeclarations 없이 온 구 데이터는 None으로 통과해야 한다"
+    assert abs(s1.ageSec - 2 * 3600) < 60, "신고 나이가 bornAt에서 계산돼야 한다"
+    assert abs(s1.ageSec + s1.ruleRemainingSec - SEVERE_EXPIRY_RULE_SEC) < 60, (
+        "잔여 = 9h 규칙 − 나이여야 한다"
+    )
+    assert s2.ruleRemainingSec == 0.0 and s2.ageIsMin, (
+        "만료 규칙 경과분은 잔여 0 + 좌측검열 플래그가 유지돼야 한다"
+    )
+    print("  [확인] 신고 나이·9h 규칙 잔여 계산, 좌측검열 플래그, 구 데이터 None 통과 전부 정상")
 
 
 # ── 2026-09-28 hub 정비 검증 ──────────────────────────────────────────────────

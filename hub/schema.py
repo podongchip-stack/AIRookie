@@ -115,10 +115,34 @@ class BedReliabilityInput(BaseModel):
 
     predictedSurvivalSec: float
     bornAt: str
+    # 생존곡선 척도. raw면 1.0(기본값 — 구 info 데이터 하위호환), info가 잔차
+    # 재보정(σR)을 적용해 보내면 그 값 — hub가 같은 곡선을 재계산하는 데 쓴다.
+    sigma: float = 1.0
     authorityAtSend: float
     ttlSec: float
     modelTag: str
     source: Literal["ai"] = "ai"
+
+
+class SevereGroupDeclaration(BaseModel):
+    """질환군 하나의 현재 중증질환 수용가능 신고 상태 (feature/info의
+    reliability/severe.py — 규칙 기반, 모델 아님)."""
+
+    value: Literal["Y", "불가능"]
+    bornAt: str
+    # True면 info의 추적 시작부터 이 값이었다 — 실제 신고는 더 오래됐을 수
+    # 있어 나이가 하한(좌측검열)이라는 뜻. dashboard는 "최소 X시간 전"으로
+    # 표현해야 한다.
+    ageIsMin: bool = False
+
+
+class SevereDeclarations(BaseModel):
+    """feature/info가 스냅샷 추적으로 알아낸 중증질환 신고의 탄생 시각.
+    E-Gen 응답에는 신고 시각 필드가 없어서 이 값은 info의 추적만이 안다.
+    현재 값이 정보미제공인 그룹은 키가 없다."""
+
+    groups: dict[str, SevereGroupDeclaration] = Field(default_factory=dict)
+    source: Literal["rule"] = "rule"
 
 
 class HospitalInfo(BaseModel):
@@ -144,6 +168,12 @@ class HospitalInfo(BaseModel):
     # reliability/(infosurv)의 병상 정보 신뢰도 예측. assessment와 같은 패턴 —
     # 이 필드 없이 오는 구 feature/info 데이터도 그대로 통과한다.
     bedReliability: Optional[BedReliabilityInput] = None
+    # 중증질환 신고 신선도(규칙 기반). 같은 Optional 패턴.
+    severeDeclarations: Optional[SevereDeclarations] = None
+    # 응급실 일반(hvec) 외 확장 필드들의 신뢰도 예측 (2026-09-28 다필드 확장).
+    # 키는 E-Gen 필드명(hvoc 수술실·hvgc 입원실·hv28 소아 등), 값 구조는
+    # bedReliability와 동일. 같은 Optional 패턴.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityInput]] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -226,6 +256,36 @@ class BedReliabilityMatch(BaseModel):
     ttlSec: float
     modelTag: str
     source: Literal["ai"] = "ai"
+    # ── 실시간 감쇠 파라미터 (2026-09-28 추가) ──
+    # dashboard가 다음 브로드캐스트를 기다리지 않고 authority를 초 단위로 직접
+    # 감쇠시켜 그릴 수 있게, 곡선의 파라미터 자체를 같이 보낸다:
+    #   S(age) = 1 − Φ((ln age − ln predictedSurvivalSec) / sigma)
+    predictedSurvivalSec: Optional[float] = None
+    bornAt: Optional[str] = None
+    sigma: float = 1.0
+    # 병원 대시보드가 "현재 정보 확인"을 누른 이력이 현재 claim에 유효하면,
+    # 그 확인 시점의 claim 나이(초). 있으면 확률이 조건부 생존 S(a)/S(u)로
+    # 계산된 것이고, dashboard의 로컬 감쇠도 같은 식을 써야 한다(2026-09-29).
+    confirmedAgeSec: Optional[float] = None
+
+
+class SevereFreshness(BaseModel):
+    """매칭된 질환군의 중증질환 수용가능 신고가 얼마나 신선한지 — hub가 매칭
+    시점에 계산해 내보내는 설명용 필드(2026-09-28 신설, 규칙 기반).
+
+    ReliabilityInfo(같은 신고를 심평원 대조로 "믿을 만한가" 판정)와 상보적이다
+    — 이쪽은 "그 신고가 언제 적 것인가"를 본다. ruleRemainingSec은 실측된
+    통상 만료 규칙(신고 후 약 9시간, Phase 0 실측 60.1%가 9.0h)에 따른 잔여
+    초로, 0이면서 여전히 신고가 떠 있으면 병원이 갱신을 지속 중이라는 뜻이지
+    신고가 죽었다는 뜻이 아니다. 순위(finalScore)에는 관여하지 않는다.
+    """
+
+    group: str
+    value: Literal["Y", "불가능"]
+    ageSec: float
+    ageIsMin: bool = False
+    ruleRemainingSec: float
+    source: Literal["rule"] = "rule"
 
 
 # 순위를 맨 뒤쪽으로 내린 이유(2026-09-28 신설). 후보에서 빼지는 않는다 — 뺑뺑이 방지 원칙.
@@ -257,6 +317,10 @@ class HospitalMatch(BaseModel):
     etaMin: Optional[int] = None
     reliability: Optional[ReliabilityInfo] = None
     bedReliability: Optional[BedReliabilityMatch] = None
+    severeFreshness: Optional[SevereFreshness] = None
+    # 수술실·입원실·소아 등 확장 필드의 신뢰도 환산값 (키 = E-Gen 필드명).
+    # bedReliability(응급실 일반)와 같은 계산·같은 설명용 원칙.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
     # ── 순위 설명 필드 (2026-09-28 신설, 모두 source: "rule") ──
     # 정렬에 쓴 가중합 점수(scoring.final_score). 승인 액션 뒤 재정렬에도 이 값을 쓴다.
     finalScore: Optional[float] = None
@@ -376,6 +440,40 @@ class DashboardIdentify(BaseModel):
     role: DashboardRole
     # role="hospital"이면 hpid, role="ambulance"면 apid.
     id: str
+
+
+# ── feature/dashboard(병원) → feature/hub (입력, 현재 정보 확인) ─────────────
+# 병원 대시보드의 "현재 정보가 맞습니다" 버튼(2026-09-29). E-Gen 자기 신고
+# 밖에서 처음 생기는 유효 확인 관측으로, hub가 그 병원 병상 신뢰도를 조건부
+# 생존(S(a)/S(u))으로 되올리는 데 쓴다 — 값이 그대로여도 "방금 사람이 확인한
+# 정확한 값"임을 시스템이 알게 되는 유일한 경로다. 확인 이력은 의사결정
+# 로그에도 남아, 나중에 infosurv의 유효 확인(G1+) 라벨 재료가 된다.
+
+class HospitalInfoConfirm(BaseModel):
+    type: Literal["info_confirm"] = "info_confirm"
+    hospitalId: str
+    timestamp: str
+
+
+# ── feature/hub → feature/dashboard(병원) (출력, 자기 정보 현황) ─────────────
+# 병원 대시보드에 보내는 "귀원 정보 현황"(2026-09-29). identify 직후,
+# feature/info의 30분 주기 upsert 직후, 정보 확인 직후에 그 병원 소켓으로만
+# 보낸다. 데이터 공급자(병원)가 자기 정보의 신선도를 직접 보게 하는 피드백
+# 루프다 — E-Gen 포털엔 이런 피드백이 없어서 수년 묵은 값이 방치된다
+# (실측: 전국 가용병상 1위가 2,457일 묵은 값). bedReliability는 horizon 0
+# (자기 화면엔 이송 개념이 없으므로 rArrive==authority)으로 환산한 값이고,
+# 곡선 파라미터가 실려 있어 화면이 감쇠를 직접 그린다.
+
+class HospitalSelfInfo(BaseModel):
+    type: Literal["hospital_self_info"] = "hospital_self_info"
+    hospitalId: str
+    name: str
+    availableBedCount: int
+    bedCountUnknown: bool
+    updatedAt: str
+    bedReliability: Optional[BedReliabilityMatch] = None
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
+    severeDeclarations: Optional[SevereDeclarations] = None
 
 
 # ── feature/hub → feature/dashboard (출력, 자기소개에 대한 즉시 응답) ───────

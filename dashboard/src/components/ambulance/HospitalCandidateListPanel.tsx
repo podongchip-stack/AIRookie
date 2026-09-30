@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { css, cx } from "styled-system/css";
 import { hospitalStatusBadge } from "styled-system/recipes";
 import { Tag } from "@/components/hospital/Tag";
 import { mintButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
+import { formatDeclarationAge, liveBedReliability } from "@/lib/bedReliability";
 import type { HospitalStatus, HubMatchResult, ReliabilityConfidence } from "@/types/dashboard";
 
 // 공용 Panel은 height:100%만 두고 minHeight/overflow는 안 잡아서, 그리드 셀이
@@ -196,6 +198,93 @@ const reliabilityBasisStyle = css({
   marginTop: "0.5",
 });
 
+// 병상 신뢰도(infosurv, AI) 칩 — "도착 시 유효 확률"을 띠로 색 구분한다.
+// 확률의 절대값이 의미 있는(캘리브레이트된) 값이라 %를 그대로 노출한다.
+// ≥80%는 mint(믿고 출발), 50~80%는 중립(참고), <50%는 coral(도착 전 재확인 권장).
+const bedRelHighStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "semibold",
+  color: "mint",
+  backgroundColor: "mintSoft",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+  fontVariantNumeric: "tabular-nums",
+});
+
+const bedRelMidStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "semibold",
+  color: "ink2",
+  backgroundColor: "surfaceSub",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+  fontVariantNumeric: "tabular-nums",
+});
+
+const bedRelLowStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "semibold",
+  color: "coral",
+  backgroundColor: "coralSoft",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+  fontVariantNumeric: "tabular-nums",
+});
+
+function bedReliabilityChipStyle(rArrive: number): string {
+  if (rArrive >= 0.8) return bedRelHighStyle;
+  if (rArrive >= 0.5) return bedRelMidStyle;
+  return bedRelLowStyle;
+}
+
+// 확장 필드(수술실·입원실·소아)의 E-Gen 필드명 → 한글 라벨.
+// info의 reliability/train_field.py FIELD_LABELS와 같은 값 — 모르는 필드가
+// 오면 필드명을 그대로 보여준다(조용히 숨기면 확장을 눈치채지 못한다).
+const BED_FIELD_LABEL: Record<string, string> = {
+  hvoc: "수술실",
+  hvicc: "중환자실",
+  hvgc: "입원실",
+  hv28: "소아",
+  hv29: "음압",
+};
+
+// 확장 필드 요약 칩 — 배후진료 역량(수술실·입원실)의 유효 확률을 한 칩에
+// 모아 보여준다. 개별 칩으로 펼치면 카드가 4~5칩으로 어지러워져 묶었다.
+const bedRelByTypeChipStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "medium",
+  color: "ink2",
+  backgroundColor: "surfaceSub",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+  fontVariantNumeric: "tabular-nums",
+});
+
+// 중증신고 신선도(규칙) 칩 — 확률이 아니라 사실(신고가 언제 적 것인지)이라 중립색.
+const severeFreshnessChipStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "medium",
+  color: "ink2",
+  backgroundColor: "surfaceSub",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+});
+
 // 병원이 "승인"(후보 등록) 응답을 보내야만 버튼이 활성화된다. 버튼을 누르면 그 자리에서
 // 바로 이송 승인(final_approval)이 전송된다 — 별도의 "선택 → 하단에서 최종 승인" 2단계가 아니다.
 export function HospitalCandidateListPanel({
@@ -207,6 +296,15 @@ export function HospitalCandidateListPanel({
   confirmedHospitalId: string | null;
   onApprove: (hospitalId: string) => void;
 }) {
+  // 병상 신뢰도의 실시간 감쇠용 시계. hub가 곡선 파라미터(predT·bornAt·sigma)를
+  // 보내주므로, 다음 브로드캐스트(60초 재계산)를 기다리지 않고 매초 확률을 다시
+  // 계산해 그린다 — "정보가 낡아가는 것"이 화면에서 눈으로 보이게 하는 장치.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   if (!data) {
     return (
       <ListPanelShell>
@@ -318,6 +416,52 @@ export function HospitalCandidateListPanel({
                   {hospital.reliability && (
                     <span className={CONFIDENCE_CHIP_STYLE[hospital.reliability.confidence]}>
                       {hospital.reliability.group} · {CONFIDENCE_LABEL[hospital.reliability.confidence]}
+                    </span>
+                  )}
+                  {/* 병상 숫자 자체의 유효 확률(infosurv 생존모델). 위 병상 칩이
+                      "몇 석인가"라면 이건 "그 숫자가 도착 시점에도 사실일 확률".
+                      AI 산출이라 규칙 기반 칩들과 구분되게 앞에 AI를 명시한다
+                      (CLAUDE.md의 AI/규칙 시각 구분 원칙). 매초 감쇠 재계산. */}
+                  {hospital.bedReliability &&
+                    (() => {
+                      const live = liveBedReliability(hospital.bedReliability, nowMs);
+                      // 병원이 직접 "현재 정보 확인"을 누른 값이면 ✓로 표시 —
+                      // 모델 추정만이 아니라 사람의 확인이 얹힌 확률이라는 뜻.
+                      const confirmed = hospital.bedReliability.confirmedAgeSec != null;
+                      return (
+                        <span
+                          className={bedReliabilityChipStyle(live.rArrive)}
+                          title={`지금 유효 ${Math.round(live.authority * 100)}%${confirmed ? " · 병원이 직접 확인한 값" : ""} · ${hospital.bedReliability.modelTag}`}
+                        >
+                          AI · 도착 시 유효 {Math.round(live.rArrive * 100)}%
+                          {confirmed ? " ✓" : ""}
+                        </span>
+                      );
+                    })()}
+                  {/* 배후진료 역량(수술실·입원실·소아)의 유효 확률 — 응급실
+                      일반 칩과 같은 모델 계열(AI), 같은 실시간 감쇠. */}
+                  {hospital.bedReliabilityByType &&
+                    Object.keys(hospital.bedReliabilityByType).length > 0 && (
+                      <span className={bedRelByTypeChipStyle}>
+                        AI ·{" "}
+                        {Object.entries(hospital.bedReliabilityByType)
+                          .map(([field, br]) => {
+                            const live = liveBedReliability(br, nowMs);
+                            const label = BED_FIELD_LABEL[field] ?? field;
+                            return `${label} ${Math.round(live.rArrive * 100)}%`;
+                          })
+                          .join(" · ")}
+                      </span>
+                    )}
+                  {/* 매칭된 질환군의 수용가능 신고가 언제 적 것인지(규칙 — E-Gen엔
+                      신고 시각이 없어 info의 스냅샷 추적만이 아는 값). */}
+                  {hospital.severeFreshness && (
+                    <span className={severeFreshnessChipStyle}>
+                      {hospital.severeFreshness.value === "Y" ? "수용가능 신고" : "수용불가 신고"}{" "}
+                      {formatDeclarationAge(
+                        hospital.severeFreshness.ageSec,
+                        hospital.severeFreshness.ageIsMin,
+                      )}
                     </span>
                   )}
                 </div>
