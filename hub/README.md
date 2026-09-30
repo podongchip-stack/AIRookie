@@ -112,7 +112,7 @@ info-v2(`hospital_score/`)가 병원마다 15개 중증질환군에 대해 5단�
 **① 설명 — `HospitalMatch.reliability`.** `process_voice_summary()`가 예상
 병명을 이 15개 질환군 어휘와 한 번 더 매칭해(기존 진료과 임베딩 매칭과는 별도
 호출), 매칭된 병원의 그 그룹 판정을 dashboard에 그대로 전달한다. `finalScore`
-계산식(`0.6×진료과매칭 + 0.4×거리`) 자체는 이 값과 무관하다 — "왜 이 순위인지"의
+계산식(`0.6×진료과매칭 + 0.4×이동시간 점수`) 자체는 이 값과 무관하다 — "왜 이 순위인지"의
 설명 근거로만 쓰인다.
 
 **② 정렬 — `declared_no`만 하드 데모션.** 관련 질환군이 `declared_no`(병원이
@@ -134,6 +134,64 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 "결과 저장 및 전송 방식" 참고), 로그가 쌓이기 시작하면 tier·거리·진료과매칭이
 실제 승인율과 어떤 관계인지 역산해 가중합으로 승격할지 재검토할 수 있다.
 
+## 순위 규칙 (2026-09-28 정비, 2026-10-01 보강)
+
+`finalScore = 0.6 × 진료과 점수 + 0.4 × 이동시간 점수(이동분 − 가산분)`으로 매기고, 아래 순서로
+정렬한다(`scoring.rank_key()`). 후보에서 빼는 병원은 없다 — 뒤로 내릴 뿐이다. **순위는 hub 한 곳에서만
+정한다** — dashboard는 받은 `hospitals[]` 순서를 그대로 쓴다(2026-10-01, 그 전엔 dashboard가 자체
+정렬로 이 규칙을 덮어써서 화면에 반영되지 않았다).
+
+1. 이 사건의 이송 확정(`confirmed`) 병원 → 병원이 승인(`approved`)한 병원
+2. 나머지 병원: `finalScore` 내림차순 (같으면 가까운 순 → ID 순)
+3. 그 뒤: `declared_no`(관련 질환군 수용 불가 신고) · `beds_full`(병상 0이 **확인된** 만실)
+4. 맨 뒤: 이 사건에서 거절(`rejected`)한 병원
+
+**진료과 점수** (2026-10-01): voice의 `summary.required_department`(심평원 과목 표기)가 병원 진료과에
+있으면 **정확 일치 1.0**(`specialtyMatch.basis = "exact"`), 없으면 예상 병명과 진료과명의 임베딩
+유사도(`"embedding"`). 진료과는 info가 E-Gen 역량 4개 과 + 심평원 전문과목별 전문의 수로 채운다.
+
+**전문성·등급 가산** (2026-10-01, `scoring.expertise_bonus_min()`): 점수에 더하지 않고 **이동시간에서
+분을 뺀다.** 점수에 더하면 같은 가산이 가까운 병원 사이에선 4분, 먼 병원 사이에선 20분의 가치가 되어
+버린다. 분 단위라 불변식이 정확히 선다 — **가산을 다 받아도 `MAX_BONUS_MIN`(8)분 넘게 먼 병원은
+가까운 병원을 이길 수 없다**(`run_match.py`가 3/10/30/60분에서 검사).
+- 매칭된 진료과 전문의 수: 최대 3분 (log 스케일 — 1명 0.7분, 5명 1.8분, 20명 이상 3분)
+- 중증(`severity_tag = "high"`)일 때만 응급의료기관 등급: 권역응급의료센터 5분, 지역응급의료센터 2분
+- 모르는 값은 0분(불리하게 두지 않음). 쓴 값과 이유는 `travelBonusMin`·`bonusReasons`로 나간다
+- 값은 수용 결과 데이터 없이 정한 보수적 초기값이다 — 거절 로그가 쌓이면 재보정한다
+
+내린 이유는 `hospitals[].demoteReasons`로 나간다. 세부 규칙:
+
+- **이동시간 점수**는 `0.5^(이동분/15)` — 15분마다 절반이 되고 0이 되지 않는다. 예전 거리
+  점수(`1 - km/20`)는 20km 밖 병원을 전부 0으로 봐서, 반경 20km 안에 병원이 없는 지역에선
+  거리 차이가 순위에 전혀 반영되지 않았다. 카카오 키가 없을 때(직선 1.5분/km) 10km에서
+  0.5가 되어 가까운 거리에서는 예전 곡선과 거의 같다.
+- **이동분은 카카오 ETA가 있으면 ETA**, 없으면(키 없음·반경 10km 밖) 직선거리 × 이 사건에서
+  ETA를 받은 병원들의 "분/km" 중앙값(표본이 없으면 1.5분/km)으로 추정한다. 고정 속도로
+  추정하면 ETA를 받은 병원(실제 교통 반영)보다 추정한 먼 병원이 부당하게 유리해진다.
+  쓴 값과 출처는 `travelMin`·`travelBasis`(`"eta"`|`"estimate"`)로 나간다. 존(zone) 판정은
+  계속 직선거리다(후보를 거르는 1차 필터라 외부 호출 없이 빨라야 한다).
+- **beds_full은 확인된 만실만**이다. 병상 미상(`bedCountUnknown`)이나 오래된 값
+  (`bedDataStale` — 마지막 갱신 1일 초과, 또는 info assessment의 `stale`·`missingFromFeed`)의
+  0은 만실로 믿지 않는다. 미상을 이유로 밀어내면 뺑뺑이가 오히려 늘어난다는 기존 원칙과 같다.
+- **병원이 이 사건에 승인·확정 응답을 했으면 declared_no·beds_full로 내리지 않는다.** 그
+  병원의 명시적 응답이 미리 해둔 신고나 병상 숫자보다 우선이다. 특히 확정 직후 병상 차감
+  오버레이로 0이 된 병원이 자기 사건에서 만실로 밀려나지 않게 한다.
+- 승인 액션이 오면 캐시된 결과를 **재정렬**해서 다시 보낸다. 예전엔 status만 바꿔서 거절한
+  병원이 1위 자리에 그대로 남았다.
+- **이송이 확정된 사건은 60초 재계산에서 재정렬하지 않는다**(2026-10-01). 목적지가 정해졌는데
+  목록이 뒤섞이고 후보 전체 ETA를 다시 부를 이유가 없다. 승인 액션 뒤 패치는 그대로 된다.
+- `nightDutyAvailable`은 순위에 쓰지 않는다. info가 `bool(capabilities)`(E-Gen에 역량을 하나라도
+  신고했는가)로 채우는 프록시라 실제 야간 당직 정보가 아니고, 진료과 점수와 같은 신호를
+  두 번 반영하게 된다.
+
+## 승인 흐름 규칙 (2026-09-28)
+
+- **주체 짝**: `hospital_approve`·`hospital_reject`는 `actor: "hospital"`, `final_approval`은 `actor: "paramedic"`만 받는다
+- **순서**: `final_approval`은 병원이 그 사건에 `approved`한 병원에만 허용한다(병원 승인 = 후보 등록, 이송 승인 = 최종 확정)
+- 어긋난 액션은 상태를 바꾸지 않고 `approval_action_refused` 이벤트로 사유만 의사결정 로그에 남긴다
+- **재선택**: 같은 사건에서 다른 병원을 이송 승인하면, 이전 확정 병원은 `approved`로 되돌리고(새 상태값 없음 — dashboard 타입 유지) 그 확정이 얹은 병상 차감을 회수한다(`approval_released` 이벤트)
+- dashboard는 이미 이 규칙대로만 버튼을 연다(`HospitalCandidateListPanel.tsx`의 `approvable`, `ApprovalActions.tsx`의 role 분기)
+
 ## 병상 정보 신뢰도(bedReliability) 반영 (2026-09-24 신설)
 
 위 hospital_score(중증질환 **수용 신고**의 신뢰도)와는 다른 축으로, feature/info의
@@ -150,7 +208,7 @@ claim-version 탄생 시각) 둘이다. authority(지금 믿어도 될 확률)�
 | 필드 | 의미 |
 |---|---|
 | `authority` | 지금 이 병상 숫자를 믿어도 될 확률 (0~1) |
-| `rArrive` | **도착 시점**(거리/평균속도 40km/h로 추정한 `horizonSec` 뒤)에도 유효할 확률 |
+| `rArrive` | **도착 시점**(`horizonSec` 뒤 — 순위에 쓴 이동 시간 `travelMin`과 같은 값, 2026-09-28)에도 유효할 확률 |
 | `ttlSec` | authority가 0.8 아래로 떨어질 때까지 남은 초 (재확인 알림 후보) |
 | `modelTag` | 사용 모델 식별자 (`aft_egen_theta3_ext0923` 등) |
 
@@ -161,6 +219,41 @@ claim-version 탄생 시각) 둘이다. authority(지금 믿어도 될 확률)�
 log-normal AFT 생존함수를 표준 라이브러리로 재구현한 것이고(scipy 의존 회피),
 수치 등가성은 info의 `python -m reliability.selftest`가 검증한다. 이 필드 없이
 오는 구 feature/info 데이터는 `bedReliability=null`로 그대로 통과한다.
+
+### 중증질환 신고 신선도 (severeFreshness, 2026-09-28 신설 — 규칙 기반)
+
+같은 취지의 셋째 축인데 **모델이 아니라 규칙**이다. info의 실측(스냅샷 47일)
+에서 중증질환 수용가능 신고(MKioskTy)는 값 변화의 90%가 Y↔정보미제공 왕복
+이고 만료 수명의 60.1%가 정확히 9.0시간 — 시스템 자동 만료 규칙이 지배해서
+모델을 만들지 않기로 했다(info의 `reliability/README.md` 참고). E-Gen 응답에
+신고 시각 필드가 없어서 "이 신고가 언제 적 것인지"는 info의 스냅샷 추적
+(`HospitalInfo.severeDeclarations`)만이 알고, hub는 매칭된 질환군에 대해
+신고 나이(`ageSec`)와 9시간 규칙 잔여(`ruleRemainingSec`)를 계산해
+`HospitalMatch.severeFreshness`(source: "rule")로 내보낸다. `ageIsMin`이
+true면 추적 시작부터 그 값이었다는 뜻이라 "최소 X시간 전"으로 읽어야 하고,
+`ruleRemainingSec`이 0인데 신고가 여전히 떠 있으면 병원이 갱신을 지속 중
+이라는 뜻이지 신고가 죽었다는 뜻이 아니다. `reliability`(같은 신고를 심평원
+대조로 "믿을 만한가")와 상보적이며, 역시 순위에는 관여하지 않는다.
+
+### 병원 정보 확인 루프 (info_confirm / hospital_self_info, 2026-09-29 신설)
+
+신뢰도 스택의 나머지가 전부 "낡음을 감지해 소비자에게 경고"하는 대증이라면,
+이건 **원인(공급자) 쪽 피드백 루프**다. E-Gen 포털엔 병원에게 "당신 정보가
+얼마나 낡았는지"를 보여주는 화면이 없어 수년 묵은 값이 방치된다(실측 2,457일).
+
+- **`hospital_self_info` (hub → 병원 대시보드)**: "귀원 정보 현황" — 병상 수·
+  자기 병상 신뢰도(horizon 0이라 rArrive==authority, 곡선 파라미터 포함)·
+  확장 필드·중증 신고 현황. identify 직후, info의 30분 upsert 직후, 정보 확인
+  직후에 그 병원 소켓으로만 보낸다(`_build_self_info()`/`_send_self_info_to_hospital()`).
+- **`info_confirm` (병원 대시보드 → hub)**: "현재 정보가 맞습니다" 버튼.
+  `HubEngine.confirm_hospital_info()`가 기록하고(상태 파일에 저장·복구),
+  `bed_reliability.evaluate()`가 **조건부 생존 S(a)/S(u)** 로 그 병원 확률을
+  되올린다 — infosurv serve의 `confirmed_at` 메커니즘이 처음으로 실신호를
+  받는 지점이다. 값이 바뀌어 claim이 새로 태어나면 확인은 자동 무효
+  (confirmedAt < bornAt). 확인은 의사결정 로그(`hospital_info_confirmed`)에도
+  남아 나중에 infosurv 유효 확인(G1+) 라벨 재료가 된다. 구급차 화면 칩에는
+  ✓로 표시(`BedReliabilityMatch.confirmedAgeSec`), 관련 사건은 즉시 재계산·
+  재브로드캐스트된다. 수식 등가성은 info의 selftest 3번(조건부 항목)이 검증.
 
 ## 개발 환경 / 언어
 
@@ -224,7 +317,9 @@ feature/hub는 `summary` 필드(부상 상태, 예상 병명, 중증도)는 매�
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
 | `updatedAt` | string (ISO 8601) | 이 정보가 마지막으로 갱신된 시각 |
 | `assessment` | object (optional) | info-v2(hospital_score)의 신뢰도 진단 — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
-| `bedReliability` | object (optional) | 병상 정보 신뢰도 예측(`predictedSurvivalSec`·`bornAt`·`authorityAtSend`·`ttlSec`·`modelTag`, source: "ai") — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `bedReliability` | object (optional) | 병상 정보 신뢰도 예측(`predictedSurvivalSec`·`bornAt`·`sigma`·`authorityAtSend`·`ttlSec`·`modelTag`, source: "ai"). `sigma`는 잔차 재보정(σR)이 적용된 생존곡선 척도(raw면 1.0, 2026-09-28) — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `bedReliabilityByType` | object (optional, 2026-09-28 다필드 확장) | 응급실 일반 외 확장 필드의 신뢰도 예측. 키는 E-Gen 필드명(`hvoc` 수술실·`hvgc` 입원실·`hv28` 소아 — info의 `train_field.py` 관문 통과분), 값 구조는 `bedReliability`와 동일 |
+| `severeDeclarations` | object (optional) | 중증질환 수용가능 신고의 질환군별 현재 값·관측 기준 탄생시각(`groups.{질환군}.{value, bornAt, ageIsMin}`, source: "rule"). 정보미제공 그룹은 키가 없다 — 위 "중증질환 신고 신선도" 참고 |
 
 ### 입력 스키마 3: feature/dashboard로부터 (승인 액션)
 
@@ -376,6 +471,7 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 
 ```json
 {
+  "type": "match_result",
   "caseId": "case-abc123",
   "patientInfo": {
     "injuryStatus": ["의식 저하", "호흡 곤란"],
@@ -398,16 +494,23 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
       "availableBedCount": 12,
       "bedCountUnknown": false,
       "status": "confirmed",
-      "etaMin": 6
+      "etaMin": 6,
+      "finalScore": 0.7843,
+      "travelMin": 5.4,
+      "travelBasis": "eta",
+      "demoteReasons": [],
+      "bedDataStale": false
     }
   ],
   "source": "rule",
-  "ambulanceName": "구급 1호차"
+  "ambulanceName": "구급 1호차",
+  "ambulanceGpsFallback": false
 }
 ```
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
+| `type` | `"match_result"` (2026-09-28 신설) | 메시지 종류 구분자. `identity_info`와 구분하려고 넣었다 |
 | `caseId` | string | 이 매칭 결과가 어느 사건 것인지. dashboard는 여러 사건을 동시에 받을 수 있어 자기가 보는 사건의 caseId로 걸러 써야 한다 |
 | `patientInfo.injuryStatus` | string[] | voice가 추출한 부상 상태 목록 (원본 `summary.symptoms` 기반) |
 | `patientInfo.expectedDiagnosis` | string | voice가 추출한 예상 병명 (원본 `summary.mechanism` 기반) |
@@ -419,14 +522,21 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 | `hospitals[].gps` | object | 병원 위치 좌표 (대시보드 지도 표시용) |
 | `hospitals[].distanceKm` | number | GPS 기준 거리 |
 | `hospitals[].specialtyMatch.department` | string | 예상 병명에 매칭된 진료과 |
-| `hospitals[].specialtyMatch.score` | number (0~1) | 해당 진료과의 수술 전문성 적합도 점수. `distanceKm`과 가중합되어 최종 순위 산출 |
+| `hospitals[].specialtyMatch.score` | number (0~1) | 해당 진료과의 수술 전문성 적합도 점수. 이동시간 점수와 가중합되어 최종 순위 산출 |
 | `hospitals[].availableBedCount` | number | 실시간 가용 병상 수 |
 | `hospitals[].bedCountUnknown` | boolean | `availableBedCount`가 0일 때 그게 **"확인된 만실"(false)**인지 **"미상"(true)**인지. **dashboard는 true면 "0"이 아니라 "미상"으로 표시해야 한다** — 미상을 0으로 보여주면 구급대원이 멀쩡한 병원을 직접 후보에서 빼게 되어, 뺑뺑이를 줄이려는 목적과 정반대가 된다 |
 | `hospitals[].status` | `"pending"` \| `"approved"` \| `"rejected"` \| `"confirmed"` | 병원 응답 상태 |
-| `hospitals[].etaMin` | number | 도착 예상 시간(분), `confirmed` 병원만 필요 |
+| `hospitals[].etaMin` | number \| null | 카카오 도로 기준 도착 예상 시간(분, 올림). 키 없음·조회 실패·반경 10km 밖이면 null |
+| `hospitals[].finalScore` | number (2026-09-28) | 정렬에 쓴 가중합 점수 |
+| `hospitals[].travelMin` / `travelBasis` | number / `"eta"`\|`"estimate"` (2026-09-28) | 순위에 쓴 이동 시간(분)과 출처 — 위 "순위 규칙" 참고 |
+| `hospitals[].demoteReasons` | (`"declared_no"`\|`"beds_full"`\|`"rejected"`)[] (2026-09-28) | 순위를 뒤로 내린 이유. 비면 `finalScore` 순서 그대로 |
+| `hospitals[].bedDataStale` | boolean (2026-09-28) | 병상 값이 1일 넘게 갱신 안 됐거나 실시간 피드에 없음. 이 경우 0이어도 만실로 보지 않는다 |
 | `hospitals[].reliability` | object \| null | info-v2 신뢰도 판정("왜 이 순위인지" 설명용, `group`·`score`·`confidence`·`basis`) — 위 "병원 신뢰도(hospital_score) 반영" 참고 |
-| `hospitals[].bedReliability` | object \| null (2026-09-24 신설) | 병상 숫자 자체의 유효 확률(`authority`·`rArrive`·`horizonSec`·`ttlSec`·`modelTag`, source: "ai"). 매칭 시점에 hub가 재계산한 값. 순위에는 관여하지 않는 설명용 — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `hospitals[].bedReliability` | object \| null (2026-09-24 신설) | 병상 숫자 자체의 유효 확률(`authority`·`rArrive`·`horizonSec`·`ttlSec`·`modelTag`, source: "ai"). 매칭 시점에 hub가 재계산한 값이고, dashboard가 브로드캐스트 사이에도 초 단위로 감쇠를 직접 그릴 수 있게 곡선 파라미터(`predictedSurvivalSec`·`bornAt`·`sigma`, 2026-09-28)도 같이 실린다. 순위에는 관여하지 않는 설명용 — 위 "병상 정보 신뢰도(bedReliability) 반영" 참고 |
+| `hospitals[].bedReliabilityByType` | object \| null (2026-09-28 다필드 확장) | 수술실(`hvoc`)·입원실(`hvgc`)·소아(`hv28`) 등 확장 필드의 유효 확률 환산. 키는 E-Gen 필드명, 값 구조는 `bedReliability`와 동일(같은 horizon) |
+| `hospitals[].severeFreshness` | object \| null (2026-09-28 신설) | 매칭된 질환군의 수용가능 신고가 언제 적 것인지(`group`·`value`·`ageSec`·`ageIsMin`·`ruleRemainingSec`, source: "rule"). `ageIsMin=true`면 "최소 X시간 전"으로 표시해야 한다. 순위 불변 — 위 "중증질환 신고 신선도" 참고 |
 | `source` | `"rule"` | 규칙 기반 데이터임을 나타내는 고정값 |
+| `ambulanceGpsFallback` | boolean (2026-09-28 신설) | `ambulanceGps`가 실제 구급차 위치가 아니라 기본 좌표(서울시청)로 대체된 값인지. true면 거리·존·순위가 엉뚱한 기준일 수 있다 |
 | `ambulanceName` | string \| null (2026-08-11 신설) | 구급차 대시보드 상단바 표시용. `hospitals[].name`(병원명)과 같은 패턴 — 이 사건의 apid를 `register_case()`로 기억해둔 값에서 찾아 구급차 레지스트리(`AmbulanceInfo.name`)를 그대로 채운다. apid를 못 찾으면(통화 시작 신호 없이 직접 `/voice/summary`를 부른 테스트 등) `null`이고, dashboard는 URL의 apid로 대체 표시한다. **병원명과 마찬가지로 그 구급차가 실제로 사건에 등장해야만 채워진다** — 사건이 아예 없는 상태(대시보드를 열었지만 아직 통화가 없음)에서는 아직 이 필드 자체를 못 받으므로 ID 폴백이 계속 보인다 |
 
 ### ~~출력 스키마 5: feature/hub → feature/info (병상 갱신 알림)~~ → 2026-08-13 폐지
@@ -525,7 +635,9 @@ GET /identity?role=hospital&id=S0000001
   이어받아 `<stem>_hub_match_result.json`으로 저장한다. 입력과 출력이 파일명만으로
   짝지어지기 때문에, 여러 사건이 동시에 처리돼도 결과 파일이 서로 덮어써지거나
   섞이지 않는다 (ERD에는 없는, 사건 단위로 voice↔hub를 연결할 임시 상관관계 키다).
-- **저장 위치**: `data/test/output/<stem>_hub_match_result.json`
+- **저장 위치**: 테스트(`run_match.py`)는 `data/test/output/<stem>_hub_match_result.json`,
+  실서버(`app.py`)는 `data/live/output/live_<시각>_hub_match_result.json`(2026-09-28 분리 —
+  예전엔 둘이 같은 폴더에 섞였다)
 - **`deliver()`는 로컬 저장 전용으로 남겨뒀다**: `save_local()`이 로컬 저장을
   담당하고, `send_to_dashboard()`는 원래 계획대로라면 `requests.post(...)`를
   채울 자리였는데, 실제 전송 채널이 살아있는 WebSocket 연결(dashboard가
@@ -538,11 +650,20 @@ GET /identity?role=hospital&id=S0000001
   `send_to_info()` 전부 없앴다 — 위 "출력 스키마 5" 참고. 병상 차감은 이제
   파일로도 안 남기고 `HubEngine._bed_overlay`(메모리)에만 있다가 TTL이
   지나면 조용히 사라진다.
-- **`send_rejection_to_info()` (2026-09-10 추가)**: `app.py`의
-  `_handle_dashboard_action()`이 `hospital_reject`일 때 `_build_rejection_payload()`로
-  `{hospitalId, caseId, timestamp, reasonCode}`(+ 사건 캐시가 있으면
-  `severity`·`diseaseGroup`·`declaredAtRequest`)를 만들어 `HUB_REJECTION_URL`
-  (기본 `http://127.0.0.1:5003/hub/rejection`)로 POST한다. fire-and-forget —
+- **`send_rejection_to_info()` (2026-09-10 추가, 09-28~29 확충)**: `app.py`의
+  `_handle_dashboard_action()`이 `hospital_reject`일 때 `_rejection_payload()`로
+  `{hospitalId, caseId, timestamp, reasonCode}` + 사건 캐시가 있으면
+  `severity`·`diseaseGroup`·`declaredAtRequest`에 더해 **결정 시점 스냅샷**
+  (`availableBedCountAtRequest`·`bedCountUnknownAtRequest`·`bedDataStaleAtRequest`·
+  `travelMinAtRequest`·`finalScoreAtRequest`·`bedAuthorityAtRequest`·
+  `bedRArriveAtRequest` — G2 라벨·확률 운영 검증 재료)를 만들어 `HUB_REJECTION_URL`
+  (기본 `http://127.0.0.1:5003/hub/rejection`)로 POST한다. **무응답도 기록한다**:
+  사건이 결말에 이르는 두 시점(`final_approval` 확정 / 확정 없이
+  `HUB_UNRESOLVED_TIMEOUT_MIN` 기본 120분 유휴 시 sweep)에 pending 후보들을
+  `reasonCode=NO_RESPONSE`로 일괄 전송하며, `reachedAtBroadcast`(도달 이력 —
+  미도달=보급 지표 / 도달했는데 무응답=응답성 지표)·`hospitalDashboardConnected`·
+  `caseFinalized`(미결 종료 구분)를 실어 소비 축을 분리한다(CLAUDE.md 소비 지침
+  참고 — 무응답은 수용성 판정에 쓰지 않는다). fire-and-forget —
   수신구(`hospital_score/ingest.py`, 별도 기동하는 선택적 서버)가 안 떠 있어도
   예외를 삼키고 계속한다. 병상 갱신과 달리 이건 E-Gen이 아니라 info가 쓰기
   가능한 자체 운영 로그라 왕복이 성립한다. 회귀 테스트: `test_rejection_forward.py`.
@@ -557,10 +678,17 @@ CLAUDE.md "보안 및 개인정보 원칙"의 "모든 의사결정 로그는 타
 - `hub_engine.py`가 매칭 결과(`process_voice_summary`)를 만들거나 승인 액션
   (`apply_approval_action`)을 처리할 때마다 `decision_log.log_decision()`을 호출해
   `data/logs/decision_log.jsonl`에 한 줄씩 append한다 (기존 줄은 절대 수정하지 않음)
-- 기록 하나는 `{timestamp, eventType, payload, hash}` 형태이고, `hash`는
-  `timestamp+eventType+payload`를 정렬된 JSON으로 직렬화한 값의 SHA-256이다.
-  누군가 로그 파일의 `payload`를 사후에 고치면 저장된 `hash`와 재계산한 `hash`가
-  달라져서 위변조를 바로 알 수 있다
+- 기록 하나는 `{timestamp, eventType, payload, prevHash, hash}` 형태이고, `hash`는
+  `timestamp+eventType+payload+prevHash`를 정렬된 JSON으로 직렬화한 값의 SHA-256이다.
+  **`prevHash`는 바로 앞 기록의 `hash`다(해시 체인, 2026-09-28).** 예전엔 줄마다 자기
+  내용만 해시해서, 내용을 고친 뒤 해시를 다시 계산하거나 줄을 지우거나 순서를 바꾸면
+  검증을 통과했다. 지금은 중간 한 줄만 건드려도 그 뒤 줄의 `prevHash`가 어긋난다.
+  한계: 파일 **끝부분**을 잘라내는 것은 체인만으로는 못 잡는다(마지막 hash를 따로 보관해
+  대조해야 함). 쓰기는 락으로 직렬화한다(여러 스레드가 동시에 쓰면 체인이 갈라짐)
+- 체인 이전(`prevHash` 없는) 기존 기록은 예전 방식으로 검증하고, 체인이 시작된 뒤에
+  `prevHash` 없는 줄이 끼어 있으면 위변조로 본다
+- 매칭 결과(`hub_match_result`), 주기적 재계산에서 순위·상태·병상이 바뀐 경우
+  (`hub_match_refreshed`), 승인 액션을 기록한다
 - `decision_log.verify_log()`로 로그 파일 전체를 검증할 수 있다 — 위변조 여부와
   검사한 줄 수를 반환한다 (`run_match.py` 맨 마지막에서 실행함)
 - **통화 전문은 지문으로만 남긴다 (2026-09-10)**: `hub_match_result` 항목의
@@ -589,6 +717,56 @@ python run_match.py
 각각 터미널에 출력하고, 최종 결과는 `data/test/output/DrRomantic3v3_hub_match_result.json`에도
 저장한다 (파일명 규칙은 아래 "결과 저장 및 전송 방식" 참고).
 
+**HTTP 레이어 검사** (앱을 import해 실제 경로를 탄다, 상태 파일은 임시 폴더를 쓴다)
+```bash
+python test_app_background.py     # 202 응답·비동기 매칭·주기적 재계산·상태 저장/복구
+python test_rejection_forward.py  # 거절 사유 → info 거절 로그 중계
+```
+
+**서버 실행**
+```bash
+python app.py        # 포트 5001, debug 꺼짐
+HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화면 켜짐
+```
+
+### 서버 운영 동작 (2026-09-28)
+
+| 동작 | 내용 | 환경변수 |
+|---|---|---|
+| 비동기 매칭 | `/voice/summary`는 검증만 하고 **202** `{"status":"accepted","caseId"}`로 바로 답한다. 매칭(임베딩 + 카카오 호출)은 작업 스레드 1개에서 순서대로 돌고, 결과는 WebSocket으로 나간다. voice는 응답 본문을 쓰지 않고 성공 여부만 본다(전송 타임아웃 10초를 넘길 여지 제거) | — |
+| 주기적 재계산 | 진행 중인 사건을 같은 환자 정보·같은 zone으로 다시 계산해, 병상·ETA·병상 신뢰도·순위가 **달라진 사건만** 대시보드에 다시 보낸다. 카카오 ETA는 5분 캐시라 호출이 주기만큼 늘지 않는다. 이송 중 순위가 저절로 바뀔 수 있다 | `HUB_REFRESH_INTERVAL_SEC` (기본 60, 0이면 끔) |
+| 상태 저장·복구 | 병원·구급차 레지스트리, 승인 상태, 병상 오버레이, 사건(구조화 요약·결과), voice 주소를 5초마다(변경 있을 때만) 저장하고 뜰 때 복구한다. 재시작 뒤 info의 다음 전송(최대 30분)까지 병원이 0곳이던 문제를 없앤다. **통화 원문은 저장하지 않는다** — 복구된 사건은 원문 자리에 안내 문구가 뜬다. 종료(Ctrl+C·SIGTERM) 때도 저장한다 | `HUB_STATE_PATH` (기본 `data/state/hub_state.json`), `HUB_PERSIST_STATE=0`이면 끔 |
+| 스레드 안전 | 엔진 상태는 락 안에서만 읽고 쓰되, 임베딩·카카오 호출은 락 밖에서 한다(그동안 승인 액션이 막히지 않게). 소켓 집합·전송, voice 주소, 의사결정 로그 쓰기도 락으로 보호한다 | — |
+| debug | 기본 꺼짐. 켜면 코드 리로더가 파일 변경마다 재시작해 인메모리 상태가 날아가고 예외 화면이 외부에 노출된다 | `HUB_DEBUG=1` |
+| 백그라운드 시작 | 위 재계산·저장·방치 사건 정리 루프는 `start_background()`가 띄운다. `start-all.sh`가 예전엔 `app.app.run()`만 불러 **실서버에서 이 루프들이 한 번도 돌지 않았다**(2026-10-01 수정) | — |
+| 역할별 전송 | 매칭 결과는 그 구급차(apid) 탭과 후보에 오른 적 있는 병원(hpid) 탭에만 보낸다(2026-10-01). identify 전 소켓은 따라잡기로 받는다 | — |
+| 방치 사건 닫기 | 확정 없이 120분 활동이 없으면 무응답(`NO_RESPONSE`)을 기록한 뒤 사건을 닫고 `{"type":"case_closed"}`를 보낸다 — 대시보드가 카드를 지운다(2026-10-01) | `HUB_UNRESOLVED_TIMEOUT_MIN` |
+| 현장 후보 | 통화 시작(출동 시뮬레이션이면 현장 도착) 때 거리순 후보를 `{"type":"scene_candidates"}`로 그 구급차 탭에만 보낸다(규칙 기반, 환자 정보 전이라 병원 탭엔 안 보냄) | — |
+| 병원 목록 동기화 | info가 한 주기 끝에 `POST /info/hospitals/roster {"hospitalIds": [...]}`를 보내면 목록에 없는 병원을 뺀다. 진행 중 사건 후보는 보류, 목록이 절반 아래로 급감하면 부분 조회 실패로 보고 안 뺀다 | — |
+| 출동 시뮬레이션 | 아래 "출동 시뮬레이션" 절 | `HUB_SIM_DISPATCH=1` |
+
+### 출동 시뮬레이션 (2026-10-01, 시연용 가짜 위치)
+
+`start-all.sh --sim-dispatch`(= `HUB_SIM_DISPATCH=1`)일 때만 켜진다. 구급차 대시보드의 [이동]을 누를 때만
+구급차가 움직인다(`ambulance_sim.py`, 설계는 `documents/1001v1_0134_...`).
+
+```
+idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─15초→ returning ─도착→ idle
+                                    └─[현장 종료]→ returning          (returning 중 [이동] = 재출동)
+```
+
+- 환자 발생 위치: 기지(Supabase 등록 좌표)에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오
+  다중 목적지 ETA로 골라 `data/sim/incident_points_<apid>.json`에 저장(이후 호출 0회)
+- 구간마다 도로 경로 1회, `HUB_SIM_SPEEDUP`(기본 5)배속으로 따라감. 남은 ETA는 실제 도로 기준
+- 위치는 레지스트리 GPS를 덮어쓰지 않고 조회 시점에 얹는다 — info의 30분 재전송과 안 부딪히고, 재시작하면 기지 대기
+- 통화 시작은 `on_scene`이고 caseId가 같을 때만 voice로 중계한다(아니면 `call_start_refused`)
+- dashboard ↔ hub 메시지
+  - 받음: `{"type":"dispatch"|"scene_end","apid","caseId","timestamp"}`
+  - 보냄: `ambulance_phase`(상태 바뀔 때, 경로 포함) · `ambulance_position`(움직이는 동안 1초마다) — 모두
+    `simulated: true`. 그 구급차 탭 전부 + 이송 중·병원 도착일 때만 확정 병원 탭. `identity_info.simDispatch`
+- 의사결정 로그: `sim_dispatch_enabled`, `ambulance_dispatched`/`dispatch_refused`, `ambulance_phase`, `case_closed`
+- 검증: `python ambulance_sim.py`(상태 머신·보간), `python test_dispatch_sim.py`(앱 레이어 전체 흐름)
+
 ## 폴더 구조
 
 ```
@@ -599,20 +777,27 @@ hub/                        (저장소 루트의 .gitignore, CLAUDE.md는 브랜
 ├── schema.py            입출력 pydantic 모델 (voice/info/dashboard 스키마와 1:1 대응)
 ├── geo.py                GPS 거리 계산, 존(Zone) 분류·확장 판단
 ├── specialty_matcher.py  임베딩 기반 예상 병명 ↔ 진료과 매칭
-├── scoring.py             거리·진료과 점수 가중합 및 순위 결정
+├── scoring.py             이동시간·진료과 점수 가중합, 전문성·등급 가산(분), 순위 결정
+├── ambulance_sim.py       구급차 출동 시뮬레이션(시연용 가짜 위치) 상태 머신·경로 보간
 ├── hub_engine.py         2단계 매칭 오케스트레이션 + 승인 액션 반영(상태 보관 + 재처리)
 ├── decision_log.py       의사결정 로그 (타임스탬프 + SHA-256 해시, 위변조 검증 가능)
 ├── delivery.py           결과 저장 + dashboard로의 실제 통신 — 파일명을 voice 입력에서 이어받음
 │                         (info로의 병상 갱신 전송은 2026-08-13 삭제됨)
 ├── run_match.py          테스트 데이터로 엔진을 실행하는 CLI
-└── data/
+├── test_app_background.py   app 레이어 검사 (비동기 매칭·재계산·상태 저장)
+├── test_rejection_forward.py 거절 사유 중계 검사
+├── test_dispatch_sim.py   출동 시뮬레이션 앱 레이어 검사
+└── data/                 (.gitignore 대상)
     ├── test/
     │   ├── hospitals/                        병원 정보 샘플 (feature/info 역할, H001~H004.json)
     │   ├── DrRomantic3v3_call_summary.json    voice 요약 샘플 (feature/voice 역할)
     │   └── output/
     │       └── DrRomantic3v3_hub_match_result.json  매칭 결과 (delivery.py가 생성)
+    ├── live/output/      실서버 매칭 결과 사본 (app.py)
+    ├── state/hub_state.json  재시작 복구용 상태 (app.py, 통화 원문 제외)
+    ├── sim/              출동 시뮬레이션 환자 발생 위치 후보 (ambulance_sim.py)
     └── logs/
-        └── decision_log.jsonl   의사결정 로그 (decision_log.py가 생성, append-only)
+        └── decision_log.jsonl   의사결정 로그 (decision_log.py가 생성, append-only, 해시 체인)
 ```
 
 ## 코드 구조 — 모듈 간 관계
@@ -662,12 +847,15 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 
 ## 알려진 제약사항 / TODO
 
-- 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`)는
-  `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
+- 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`),
+  이동시간 반감기(`TRAVEL_HALF_LIFE_MIN`)는 `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
-- 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다(대회 데모 단계라
-  구급차가 실제로 이동하지 않아 서울 랜드마크로 고정) — 진짜 실시간 GPS 연동은
-  이번 범위가 아니다
+- 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다. 시연에서는 출동
+  시뮬레이션(`--sim-dispatch`)이 가짜 위치를 얹는다. 진짜 실시간 GPS(브라우저 geolocation 등)
+  수신 경로는 아직 없다
+- **WebSocket에 인증이 없다.** 주소를 아는 누구나 접속해 승인 액션(`final_approval` 포함)과 출동
+  명령을 보낼 수 있다. 시연 범위에선 허용하되, 공개 운영 전에는 Cloudflare Access 같은 로그인을
+  도메인 앞에 두거나 소켓별 토큰을 붙여야 한다
 - voice 자가등록(`/voice/register`)이 온 apid의 `AmbulanceInfo`가 아직 없으면(즉
   feature/info가 그 구급차 정보를 아직 안 보냈으면) 409로 거부하고 재시도 큐 없이
   그냥 실패한다 — voice 쪽에서 재시도 로직을 두거나, info가 먼저 뜨는 걸 운영 순서로

@@ -179,6 +179,7 @@ dashboard에서 병원이 "수용 불가"를 누르면 hub가 사유를 `POST /h
 hub는 조용히 넘어간다(fire-and-forget). 쌓인 로그는
 `python -m hospital_score.rejection --summary`로 축별 집계해 본다.
 
-**결과 확인**: hub가 반환한 매칭 결과는 `hub/data/test/output/`에 저장되고,
-모든 의사결정은 `hub/data/logs/decision_log.jsonl`에 타임스탬프+해시로
-기록된다(`hub/decision_log.py` — 통화 전문은 sha256 지문으로 치환돼 남는다).
+**결과 확인**: hub 실서버의 매칭 결과는 `hub/data/live/output/`에(테스트 `run_match.py`는
+`hub/data/test/output/`), 모든 의사결정은 `hub/data/logs/decision_log.jsonl`에
+타임스탬프+해시 체인으로 기록된다(`hub/decision_log.py` — 통화 전문은 sha256 지문으로
+치환돼 남는다). 재시작 복구용 상태는 `hub/data/state/hub_state.json`(통화 원문 제외).

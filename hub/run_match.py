@@ -14,7 +14,13 @@ from pathlib import Path
 import bed_reliability
 import decision_log
 import delivery
-from hub_engine import BED_OVERLAY_TTL_MIN, CASE_RETENTION_MIN, HubEngine
+from hub_engine import (
+    _ASSESSMENT_GROUPS,
+    BED_OVERLAY_TTL_MIN,
+    CASE_RETENTION_MIN,
+    SEVERE_EXPIRY_RULE_SEC,
+    HubEngine,
+)
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -24,6 +30,8 @@ from schema import (
     BedReliabilityInput,
     GpsPoint,
     HospitalInfo,
+    SevereDeclarations,
+    SevereGroupDeclaration,
     Specialty,
     VoiceCallSummaryMessage,
     VoiceSummary,
@@ -141,6 +149,8 @@ def main() -> None:
     hospital_before = engine.get_hospital(top_hospital_id)
     raw_before = hospital_before.availableBedCount
     effective_before = engine.effective_bed_count(hospital_before)
+    # 이송 승인은 병원이 먼저 승인(후보 등록)한 병원에만 가능하다(2026-09-28 순서 검사)
+    engine.apply_approval_action(_action(CASE_ID, "hospital_approve", top_hospital_id))
     action = ApprovalAction(
         caseId=CASE_ID,
         action="final_approval",
@@ -205,6 +215,7 @@ def main() -> None:
     )
     print(f"  [확인] {other_case_id}의 병원 상태가 전부 pending — {CASE_ID}의 승인 상태와 안 섞임")
 
+    engine.apply_approval_action(_action(other_case_id, "hospital_approve", other_top_hospital_id))
     engine.apply_approval_action(
         ApprovalAction(
             caseId=other_case_id,
@@ -238,6 +249,16 @@ def main() -> None:
     test_declared_no_demotion()
     test_case_eviction()
     test_bed_reliability()
+    test_severe_freshness()
+    test_bed_full_and_rejected_ranking()
+    test_travel_time_ranking()
+    test_gps_fallback_and_message_type()
+    test_refresh_case()
+    test_state_roundtrip()
+    test_decision_log_chain()
+    test_approval_order_and_reselection()
+    test_expertise_bonus_and_exact_match()
+    test_hospital_roster()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -340,6 +361,7 @@ def test_case_eviction() -> None:
 
     # 1) 오래된 사건: 매칭 → 확정 → 확정 시각을 CASE_RETENTION_MIN+5분 과거로 강제
     engine.process_voice_summary(_voice(old_case), gps, max_zone=1)
+    engine.apply_approval_action(_action(old_case, "hospital_approve", "E001"))
     engine.apply_approval_action(ApprovalAction(
         caseId=old_case, action="final_approval", hospital_id="E001",
         actor="paramedic", timestamp="2026-09-10T00:00:00Z",
@@ -394,6 +416,13 @@ def test_bed_reliability() -> None:
             predictedSurvivalSec=2400.0, bornAt=fresh_born,
             authorityAtSend=1.0, ttlSec=2400.0, modelTag="aft_egen_theta3_ext0923",
         ),
+        # 확장 필드(수술실) — bedReliability와 같은 환산이 byType으로도 나가는지 확인용
+        bedReliabilityByType={
+            "hvoc": BedReliabilityInput(
+                predictedSurvivalSec=9600.0, bornAt=fresh_born,
+                authorityAtSend=1.0, ttlSec=9600.0, modelTag="aft_egen_hvoc_theta3",
+            )
+        },
     )
     with_old = HospitalInfo(
         hospitalId="B002", name="[테스트] 30분 묵은 병상 값",
@@ -441,11 +470,431 @@ def test_bed_reliability() -> None:
     assert b2.ttlSec == 0.0 or b2.authority >= bed_reliability.AUTHORITY_TTL_THRESHOLD, (
         "authority가 임계(0.8) 아래인데 ttl이 남아 있으면 안 된다"
     )
-    expected_horizon = matches["B001"].distanceKm / bed_reliability.AVG_AMBULANCE_SPEED_KMH * 3600.0
-    assert abs(b1.horizonSec - expected_horizon) < 1.0, "horizonSec은 거리/평균속도에서 나와야 한다"
+    # 도착 시점(horizon)은 순위에 쓴 이동 시간과 같아야 한다(2026-09-28). 카카오 키가 없는
+    # 테스트라 기본 추정(직선 1.5분/km = 예전 40km/h 가정과 같은 값)이 쓰인다.
+    expected_horizon = matches["B001"].travelMin * 60.0
+    assert abs(b1.horizonSec - expected_horizon) < 6.0, "horizonSec은 순위에 쓴 이동 시간(travelMin)과 같아야 한다"
+    assert matches["B001"].travelBasis == "estimate", "카카오 키가 없으면 이동 시간은 추정치여야 한다"
+    by_type = matches["B001"].bedReliabilityByType
+    assert by_type is not None and "hvoc" in by_type, "확장 필드(byType) 환산이 실려야 한다"
+    assert 0.0 <= by_type["hvoc"].rArrive <= by_type["hvoc"].authority <= 1.0
+    assert by_type["hvoc"].modelTag == "aft_egen_hvoc_theta3"
+    assert matches["B002"].bedReliabilityByType is None, "byType 없이 온 병원은 None으로 통과해야 한다"
     order_without_demote = [h.hospitalId for h in result.hospitals]
     print(f"  [확인] 신선한 값 authority({b1.authority}) > 묵은 값 authority({b2.authority}), "
           f"rArrive ≤ authority, 구 데이터는 None 통과 (순위 불변: {order_without_demote})")
+
+    # 병원의 "현재 정보 확인"(info_confirm)이 들어오면 조건부 생존으로 확률이
+    # 되올라간다 — 30분 묵어 0.61이던 B002가 방금 확인되면 1.0 근처로.
+    assert engine.confirm_hospital_info("B002", datetime.now(timezone.utc))
+    assert not engine.confirm_hospital_info("B999", datetime.now(timezone.utc)), (
+        "모르는 병원의 확인은 거부돼야 한다"
+    )
+    result2 = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    b2_after = next(h for h in result2.hospitals if h.hospitalId == "B002").bedReliability
+    assert b2_after is not None and b2_after.confirmedAgeSec is not None, (
+        "확인 이력이 현재 claim에 유효하면 confirmedAgeSec이 실려야 한다"
+    )
+    assert b2_after.authority > b2.authority + 0.3, (
+        f"확인 직후 authority가 조건부 생존으로 크게 되올라가야 한다 "
+        f"({b2.authority} -> {b2_after.authority})"
+    )
+    print(f"  [확인] 병원 정보 확인 후 B002 authority {b2.authority} -> {b2_after.authority} "
+          f"(조건부 생존, confirmedAgeSec={b2_after.confirmedAgeSec}s)")
+
+
+def test_severe_freshness() -> None:
+    """feature/info가 severeDeclarations(중증질환 신고의 관측 기준 탄생 시각)를
+    보내면, hub가 매칭된 질환군의 신고 나이와 9시간 만료 규칙 잔여를 계산해
+    HospitalMatch.severeFreshness로 싣는지 확인한다. 매칭되는 질환군이 임베딩
+    결과에 따라 달라지므로 15개 그룹 전부에 신고를 넣어 결정성을 확보한다.
+    """
+    print("\n=== severeFreshness 환산 확인: 중증신고가 언제 적 것인지가 매칭 결과에 실리는지 ===")
+    engine = HubEngine()
+    now = datetime.now(timezone.utc)
+
+    def declarations(born: datetime, age_is_min: bool = False) -> SevereDeclarations:
+        return SevereDeclarations(
+            groups={
+                g: SevereGroupDeclaration(
+                    value="Y", bornAt=born.isoformat(timespec="seconds"), ageIsMin=age_is_min
+                )
+                for g in _ASSESSMENT_GROUPS
+            }
+        )
+
+    fresh = HospitalInfo(
+        hospitalId="S001", name="[테스트] 2시간 전 신고",
+        gps=GpsPoint(lat=35.1810, lng=128.1090), availableBedCount=5, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+        severeDeclarations=declarations(now - timedelta(hours=2)),
+    )
+    expired = HospitalInfo(
+        hospitalId="S002", name="[테스트] 10시간 전 신고(규칙상 만료 경과, 갱신 유지 중)",
+        gps=GpsPoint(lat=35.1950, lng=128.1200), availableBedCount=3, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+        severeDeclarations=declarations(now - timedelta(hours=10), age_is_min=True),
+    )
+    without = HospitalInfo(
+        hospitalId="S003", name="[테스트] severeDeclarations 없음 (구 데이터)",
+        gps=GpsPoint(lat=35.2000, lng=128.1300), availableBedCount=1, nightDutyAvailable=True,
+        specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt="2026-09-28T00:00:00Z",
+    )
+    for h in (fresh, expired, without):
+        engine.update_hospital_info(h)
+
+    voice = VoiceCallSummaryMessage(
+        caseId="case-severe-freshness-test",
+        transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+        summary=VoiceSummary(
+            patient="60대 남성", mechanism="급성 심근경색 의심",
+            symptoms=["흉통"], treatment=["산소 공급"], severity_tag="high",
+        ),
+        source="ai",
+    )
+    result = engine.process_voice_summary(voice, GpsPoint(lat=35.1800, lng=128.1080), max_zone=1)
+    matches = {h.hospitalId: h for h in result.hospitals}
+    for h in result.hospitals:
+        sf = h.severeFreshness
+        desc = (
+            f"[{sf.group}] {sf.value} — {sf.ageSec / 3600:.1f}h 전{'(최소)' if sf.ageIsMin else ''}, "
+            f"규칙 잔여 {sf.ruleRemainingSec / 3600:.1f}h ({sf.source})"
+            if sf else "없음"
+        )
+        print(f"  {h.hospitalId} {h.name} — 신고 신선도 [{desc}]")
+
+    s1, s2 = matches["S001"].severeFreshness, matches["S002"].severeFreshness
+    assert s1 is not None and s2 is not None, "신고를 보낸 병원은 신선도가 실려야 한다"
+    assert matches["S003"].severeFreshness is None, "severeDeclarations 없이 온 구 데이터는 None으로 통과해야 한다"
+    assert abs(s1.ageSec - 2 * 3600) < 60, "신고 나이가 bornAt에서 계산돼야 한다"
+    assert abs(s1.ageSec + s1.ruleRemainingSec - SEVERE_EXPIRY_RULE_SEC) < 60, (
+        "잔여 = 9h 규칙 − 나이여야 한다"
+    )
+    assert s2.ruleRemainingSec == 0.0 and s2.ageIsMin, (
+        "만료 규칙 경과분은 잔여 0 + 좌측검열 플래그가 유지돼야 한다"
+    )
+    print("  [확인] 신고 나이·9h 규칙 잔여 계산, 좌측검열 플래그, 구 데이터 None 통과 전부 정상")
+
+
+# ── 2026-09-28 hub 정비 검증 ──────────────────────────────────────────────────
+
+_TEST_GPS = GpsPoint(lat=35.1800, lng=128.1080)
+_shared_engine: HubEngine | None = None
+
+
+def _engine() -> HubEngine:
+    """임베딩 모델을 매 테스트마다 다시 올리지 않게 matcher만 공유한 새 엔진."""
+    global _shared_engine
+    if _shared_engine is None:
+        _shared_engine = HubEngine()
+        return _shared_engine
+    return HubEngine(specialty_matcher=_shared_engine._matcher)
+
+
+def _hospital(hid: str, name: str, lat: float, lng: float, beds: int, *, beds_by_type=None,
+              updated_at: str | None = None, bed_rel: BedReliabilityInput | None = None) -> HospitalInfo:
+    return HospitalInfo(
+        hospitalId=hid, name=name, gps=GpsPoint(lat=lat, lng=lng), availableBedCount=beds,
+        nightDutyAvailable=True, specialties=[Specialty(department="흉부외과", doctorCount=1)],
+        updatedAt=updated_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        bedsByType=beds_by_type, bedReliability=bed_rel,
+    )
+
+
+def _voice(case_id: str, raw_text: str = "x") -> VoiceCallSummaryMessage:
+    return VoiceCallSummaryMessage(
+        caseId=case_id,
+        transcript=VoiceTranscript(raw_text=raw_text, filtered_text=raw_text),
+        summary=VoiceSummary(
+            patient="50대 남성", mechanism="교통사고 흉부 충격",
+            symptoms=["호흡 곤란"], treatment=["산소 공급"], severity_tag="high",
+        ),
+        source="ai",
+    )
+
+
+def _action(case_id: str, action: str, hospital_id: str) -> ApprovalAction:
+    return ApprovalAction(
+        caseId=case_id, action=action, hospital_id=hospital_id,
+        actor="paramedic" if action == "final_approval" else "hospital",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def test_bed_full_and_rejected_ranking() -> None:
+    """확인된 만실은 뒤로, 미상·오래된 값은 그대로, 거절한 병원은 맨 뒤, 승인한 병원은 만실이어도
+    안 내린다. 승인 액션 뒤 캐시도 재정렬돼야 한다."""
+    print("\n=== 만실·거절 순위 확인: 확인된 만실은 뒤로, 미상·오래된 값은 유지, 거절은 맨 뒤 ===")
+    engine = _engine()
+    three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(timespec="seconds")
+    for h in (
+        _hospital("F001", "[테스트] 가장 가까움, 확인된 만실", 35.1805, 128.1085, 0, beds_by_type={"ER_ADULT": 0}),
+        _hospital("F002", "[테스트] 만실이지만 3일 묵은 값", 35.1850, 128.1120, 0, beds_by_type={"ER_ADULT": 0},
+                  updated_at=three_days_ago),
+        _hospital("F003", "[테스트] 병상 미상", 35.1900, 128.1160, 0),
+        _hospital("F004", "[테스트] 가장 멂, 병상 있음", 35.1950, 128.1200, 3, beds_by_type={"ER_ADULT": 3}),
+    ):
+        engine.update_hospital_info(h)
+
+    case_id = "case-bed-full-test"
+    result = engine.process_voice_summary(_voice(case_id), _TEST_GPS, max_zone=1)
+    order = [h.hospitalId for h in result.hospitals]
+    by_id = {h.hospitalId: h for h in result.hospitals}
+    print(f"  순위: {order} / F001 내림 이유 {by_id['F001'].demoteReasons}, F002 오래된 값 {by_id['F002'].bedDataStale}")
+    assert order == ["F002", "F003", "F004", "F001"], "확인된 만실(F001)만 뒤로 가고 나머지는 거리 순이어야 한다"
+    assert by_id["F001"].demoteReasons == ["beds_full"]
+    assert by_id["F002"].bedDataStale and not by_id["F002"].demoteReasons, "오래된 값의 0은 만실로 믿으면 안 된다"
+    assert by_id["F003"].bedCountUnknown and not by_id["F003"].demoteReasons, "미상은 순위를 막으면 안 된다"
+
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "F001"))
+    engine.apply_approval_action(_action(case_id, "hospital_reject", "F002"))
+    patched = engine.get_case_result(case_id)
+    order = [h.hospitalId for h in patched.hospitals]
+    print(f"  F001 승인·F002 거절 후 캐시 순위: {order}")
+    assert order[0] == "F001", "병원이 승인했으면 병상 0이어도 내리지 않는다(명시적 응답 우선)"
+    assert order[-1] == "F002" and patched.hospitals[-1].demoteReasons == ["rejected"], "거절한 병원은 맨 뒤"
+    print("  [확인] 확인된 만실만 뒤로, 승인 응답은 만실 판정보다 우선, 거절은 캐시에서도 즉시 맨 뒤로 재정렬")
+
+
+class _FakeRouter:
+    """routing.KakaoRouting 대역. hospitalId -> (초, 미터)만 돌려준다."""
+
+    def __init__(self, etas: dict[str, tuple[int, int]]) -> None:
+        self._etas = etas
+
+    def etas(self, origin, destinations):  # noqa: ANN001
+        return {hid: v for hid, v in self._etas.items() if hid in destinations}
+
+
+def test_travel_time_ranking() -> None:
+    """순위가 직선거리가 아니라 이동 시간(ETA 우선)으로 매겨지고, ETA 없는 먼 병원은 같은
+    사건의 ETA로 보정한 분/km로 추정하며, 20km 밖에서도 거리 차이가 살아 있어야 한다."""
+    print("\n=== 이동 시간 순위 확인: ETA 우선, 없는 병원은 보정 추정, 20km 밖도 구분 ===")
+    from scoring import TRAVEL_HALF_LIFE_MIN, travel_score
+
+    assert travel_score(25 * 1.5) > travel_score(40 * 1.5) > 0.0, "20km 밖 병원끼리도 가까운 쪽 점수가 높아야 한다"
+    assert abs(travel_score(TRAVEL_HALF_LIFE_MIN) - 0.5) < 1e-9
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    engine = HubEngine(
+        specialty_matcher=_engine()._matcher,
+        router=_FakeRouter({"R001": (20 * 60, 5000), "R002": (8 * 60, 4000)}),
+    )
+    for h in (
+        _hospital("R001", "[테스트] 직선 가깝지만 강 건너 (ETA 20분)", 35.1980, 128.1080, 3, beds_by_type={"ER_ADULT": 3}),
+        _hospital("R002", "[테스트] 직선 조금 멀지만 길 좋음 (ETA 8분)", 35.1800, 128.1520, 3, beds_by_type={"ER_ADULT": 3},
+                  bed_rel=BedReliabilityInput(predictedSurvivalSec=2400.0, bornAt=now_iso, authorityAtSend=1.0,
+                                              ttlSec=2400.0, modelTag="test")),
+        _hospital("R003", "[테스트] 반경 밖, ETA 없음", 35.1800, 128.2400, 3, beds_by_type={"ER_ADULT": 3}),
+    ):
+        engine.update_hospital_info(h)
+
+    result = engine.process_voice_summary(_voice("case-travel-test"), _TEST_GPS, max_zone=3)
+    by_id = {h.hospitalId: h for h in result.hospitals}
+    for h in result.hospitals:
+        print(f"  {h.hospitalId} 직선 {h.distanceKm}km → 이동 {h.travelMin}분({h.travelBasis}), 점수 {h.finalScore}")
+    assert [h.hospitalId for h in result.hospitals][:2] == ["R002", "R001"], "직선거리가 아니라 ETA로 앞서야 한다"
+    assert by_id["R001"].travelBasis == by_id["R002"].travelBasis == "eta"
+    assert by_id["R003"].travelBasis == "estimate" and by_id["R003"].etaMin is None
+    ratios = sorted([20 / by_id["R001"].distanceKm, 8 / by_id["R002"].distanceKm])
+    expected = by_id["R003"].distanceKm * (sum(ratios) / 2)
+    assert abs(by_id["R003"].travelMin - expected) < 0.5, "ETA 없는 병원은 같은 사건 ETA 비율 중앙값으로 추정해야 한다"
+    assert abs(by_id["R002"].bedReliability.horizonSec - 8 * 60) < 1.0, "rArrive의 도착 시점은 ETA여야 한다"
+    print("  [확인] ETA 기준 순위, ETA 없는 병원은 보정 추정, 병상 신뢰도 도착 시점 = ETA")
+
+
+def test_gps_fallback_and_message_type() -> None:
+    print("\n=== 위치 대체 표시·메시지 구분자 확인 ===")
+    engine = _engine()
+    engine.update_hospital_info(_hospital("G001", "[테스트] 병원", 35.1810, 128.1090, 2, beds_by_type={"ER_ADULT": 2}))
+    result = engine.process_voice_summary(_voice("case-gps-fallback"), _TEST_GPS, max_zone=1, gps_fallback=True)
+    dumped = result.model_dump()
+    assert dumped["type"] == "match_result", "HubMatchResult에 type 구분자가 실려야 한다"
+    assert dumped["ambulanceGpsFallback"] is True, "기본 좌표로 대체한 사실이 결과에 실려야 한다"
+    normal = engine.process_voice_summary(_voice("case-gps-normal"), _TEST_GPS, max_zone=1)
+    assert normal.ambulanceGpsFallback is False
+    print("  [확인] type=match_result, 대체 좌표 사건만 ambulanceGpsFallback=True")
+
+
+def test_refresh_case() -> None:
+    """진행 중 사건 재계산: 바뀐 게 없으면 None, 병상이 바뀌면 새 결과 + 의사결정 로그."""
+    print("\n=== 주기적 재계산 확인: 변화 없으면 조용히, 병상이 바뀌면 다시 보냄 ===")
+    engine = _engine()
+    engine.update_hospital_info(_hospital("P001", "[테스트] 병원", 35.1810, 128.1090, 4, beds_by_type={"ER_ADULT": 4}))
+    case_id = "case-refresh-test"
+    engine.process_voice_summary(_voice(case_id), _TEST_GPS, max_zone=1)
+    assert engine.get_active_case_ids() == [case_id]
+    assert engine.refresh_case(case_id, _TEST_GPS) is None, "아무것도 안 바뀌었으면 다시 보낼 필요 없다"
+
+    engine.update_hospital_info(_hospital("P001", "[테스트] 병원", 35.1810, 128.1090, 1, beds_by_type={"ER_ADULT": 1}))
+    updated = engine.refresh_case(case_id, _TEST_GPS)
+    assert updated is not None and updated.hospitals[0].availableBedCount == 1, "병상이 바뀌면 새 결과를 돌려줘야 한다"
+    with decision_log.LOG_PATH.open(encoding="utf-8") as f:
+        last = [line for line in f if line.strip()][-1]
+    assert '"eventType": "hub_match_refreshed"' in last, "순위·병상이 바뀐 재계산은 의사결정 로그에 남아야 한다"
+    print("  [확인] 변화 없음 → None, 병상 4→1 → 재전송 대상 + hub_match_refreshed 로그")
+
+
+def test_state_roundtrip() -> None:
+    """디스크 저장·복구: 병원·승인 상태·병상 오버레이·사건이 살아나고, 통화 원문은 저장 안 됨."""
+    print("\n=== 상태 저장·복구 확인: 재시작해도 병원·승인·병상 차감이 남고 통화 원문은 안 남음 ===")
+    import json
+
+    engine = _engine()
+    engine.update_hospital_info(_hospital("S001", "[테스트] 병원", 35.1810, 128.1090, 5, beds_by_type={"ER_ADULT": 5}))
+    engine.update_ambulance_info(AmbulanceInfo(apid="A9", name="구급 9호차", gps=_TEST_GPS, voicePort=5002,
+                                               updatedAt="2026-09-28T00:00:00Z"))
+    case_id = "case-state-test"
+    secret = "환자 홍길동 010-0000-0000 통화 원문"
+    engine.register_case(case_id, "A9")
+    engine.process_voice_summary(_voice(case_id, raw_text=secret), _TEST_GPS, max_zone=1)
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "S001"))
+    engine.apply_approval_action(_action(case_id, "final_approval", "S001"))
+    assert engine.take_dirty() is True and engine.take_dirty() is False, "변경 표시는 한 번 읽으면 지워져야 한다"
+
+    serialized = json.dumps(engine.export_state(), ensure_ascii=False)
+    assert secret not in serialized, "통화 원문이 상태 파일에 들어가면 안 된다"
+
+    restored = HubEngine(specialty_matcher=engine._matcher)
+    counts = restored.import_state(json.loads(serialized))
+    print(f"  복구: {counts}")
+    assert counts == {"hospitals": 1, "ambulances": 1, "cases": 1}
+    info = restored.get_hospital("S001")
+    assert restored.effective_bed_count(info) == 4, "병상 차감(오버레이)이 복구돼야 한다"
+    result = restored.get_case_result(case_id)
+    assert result is not None and result.hospitals[0].status == "confirmed"
+    assert restored.get_case_apid(case_id) == "A9" and restored.get_ambulance("A9").name == "구급 9호차"
+    restored.apply_approval_action(_action(case_id, "final_approval", "S001"))
+    assert restored.effective_bed_count(info) == 4, "복구 뒤에도 중복 최종 승인은 멱등이어야 한다"
+    print("  [확인] 병원·구급차·사건·확정 상태·병상 차감 복구, 복구 뒤 멱등성 유지, 통화 원문 미저장")
+
+
+def test_decision_log_chain() -> None:
+    """해시 체인: 중간 줄 삭제·내용 수정 후 hash 재계산을 잡아내고, 체인 이전 기록은 통과."""
+    print("\n=== 의사결정 로그 해시 체인 확인 ===")
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "log.jsonl"
+        # 체인 이전(prevHash 없는) 기록 2줄 → 그 뒤로 체인 기록 3줄
+        legacy = []
+        for i in range(2):
+            ts, payload = f"2026-01-0{i + 1}T00:00:00Z", {"n": i}
+            legacy.append({"timestamp": ts, "eventType": "legacy", "payload": payload,
+                           "hash": decision_log._hash_entry(ts, "legacy", payload)})
+        path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in legacy), encoding="utf-8")
+        for i in range(3):
+            decision_log.log_decision("chained", {"n": i}, log_path=path)
+        assert decision_log.verify_log(path) == (True, 5), "체인 이전 기록 + 체인 기록이 함께 통과해야 한다"
+
+        lines = path.read_text(encoding="utf-8").splitlines()
+
+        path.write_text("\n".join(lines[:3] + lines[4:]) + "\n", encoding="utf-8")
+        assert decision_log.verify_log(path)[0] is False, "중간 줄 삭제를 잡아야 한다"
+
+        forged = json.loads(lines[3])
+        forged["payload"] = {"n": 999}
+        forged["hash"] = decision_log._hash_entry(forged["timestamp"], forged["eventType"], forged["payload"],
+                                                  forged["prevHash"])
+        path.write_text("\n".join(lines[:3] + [json.dumps(forged, ensure_ascii=False)] + lines[4:]) + "\n",
+                        encoding="utf-8")
+        assert decision_log.verify_log(path)[0] is False, "내용 수정 후 hash를 다시 계산해도 다음 줄에서 잡아야 한다"
+
+        path.write_text("\n".join(lines[:3] + [lines[0]] + lines[3:]) + "\n", encoding="utf-8")
+        assert decision_log.verify_log(path)[0] is False, "체인 시작 뒤 끼워 넣은 체인 밖 줄을 잡아야 한다"
+    print("  [확인] 체인 이전 기록 통과, 중간 삭제·수정 후 재해시·끼워 넣기 모두 탐지")
+
+
+def test_approval_order_and_reselection() -> None:
+    """승인 흐름(2026-09-28): 병원 승인 없는 이송 승인·주체가 어긋난 액션은 거부하고,
+    이송 병원을 다시 고르면 이전 병원의 확정을 풀고 병상 차감을 회수한다."""
+    print("\n=== 승인 흐름 확인: 순서·주체 검사 + 재선택 시 이전 병원 해제 ===")
+    engine = _engine()
+    for h in (
+        _hospital("Q001", "[테스트] 병원 A", 35.1810, 128.1090, 5, beds_by_type={"ER_ADULT": 5}),
+        _hospital("Q002", "[테스트] 병원 B", 35.1850, 128.1120, 5, beds_by_type={"ER_ADULT": 5}),
+    ):
+        engine.update_hospital_info(h)
+    case_id = "case-approval-flow"
+    engine.process_voice_summary(_voice(case_id), _TEST_GPS, max_zone=1)
+    status = lambda hid: next(h.status for h in engine.get_case_result(case_id).hospitals if h.hospitalId == hid)
+    beds = lambda hid: engine.effective_bed_count(engine.get_hospital(hid))
+    log_lines = lambda: [line for line in decision_log.LOG_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    start = len(log_lines())
+
+    # 1) 병원 승인 없이 이송 승인 → 거부, 병상 그대로
+    engine.apply_approval_action(_action(case_id, "final_approval", "Q001"))
+    assert status("Q001") == "pending" and beds("Q001") == 5, "병원 승인 전 이송 승인은 거부돼야 한다"
+    # 2) 주체가 어긋난 액션(구급대원이 병원 승인을 누름) → 거부
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "Q001").model_copy(update={"actor": "paramedic"}))
+    assert status("Q001") == "pending", "구급대원이 보낸 병원 승인은 거부돼야 한다"
+    # 3) 정상 순서 → A 확정, 병상 1 차감
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "Q001"))
+    engine.apply_approval_action(_action(case_id, "final_approval", "Q001"))
+    assert status("Q001") == "confirmed" and beds("Q001") == 4
+    # 4) B로 재선택 → A는 approved로 풀리고 병상 회수, B 확정·차감
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "Q002"))
+    engine.apply_approval_action(_action(case_id, "final_approval", "Q002"))
+    assert status("Q001") == "approved" and beds("Q001") == 5, "재선택 시 이전 병원 확정 해제 + 병상 회수"
+    assert status("Q002") == "confirmed" and beds("Q002") == 4
+    order = [h.hospitalId for h in engine.get_case_result(case_id).hospitals]
+    assert order[:2] == ["Q002", "Q001"], f"확정 병원이 맨 앞, 그다음 승인 병원이어야 한다: {order}"
+    events = log_lines()[start:]
+    assert sum('"approval_action_refused"' in e for e in events) == 2, "거부된 액션 2건은 사유와 함께 로그에 남아야 한다"
+    assert sum('"approval_released"' in e for e in events) == 1, "재선택 해제는 의사결정 로그에 남아야 한다"
+    print("  [확인] 승인 전 이송 승인·주체 불일치 거부, 재선택 시 A 해제(병상 4→5)·B 확정(5→4), 순서 확정→승인")
+
+
+def test_expertise_bonus_and_exact_match() -> None:
+    """진료과 정확 일치 + 전문의 수·응급의료기관 등급 가산(2026-10-01).
+    불변식: 가산을 다 받아도 MAX_BONUS_MIN분 넘게 먼 병원은 가까운 병원을 이길 수 없다."""
+    from scoring import MAX_BONUS_MIN, expertise_bonus_min, final_score
+
+    print("\n=== 전문성·등급 가산: 분 단위 불변식 + 필요 진료과 정확 일치 ===")
+    full, _ = expertise_bonus_min(999, "권역응급의료센터", "high")
+    assert full == MAX_BONUS_MIN, f"최대 가산은 {MAX_BONUS_MIN}분이어야 한다 ({full})"
+    for near in (3.0, 10.0, 30.0, 60.0):
+        far = near + MAX_BONUS_MIN + 0.1
+        assert final_score(0.8, near) > final_score(0.8, far, full), f"{near}분 vs {far}분: 가산이 불변식을 넘었다"
+    assert expertise_bonus_min(None, "권역응급의료센터", "medium") == (0.0, []), "중증이 아니면 등급 가산 없음"
+    assert expertise_bonus_min(None, None, "high") == (0.0, []), "모르는 값은 0분(불리하게 두지 않음)"
+
+    engine = _engine()
+    ortho = _hospital("X001", "[테스트] 정형외과 있음", 35.1810, 128.1090, 5, beds_by_type={"ER_ADULT": 5})
+    ortho = ortho.model_copy(update={
+        "specialties": [Specialty(department="정형외과", doctorCount=12), Specialty(department="내과", doctorCount=30)],
+        "emergencyLevel": "권역응급의료센터",
+    })
+    other = _hospital("X002", "[테스트] 정형외과 없음", 35.1812, 128.1091, 5, beds_by_type={"ER_ADULT": 5})
+    for h in (ortho, other):
+        engine.update_hospital_info(h)
+    voice = _voice("case-exact")
+    voice = voice.model_copy(update={"summary": voice.summary.model_copy(update={"required_department": "정형외과"})})
+    result = engine.process_voice_summary(voice, _TEST_GPS, max_zone=1)
+    top = result.hospitals[0]
+    assert top.hospitalId == "X001" and top.specialtyMatch.basis == "exact" and top.specialtyMatch.score == 1.0
+    assert top.specialtyMatch.doctorCount == 12 and top.travelBonusMin > 0 and top.bonusReasons
+    assert result.hospitals[1].specialtyMatch.basis == "embedding", "일치하는 과가 없으면 임베딩으로 남는다(제외 안 함)"
+    print(f"  [확인] 최대 가산 {MAX_BONUS_MIN}분 불변식, 정확 일치 1.0 · 가산 {top.travelBonusMin}분 {top.bonusReasons}")
+
+
+def test_hospital_roster() -> None:
+    """피드에서 사라진 병원 제거(2026-10-01): 진행 중 사건 후보는 남기고, 목록 급감이면 안 뺀다."""
+    print("\n=== 병원 목록 동기화: 피드에서 빠진 병원 제거 ===")
+    engine = _engine()
+    for i in range(4):
+        engine.update_hospital_info(_hospital(f"R00{i}", f"[테스트] 병원 {i}", 35.18 + i * 0.001, 128.109, 3))
+    engine.update_hospital_info(_hospital("R_FAR", "[테스트] 먼 병원", 37.9, 127.9, 3))
+    engine.process_voice_summary(_voice("case-roster"), _TEST_GPS, max_zone=1)  # R000~R003이 후보
+    assert engine.apply_hospital_roster(["R000"]) == ([], ["R001", "R002", "R003", "R_FAR"]), "목록 급감이면 안 뺀다"
+    removed, kept = engine.apply_hospital_roster(["R000", "R001", "R002"])
+    assert removed == ["R_FAR"] and kept == ["R003"], (removed, kept)
+    assert engine.get_hospital("R_FAR") is None and engine.get_hospital("R003") is not None
+    print("  [확인] 후보 아닌 병원만 제거, 진행 중 사건 후보는 보류, 목록 급감 시 제거 안 함")
 
 
 if __name__ == "__main__":

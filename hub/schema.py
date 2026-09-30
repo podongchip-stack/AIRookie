@@ -115,10 +115,34 @@ class BedReliabilityInput(BaseModel):
 
     predictedSurvivalSec: float
     bornAt: str
+    # 생존곡선 척도. raw면 1.0(기본값 — 구 info 데이터 하위호환), info가 잔차
+    # 재보정(σR)을 적용해 보내면 그 값 — hub가 같은 곡선을 재계산하는 데 쓴다.
+    sigma: float = 1.0
     authorityAtSend: float
     ttlSec: float
     modelTag: str
     source: Literal["ai"] = "ai"
+
+
+class SevereGroupDeclaration(BaseModel):
+    """질환군 하나의 현재 중증질환 수용가능 신고 상태 (feature/info의
+    reliability/severe.py — 규칙 기반, 모델 아님)."""
+
+    value: Literal["Y", "불가능"]
+    bornAt: str
+    # True면 info의 추적 시작부터 이 값이었다 — 실제 신고는 더 오래됐을 수
+    # 있어 나이가 하한(좌측검열)이라는 뜻. dashboard는 "최소 X시간 전"으로
+    # 표현해야 한다.
+    ageIsMin: bool = False
+
+
+class SevereDeclarations(BaseModel):
+    """feature/info가 스냅샷 추적으로 알아낸 중증질환 신고의 탄생 시각.
+    E-Gen 응답에는 신고 시각 필드가 없어서 이 값은 info의 추적만이 안다.
+    현재 값이 정보미제공인 그룹은 키가 없다."""
+
+    groups: dict[str, SevereGroupDeclaration] = Field(default_factory=dict)
+    source: Literal["rule"] = "rule"
 
 
 class HospitalInfo(BaseModel):
@@ -130,6 +154,9 @@ class HospitalInfo(BaseModel):
     specialties: list[Specialty] = Field(default_factory=list)
     source: Literal["rule"] = "rule"
     updatedAt: str
+    # E-Gen 응급의료기관 등급(dutyEmclsName, 2026-10-01): 권역응급의료센터/지역응급의료센터/
+    # 지역응급의료기관/응급실운영신고기관. 중증 환자 가산(scoring.LEVEL_BONUS_MIN)에 쓴다.
+    emergencyLevel: Optional[str] = None
     # feature/info는 병상 수가 미상일 때 availableBedCount에 0을 넣되, bedsByType에
     # 해당 코드(ER_ADULT 등) 키를 넣지 않는 것으로 "미상"과 "확인된 만실"을 구분한다
     # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
@@ -144,6 +171,12 @@ class HospitalInfo(BaseModel):
     # reliability/(infosurv)의 병상 정보 신뢰도 예측. assessment와 같은 패턴 —
     # 이 필드 없이 오는 구 feature/info 데이터도 그대로 통과한다.
     bedReliability: Optional[BedReliabilityInput] = None
+    # 중증질환 신고 신선도(규칙 기반). 같은 Optional 패턴.
+    severeDeclarations: Optional[SevereDeclarations] = None
+    # 응급실 일반(hvec) 외 확장 필드들의 신뢰도 예측 (2026-09-28 다필드 확장).
+    # 키는 E-Gen 필드명(hvoc 수술실·hvgc 입원실·hv28 소아 등), 값 구조는
+    # bedReliability와 동일. 같은 Optional 패턴.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityInput]] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -189,6 +222,11 @@ class PatientInfo(BaseModel):
 class SpecialtyMatch(BaseModel):
     department: Optional[str] = None
     score: float = 0.0
+    # 어떻게 맞췄나(2026-10-01): voice의 required_department와 정확히 같은 과가 있으면 "exact"
+    # (score 1.0), 없으면 예상 병명과 진료과명의 임베딩 유사도("embedding"), 진료과가 없으면 "none".
+    basis: Literal["exact", "embedding", "none"] = "embedding"
+    # 매칭된 진료과의 전문의 수(심평원). 모르면 None — 가산점 없음.
+    doctorCount: Optional[int] = None
 
 
 class ReliabilityInfo(BaseModel):
@@ -216,7 +254,8 @@ class BedReliabilityMatch(BaseModel):
     ReliabilityInfo(assessment 기반, 중증질환군 수용 신고의 신뢰도)와는 다른
     축이다 — 이쪽은 "가용 병상 수 값 자체가 아직 유효한가"를 본다. 순위
     (finalScore)에는 관여하지 않는다. authority는 지금 시점, rArrive는
-    도착 시점(거리/평균속도로 추정한 horizonSec 뒤)의 유효 확률.
+    도착 시점(horizonSec 뒤)의 유효 확률. horizonSec는 순위에 쓴 이동 시간
+    (HospitalMatch.travelMin — 카카오 ETA, 없으면 보정 추정치)과 같다(2026-09-28).
     """
 
     authority: float
@@ -225,6 +264,47 @@ class BedReliabilityMatch(BaseModel):
     ttlSec: float
     modelTag: str
     source: Literal["ai"] = "ai"
+    # ── 실시간 감쇠 파라미터 (2026-09-28 추가) ──
+    # dashboard가 다음 브로드캐스트를 기다리지 않고 authority를 초 단위로 직접
+    # 감쇠시켜 그릴 수 있게, 곡선의 파라미터 자체를 같이 보낸다:
+    #   S(age) = 1 − Φ((ln age − ln predictedSurvivalSec) / sigma)
+    predictedSurvivalSec: Optional[float] = None
+    bornAt: Optional[str] = None
+    sigma: float = 1.0
+    # 병원 대시보드가 "현재 정보 확인"을 누른 이력이 현재 claim에 유효하면,
+    # 그 확인 시점의 claim 나이(초). 있으면 확률이 조건부 생존 S(a)/S(u)로
+    # 계산된 것이고, dashboard의 로컬 감쇠도 같은 식을 써야 한다(2026-09-29).
+    confirmedAgeSec: Optional[float] = None
+
+
+class SevereFreshness(BaseModel):
+    """매칭된 질환군의 중증질환 수용가능 신고가 얼마나 신선한지 — hub가 매칭
+    시점에 계산해 내보내는 설명용 필드(2026-09-28 신설, 규칙 기반).
+
+    ReliabilityInfo(같은 신고를 심평원 대조로 "믿을 만한가" 판정)와 상보적이다
+    — 이쪽은 "그 신고가 언제 적 것인가"를 본다. ruleRemainingSec은 실측된
+    통상 만료 규칙(신고 후 약 9시간, Phase 0 실측 60.1%가 9.0h)에 따른 잔여
+    초로, 0이면서 여전히 신고가 떠 있으면 병원이 갱신을 지속 중이라는 뜻이지
+    신고가 죽었다는 뜻이 아니다. 순위(finalScore)에는 관여하지 않는다.
+    """
+
+    group: str
+    value: Literal["Y", "불가능"]
+    ageSec: float
+    ageIsMin: bool = False
+    ruleRemainingSec: float
+    source: Literal["rule"] = "rule"
+
+
+# 순위를 맨 뒤쪽으로 내린 이유(2026-09-28 신설). 후보에서 빼지는 않는다 — 뺑뺑이 방지 원칙.
+# declared_no: 관련 중증질환군을 병원이 "수용 불가"로 신고 / beds_full: 병상 0이 확인된 만실
+# (미상·오래된 값은 해당 안 됨) / rejected: 이 사건에 대해 병원이 명시적으로 거절.
+# 병원이 이 사건에 승인(approved)·확정(confirmed) 응답을 했으면 신고·병상 값보다 그 응답이
+# 우선이라 declared_no·beds_full로 내리지 않는다.
+DemoteReason = Literal["declared_no", "beds_full", "rejected"]
+# 순위 계산에 쓴 이동 시간의 출처. eta: 카카오 도로 기준 소요시간 / estimate: 직선거리 ×
+# (같은 사건에서 ETA가 있는 병원들로 보정한 분/km, 없으면 기본값)으로 추정.
+TravelBasis = Literal["eta", "estimate"]
 
 
 class HospitalMatch(BaseModel):
@@ -239,12 +319,38 @@ class HospitalMatch(BaseModel):
     # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
     bedCountUnknown: bool = False
     status: HospitalStatus = "pending"
+    # 도로 기준 도착 예상 시간(분, 올림). 카카오모빌리티 다중 목적지 길찾기로 채운다(routing.py,
+    # 2026-09-24). 키 없음·조회 실패·반경 10km 밖이면 None. 표시용 원값이고, 순위에는 아래
+    # travelMin(ETA가 있으면 같은 값의 올림 전 분)이 들어간다.
     etaMin: Optional[int] = None
     reliability: Optional[ReliabilityInfo] = None
     bedReliability: Optional[BedReliabilityMatch] = None
+    severeFreshness: Optional[SevereFreshness] = None
+    # 수술실·입원실·소아 등 확장 필드의 신뢰도 환산값 (키 = E-Gen 필드명).
+    # bedReliability(응급실 일반)와 같은 계산·같은 설명용 원칙.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
+    # ── 순위 설명 필드 (2026-09-28 신설, 모두 source: "rule") ──
+    # 정렬에 쓴 가중합 점수(scoring.final_score). 승인 액션 뒤 재정렬에도 이 값을 쓴다.
+    finalScore: Optional[float] = None
+    # 순위 계산에 쓴 이동 시간(분)과 그 출처. etaMin은 표시용 올림값, 이건 계산용 원값이다.
+    travelMin: Optional[float] = None
+    travelBasis: Optional[TravelBasis] = None
+    # 순위를 뒤로 내린 이유. 비어 있으면 finalScore 순서 그대로다.
+    demoteReasons: list[DemoteReason] = Field(default_factory=list)
+    # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
+    # "확인된 만실"로 보지 않는다(beds_full로 안 내림). bedCountUnknown과는 별개 축이다.
+    bedDataStale: bool = False
+    # 전문성·등급 가산(2026-10-01, scoring.expertise_bonus_min). 이동시간에서 뺀 분과 그 이유.
+    emergencyLevel: Optional[str] = None
+    travelBonusMin: float = 0.0
+    bonusReasons: list[str] = Field(default_factory=list)
 
 
 class HubMatchResult(BaseModel):
+    # 메시지 종류 구분자(2026-09-28 신설). dashboard로 나가는 메시지 중 이것만 type이 없어서
+    # dashboard가 `"type" in parsed`로 구분하고 있었다. 기존 판별(identity_info인지 먼저 확인)과
+    # 충돌하지 않는다.
+    type: Literal["match_result"] = "match_result"
     # 여러 사건(구급차)이 동시에 진행될 수 있어, dashboard가 이 결과를 어느
     # 사건 것인지 구분해 자기 화면에 맞는 것만 골라 쓸 수 있게 한다.
     caseId: str
@@ -262,6 +368,13 @@ class HubMatchResult(BaseModel):
     # 구급차의 사건"을 다시 골라내려면 이 값이 필요하다. ambulanceName과 같은 조회
     # (register_case로 기억해둔 값)라 못 찾으면 None.
     apid: Optional[str] = None
+    # 매칭에 쓴 구급차 좌표(2026-09-24 신설). 대시보드 지도가 구급차를 임시 위치가 아니라
+    # 실제 위치에 그리고, 도로 경로(GET /route)의 출발점과 맞추는 데 쓴다. 구급차 레지스트리에
+    # 없으면 hub의 기본 좌표(FALLBACK_AMBULANCE_GPS)가 들어간다.
+    ambulanceGps: Optional[GpsPoint] = None
+    # ambulanceGps가 실제 구급차 위치가 아니라 기본 좌표(서울시청)로 대체된 값인지(2026-09-28
+    # 신설). True면 거리·존·순위가 전부 엉뚱한 기준일 수 있다 — 예전엔 콘솔 로그에만 남았다.
+    ambulanceGpsFallback: bool = False
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
@@ -341,6 +454,40 @@ class DashboardIdentify(BaseModel):
     id: str
 
 
+# ── feature/dashboard(병원) → feature/hub (입력, 현재 정보 확인) ─────────────
+# 병원 대시보드의 "현재 정보가 맞습니다" 버튼(2026-09-29). E-Gen 자기 신고
+# 밖에서 처음 생기는 유효 확인 관측으로, hub가 그 병원 병상 신뢰도를 조건부
+# 생존(S(a)/S(u))으로 되올리는 데 쓴다 — 값이 그대로여도 "방금 사람이 확인한
+# 정확한 값"임을 시스템이 알게 되는 유일한 경로다. 확인 이력은 의사결정
+# 로그에도 남아, 나중에 infosurv의 유효 확인(G1+) 라벨 재료가 된다.
+
+class HospitalInfoConfirm(BaseModel):
+    type: Literal["info_confirm"] = "info_confirm"
+    hospitalId: str
+    timestamp: str
+
+
+# ── feature/hub → feature/dashboard(병원) (출력, 자기 정보 현황) ─────────────
+# 병원 대시보드에 보내는 "귀원 정보 현황"(2026-09-29). identify 직후,
+# feature/info의 30분 주기 upsert 직후, 정보 확인 직후에 그 병원 소켓으로만
+# 보낸다. 데이터 공급자(병원)가 자기 정보의 신선도를 직접 보게 하는 피드백
+# 루프다 — E-Gen 포털엔 이런 피드백이 없어서 수년 묵은 값이 방치된다
+# (실측: 전국 가용병상 1위가 2,457일 묵은 값). bedReliability는 horizon 0
+# (자기 화면엔 이송 개념이 없으므로 rArrive==authority)으로 환산한 값이고,
+# 곡선 파라미터가 실려 있어 화면이 감쇠를 직접 그린다.
+
+class HospitalSelfInfo(BaseModel):
+    type: Literal["hospital_self_info"] = "hospital_self_info"
+    hospitalId: str
+    name: str
+    availableBedCount: int
+    bedCountUnknown: bool
+    updatedAt: str
+    bedReliability: Optional[BedReliabilityMatch] = None
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
+    severeDeclarations: Optional[SevereDeclarations] = None
+
+
 # ── feature/hub → feature/dashboard (출력, 자기소개에 대한 즉시 응답) ───────
 # DashboardIdentify에 대한 응답. _send_catchup()(사건 기반)과는 별개로, hub가
 # 이미 인메모리로 갖고 있는 병원/구급차 레지스트리(update_hospital_info()/
@@ -354,3 +501,21 @@ class DashboardIdentityInfo(BaseModel):
     id: str
     name: Optional[str] = None
     known: bool
+    # 출동 시뮬레이션이 켜져 있는지(2026-10-01). 구급차 화면이 [이동]·[현장 종료] 버튼을 띄울지 정한다.
+    simDispatch: bool = False
+
+
+class DispatchRequest(BaseModel):
+    """dashboard → hub: 구급차 대시보드 [이동] (출동 시뮬레이션, 2026-10-01). caseId는 이때 만든다."""
+    type: Literal["dispatch"] = "dispatch"
+    apid: str
+    caseId: str
+    timestamp: str
+
+
+class SceneEnd(BaseModel):
+    """dashboard → hub: [현장 종료] — 이송 확정 없이 현장에서 끝내고 기지로 복귀."""
+    type: Literal["scene_end"] = "scene_end"
+    apid: str
+    caseId: str
+    timestamp: str

@@ -83,6 +83,7 @@ declare global {
     class CustomOverlay {
       constructor(options: CustomOverlayOptions);
       setMap(map: Map | null): void;
+      setPosition(position: LatLng): void;
     }
 
     function load(callback: () => void): void;

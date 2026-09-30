@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { css } from "styled-system/css";
 import { AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
@@ -9,6 +9,7 @@ import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEdit
 import { CallDemoPanel } from "@/components/ambulance/CallDemoPanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
+import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import type { CallSignalType } from "@/types/dashboard";
 
@@ -42,17 +43,20 @@ function saveCaseId(apid: string | null, caseId: string) {
 
 function alertNotSent() {
   window.alert(
-    "hub와 연결이 끊겨 통화 신호를 보내지 못했습니다. 상단에 '실시간 연동'이 다시 뜨면 한 번 더 눌러주세요.",
+    "hub와 연결이 끊겨 신호를 보내지 못했습니다. 상단에 '실시간 연동'이 다시 뜨면 한 번 더 눌러주세요.",
   );
 }
 
 function AmbulanceDashboardContent() {
   const searchParams = useSearchParams();
   const apid = searchParams.get("id");
-  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk } = useDashboardSocket(
+  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand } = useDashboardSocket(
     apid ? { role: "ambulance", id: apid } : null,
   );
-  const [localConfirmedId, setConfirmedHospitalId] = useState<string | null>(null);
+  // 이송 승인을 눌렀지만 hub 응답(confirmed)을 아직 못 받은 병원. 화면의 "확정"은 hub 기준으로만
+  // 띄운다(2026-10-01) — 예전엔 누르는 즉시 로컬에서 확정으로 바꿔서, hub가 거부해도(병원 미승인 등)
+  // 화면엔 확정으로 남았다. mock 모드는 hub가 없으니 누른 값을 그대로 확정으로 본다.
+  const [pendingConfirm, setPendingConfirm] = useState<{ hospitalId: string; result: unknown } | null>(null);
   // 통화 시작 때 만든 caseId는 탭 세션에 저장해 둔다 — 예전엔 메모리에만 있어서 새로고침
   // 한 번에 사라졌고, 그러면 hub가 결과를 다시 보내줘도 화면에 못 띄웠다(2026-09-24).
   const [myCaseId, setMyCaseIdState] = useState<string | null>(() => loadCaseId(apid));
@@ -70,20 +74,54 @@ function AmbulanceDashboardContent() {
     ? state.matchResults[myCaseId] ?? null
     : ownResults[ownResults.length - 1] ?? null;
   const activeCaseId = myResult?.caseId ?? myCaseId;
-  // 새로고침으로 로컬 선택이 사라져도 hub가 확정(confirmed)으로 기록한 병원은 복원한다.
-  const confirmedHospitalId =
-    localConfirmedId ?? myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
+  const hubConfirmedId = myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
+  // 요청 중 표시는 누른 순간의 결과가 그대로일 때만 유효하다 — hub가 새 결과를 보내면(확정
+  // 반영이든 거부로 그대로든) 자연히 풀린다. 거부되면 hub가 재전송하지 않을 수 있어 5초 뒤에도 푼다.
+  const pendingConfirmId =
+    pendingConfirm && (connectionMode === "mock" || pendingConfirm.result === myResult)
+      ? pendingConfirm.hospitalId
+      : null;
+  const confirmedHospitalId = connectionMode === "mock" ? pendingConfirmId ?? hubConfirmedId : hubConfirmedId;
+  useEffect(() => {
+    if (!pendingConfirm || connectionMode === "mock") return;
+    const timer = setTimeout(() => setPendingConfirm(null), 5000);
+    return () => clearTimeout(timer);
+  }, [pendingConfirm, connectionMode]);
+
+  // 출동 시뮬레이션(hub --sim-dispatch, 2026-10-01). 켜져 있으면 caseId는 [이동] 때 만들고,
+  // 통화 시작은 현장 도착 뒤 그 사건으로만 한다(hub도 같은 규칙으로 거부한다).
+  const simOn = state.identity.simDispatch === true;
+  const mySim = apid ? state.ambulanceSim[apid] ?? null : null;
+  const [callActive, setCallActive] = useState(false);
+  const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === myCaseId;
+  const startBlockedReason = simOn && !onSceneForMyCase ? "현장 도착 후 통화할 수 있습니다" : null;
+
+  function handleDispatch() {
+    if (!apid) return;
+    const caseId = crypto.randomUUID();
+    setMyCaseId(caseId);
+    setPendingConfirm(null);
+    if (!sendSimCommand("dispatch", apid, caseId)) alertNotSent();
+  }
+
+  function handleSceneEnd() {
+    if (!apid || !activeCaseId) return;
+    if (!sendSimCommand("scene_end", apid, activeCaseId)) alertNotSent();
+  }
 
   function handleCallSignal(signal: CallSignalType) {
     if (!apid) return;
-    if (signal === "call_started") {
+    setCallActive(signal === "call_started");
+    if (signal === "call_started" && simOn) {
+      if (myCaseId && !sendCallSignal(signal, apid, myCaseId)) alertNotSent();
+    } else if (signal === "call_started") {
       // mock 모드에선 고정 caseId를 써야 mock-data.ts의 mockHubMatchResult
       // (caseId: "case-mock-demo")와 실제로 매칭된다 — crypto.randomUUID()로
       // 만들면 mock 데이터의 고정 ID와 절대 일치하지 않아 "통화 시작"을 눌러도
       // 영원히 수신 대기 중으로 남는다(2026-08-11 실제로 재현됨).
       const caseId = connectionMode === "mock" ? "case-mock-demo" : crypto.randomUUID();
       setMyCaseId(caseId);
-      setConfirmedHospitalId(null);
+      setPendingConfirm(null);
       if (!sendCallSignal(signal, apid, caseId)) alertNotSent();
     } else if (activeCaseId) {
       if (!sendCallSignal(signal, apid, activeCaseId)) alertNotSent();
@@ -92,7 +130,7 @@ function AmbulanceDashboardContent() {
 
   function handleApprove(hospitalId: string) {
     if (!activeCaseId) return;
-    setConfirmedHospitalId(hospitalId);
+    setPendingConfirm({ hospitalId, result: myResult });
     sendAction({
       caseId: activeCaseId,
       action: "final_approval",
@@ -162,14 +200,29 @@ function AmbulanceDashboardContent() {
           <div className={css({ flex: "0 0 auto" })}>
             <CallSummaryEditablePanel data={myResult} />
           </div>
+          {simOn && (
+            <DispatchControlPanel
+              sim={mySim}
+              confirmed={confirmedHospitalId != null}
+              callActive={callActive}
+              onDispatch={handleDispatch}
+              onSceneEnd={handleSceneEnd}
+            />
+          )}
           <div className={css({ flex: "1", minHeight: "0" })}>
-            <CallDemoPanel onCallSignal={handleCallSignal} onAudioChunk={sendAudioChunk} />
+            <CallDemoPanel
+              onCallSignal={handleCallSignal}
+              onAudioChunk={sendAudioChunk}
+              startBlockedReason={startBlockedReason}
+            />
           </div>
         </div>
 
         <HospitalCandidateListPanel
           data={myResult}
           confirmedHospitalId={confirmedHospitalId}
+          pendingHospitalId={pendingConfirmId}
+          scene={activeCaseId ? state.sceneCandidates[activeCaseId] ?? null : null}
           onApprove={handleApprove}
         />
 
@@ -178,7 +231,12 @@ function AmbulanceDashboardContent() {
             gridColumn: { base: "1", md: "1 / span 2", lg: "3" },
           })}
         >
-          <CandidateMapPanel data={myResult} confirmedHospitalId={confirmedHospitalId} />
+          <CandidateMapPanel
+            data={myResult}
+            confirmedHospitalId={confirmedHospitalId}
+            sim={simOn ? mySim : null}
+            scene={activeCaseId ? state.sceneCandidates[activeCaseId] ?? null : null}
+          />
         </div>
       </main>
 

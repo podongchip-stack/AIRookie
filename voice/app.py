@@ -1,8 +1,10 @@
 """feature/hub가 중계하는 통화 시작/종료 신호를 받아 로컬 마이크를 제어하는
-HTTP 레이어. 녹음(mic_recorder.py)과 STT+필터링+SBAR 구조화(transcribe.py)는
-손대지 않고 그대로 재사용한다 — call_capture.py의 "녹음만 하다가 종료 시
-배치 파이프라인 실행" 흐름을, Ctrl+C 대신 HTTP 요청으로 트리거하도록 감싼
-것뿐이다.
+HTTP 레이어. call_capture.py와 같은 흐름(통화 중 발화 단위 인식 -> 종료 시
+구조화·전송)을 Ctrl+C 대신 HTTP 요청으로 트리거하도록 감싼 것이다.
+
+두 모델(ASR·HMM)은 서버가 뜰 때 한 번만 올려두고 통화마다 재사용한다. 통화 중에는
+live_transcriber.py가 말이 끊길 때마다 그 발화를 바로 인식해 두므로, 종료 신호 뒤에는
+마지막 발화 인식과 구조화(1초 미만)만 남는다.
 
 여러 구급차가 동시에 사건을 진행할 수 있다. 이 프로세스 자체는 구급차 1대
 전용(실제 마이크가 그 구급차 장비 하나뿐이라 통화도 한 번에 하나만 가능)
@@ -21,23 +23,21 @@ import socket
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 from flask import Flask, jsonify, request
 
+from asr import AsrModel
+from hmm import HmmExtractor
+from live_transcriber import LiveTranscriber
 from mic_recorder import MicRecorder
-from transcribe import ORIGIN_DATA_DIR, transcribe
+from transcribe import ORIGIN_DATA_DIR, emit_call_summary, load_models
 
 app = Flask(__name__)
 
 # call_capture.py의 CLI 기본값과 동일 — 필요하면 환경변수로 덮어쓴다.
-STT_MODEL = os.environ.get("VOICE_STT_MODEL", "medium")
-LANGUAGE = os.environ.get("VOICE_LANGUAGE", "ko")
 DEVICE = os.environ.get("VOICE_DEVICE", "auto")
-COMPUTE_TYPE = os.environ.get("VOICE_COMPUTE_TYPE", "auto")
-LLM_MODEL = os.environ.get("VOICE_LLM_MODEL", "qwen3:14b")
 
 # 이 voice 인스턴스가 담당하는 구급차. hub의 ambulances 레지스트리(apid)와
 # 맞아야 하고, 없으면 자가등록을 아예 시도하지 않는다(단독 CLI 테스트 등).
@@ -55,7 +55,12 @@ VOICE_REGISTER_RETRY_SEC = int(os.environ.get("VOICE_REGISTER_RETRY_SEC", 5))
 # info(5002)와 포트가 겹쳐 같은 장비에서 동시에 못 띄우므로 환경변수로 뺐다.
 VOICE_PORT = int(os.environ.get("VOICE_PORT", 6000))
 
+# 서버 시작 시 __main__에서 한 번 채운다
+_asr_model: AsrModel | None = None
+_extractor: HmmExtractor | None = None
+
 _recorder: MicRecorder | None = None
+_live: LiveTranscriber | None = None
 _session: str | None = None
 _case_id: str | None = None
 _lock = threading.Lock()
@@ -100,28 +105,20 @@ def _register_with_hub() -> None:
             time.sleep(VOICE_REGISTER_RETRY_SEC)
 
 
-def _run_pipeline(audio_path: Path, case_id: str | None) -> None:
-    """STT+필터링+SBAR 구조화+hub 전송을 백그라운드 스레드에서 실행한다.
-    수십 초 걸릴 수 있어 /call/end 응답을 막지 않으려고 스레드로 뺐다 —
-    완료되면 transcribe() 내부의 send_to_hub()가 알아서 hub로 결과를 보낸다.
+def _run_pipeline(live: LiveTranscriber, duration_sec: float, session: str, case_id: str | None) -> None:
+    """남은 발화 인식 + 구조화 + hub 전송을 백그라운드 스레드에서 실행한다.
+    통화 중 인식이 밀려 있으면 몇 초 걸릴 수 있어 /call/end 응답을 막지 않으려고
+    스레드로 뺐다 — 완료되면 emit_call_summary() 안의 send_to_hub()가 hub로 보낸다.
     """
-    transcribe(
-        audio_path=audio_path,
-        model_size=STT_MODEL,
-        language=LANGUAGE,
-        device=DEVICE,
-        compute_type=COMPUTE_TYPE,
-        do_summarize=True,
-        llm_model=LLM_MODEL,
-        case_id=case_id,
-    )
+    segments = live.finish()
+    emit_call_summary(segments, duration_sec, session, _extractor, case_id)
 
 
 @app.post("/call/start")
 def call_start():
     """hub가 중계한 "통화 시작" 신호. 로컬 마이크 녹음을 시작하고, 같이 온
     caseId를 세션에 기억해뒀다가 통화 종료 후 요약에 그대로 실어 보낸다."""
-    global _recorder, _session, _case_id
+    global _recorder, _live, _session, _case_id
     payload = request.get_json(silent=True) or {}
     case_id = payload.get("caseId")
 
@@ -135,8 +132,11 @@ def call_start():
             recorder.start()
         except RuntimeError as e:
             return jsonify({"error": str(e)}), 500
+        live = LiveTranscriber(recorder, _asr_model)
+        live.start()
 
         _recorder = recorder
+        _live = live
         _session = session
         _case_id = case_id
 
@@ -146,27 +146,29 @@ def call_start():
 
 @app.post("/call/end")
 def call_end():
-    """hub가 중계한 "통화 종료" 신호. 녹음을 멈추고 배치 파이프라인을
-    백그라운드로 실행한다 (call_capture.py와 동일한 순서: 저장 -> stop ->
-    STT+구조화)."""
-    global _recorder, _session, _case_id
+    """hub가 중계한 "통화 종료" 신호. 녹음을 멈추고 남은 처리를 백그라운드로
+    실행한다 (call_capture.py와 동일한 순서: 저장 -> stop -> 남은 발화 인식+구조화).
+    녹음 파일은 인식에 쓰지 않지만 사후 검증(원본 보존)용으로 남긴다."""
+    global _recorder, _live, _session, _case_id
     with _lock:
         if _recorder is None:
             return jsonify({"error": "not recording"}), 400
 
         recorder = _recorder
+        live = _live
         session = _session
         case_id = _case_id
         _recorder = None
+        _live = None
         _session = None
         _case_id = None
 
-    audio_path = ORIGIN_DATA_DIR / f"{session}.wav"
-    recorder.save_wav(audio_path)
+    recorder.save_wav(ORIGIN_DATA_DIR / f"{session}.wav")
     recorder.stop()
-    print(f"[통화 종료] 녹음 저장 완료 (session={session}) — 파이프라인 실행 시작")
+    duration_sec = len(recorder.snapshot()) / recorder.sample_rate
+    print(f"[통화 종료] 녹음 저장 완료 (session={session}, {duration_sec:.1f}초) — 남은 발화 인식·구조화 시작")
 
-    threading.Thread(target=_run_pipeline, args=(audio_path, case_id), daemon=True).start()
+    threading.Thread(target=_run_pipeline, args=(live, duration_sec, session, case_id), daemon=True).start()
 
     return jsonify({"status": "processing_started", "session": session}), 200
 
@@ -175,4 +177,6 @@ if __name__ == "__main__":
     # hub가 살아있든 아니든 서버는 바로 뜨게, 자가등록은 별도 스레드에서
     # 재시도하며 진행한다 (hub/info가 이 voice보다 늦게 뜨는 순서도 흔할 것).
     threading.Thread(target=_register_with_hub, daemon=True).start()
-    app.run(host="0.0.0.0", port=VOICE_PORT, debug=True, threaded=True)
+    _asr_model, _extractor = load_models(DEVICE)
+    # 디버그 리로더는 프로세스를 하나 더 띄워 두 모델(수 GB)을 한 번 더 올리므로 끈다
+    app.run(host="0.0.0.0", port=VOICE_PORT, debug=True, threaded=True, use_reloader=False)

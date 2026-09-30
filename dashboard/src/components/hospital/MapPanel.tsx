@@ -7,7 +7,7 @@ import { Tag } from "@/components/hospital/Tag";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { createColoredMarkerImage, createLabelOverlay } from "@/lib/kakao-map-markers";
 import { fetchRoadPath } from "@/lib/route";
-import type { HospitalCandidate, HospitalStatus } from "@/types/dashboard";
+import type { AmbulanceSimState, HospitalCandidate, HospitalStatus } from "@/types/dashboard";
 
 const STATUS_LABEL: Record<HospitalStatus, string> = {
   pending: "판단 대기",
@@ -36,10 +36,14 @@ export function MapPanel({
   hospital,
   caseId,
   ambulanceGps,
+  sim = null,
 }: {
   hospital: HospitalCandidate | null;
   caseId: string | null;
   ambulanceGps: { lat: number; lng: number } | null;
+  // 이 병원으로 이송 중인 구급차의 출동 시뮬레이션 상태(2026-10-01). 있으면 구급차 마커는 1초마다
+  // 따로 옮기고, 경로는 hub가 보낸 시뮬레이션 경로를 그린다.
+  sim?: AmbulanceSimState | null;
 }) {
   const confirmed = hospital?.status === "confirmed";
   const { ready, error } = useKakaoMapScript();
@@ -99,17 +103,32 @@ export function MapPanel({
     hospitalLabelRef.current.setMap(map);
 
     ambulanceMarkerRef.current?.setMap(null);
+    ambulanceLabelRef.current?.setMap(null);
+    polylineRef.current?.setMap(null);
+    if (sim?.path && sim.path.length > 1) {
+      // 출동 시뮬레이션: 구급차 마커는 아래 effect가 1초마다 옮긴다.
+      ambulanceMarkerRef.current = null;
+      ambulanceLabelRef.current = null;
+      const simPath = sim.path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng));
+      polylineRef.current = new kakao.maps.Polyline({
+        path: simPath, strokeWeight: 4, strokeColor: "#1E5FA8", strokeOpacity: 0.9, strokeStyle: "solid",
+      });
+      polylineRef.current.setMap(map);
+      const simBounds = new kakao.maps.LatLngBounds();
+      simPath.forEach((point) => simBounds.extend(point));
+      simBounds.extend(hospitalPos);
+      map.setBounds(simBounds);
+      return;
+    }
     ambulanceMarkerRef.current = new kakao.maps.Marker({
       position: ambulancePos,
       map,
       title: ambulanceGps ? "구급차 현재 위치" : "구급차 현재 위치(임시 표시)",
       image: createColoredMarkerImage("#1E5FA8"),
     });
-    ambulanceLabelRef.current?.setMap(null);
     ambulanceLabelRef.current = createLabelOverlay(ambulancePos, "구급차 현재 위치");
     ambulanceLabelRef.current.setMap(map);
 
-    polylineRef.current?.setMap(null);
     polylineRef.current = new kakao.maps.Polyline({
       path: [ambulancePos, hospitalPos],
       strokeWeight: 3,
@@ -150,7 +169,36 @@ export function MapPanel({
     };
     // ambulanceGps는 매 렌더 새 객체일 수 있어 참조 대신 좌표 값으로 변경을 감지한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, hospital, confirmed, caseId, ambulanceGps?.lat, ambulanceGps?.lng]);
+  }, [ready, hospital, confirmed, caseId, ambulanceGps?.lat, ambulanceGps?.lng, sim?.phase, sim?.path?.length]);
+
+  // 출동 시뮬레이션: 1초마다 구급차 마커만 옮긴다.
+  const simMarkerRef = useRef<kakao.maps.Marker | null>(null);
+  const simLabelRef = useRef<kakao.maps.CustomOverlay | null>(null);
+  useEffect(() => {
+    if (!ready || !mapRef.current || !sim?.gps) {
+      simMarkerRef.current?.setMap(null);
+      simLabelRef.current?.setMap(null);
+      simMarkerRef.current = null;
+      simLabelRef.current = null;
+      return;
+    }
+    const pos = new window.kakao.maps.LatLng(sim.gps.lat, sim.gps.lng);
+    if (!simMarkerRef.current) {
+      simMarkerRef.current = new window.kakao.maps.Marker({
+        position: pos, map: mapRef.current, title: "구급차 (시뮬레이션 위치)",
+        image: createColoredMarkerImage("#1E5FA8"), zIndex: 30,
+      });
+      simLabelRef.current = createLabelOverlay(pos, "구급차 (시뮬레이션)");
+      simLabelRef.current.setMap(mapRef.current);
+    } else {
+      simMarkerRef.current.setPosition(pos);
+      simLabelRef.current?.setPosition(pos);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, sim?.gps?.lat, sim?.gps?.lng]);
+
+  const etaMin =
+    sim?.phase === "transporting" && sim.etaSec != null ? Math.max(1, Math.ceil(sim.etaSec / 60)) : hospital?.etaMin ?? null;
 
   return (
     <Panel
@@ -229,7 +277,7 @@ export function MapPanel({
                 color: confirmed ? "#0A7351" : "ink",
               })}
             >
-              {hospital?.etaMin != null ? `${hospital.etaMin}분` : "-"}
+              {etaMin != null ? `${etaMin}분` : "-"}
             </div>
             <div className={css({ fontSize: "xs", color: "ink", marginTop: "0.5" })}>
               실시간 교통 반영
