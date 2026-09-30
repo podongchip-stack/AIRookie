@@ -282,7 +282,7 @@ def _demote_reasons(
 def _sort_matches(matches: list[HospitalMatch]) -> list[HospitalMatch]:
     return sorted(
         matches,
-        key=lambda m: rank_key(m.finalScore or 0.0, m.distanceKm, m.hospitalId, m.demoteReasons),
+        key=lambda m: rank_key(m.finalScore or 0.0, m.distanceKm, m.hospitalId, m.demoteReasons, m.status),
     )
 
 

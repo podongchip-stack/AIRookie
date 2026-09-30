@@ -74,27 +74,11 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
   confirmed: "이송 확정",
 };
 
-// 정렬 기준(2026-08-13 변경): 1차 병상 유무 → 2차 승인 여부 → 3차 적합도.
-// 거절해도 목록에서 없애지 않는다 — 병원이 "불가"였다가 병상이 나서 다시
-// 받아주는 경우가 있어서, 매번 이 우선순위로 다시 정렬해두면 승인으로
-// 바뀌는 순간 자동으로 위로 올라온다(2026-08-11 논의, 순위 기준만 바뀌고
-// 이 원칙은 그대로 유지).
-const STATUS_PRIORITY: Record<HospitalStatus, number> = {
-  confirmed: 0,
-  approved: 1,
-  pending: 2,
-  rejected: 3,
-};
-
-// 1차 기준(병상 유무)의 두 그룹. "미상"은 "확인된 만실"과 같은 그룹으로 묶지
-// 않는다 — 미상은 실제로 자리가 있을 수도 있는데, 만실과 같이 맨 뒤로 밀어
-// 버리면 구급대원이 그 병원을 스스로 후보에서 빼게 되어 뺑뺑이 방지 목적과
-// 어긋난다(CLAUDE.md 원칙). 그래서 "병상 있음"과 "미상"을 같은 상위 그룹으로,
-// "확인된 만실(0석)"만 하위 그룹으로 나눈다.
-function bedAvailabilityPriority(hospital: { availableBedCount: number; bedCountUnknown: boolean }): number {
-  const confirmedEmpty = !hospital.bedCountUnknown && hospital.availableBedCount <= 0;
-  return confirmedEmpty ? 1 : 0;
-}
+// 순서는 hub가 보낸 hospitals[] 순서를 그대로 쓴다(2026-10-01). 예전엔 여기서 병상 유무 →
+// 승인 여부 → 진료과 점수 → 직선거리로 다시 정렬해서, hub가 정한 순위(카카오 ETA 기반
+// 이동시간 점수·수용 불가 신고 내림·오래된 병상 값 예외)가 화면에 전혀 반영되지 않았다.
+// "확정·승인 병원을 위로, 거절 병원은 맨 뒤" 규칙도 이제 hub의 scoring.rank_key()에 있다.
+// 거절해도 목록에서 없애지 않는 원칙은 그대로다.
 
 const deptChipStyle = css({
   display: "inline-flex",
@@ -290,10 +274,14 @@ const severeFreshnessChipStyle = css({
 export function HospitalCandidateListPanel({
   data,
   confirmedHospitalId,
+  pendingHospitalId,
   onApprove,
 }: {
   data: HubMatchResult | null;
+  // hub가 confirmed로 돌려준 병원. 버튼을 누른 즉시가 아니라 hub 응답 기준이다(2026-10-01).
   confirmedHospitalId: string | null;
+  // 이송 승인을 눌렀지만 hub 응답을 아직 못 받은 병원 — "확정 요청 중"으로 보여준다.
+  pendingHospitalId: string | null;
   onApprove: (hospitalId: string) => void;
 }) {
   // 병상 신뢰도의 실시간 감쇠용 시계. hub가 곡선 파라미터(predT·bornAt·sigma)를
@@ -313,37 +301,11 @@ export function HospitalCandidateListPanel({
     );
   }
 
-  // displayStatus까지 미리 계산해서 정렬 키로 쓴다 — 렌더링 때 또 계산하지 않고
-  // 그대로 재사용한다.
-  const sortedHospitals = data.hospitals
-    .map((hospital) => {
-      const confirmed = hospital.hospitalId === confirmedHospitalId;
-      // "이송 확정"은 실제로 이 구급차 세션에서 승인 버튼을 눌렀을 때만 보여준다.
-      // 데이터상 이미 confirmed여도, 로컬에서 아직 안 눌렀으면 "후보 등록"으로 표시한다.
-      const displayStatus: HospitalStatus = confirmed
-        ? "confirmed"
-        : hospital.status === "confirmed"
-          ? "approved"
-          : hospital.status;
-      return { hospital, confirmed, displayStatus };
-    })
-    .sort((a, b) => {
-      // 1차: 병상 유무 (있음/미상 vs 확인된 만실)
-      const bedDiff = bedAvailabilityPriority(a.hospital) - bedAvailabilityPriority(b.hospital);
-      if (bedDiff !== 0) return bedDiff;
-
-      // 2차: 승인 여부 (기존 기준 그대로 — 확정 > 승인 > 대기 > 거절)
-      const statusDiff = STATUS_PRIORITY[a.displayStatus] - STATUS_PRIORITY[b.displayStatus];
-      if (statusDiff !== 0) return statusDiff;
-
-      // 3차: 적합도 (specialtyMatch.score, 높을수록 우선)
-      const matchDiff = b.hospital.specialtyMatch.score - a.hospital.specialtyMatch.score;
-      if (matchDiff !== 0) return matchDiff;
-
-      // 여기까지 전부 같으면 거리로 최종 결정 — 동점일 때 순서가 매번
-      // 흔들리지 않도록 하는 안정적 타이브레이커일 뿐, 별도 기준은 아니다.
-      return a.hospital.distanceKm - b.hospital.distanceKm;
-    });
+  const hospitals = data.hospitals.map((hospital) => ({
+    hospital,
+    confirmed: hospital.hospitalId === confirmedHospitalId,
+    requesting: hospital.hospitalId === pendingHospitalId && hospital.hospitalId !== confirmedHospitalId,
+  }));
 
   return (
     <ListPanelShell subtitle={`Zone ${data.zoneActive.join(", ")} 내 후보`}>
@@ -364,7 +326,7 @@ export function HospitalCandidateListPanel({
           thinScrollbarStyle,
         )}
       >
-        {sortedHospitals.map(({ hospital, confirmed, displayStatus }) => {
+        {hospitals.map(({ hospital, confirmed, requesting }) => {
           const approvable = hospital.status === "approved" || hospital.status === "confirmed";
 
           return (
@@ -471,12 +433,12 @@ export function HospitalCandidateListPanel({
               </div>
 
               <div className={css({ display: "flex", alignItems: "center", gap: "2", flexShrink: "0" })}>
-                <span className={hospitalStatusBadge({ status: displayStatus })}>
-                  {STATUS_LABEL[displayStatus]}
+                <span className={hospitalStatusBadge({ status: hospital.status })}>
+                  {requesting ? "확정 요청 중" : STATUS_LABEL[hospital.status]}
                 </span>
                 <button
                   type="button"
-                  disabled={!approvable}
+                  disabled={!approvable || requesting}
                   onClick={() => onApprove(hospital.hospitalId)}
                   className={confirmed ? mintButtonStyle : primaryButtonStyle}
                 >

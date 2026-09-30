@@ -47,9 +47,13 @@ def rank_key(
     distance_km: float,
     hospital_id: str,
     demote_reasons: list[str] | tuple[str, ...] = (),
+    status: str = "pending",
 ) -> tuple:
     """정렬 키. 앞 칸일수록 우선한다.
 
+    0) 이 사건의 이송 확정(confirmed) 병원이 맨 앞, 그다음 병원이 승인(approved)한 병원
+       (2026-10-01 — 예전엔 dashboard가 자체 정렬로 올려 줬다. 순위를 hub 한 곳에서만 정하도록
+       옮겼다. 병원의 명시적 응답이 점수 추정보다 우선한다는 _demote_reasons()의 원칙과 같다)
     1) 이 사건에서 거절(rejected)한 병원은 맨 뒤
     2) 그 앞은 declared_no(수용 불가 신고)·beds_full(확인된 만실)로 내린 병원
     3) 나머지는 finalScore 내림차순, 같으면 가까운 순·ID 순(결정적 정렬)
@@ -61,7 +65,14 @@ def rank_key(
     내릴 것"(hospital_score README) — 정보 자체는 안 버린다.
     """
     reasons = set(demote_reasons)
-    bucket = 2 if "rejected" in reasons else (1 if reasons else 0)
+    if status == "confirmed":
+        bucket = 0
+    elif status == "approved":
+        bucket = 1
+    elif "rejected" in reasons:
+        bucket = 4
+    else:
+        bucket = 3 if reasons else 2
     return (bucket, -final, distance_km, hospital_id)
 
 
@@ -78,5 +89,7 @@ def rank(hospitals: list[dict]) -> list[dict]:
 
     return sorted(
         hospitals,
-        key=lambda h: rank_key(h["finalScore"], h["distanceKm"], h["hospitalId"], _reasons(h)),
+        key=lambda h: rank_key(
+            h["finalScore"], h["distanceKm"], h["hospitalId"], _reasons(h), h.get("status", "pending")
+        ),
     )

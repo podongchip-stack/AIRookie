@@ -839,10 +839,12 @@ def test_approval_order_and_reselection() -> None:
     engine.apply_approval_action(_action(case_id, "final_approval", "Q002"))
     assert status("Q001") == "approved" and beds("Q001") == 5, "재선택 시 이전 병원 확정 해제 + 병상 회수"
     assert status("Q002") == "confirmed" and beds("Q002") == 4
+    order = [h.hospitalId for h in engine.get_case_result(case_id).hospitals]
+    assert order[:2] == ["Q002", "Q001"], f"확정 병원이 맨 앞, 그다음 승인 병원이어야 한다: {order}"
     events = log_lines()[start:]
     assert sum('"approval_action_refused"' in e for e in events) == 2, "거부된 액션 2건은 사유와 함께 로그에 남아야 한다"
     assert sum('"approval_released"' in e for e in events) == 1, "재선택 해제는 의사결정 로그에 남아야 한다"
-    print("  [확인] 승인 전 이송 승인·주체 불일치 거부, 재선택 시 A 해제(병상 4→5)·B 확정(5→4)")
+    print("  [확인] 승인 전 이송 승인·주체 불일치 거부, 재선택 시 A 해제(병상 4→5)·B 확정(5→4), 순서 확정→승인")
 
 
 if __name__ == "__main__":

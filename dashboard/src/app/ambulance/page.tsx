@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { css } from "styled-system/css";
 import { AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
@@ -52,7 +52,10 @@ function AmbulanceDashboardContent() {
   const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk } = useDashboardSocket(
     apid ? { role: "ambulance", id: apid } : null,
   );
-  const [localConfirmedId, setConfirmedHospitalId] = useState<string | null>(null);
+  // 이송 승인을 눌렀지만 hub 응답(confirmed)을 아직 못 받은 병원. 화면의 "확정"은 hub 기준으로만
+  // 띄운다(2026-10-01) — 예전엔 누르는 즉시 로컬에서 확정으로 바꿔서, hub가 거부해도(병원 미승인 등)
+  // 화면엔 확정으로 남았다. mock 모드는 hub가 없으니 누른 값을 그대로 확정으로 본다.
+  const [pendingConfirm, setPendingConfirm] = useState<{ hospitalId: string; result: unknown } | null>(null);
   // 통화 시작 때 만든 caseId는 탭 세션에 저장해 둔다 — 예전엔 메모리에만 있어서 새로고침
   // 한 번에 사라졌고, 그러면 hub가 결과를 다시 보내줘도 화면에 못 띄웠다(2026-09-24).
   const [myCaseId, setMyCaseIdState] = useState<string | null>(() => loadCaseId(apid));
@@ -70,9 +73,19 @@ function AmbulanceDashboardContent() {
     ? state.matchResults[myCaseId] ?? null
     : ownResults[ownResults.length - 1] ?? null;
   const activeCaseId = myResult?.caseId ?? myCaseId;
-  // 새로고침으로 로컬 선택이 사라져도 hub가 확정(confirmed)으로 기록한 병원은 복원한다.
-  const confirmedHospitalId =
-    localConfirmedId ?? myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
+  const hubConfirmedId = myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
+  // 요청 중 표시는 누른 순간의 결과가 그대로일 때만 유효하다 — hub가 새 결과를 보내면(확정
+  // 반영이든 거부로 그대로든) 자연히 풀린다. 거부되면 hub가 재전송하지 않을 수 있어 5초 뒤에도 푼다.
+  const pendingConfirmId =
+    pendingConfirm && (connectionMode === "mock" || pendingConfirm.result === myResult)
+      ? pendingConfirm.hospitalId
+      : null;
+  const confirmedHospitalId = connectionMode === "mock" ? pendingConfirmId ?? hubConfirmedId : hubConfirmedId;
+  useEffect(() => {
+    if (!pendingConfirm || connectionMode === "mock") return;
+    const timer = setTimeout(() => setPendingConfirm(null), 5000);
+    return () => clearTimeout(timer);
+  }, [pendingConfirm, connectionMode]);
 
   function handleCallSignal(signal: CallSignalType) {
     if (!apid) return;
@@ -83,7 +96,7 @@ function AmbulanceDashboardContent() {
       // 영원히 수신 대기 중으로 남는다(2026-08-11 실제로 재현됨).
       const caseId = connectionMode === "mock" ? "case-mock-demo" : crypto.randomUUID();
       setMyCaseId(caseId);
-      setConfirmedHospitalId(null);
+      setPendingConfirm(null);
       if (!sendCallSignal(signal, apid, caseId)) alertNotSent();
     } else if (activeCaseId) {
       if (!sendCallSignal(signal, apid, activeCaseId)) alertNotSent();
@@ -92,7 +105,7 @@ function AmbulanceDashboardContent() {
 
   function handleApprove(hospitalId: string) {
     if (!activeCaseId) return;
-    setConfirmedHospitalId(hospitalId);
+    setPendingConfirm({ hospitalId, result: myResult });
     sendAction({
       caseId: activeCaseId,
       action: "final_approval",
@@ -170,6 +183,7 @@ function AmbulanceDashboardContent() {
         <HospitalCandidateListPanel
           data={myResult}
           confirmedHospitalId={confirmedHospitalId}
+          pendingHospitalId={pendingConfirmId}
           onApprove={handleApprove}
         />
 
