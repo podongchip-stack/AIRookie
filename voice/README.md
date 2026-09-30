@@ -1,4 +1,4 @@
-# feature/voice — 음성 STT(Qwen3-ASR) · 정보 구조화(HMM) 파이프라인
+# feature/voice — 음성 STT(Qwen3-ASR) · 정보 구조화(MF_BERT) 파이프라인
 
 > **폴더 구조 안내(모노레포)**: 이 저장소는 `feature/voice`·`feature/hub`·
 > `feature/info`·`feature/dashboard`가 하나의 저장소를 공유하며, 각 브랜치는
@@ -38,18 +38,18 @@ cd voice
 pip install -r requirements.txt
 ```
 
-**2. 가중치** — 두 모델 모두 저장소에 없고(용량) Hugging Face Hub 공개 저장소
-[`podongchip/goldenlink-voice-models`](https://huggingface.co/podongchip/goldenlink-voice-models)에 있다.
+**2. 가중치** — 두 모델 모두 저장소에 없고(용량) Hugging Face Hub에 있다.
 따로 받을 필요 없이 첫 실행 때 Hugging Face 캐시(`HF_HOME`)로 자동으로 내려받는다(인터넷 필요, 로그인 불필요).
 
-| Hub 경로 | 내용 | 로컬 폴더로 대신 쓰려면 |
+| Hub 저장소 · 경로 | 내용 | 로컬 폴더로 대신 쓰려면 |
 | --- | --- | --- |
-| `asr_adapter/` | Qwen3-ASR LoRA 어댑터 (`adapter_config.json`, `adapter_model.safetensors`, 약 79MB) | `ASR_ADAPTER_DIR` |
-| `hmm/` | HMM 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` | `HMM_RUN_DIR` |
+| [`Playedwell03/qwen3-asr-0.6b-119ko-tiny`](https://huggingface.co/Playedwell03/qwen3-asr-0.6b-119ko-tiny) | Qwen3-ASR-0.6B LoRA 어댑터 (`adapter_config.json`, `adapter_model.safetensors`) | `ASR_ADAPTER_DIR` |
+| [`podongchip/MF_BERT`](https://huggingface.co/podongchip/MF_BERT) | MF_BERT 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` | `MF_BERT_DIR` |
 
 환경변수를 주면 Hub에서 받지 않고 그 폴더를 쓴다(재학습한 가중치를 올리기 전에 시험할 때 등, `weights.py`).
-ASR 베이스 모델(`Qwen/Qwen3-ASR-1.7B-hf`, 약 4GB)과 HMM 인코더 설정(`klue/roberta-large`)도
-같은 캐시로 자동으로 내려받는다.
+ASR 베이스 모델(`Qwen/Qwen3-ASR-0.6B-hf`)과 MF_BERT 인코더 설정(`klue/roberta-large`의 config만 — 인코더 가중치는
+체크포인트에 들어 있어 받지 않는다)도 같은 캐시로 자동으로 내려받는다. 이전 구조화 모델 저장소
+`podongchip/goldenlink-voice-models`(HMM v1·v2 가중치)는 더 이상 쓰지 않는다.
 
 **3. 실행** — 마이크로 바로 시작해볼 수 있다 (`voice/` 안에서):
 
@@ -64,17 +64,21 @@ Ctrl+C를 누르면(통화 종료) 남은 발화를 인식한 뒤 구조화 → 
 
 ## 이 브랜치가 하는 일
 
-통화 음성을 텍스트로 바꾸고 → 환자 정보 6필드로 구조화해 → `feature/hub`로 보낸다.
+통화 음성을 텍스트로 바꾸고 → v2 스키마(17개 필드)로 구조화해 → `feature/hub`로 보낸다.
 dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 
 ```
-마이크 ─▶ [STT] Qwen3-ASR + LoRA ─▶ 발화 텍스트 ─▶ [구조화] HMM + 규칙 조립 ─▶ summary 6필드 ─▶ feature/hub
+마이크 ─▶ [STT] Qwen3-ASR + LoRA ─▶ 발화 텍스트 ─▶ [구조화] MF_BERT ─▶ summary(v2 17필드) ─▶ feature/hub
           통화 중 발화 단위로 인식                    분류·태깅 모델 (생성형 아님)
 ```
 
 > **2026-09-24 교체.** 이전 경로(faster-whisper → `corrections.json` 오인식 교정 →
 > Ollama `qwen3:14b` SBAR 구조화)는 코드째 삭제했다. 두 모델은 팀이 따로
-> 파인튜닝한 것으로(`C:\Dev\HMM`), 추론 코드만 이 폴더(`asr.py`, `hmm/`)에 복사해 넣었다.
+> 파인튜닝한 것으로, 추론 코드만 이 폴더(`asr.py`, `MF_BERT/`)에 복사해 넣었다.
+>
+> **2026-10-01 구조화 모델 교체.** HMM v2(`hmm/`)를 지우고 MF_BERT(`MF_BERT/`)로 바꿨다. 출력층·디코더·
+> 라벨이 같아 `summary`(v2 17필드) 형식은 그대로다. 바뀐 것은 긴 통화를 512토큰 조각으로 나눠 넣는 입력 처리와
+> 가중치 저장소다([구조화 — MF_BERT](#구조화--mf_bert-mf_bert) 참고).
 
 **진입점은 3개**다. 셋 다 같은 모델·같은 후처리(`transcribe.emit_call_summary()`)를 쓰고
 출력 JSON 스키마도 같다.
@@ -85,8 +89,7 @@ dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 | `call_capture.py` | 마이크로 직접 통화를 흉내내는 CLI 테스트 | 실행 / `Ctrl+C` | 통화 중 발화 단위 |
 | `transcribe.py` | 이미 녹음된 파일 배치 처리 | (해당 없음) | 파일 통째로 5초 조각 |
 
-시연·튜닝용 화면은 `simulation3/gui.py`에 따로 있다 — 같은 모듈을 쓰면서 통화 중에 6필드·모델 판정
-중간값·hub JSON을 실시간으로 보여준다(전송은 안 함). 사용법은 [`simulation3/README.md`](simulation3/README.md).
+시연·튜닝용 화면은 `simulation3/gui.py`에 따로 있다 — 같은 모듈을 쓰면서 통화 중에 v2 17필드·hub JSON을 실시간으로 보여준다(전송은 안 함). 사용법은 [`simulation3/README.md`](simulation3/README.md).
 
 ---
 
@@ -158,7 +161,7 @@ VOICE_APID=A0000001 VOICE_PORT=6000 python app.py
 | `VOICE_DEVICE` | `auto` | 연산 장치 |
 | `VOICE_SILENCE_RMS` | `0.01` | 이보다 작은 소리는 말이 아닌 것으로 본다. [발화 단위 인식](#발화-단위-인식-live_transcriberpy) 참고 |
 | `VOICE_UTTERANCE_HOLD_SEC` | `0.4` | 이만큼 조용하면 한 발화가 끝난 것으로 본다 |
-| `ASR_ADAPTER_DIR` / `HMM_RUN_DIR` | (없음 — Hub에서 받음) | 가중치를 로컬 폴더로 대신 쓸 때. [빠른 시작](#빠른-시작) 참고 |
+| `ASR_ADAPTER_DIR` / `MF_BERT_DIR` | (없음 — Hub에서 받음) | 가중치를 로컬 폴더로 대신 쓸 때. [빠른 시작](#빠른-시작) 참고 |
 
 **동작 순서**
 1. 서버가 뜨기 전에 두 모델을 한 번 올린다(약 15~20초). 통화마다 올리면 그만큼 늦어지므로 프로세스가 살아있는 동안 재사용한다
@@ -194,7 +197,7 @@ POST /call/end    (hub 중계)
 │                                                                  │
 │ transcribe.emit_call_summary()                                   │
 │   발화들을 줄바꿈으로 이어 붙임 → origin_text/<세션>.txt 저장     │
-│   HmmExtractor.extract()        HMM 점수 → 규칙 조립 → 6필드      │
+│   MfBertExtractor.extract()     MF_BERT 점수 → v2 17필드 (decode)│
 │   CallSummaryMessage 조립       pydantic 검증                    │
 │   summary_text/<세션>_call_summary.json 저장                     │
 │   send_to_hub()                 POST /voice/summary              │
@@ -232,7 +235,7 @@ Qwen3-ASR은 오디오 한 덩어리를 받아 문장을 생성하는 모델이�
 | --- | --- | --- |
 | STT | `transcript.raw_text` · `turns[]` | `62세 남성이고요.\n30분 전부터 갑자기 가슴이.\n...짐근경색을 의심하고...` |
 | 구조화 입력 | `transcript.filtered_text` | `raw_text`와 같음 (교정·필터링 단계 없음) |
-| 구조화 | `summary` | `{"patient": "60대 남성", "mechanism": "심장질환 · 흉통", "severity_tag": "high", "required_department": "내과", ...}` |
+| 구조화 | `summary` | `{"ktas_level": 2, "chief_complaint": {"major": "I 심혈관계", "minor": "흉통(심장성)"}, "age": {"years": 62, ...}, "sex": "남성", ...}` (v2 17필드) |
 | 전송 | `CallSummaryMessage` | 위 전부 + `caseId`·`source`·`model_used` |
 
 ### 실측 소요 시간
@@ -241,18 +244,20 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 
 | 단계 | 소요 |
 | --- | --- |
-| 모델 로딩 (ASR + HMM) | 14~20초 *(프로세스당 1회)* |
+| 모델 로딩 (ASR + 구조화 모델) | 14~20초 *(프로세스당 1회, HMM v2 때 측정)* |
 | **통화 종료 → hub 수신** (`app.py`, 발화 단위 인식) | **3.7초** |
 | 참고: 같은 통화를 끝나고 한 번에 인식 (`transcribe.py`) | ASR 61.1초 |
-| 구조화 (HMM) | 0.1초 |
+| 구조화 (MF_BERT) | 0.01~0.03초 *(프로세스 첫 호출만 약 0.3초)* |
 
-`app.py` 수치는 실제 마이크 대신 파일을 실시간 속도로 흘려 넣어 잰 값이다.
+`app.py` 수치는 실제 마이크 대신 파일을 실시간 속도로 흘려 넣어 잰 값이고, 구조화 모델이 HMM v2였을 때 쟀다.
+MF_BERT만 따로 잰 값(Linux · RTX 5080 · 텍스트 입력)은 캐시에서 올리는 데 5.7초, GPU 메모리 1.41GB다.
+구조화는 두 모델 모두 1초 미만이라 종료 → hub 수신 시간은 거의 그대로일 것으로 보지만, 교체 후 다시 재지는 않았다.
 
 ### 실패해도 죽지 않는 지점 / 죽는 지점
 
 | 상황 | 동작 |
 | --- | --- |
-| GPU 없음 | **계속** — ASR은 mps/cpu, HMM은 cpu로 (매우 느림, 미검증) |
+| GPU 없음 | **계속** — ASR은 mps/cpu, MF_BERT는 cpu로 (매우 느림, 미검증) |
 | 가중치를 못 받음(오프라인 첫 실행) / 환경변수 폴더 없음 | **시작 실패** — 다운로드 오류나 `FileNotFoundError`로 서버가 뜨지 않는다 |
 | 통화 중 인식 예외 | **계속** — 종료 시 남은 소리를 한꺼번에 다시 인식 |
 | 인식된 발화가 없음(무음 통화) | 구조화·전송을 **건너뜀** (원문 `.txt`는 빈 파일로 남음) |
@@ -266,59 +271,59 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 
 ## 모델 설명
 
-### STT — Qwen3-ASR + LoRA (`asr.py`)
+### STT — Qwen3-ASR-0.6B + LoRA (`asr.py`)
 
 | 항목 | 내용 |
 | --- | --- |
-| 베이스 | `Qwen/Qwen3-ASR-1.7B-hf` |
-| 어댑터 | LoRA r=16 (alpha 32), 학습 step 3400 시점 best |
-| 학습 데이터 | AI Hub 119 신고 음성, 재난유형 4종 × 5시간 = 20시간(발화 36,651개) |
-| 검증 | 학습에 안 쓴 500개 발화 기준 정규화 CER 원본 0.298 → **0.182** |
+| 베이스 | `Qwen/Qwen3-ASR-0.6B-hf` |
+| 어댑터 | [`Playedwell03/qwen3-asr-0.6b-119ko-tiny`](https://huggingface.co/Playedwell03/qwen3-asr-0.6b-119ko-tiny) — LoRA r=32 (alpha 32), 학습 가능 파라미터 29.5M |
+| 학습 데이터 | AI Hub 119 신고 음성 20시간 (합성 노이즈 증강 포함) |
+| 검증 | 깨끗한 음성 CER 0.187 (모델 카드 기준, 1.7B 어댑터 0.188과 통계적으로 동등). 소음 환경은 1.7B가 더 낫다(군중 소음 5dB에서 CER 차이 0.124) |
 | 입력 단위 | 학습 데이터가 평균 2초 발화라 5초 안팎으로 잘라 인식(20초 단위는 문장이 통째로 빠졌음) |
 
+- 이전 1.7B 어댑터에서 0.6B로 바꿨다(2026-09-29). 프롬프트 형식(`language Korean<asr_text>`)과 5초 분할은 그대로 두었고, 새 어댑터로 실제 음성 인식 품질은 아직 측정하지 않았다
 - **틀린 결과도 자연스러운 문장처럼 나온다** (예: `심근경색` → `짐근경색`, `식은땀` → `찌근땀`). 구급대원 확인·수정(Override)을 거쳐야 한다
 - 학습 데이터의 개인정보 마스킹 표기 때문에 `***[개인정보]`를 출력하는 경우가 있다 (처리 방법 보류 중)
 - 검증은 신고자↔119 통화로 했다. **구급대원↔병원 통화, 소음이 큰 현장에서의 성능은 측정하지 않았다**
 
-### 구조화 — HMM (`hmm/`)
+### 구조화 — MF_BERT (`MF_BERT/`)
 
 KLUE RoBERTa-large 인코더에 출력층 여러 개를 붙인 다중과제 모델이 필드별 점수를 내고(AI),
-규칙 조립기가 이를 hub 계약 필드로 맞춘다(규칙). **생성형 모델이 아니라** 출력 형식이 깨질
-일이 없고, 같은 입력에는 항상 같은 결과가 나온다.
+`decode.py`가 그 점수를 v2 스키마로 푼다. 활력징후·나이·발생 시점의 숫자는 모델이 찾은 구간을
+규칙(`parse.py`)으로 읽는다. **생성형 모델이 아니라** 출력 형식이 깨질 일이 없고, 같은 입력에는
+항상 같은 결과가 나온다. 필드 정의는 `C:\Dev\HMM\data_v3\필드_설명.md`가 원본이다.
 
-| 모델이 고르는 것 | 보기 |
+긴 통화는 512토큰 조각(128토큰씩 겹침)으로 나눠 인코딩하고, 겹친 토큰은 한 조각 것만 남겨 원문 토큰
+줄로 다시 이어 붙인다(`chunking.py`). 이전 HMM v2는 포지션 임베딩을 2048칸으로 늘려 한 번에 넣었지만,
+MF_BERT는 사전학습된 512칸만 쓴다. 조각이 하나뿐인 짧은 통화는 두 방식의 계산이 같다.
+
+| 출력층 | 하는 일 | v2 필드 |
+| --- | --- | --- |
+| 단일 선택 8개 | KTAS 등급, 주 호소 대분류·소분류, 주 기전, 질병 분류, 성별, 의식(AVPU), 복용약 유무 | `ktas_level` `chief_complaint` `incidents` `disease_category` `sex` `consciousness` `medications` |
+| 다중 선택 7개 | 기전(+세부), 처치(+세부), 증상, 손상(+좌우) — 확률 0.5 이상 | `incidents` `treatments` `symptoms` `injuries` |
+| 구간 태거 | 활력징후·나이·발생 시점·의심 진단·복용약 구간(BIO) 태깅 | `vitals` `age` `onset` `suspected_diagnosis` `medications` |
+
+`call_type`·`ktas_evidence`·`notes`는 모델이 배우는 항목이 아니라 항상 `null`이고, 그 사실이 `summary.meta.not_predicted`에 들어 있다.
+
+**성능** (합성 통화 대본 8,990건, 5-fold 교차검증 — `/mnt/D/Project/BERT_Multiclass Classification/BERT/train_kfold.py`, 실행 `2026-09-30_183446`)
+
+| 항목 | 값 (5-fold 평균 ± 표준편차) |
 | --- | --- |
-| 원인 (cause) | 외상 7 · 비외상성 손상 11 · 질병 12 = 30개 + 판단 보류 |
-| 부위 (body_part) | 머리·얼굴·목·가슴·배·등·허리·골반·팔·다리·다발성 + 판단 보류 (외상·손상일 때만) |
-| 중증도 | high · medium · low |
-| 나이대 · 성별 | 10세 미만 ~ 90대 이상 / 남성·여성 (+ 판단 보류) |
-| 처치 (다중 선택) | 기도확보·산소투여·CPR·ECG·AED·순환보조·약물투여·고정·상처처치·분만·보온 |
-| 증상 구간 | 토큰마다 증상 있음/없음 구간 태깅 → 표준명으로 정리 |
+| 종합 score | 0.6912 ± 0.0041 (배포 체크포인트 fold00: 0.6934) |
+| 긴 통화(조각 2개 이상)만 종합 score | 0.6346 ± 0.0153 |
+| 성별 / 복용약 유무 / 주 기전 정확도 | 0.996 / 0.975 / 0.950 |
+| KTAS 정확도 · macro-F1 | 0.791 · 0.779 |
+| 주 호소 대분류 / 소분류 정확도 | 0.923 / 0.872 |
+| 증상 micro-F1 · macro-F1 | 0.672 · 0.431 |
+| 처치 micro-F1 · macro-F1 | 0.730 · 0.384 |
+| 손상 micro-F1 (좌우 포함 0.309) | 0.482 — **가장 약함** |
+| 구간 span F1 | 0.696 |
 
-| 계약 필드 | 만드는 규칙 (`hmm/assemble.py`) |
-| --- | --- |
-| `patient` | 나이대 + 성별 중 아는 것만 (`"60대 남성"`) |
-| `mechanism` | 원인 + (외상이면 부위 / 질병이면 대표 증상) (`"낙상 · 머리"`) |
-| `symptoms` | "있음" 증상 구간의 표준명, 원문 순서 |
-| `treatment` | 시행 확률 0.5 이상인 처치 |
-| `severity_tag` | 중증도 그대로 |
-| `required_department` | 원인·부위 → 심평원 전문과목 대응표(`hmm/department_mapping.json`). 대응이 없으면 `null` |
-
-**성능** (golden eval 355건, 텍스트 입력 기준 — `C:\Dev\HMM\BANCHMARK`)
-
-| 필드 | 정확도 / F1 |
-| --- | --- |
-| patient | 0.938 |
-| severity_tag | 0.831 |
-| required_department | 0.848 |
-| treatment | F1 0.894 |
-| mechanism (완전 일치) | 0.487 — 원인 부분만 보면 0.808 |
-| symptoms | F1 0.186 — **가장 약함** |
-
+- 배포 체크포인트는 전체 데이터로 다시 학습한 모델이 아니라 fold00이다. 5개 fold 중 검증 score가 가장 높은 건 fold04(0.6977)이고 fold00은 두 번째다. 이 fold의 검증 데이터는 다른 fold 학습에 쓰였으므로 위 수치는 평균값을 기준으로 읽는다
+- **이전 HMM v2의 수치(score 0.7312)와 직접 비교할 수 없다** — 학습·검증 데이터가 다르다(HMM v2는 `data_v3` 9,677건 중 `edge`·119 신고 제외)
+- 학습 데이터는 전부 합성 통화 대본이고 라벨도 Claude로 자동 생성했다(일부 레코드 meta에 "사람 검수 전"으로 표시)
 - 학습 데이터는 "줄바꿈 = 화자 전환"인 대본 형태다. 여기 입력은 "줄바꿈 = 발화 경계"라 완전히 같은 형태가 아니고, **실제 음성 입력에서의 성능은 측정하지 않았다**
-- 증상 표준명은 임시 규칙(`hmm/symptom_names.py`)이다. 사전에 없는 표현은 원문 구간이 그대로 나온다(예: `"가슴이."`)
-- `department_mapping.json`의 뇌혈관질환·소화기질환·성폭행 대응은 팀 확정 전 초안이다(파일 안 `ambiguous_notes`)
-- 복사해 온 코드가 원본과 같은 결과를 내는지 eval 295건으로 대조했다(transformers 4.57.6 원본 ↔ 5.17.0 복사본, 전부 동일)
+- 복사해 온 코드가 원본 `mf_bert/infer.py`의 `predict()`와 같은 결과를 내는지 fold00 검증 데이터 15건(조각 3개짜리 긴 통화 5건 포함)으로 대조했다(전부 동일)
 
 ---
 
@@ -326,9 +331,9 @@ KLUE RoBERTa-large 인코더에 출력층 여러 개를 붙인 다중과제 모�
 
 | 구분 | 모델 | 처리 방식 |
 | --- | --- | --- |
-| STT | Qwen3-ASR-1.7B + LoRA (팀 파인튜닝) | AI 처리 |
-| 정보 구조화 — 필드 판정 | KLUE RoBERTa-large 다중과제 모델 HMM (팀 학습) | AI 처리 (분류·태깅, 생성형 아님) |
-| 정보 구조화 — 필드 조립·진료과 도출 | *(모델 없음)* | 규칙 기반 |
+| STT | Qwen3-ASR-0.6B + LoRA (`Playedwell03/qwen3-asr-0.6b-119ko-tiny`) | AI 처리 |
+| 정보 구조화 — 필드 판정 | KLUE RoBERTa-large 다중과제 모델 MF_BERT (팀 학습, `podongchip/MF_BERT`) | AI 처리 (분류·태깅, 생성형 아님) |
+| 정보 구조화 — 점수 해석·숫자 파싱 | *(모델 없음, `MF_BERT/decode.py`·`MF_BERT/parse.py`)* | 규칙 기반 |
 
 **개발 환경**: Python 3.11, torch 2.11 (CUDA 12.8), transformers 5.17, peft, flask.
 Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌아가며 외부 API로 음성·텍스트가 나가지 않는다.
@@ -341,34 +346,106 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
 
 **출력**: `feature/hub`로 전달되는 JSON. dashboard로는 직접 보내지 않는다.
 `feature/dashboard`의 `CallSummaryMessage` 타입과 1:1 대응하며(`schema.py`),
-**hub·dashboard와의 고정 계약이라 필드를 임의로 늘리거나 바꾸지 않는다.**
+**`summary`는 2026-09-29에 v1(6필드)에서 v2 스키마(17필드 + `meta`)로 바뀌었다(2026-10-01 구조화 모델을 MF_BERT로 바꿨어도 형식은 같다). hub·dashboard 쪽 수정은 담당자가 따로 진행한다.**
 
 ```json
 {
   "caseId": "case-abc123",
   "transcript": {
-    "raw_text": "62세 남성이고요.\n30분 전부터 갑자기 가슴이.\n가슴을 지어 짜는 듯한 흉통이 있었다고 합니다.",
-    "filtered_text": "62세 남성이고요.\n30분 전부터 갑자기 가슴이.\n가슴을 지어 짜는 듯한 흉통이 있었다고 합니다.",
+    "raw_text": "62세 남성이고요.\n30분 전부터 갑자기 가슴이 쥐어짜는 듯이 아프다고 하십니다.\n식은땀 나고 왼쪽 팔까지 아파요. 혈압 150에 90 맥박 110 산소포화도 96이고요.\n의식은 명료하고 산소 투여하고 심전도 시행했습니다. 심근경색 의심됩니다.",
+    "filtered_text": "62세 남성이고요.\n30분 전부터 갑자기 가슴이 쥐어짜는 듯이 아프다고 하십니다.\n식은땀 나고 왼쪽 팔까지 아파요. 혈압 150에 90 맥박 110 산소포화도 96이고요.\n의식은 명료하고 산소 투여하고 심전도 시행했습니다. 심근경색 의심됩니다.",
     "language": "ko",
-    "timestamp": "2026-09-24T07:53:04Z",
-    "duration_sec": 108.6,
+    "timestamp": "2026-09-29T07:53:04Z",
+    "duration_sec": 42.3,
     "turns": [
-      { "speaker": "미분리", "timestamp": "07:53:29", "text": "62세 남성이고요." },
-      { "speaker": "미분리", "timestamp": "07:53:32", "text": "30분 전부터 갑자기 가슴이." }
+      {
+        "speaker": "미분리",
+        "timestamp": "07:53:29",
+        "text": "62세 남성이고요."
+      }
     ]
   },
   "summary": {
-    "patient": "60대 남성",
-    "mechanism": "심장질환 · 흉통",
-    "symptoms": ["흉통", "왼쪽 팔까지 통증이 뻗친다", "식은땀"],
-    "treatment": ["산소투여", "ECG", "AED"],
-    "severity_tag": "high",
-    "required_department": "내과"
+    "call_type": null,
+    "ktas_level": 2,
+    "ktas_evidence": null,
+    "chief_complaint": {
+      "major": "I 심혈관계",
+      "minor": "흉통(심장성)"
+    },
+    "suspected_diagnosis": [
+      {
+        "text": "심근경색 의심"
+      }
+    ],
+    "vitals": [
+      {
+        "sequence": 1,
+        "sbp": 150,
+        "dbp": 90,
+        "hr": 110,
+        "rr": null,
+        "bt": null,
+        "spo2": 96,
+        "glucose": null,
+        "evidence": [
+          "혈압 150에 90 맥박 110 산소포화도 96이고요"
+        ]
+      }
+    ],
+    "consciousness": [
+      {
+        "sequence": 1,
+        "avpu": "A"
+      }
+    ],
+    "symptoms": [
+      {
+        "standard_name": "흉통",
+        "status": "확인"
+      }
+    ],
+    "onset": {
+      "text": "30분 전부터",
+      "minutes_ago": 30
+    },
+    "incidents": [
+      {
+        "type": "질병",
+        "detail": null,
+        "primary": true
+      }
+    ],
+    "disease_category": "심장질환",
+    "injuries": [],
+    "treatments": [],
+    "age": {
+      "years": 62,
+      "months": null,
+      "band": null,
+      "evidence": [
+        "62세 남성이",
+        "요"
+      ]
+    },
+    "sex": "남성",
+    "medications": {
+      "status": "미언급",
+      "items": []
+    },
+    "notes": null,
+    "meta": {
+      "not_predicted": [
+        "call_type",
+        "ktas_evidence",
+        "notes"
+      ]
+    }
   },
   "source": "ai",
   "model_used": {
-    "stt": "qwen3-asr-1.7b-lora",
-    "llm": "hmm-klue-roberta-large"
+    "stt": "qwen3-asr-0.6b-119ko-tiny",
+    "llm": "mf-bert-klue-roberta-large"
   }
 }
 ```
@@ -382,16 +459,13 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 (처리 시점에서 통화 길이만큼 거슬러 올라간 근사값) |
 | `transcript.duration_sec` | number | 통화 길이(초) |
 | `transcript.turns` | array | 발화별 원본 로그 (`speaker`는 화자 분리가 없어 `"미분리"` 고정, `excludedFromSummary`는 채우는 곳이 없어 항상 빠짐) |
-| `summary.patient` | string | 나이대·성별. 둘 다 모르면 빈 문자열 |
-| `summary.mechanism` | string | 원인 · 부위/대표 증상. 원인을 모르면 빈 문자열 |
-| `summary.symptoms` | string[] | 있는 증상 목록 |
-| `summary.treatment` | string[] | 시행한 처치 목록 |
-| `summary.severity_tag` | `"high"` \| `"medium"` \| `"low"` | 중증도. 항상 값이 있다 |
-| `summary.required_department` | string \| null | 필요 진료과 (심평원 전문과목 표기) |
+| `summary` | object | MF_BERT 출력 그대로(v2 스키마) — 17개 필드(`call_type` `ktas_level` `ktas_evidence` `chief_complaint` `suspected_diagnosis` `vitals` `consciousness` `symptoms` `onset` `incidents` `disease_category` `injuries` `treatments` `age` `sex` `medications` `notes`)와 `meta`. 각 필드의 뜻은 `C:\Dev\HMM\data_v3\필드_설명.md`. 값이 없는 필드도 `null`·빈 목록으로 **빠지지 않고 나간다** |
+| `summary.ktas_level` | 1~5 | Pre-KTAS 중증도. 1이 가장 위급. 항상 값이 있다 |
+| `summary.call_type` `ktas_evidence` `notes` | null | 모델이 예측하지 않는 항목이라 항상 `null` |
 | `source` | `"ai"` | AI 처리 결과 고정값 |
 | `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명. `llm`은 필드명만 유지할 뿐 생성형 모델이 아니다 |
 
-바이탈 필드는 포함하지 않는다 (환자 바이탈 정보는 더 이상 사용하지 않기로 결정됨).
+`summary.vitals`는 통화 속 발화에서 읽은 값일 뿐, 별도 바이탈 수집·전송 경로는 없다.
 
 ---
 
@@ -413,14 +487,13 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 │   ├── mic_recorder.py          [녹음]   마이크 입력 → numpy 버퍼 → WAV
 │   ├── live_transcriber.py      [녹음→STT] 통화 중 무음 감지로 발화를 잘라 바로 인식
 │   ├── asr.py                   [STT]    Qwen3-ASR + LoRA, 오디오 읽기·5초 분할
-│   ├── hmm/                     [구조화] HMM 모델 + 규칙 조립기
-│   │   ├── __init__.py          HmmExtractor — 체크포인트 로딩, 텍스트 → 6필드
+│   ├── MF_BERT/                 [구조화] MF_BERT 모델 + 디코더
+│   │   ├── __init__.py          MfBertExtractor — 체크포인트 로딩, 텍스트 → v2 17필드
 │   │   ├── model.py             모델 정의 (체크포인트 state_dict와 구조가 같아야 함)
+│   │   ├── chunking.py          긴 통화 → 512토큰 조각, 조각 → 원문 토큰 줄 복원
 │   │   ├── labels.py            출력층 보기 목록 (순서를 바꾸면 체크포인트와 안 맞음)
-│   │   ├── decode.py            점수 → 필드 (증상 구간은 BIO 제약 Viterbi)
-│   │   ├── assemble.py          필드 → 계약 6필드 (규칙)
-│   │   ├── symptom_names.py     증상 구간 → 표준명 (임시 규칙)
-│   │   └── department_mapping.json  원인·부위 → 전문과목 대응표
+│   │   ├── decode.py            점수 → v2 필드 (주 호소는 대분류에 속한 소분류만, 구간은 BIO 태그)
+│   │   └── parse.py             활력징후·나이·발생 시점 구간 → 숫자 (규칙)
 │   ├── schema.py                [출력]   pydantic 스키마 (hub 전송용 JSON)
 │   │
 │   │   ── 그 외 ──
@@ -453,17 +526,16 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
                        │
         ┌──────────────┼──────────────┐
         ▼              ▼              ▼
-   hmm.HmmExtractor  schema      send_to_hub()
-   (model→decode→   (pydantic)      hub POST
-    assemble)
+MF_BERT.MfBertExtractor schema   send_to_hub()
+   (model→decode)    (pydantic)      hub POST
 ```
 
-화살표가 한 방향뿐이고 순환이 없다. `hmm/`·`schema.py`·`mic_recorder.py`는 다른 로컬
+화살표가 한 방향뿐이고 순환이 없다. `MF_BERT/`·`schema.py`·`mic_recorder.py`는 다른 로컬
 모듈에 의존하지 않아, 모델을 바꿔도 영향 범위가 그 폴더·파일로 묶인다.
 
 ### 경로 규칙
 
-모든 파이썬 코드가 `voice/` 한 폴더에 평평하게 있어(`hmm/`만 패키지) 상호 import가
+모든 파이썬 코드가 `voice/` 한 폴더에 평평하게 있어(`MF_BERT/`만 패키지) 상호 import가
 그대로 동작한다. 데이터 경로는 파일 위치(`__file__`) 기준으로 계산되므로 어디서 실행하든
 결과는 저장소 루트의 `data/voice_data/`로 모인다. 설치·실행은 `requirements.txt`가 있는
 `voice/` 안에서 하는 쪽으로 통일했다.
@@ -473,12 +545,12 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 ## 알려진 제약사항 / TODO
 
 - **실제 마이크(sounddevice)로 발화 단위 인식을 검증하지 않았다.** 파일을 실시간 속도로 흘려 넣어 확인했다. 무음 판정 기본값은 장비 마이크에서 다시 맞춰야 할 수 있다
-- 화자 분리(diarization)가 없어 모든 턴의 `speaker`는 `"미분리"`로 고정. HMM 입력의 줄바꿈도 화자 전환이 아니라 발화 경계다
+- 화자 분리(diarization)가 없어 모든 턴의 `speaker`는 `"미분리"`로 고정. MF_BERT 입력의 줄바꿈도 화자 전환이 아니라 발화 경계다
 - 파이프라인이 중간에 실패하거나 인식된 발화가 없으면 hub로 알리는 경로가 없어 hub가 계속 기다린다
-- **hub는 `summary.required_department`를 매칭에 쓰지 않는다.** hub는 `mechanism`을 예상 병명으로 보고 병원 진료과 이름과 임베딩 유사도로 비교한다(`hub_engine.process_voice_summary`). HMM이 규칙으로 뽑은 진료과(`"내과"`, `"신경외과"` 등)는 받기만 하고 버려진다 — 매칭에 쓸지는 feature/hub 쪽 결정이다
-- **원인이 판단 보류면 `mechanism`이 빈 문자열로 나간다.** 이때 hub의 진료과 매칭 입력이 비어 순위가 사실상 거리로만 정해진다. hub는 후보를 제외하지 않으므로 매칭 자체가 깨지지는 않는다
+- **hub·dashboard가 아직 v1 `summary`(6필드)를 기대한다.** `patient`·`mechanism`·`symptoms`(문자열 목록)·`treatment`·`severity_tag`·`required_department`가 사라져 hub가 이 메시지를 그대로는 처리하지 못한다 — hub 담당자가 v2 17필드를 읽도록 고쳐야 한다
+- v2에는 진료과(`required_department`)를 내는 규칙이 없다. 예전 원인·부위 → 전문과목 대응표는 v1 라벨 기준이라 함께 삭제했다
 - ASR이 `***[개인정보]`를 출력하는 경우의 처리 보류 중
-- HMM의 증상(symptoms) 필드 성능이 낮다(F1 0.19). 증상 표준명 사전도 임시 규칙이다
-- Mac(MPS)·CPU 실행은 두 모델 모두 검증하지 않았다. 1.7B ASR은 CPU에서 매우 느리다
+- MF_BERT에서 손상(injury micro-F1 0.48)·처치·증상의 희귀 라벨 성능이 낮다(macro-F1 각각 0.30·0.38·0.43)
+- Mac(MPS)·CPU 실행은 두 모델 모두 검증하지 않았다. ASR은 CPU에서 느리다
 - 마이크 권한 설정 필수 (macOS: 시스템 설정 > 개인정보 보호 > 마이크)
 - `data/voice_data/` 하위 전 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음
