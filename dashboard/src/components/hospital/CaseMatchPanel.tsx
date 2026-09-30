@@ -1,6 +1,7 @@
 import { css } from "styled-system/css";
 import { hospitalStatusBadge, severityBadge } from "styled-system/recipes";
 import { Panel } from "@/components/layout/Panel";
+import { PatientVitals } from "@/components/panels/PatientVitals";
 import { Tag } from "@/components/hospital/Tag";
 import { ApprovalActions } from "@/components/panels/ApprovalActions";
 import type { ApprovalAction, HospitalCandidate, HospitalStatus, PatientInfo, Severity } from "@/types/dashboard";
@@ -84,6 +85,7 @@ export function CaseMatchPanel({
             </span>
           ))}
         </div>
+        <PatientVitals patientInfo={patientInfo} />
       </div>
 
       {hospital ? (

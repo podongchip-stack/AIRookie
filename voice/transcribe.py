@@ -1,14 +1,15 @@
-"""통화 음성 -> STT(Qwen3-ASR) -> 구조화(HMM) -> feature/hub 전달용 JSON. 파이프라인 본체이자 배치 CLI.
+"""통화 음성 -> STT(Qwen3-ASR) -> 구조화(MF_BERT) -> feature/hub 전달용 JSON. 파이프라인 본체이자 배치 CLI.
 
-    ASR   Qwen3-ASR-1.7B + LoRA (asr.py)          음성 -> 발화 구간 텍스트   (AI 처리)
-    HMM   KLUE RoBERTa-large 다중과제 (hmm/)       텍스트 -> 필드별 점수      (AI 처리)
-          + 규칙 조립기 (hmm/assemble.py)          -> summary 6필드            (규칙 기반)
+    ASR      Qwen3-ASR-0.6B + LoRA (asr.py)                음성 -> 발화 구간 텍스트   (AI 처리)
+    MF_BERT  KLUE RoBERTa-large 다중과제 (MF_BERT/)        텍스트 -> 필드별 점수      (AI 처리)
+             + 점수 해석·숫자 파싱 (MF_BERT/decode.py)     -> summary(v2 17필드)       (규칙 기반)
 
 app.py·call_capture.py는 통화 중에 발화 단위로 미리 인식해(live_transcriber.py) 구간 목록을 넘기고,
 이 파일의 CLI는 이미 녹음된 파일을 통째로 인식한다. 이후 과정(emit_call_summary)은 같다.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -18,9 +19,9 @@ from pathlib import Path
 import requests
 
 import asr
-import hmm
+import MF_BERT
 from asr import AsrModel, Segment
-from hmm import HmmExtractor
+from MF_BERT import MfBertExtractor
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
 
 # feature/hub의 voice 요약 수신 엔드포인트. dashboard로는 직접 보내지 않고
@@ -43,12 +44,12 @@ ORIGIN_TEXT_DIR = DATA_VOICE_DIR / "origin_text"
 SUMMARY_TEXT_DIR = DATA_VOICE_DIR / "summary_text"
 
 
-def load_models(device: str) -> tuple[AsrModel, HmmExtractor]:
+def load_models(device: str) -> tuple[AsrModel, MfBertExtractor]:
     """두 모델을 한 번 올린다(합쳐서 약 20초). 통화마다 올리면 그만큼 늦어지므로 프로세스 시작 시 1회만 부른다."""
-    print(f"모델 로딩 중... (ASR {asr.MODEL_NAME} + 구조화 {hmm.MODEL_NAME}, device={device})")
+    print(f"모델 로딩 중... (ASR {asr.MODEL_NAME} + 구조화 {MF_BERT.MODEL_NAME}, device={device})")
     started = time.perf_counter()
     asr_model = AsrModel(device)
-    extractor = HmmExtractor(device)
+    extractor = MfBertExtractor(device)
     print(f"모델 로딩 완료 ({time.perf_counter() - started:.1f}초, ASR device={asr_model.device})")
     return asr_model, extractor
 
@@ -62,7 +63,7 @@ def send_to_hub(message: CallSummaryMessage) -> None:
     try:
         response = requests.post(
             HUB_VOICE_SUMMARY_URL,
-            json=message.model_dump(exclude_none=True),
+            json=message.to_payload(),
             timeout=10,
         )
         response.raise_for_status()
@@ -86,7 +87,7 @@ def build_call_summary_message(
     summary: dict,
     case_id: str | None = None,
 ) -> CallSummaryMessage:
-    """발화 구간 + summary 6필드 -> hub로 보낼 CallSummaryMessage (pydantic 검증 포함). 저장·전송은 하지 않는다.
+    """발화 구간 + summary(v2 17필드) -> hub로 보낼 CallSummaryMessage (pydantic 검증 포함). 저장·전송은 하지 않는다.
 
     실제 통화 시작 시각 메타데이터가 없으므로, 처리 시점에서 오디오 길이만큼 거슬러
     올라간 시각을 통화 시작 시각으로 근사한다.
@@ -114,7 +115,7 @@ def build_call_summary_message(
             ],
         ),
         summary=Summary(**summary),
-        model_used=ModelUsed(stt=asr.MODEL_NAME, llm=hmm.MODEL_NAME),
+        model_used=ModelUsed(stt=asr.MODEL_NAME, llm=MF_BERT.MODEL_NAME),
     )
 
 
@@ -122,13 +123,13 @@ def emit_call_summary(
     segments: list[Segment],
     duration_sec: float,
     name: str,
-    extractor: HmmExtractor,
+    extractor: MfBertExtractor,
     case_id: str | None = None,
     do_summarize: bool = True,
 ) -> None:
-    """발화 구간 -> STT 원문 저장 -> HMM 구조화 -> JSON 조립·저장 -> hub 전송.
+    """발화 구간 -> STT 원문 저장 -> MF_BERT 구조화 -> JSON 조립·저장 -> hub 전송.
 
-    발화는 줄바꿈으로 이어 붙인다. HMM은 "줄바꿈 = 화자 전환"인 통화 텍스트로 학습했는데, 여기 줄바꿈은
+    발화는 줄바꿈으로 이어 붙인다. MF_BERT는 "줄바꿈 = 화자 전환"인 통화 텍스트로 학습했는데, 여기 줄바꿈은
     발화(무음) 경계라 완전히 같은 형태는 아니다 — 화자 분리가 붙으면 그 경계로 바꿀 자리다.
 
     오인식 교정 단계는 없다. filtered_text(=구조화에 실제로 들어간 입력)는 raw_text와 같다 — 필드는
@@ -150,7 +151,7 @@ def emit_call_summary(
     print(f"구조화 완료 ({extract_elapsed:.2f}초)")
 
     message = build_call_summary_message(segments, duration_sec, name, summary, case_id)
-    output_json = message.model_dump_json(exclude_none=True, indent=2)
+    output_json = json.dumps(message.to_payload(), ensure_ascii=False, indent=2)
     SUMMARY_TEXT_DIR.mkdir(parents=True, exist_ok=True)
     summary_path = SUMMARY_TEXT_DIR / f"{name}_call_summary.json"
     summary_path.write_text(output_json, encoding="utf-8")

@@ -32,8 +32,8 @@
 음성 수집 → 전처리 (FFmpeg 노이즈 제거)
     ↓
 현장 정보 구조화 AI
-    - Qwen3-ASR-1.7B + LoRA (STT, 통화 중 발화 단위 인식)
-    - KLUE RoBERTa-large 다중과제 모델(HMM) 정보 추출 + 규칙 조립
+    - Qwen3-ASR-0.6B + LoRA (STT, 통화 중 발화 단위 인식)
+    - KLUE RoBERTa-large 다중과제 모델(MF_BERT) 정보 추출 (v2 스키마 17필드)
     ↓
 구급대원 확인 및 수정 (Override) → 환자 프로필 생성
     ↓
@@ -72,8 +72,8 @@
 
 | 구분 | 처리 방식 | 비고 |
 |---|---|---|
-| 음성 → 텍스트 변환 | AI (Qwen3-ASR-1.7B + LoRA 파인튜닝) | 통화 중 말이 끊길 때마다 발화 단위로 인식. 화자 분리는 아직 없음 |
-| 통화 내용 구조화 | AI (KLUE RoBERTa-large 다중과제 분류·태깅, HMM) + 규칙 조립 | 생성형 LLM 아님 — 원인·부위·중증도·나이대·성별·처치·증상 구간을 모델이 고르고, `mechanism`·`required_department`는 규칙(대응표)으로 조립. 발화 필터링·오인식 교정 단계는 없음 |
+| 음성 → 텍스트 변환 | AI (Qwen3-ASR-0.6B + LoRA 파인튜닝) | 통화 중 말이 끊길 때마다 발화 단위로 인식. 화자 분리는 아직 없음 |
+| 통화 내용 구조화 | AI (KLUE RoBERTa-large 다중과제 분류·태깅, MF_BERT) + 규칙 해석 | 생성형 LLM 아님 — KTAS·주 호소·기전·증상·처치·손상·의식·나이·성별·복용약 등 v2 17필드를 모델이 고르고, 활력징후·나이·발생 시점의 숫자는 모델이 찾은 구간을 규칙으로 읽는다. 발화 필터링·오인식 교정 단계는 없음 |
 | 병원 리스트 정렬 | 규칙 기반 (GPS 거리 · 존 그룹) | AI 미사용 |
 | 진료과 매칭 (예상 병명 ↔ 병원 진료과) | AI 보조 (경량 임베딩 유사도, sentence-transformers) | 생성형 LLM 아님, 결정적·설명 가능(유사도 점수 노출), On-Premise |
 | 병원 적합도 매칭 (거리·병상·존 스코어링) | 규칙 기반 (E-Gen 3개 오퍼레이션 대조) | AI 미사용, 설명 가능한 구조 유지 |
@@ -91,8 +91,8 @@ voice·info·hub·dashboard 간 데이터는 아래 흐름으로 오간다. **da
 feature/hub를 거친다. feature/hub는 GPS와 feature/info의 병원 정보로 먼저 존 기반 병원
 후보 리스트를 만들어 두고, feature/voice의 의료 정보(부상 상태·예상 병명·중증도)가
 도착하면 이를 반영해 리스트를 재처리한 뒤, 의료 정보·예상 병명·병원 정보·병원 리스트를
-합쳐 dashboard로 전달한다. 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련
-스키마를 제거했다. dashboard에서 발생하는 승인 행위
+합쳐 dashboard로 전달한다. ~~환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련
+스키마를 제거했다.~~ → **회의로 다시 쓰기로 했다(2026-09-29 voice v2).** 활력징후는 voice(MF_BERT)가 통화에서 뽑아 보내고 hub가 dashboard에 표시한다. info가 바이탈을 수집하지는 않는다(병원 정보만 다룬다). dashboard에서 발생하는 승인 행위
 (hospital_approve/hospital_reject/final_approval)의 수신 주체는 **feature/hub로 확정**됐다
 (아래 2번 포맷 참고). dashboard↔hub 구간은 REST가 아니라 **WebSocket**이다 — dashboard가
 `new WebSocket()`(socket.io 아님)으로 접속해 승인 액션과 통화 시작/종료 신호(3번 포맷)를
@@ -130,16 +130,29 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
     "duration_sec": 42.3
   },
   "summary": {
-    "patient": "50대 남성",
-    "mechanism": "교통사고 · 흉부 충격",
-    "symptoms": ["의식 저하", "호흡 곤란"],
-    "treatment": ["산소 공급", "지혈 완료"],
-    "severity_tag": "high"
+    "call_type": null,
+    "ktas_level": 2,
+    "ktas_evidence": null,
+    "chief_complaint": { "major": "I 심혈관계", "minor": "흉통(심장성)" },
+    "suspected_diagnosis": [{ "text": "경색 의심" }],
+    "vitals": [{ "sequence": 1, "sbp": 150, "dbp": 90, "hr": 110, "rr": null, "bt": null, "spo2": 96, "glucose": null, "evidence": ["혈압 150에 90 맥박 110 산소포화도 96이고요"] }],
+    "consciousness": [{ "sequence": 1, "avpu": "A" }],
+    "symptoms": [{ "standard_name": "흉통", "status": "확인" }],
+    "onset": { "text": "30분 전부터", "minutes_ago": 30 },
+    "incidents": [{ "type": "질병", "detail": null, "primary": true }],
+    "disease_category": "심장질환",
+    "injuries": [],
+    "treatments": [{ "category": "ECG", "status": "시행", "detail": null }],
+    "age": { "years": 62, "months": null, "band": null, "evidence": ["62세 남성이"] },
+    "sex": "남성",
+    "medications": { "status": "미언급", "items": [] },
+    "notes": null,
+    "meta": { "not_predicted": ["call_type", "ktas_evidence", "notes"] }
   },
   "source": "ai",
   "model_used": {
-    "stt": "qwen3-asr-1.7b-lora",
-    "llm": "hmm-klue-roberta-large"
+    "stt": "qwen3-asr-0.6b-119ko-tiny",
+    "llm": "mf-bert-klue-roberta-large"
   }
 }
 ```
@@ -152,14 +165,16 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | `transcript.language` | string | 언어 코드 |
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 |
 | `transcript.duration_sec` | number | 통화 길이(초) |
-| `summary.patient` | string | 환자 인적사항 요약 (개인정보 제외) |
-| `summary.mechanism` | string | 사고 기전 |
-| `summary.symptoms` | string[] | 증상 목록 |
-| `summary.treatment` | string[] | 처치 목록 |
-| `summary.severity_tag` | `"high"` \| `"medium"` \| `"low"` | 중증도 단계, 이 세 값만 허용 |
-| `summary.required_department` | string \| null (선택) | 필요 진료과(심평원 전문과목 표기). voice가 원인·부위 → 대응표로 규칙 도출하며, 대응이 없으면 null. hub는 현재 매칭에 쓰지 않는다(`mechanism`을 진료과와 임베딩 비교) |
+| `summary` | object | MF_BERT 출력 그대로(v2 스키마) — 17개 필드(`call_type` `ktas_level` `ktas_evidence` `chief_complaint` `suspected_diagnosis` `vitals` `consciousness` `symptoms` `onset` `incidents` `disease_category` `injuries` `treatments` `age` `sex` `medications` `notes`)와 `meta`. 각 필드의 뜻은 voice README·`C:\Dev\HMM\data_v3\필드_설명.md`. 값이 없는 필드도 `null`·빈 목록으로 빠지지 않고 나간다 |
+| `summary.ktas_level` | 1~5 | Pre-KTAS 중증도. 1이 가장 위급. 항상 값이 있다 |
+| `summary.call_type` `ktas_evidence` `notes` | null | 모델이 예측하지 않는 항목이라 항상 null |
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
-| `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명. `llm`은 계약상 필드명을 유지할 뿐, 현재 값은 생성형이 아닌 HMM 분류 모델이다 |
+| `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명. `llm`은 계약상 필드명을 유지할 뿐, 현재 값은 생성형이 아닌 MF_BERT 분류 모델이다 |
+
+> **2026-09-29 `summary`가 v1 6필드(`patient`·`mechanism`·`symptoms`·`treatment`·`severity_tag`·`required_department`)에서
+> HMM v2 17필드로 바뀌었다.** hub·dashboard는 아직 v1을 기대하므로 hub 담당자가 v2를 읽도록 고쳐야 한다.
+> v2에는 `required_department`(진료과)와 `mechanism`(기전 문장)에 해당하는 필드가 없다 — hub가 예상 병명 매칭에 쓸
+> 값은 `chief_complaint`·`incidents`·`suspected_diagnosis` 중에서 hub 담당자가 정한다.
 
 이 JSON은 feature/hub로 전달되며, feature/hub는 `summary`(부상 상태·예상 병명·중증도)는
 매칭 스코어링에 쓰고, `transcript.raw_text`/`transcript.filtered_text`(통화 원문 전체·
@@ -225,10 +240,12 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 ## feature/voice 담당자 참고사항
 
 - 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
-- **STT는 Qwen3-ASR-1.7B + LoRA, 구조화는 HMM(KLUE RoBERTa-large 다중과제 모델) + 규칙 조립기다 (2026-09-24 교체).** 이전의 faster-whisper → `corrections.json` 오인식 교정 → Ollama `qwen3:14b` SBAR 구조화 경로는 코드째 삭제했다. 두 모델은 팀이 따로 파인튜닝한 것으로, 코드는 `voice/asr.py`·`voice/hmm/`에 복사해 넣었다. 가중치는 저장소에 없고 Hugging Face Hub 공개 저장소 `podongchip/goldenlink-voice-models`(`asr_adapter/`·`hmm/`)에 올려, 첫 실행 때 HF 캐시로 자동으로 받는다(`voice/weights.py`). `ASR_ADAPTER_DIR`·`HMM_RUN_DIR` 환경변수를 주면 Hub 대신 그 로컬 폴더를 쓴다
-  - ASR은 AI Hub 119 신고 음성 20시간으로 LoRA 학습(검증 CER 0.298 → 0.182). 학습 데이터가 짧은 발화라 통화를 통째로 넣지 않고 발화 단위로 인식한다
-  - HMM은 원인·부위·중증도·나이대·성별·처치(분류 헤드)와 증상 구간(토큰 태깅)을 내고, 규칙 조립기가 이를 `summary` 6필드로 맞춘다. `required_department`는 원인·부위 → 심평원 전문과목 대응표(`voice/hmm/department_mapping.json`)로 도출한다. 생성형이 아니라 출력 형식이 깨질 일이 없고 추론은 0.1초 안팎이다
-  - Qwen3-ASR이 transformers 5.13 이상을 요구해 voice 환경을 torch 2.11(cu128)·transformers 5.17로 올렸다. HMM은 이 버전에서 원본(4.57.6)과 eval 295건 출력이 동일함을 확인했다
+- **STT는 Qwen3-ASR-0.6B + LoRA, 구조화는 MF_BERT(KLUE RoBERTa-large 다중과제 모델)다 (2026-10-01 HMM v2에서 교체, 2026-09-29 ASR 교체, 그 전 2026-09-24에 faster-whisper·Ollama 경로를 삭제).** 두 모델은 팀이 따로 파인튜닝한 것으로, 코드는 `voice/asr.py`·`voice/MF_BERT/`에 복사해 넣었다. 가중치는 저장소에 없고 첫 실행 때 HF 캐시로 자동으로 받는다(`voice/weights.py`) — ASR 어댑터는 `Playedwell03/qwen3-asr-0.6b-119ko-tiny`(베이스 `Qwen/Qwen3-ASR-0.6B-hf`), MF_BERT는 Hugging Face Hub 공개 저장소 `podongchip/MF_BERT`(`best.pt` + `tokenizer/`). 이전 HMM 가중치 저장소 `podongchip/goldenlink-voice-models`는 더 이상 쓰지 않는다. `ASR_ADAPTER_DIR`·`MF_BERT_DIR` 환경변수를 주면 Hub 대신 그 로컬 폴더를 쓴다
+  - ASR은 AI Hub 119 신고 음성 20시간으로 LoRA 학습(깨끗한 음성 CER 0.187, 1.7B 어댑터와 동등하지만 소음 환경은 1.7B가 낫다). 학습 데이터가 짧은 발화라 통화를 통째로 넣지 않고 발화 단위로 인식한다. 새 어댑터의 실제 음성 인식 품질은 아직 측정하지 않았다
+  - MF_BERT는 합성 통화 대본 8,990건으로 학습해 v2 17필드를 낸다. 5-fold 교차검증 평균 score 0.6912 ± 0.0041이고, 배포한 체크포인트는 fold00(0.6934)이다(전체 데이터 재학습본이 아님. fold 최고는 fold04 0.6977). 학습 데이터가 달라 HMM v2의 0.7312와 직접 비교할 수 없다. 손상·처치·증상의 희귀 라벨 성능이 낮다. 생성형이 아니라 출력 형식이 깨질 일이 없다
+  - HMM v2와 출력층·`labels.py`·`decode.py`·`parse.py`가 같아 `summary` 형식은 그대로다. 달라진 건 입력 처리다 — HMM v2는 포지션 임베딩을 2048칸으로 늘려 통화를 한 번에 넣었고, MF_BERT는 512토큰 조각(128토큰 겹침)으로 나눠 인코딩한 뒤 이어 붙인다(`voice/MF_BERT/chunking.py`)
+  - `voice/MF_BERT/`의 `decode.py`가 점수를 v2 스키마로 풀고 `parse.py`가 활력징후·나이·발생 시점 숫자를 읽는다. 복사본이 원본(`BERT_Multiclass Classification/BERT/mf_bert/infer.py`)과 같은 결과를 내는지 fold00 검증 데이터 15건(긴 통화 5건 포함)으로 확인했다. 예전 v1의 규칙 조립기·진료과 대응표(`required_department`)는 v1 라벨 기준이라 삭제했다
+  - Qwen3-ASR이 transformers 5.13 이상을 요구해 voice 환경(`AIRookieProject`)을 torch 2.11(cu128)·transformers 5.17로 올렸다. conda `ml` 환경은 transformers 4.57.6이라 ASR이 안 돌아 voice에는 쓸 수 없다
 - **통화 중 발화 단위 인식**(`voice/live_transcriber.py`): 통화 중 0.5초마다 마이크 버퍼를 보고, 말이 끊기면(음량 기반 무음 감지) 그 발화만 잘라 바로 인식해 둔다. 종료 신호 뒤에는 마지막 발화 인식과 구조화만 남아 hub 도착까지 수 초다(108초 통화 실측 3.7초, 끝나고 한 번에 인식하면 약 61초). 무음 판정은 소리 크기만 보므로 현장 소음에 따라 `VOICE_SILENCE_RMS`·`VOICE_UTTERANCE_HOLD_SEC`로 조절한다
 - 원본 로그 보존 원칙(완전 삭제 금지, 사후 검증·audit trail용)은 유지된다 — `transcript.raw_text`/`turns`에 전체 발화가 그대로 남는다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
@@ -244,7 +261,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 > (hospital_approve/hospital_reject/final_approval)의 수신 주체도
 > **`feature/hub`로 확정**되었습니다.
 
-- 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어, 바이탈 수집·전송 관련 서술은 모두 제거했다
+- 환자 바이탈 정보는 info가 수집하지 않는다. (환자 활력징후는 2026-09-29 회의로 voice v2가 통화에서 뽑아 hub → dashboard로 표시하기로 했다 — info와 무관)
 - 병원 매칭·존(Zone) 로직은 더 이상 이 브랜치가 담당하지 않는다 (`feature/hub` 담당자 참고사항 참고)
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷)은 feature/hub가 수신하므로 이 브랜치는 별도 구현이 필요 없다
@@ -501,6 +518,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **출동 시뮬레이션**(`start-all.sh --sim-dispatch`, 시연용 가짜 위치): [이동] → 현장(기지 5~12분 거리) → 통화·승인 → 확정 병원 → 15초 → 기지 복귀. `ambulance_sim.py`, 메시지 `dispatch`·`scene_end`(받음) / `ambulance_phase`·`ambulance_position`(보냄, `simulated: true`). 위치는 레지스트리 GPS를 덮지 않고 조회 시점에 얹는다
   - **start-all이 hub 백그라운드 루프를 안 띄우던 버그 수정** — `app.app.run()`만 불러서 60초 재계산·상태 저장·sweep이 실서버에서 한 번도 돌지 않았다. 이제 `app.start_background()`를 먼저 부른다
   - WebSocket 인증은 여전히 없다(시연 범위 허용, hub/README.md 한계에 명시)
+- **voice v2 스키마 수신(2026-10-01, voice MF_BERT 머지와 함께)**: voice가 summary를 v2(MF_BERT 17필드 — `ktas_level`·`chief_complaint`·`incidents`·`injuries`·`vitals` …)로 바꿔 예전 hub 스키마로는 전부 400이 났다. `hub/voice_v2.py`가 v2를 예전 필드로 옮긴다(규칙 기반) — KTAS 1~2→high·3→medium·4~5→low, 예상 병명 = 주 사고/질병 분류 + 주 호소 + 의심 진단 + 손상, 환자 = 나이+성별, 증상 = "확인"된 것, 처치 = 시행한 것. **필요 진료과는 예전 voice의 대응표(`department_mapping.json`)를 그대로 옮겨** `disease_category`·`incidents[].type`·`injuries[].region`으로 도출한다(외상이면 부위 우선, 여러 부위는 다발성→외과). ⚠ 표는 **팀 확인 전 초안**(뇌혈관: 신경과/신경외과, 소화기: 외과/내과 기본값 미확정). 예전 6필드 형식도 그대로 받는다. KTAS·활력징후·의식(AVPU)·발생 시점·주 호소는 `patientInfo`로 dashboard에 간다(순위에는 안 씀)
 
 ## feature/dashboard 담당자 참고사항
 
@@ -573,6 +591,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - 후보 목록은 **hub가 보낸 순서를 그대로** 쓴다(자체 정렬 제거). 이송 승인을 누르면 즉시 "확정"이 아니라 "확정 요청 중"으로 두고, hub가 `confirmed`로 돌려줄 때만 확정 표시(mock 모드는 예전대로)
   - hub 메시지는 `type`으로 구분하고 모르는 `type`은 버린다(type 없는 메시지 = 구 hub의 매칭 결과). 새로 받는 것: `case_closed`(사건 카드 지움), `scene_candidates`(매칭 전 거리순 후보 — 구급차 화면), `ambulance_phase`·`ambulance_position`(출동 시뮬레이션)
   - 후보 카드: "필요 진료과 일치"/적합도, 전문의 수, 권역·지역센터 칩, 순위 가산 이유(툴팁)
+  - 통화 요약(구급차)·수용 요청 카드(병원)에 voice v2의 KTAS·활력징후(최근 측정)·의식·발생 시점·환자(나이·성별)를 표시(`panels/PatientVitals.tsx`, AI 처리). 예전 voice 데이터면 아무것도 안 그린다
   - `identity_info.simDispatch`가 true면 구급차 화면에 출동 조작부([이동]·[현장 종료], "시뮬레이션 위치" 배지). caseId는 [이동] 때 만들고 통화 시작은 현장 도착 뒤에만 열린다. 지도는 상태가 바뀔 때만 경로·기지·환자 발생 위치를 다시 그리고 1초 위치엔 마커만 옮긴다. 병원 지도도 우리 병원으로 이송 중인 구급차를 보여준다
 
 ---

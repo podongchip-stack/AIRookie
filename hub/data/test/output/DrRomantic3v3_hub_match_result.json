@@ -9,7 +9,17 @@
     "expectedDiagnosis": "교통사고로 인한 흉부 손상",
     "severityTag": "high",
     "rawTranscript": "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다... A병원: 네 잠시만요...",
-    "filteredTranscript": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란."
+    "filteredTranscript": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란.",
+    "patient": "50대 남성",
+    "treatment": [
+      "산소 공급"
+    ],
+    "ktasLevel": null,
+    "vitals": [],
+    "consciousness": null,
+    "onset": null,
+    "chiefComplaint": null,
+    "requiredDepartment": null
   },
   "zoneActive": [
     1

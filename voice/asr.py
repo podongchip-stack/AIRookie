@@ -1,11 +1,12 @@
-"""파인튜닝한 Qwen3-ASR(베이스 + LoRA 어댑터)로 통화 음성을 텍스트로 바꾼다.
+"""파인튜닝한 Qwen3-ASR-0.6B(베이스 + LoRA 어댑터)로 통화 음성을 텍스트로 바꾼다.
 
 C:\\Dev\\HMM\\use\\transcribe_ko.py의 인식 로직을 가져왔다. 어댑터는 AI Hub 119 신고 음성
 20시간으로 학습했고, 학습 데이터가 평균 2초짜리 발화라 긴 통화를 통째로 넣지 않고 조용한 지점에서
 5초 안팎으로 잘라 구간별로 인식한다(20초 단위는 문장이 통째로 빠졌고 8초 단위도 일부 누락).
 
-가중치는 저장소에 없다. 베이스 모델과 어댑터(약 79MB) 모두 첫 실행 때 Hugging Face 캐시(HF_HOME)로
-내려받는다. ASR_ADAPTER_DIR 환경변수를 주면 어댑터는 그 로컬 폴더를 쓴다(weights.py).
+가중치는 저장소에 없다. 베이스 모델(Qwen/Qwen3-ASR-0.6B-hf)과 어댑터(Playedwell03/qwen3-asr-0.6b-119ko-tiny)
+모두 첫 실행 때 Hugging Face 캐시(HF_HOME)로 내려받는다. ASR_ADAPTER_DIR 환경변수를 주면 어댑터는 그 로컬
+폴더를 쓴다(weights.py).
 """
 
 from __future__ import annotations
@@ -24,12 +25,12 @@ from peft import PeftModel
 from scipy.signal import resample_poly
 from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
 
-from weights import resolve_weights_dir
+from weights import resolve_asr_adapter_dir
 
-BASE_MODEL_ID = "Qwen/Qwen3-ASR-1.7B-hf"
+BASE_MODEL_ID = "Qwen/Qwen3-ASR-0.6B-hf"
 
 #: model_used.stt에 싣는 이름
-MODEL_NAME = "qwen3-asr-1.7b-lora"
+MODEL_NAME = "qwen3-asr-0.6b-119ko-tiny"
 
 SAMPLE_RATE = 16000
 DEFAULT_CHUNK_SEC = 5.0
@@ -118,7 +119,7 @@ class AsrModel:
 
     def __init__(self, device: str = "auto", adapter_dir: Path | None = None) -> None:
         if adapter_dir is None:
-            adapter_dir = resolve_weights_dir("ASR_ADAPTER_DIR", "asr_adapter")
+            adapter_dir = resolve_asr_adapter_dir()
         if not adapter_dir.is_dir():
             raise FileNotFoundError(f"ASR 어댑터 폴더가 없습니다: {adapter_dir} (ASR_ADAPTER_DIR 환경변수로 지정)")
         self.device = pick_device(device)

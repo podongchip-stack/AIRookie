@@ -273,6 +273,8 @@ true면 추적 시작부터 그 값이었다는 뜻이라 "최소 X시간 전"�
 
 ### 입력 스키마 1: feature/voice로부터 (환자 정보)
 
+> **2026-10-01**: voice가 summary를 v2 스키마(MF_BERT 17필드)로 바꿨다. hub는 v2와 아래 예전 형식을 **둘 다** 받는다 — v2면 `voice_v2.normalize()`가 예전 필드(`patient`·`mechanism`·`symptoms`·`treatment`·`severity_tag`·`required_department`)로 옮기고 KTAS·활력징후·의식·발생 시점·주 호소를 더한다. v2 원본 형식은 CLAUDE.md "데이터 포맷 1번"이 최신이다. 필요 진료과 대응표는 팀 확인 전 초안(`voice_v2.py` 상단).
+
 기존 feature/voice README.md에 정의된 출력 스키마를 그대로 참조한다
 (`transcript`, `summary.mechanism`, `summary.symptoms`, `summary.treatment`,
 `summary.severity_tag` 등, 자세한 필드 설명은 feature/voice README.md 참고).
