@@ -18,7 +18,8 @@
 #   ./start-all.sh                    공개 모드 (도메인 주소로 접속)
 #   ./start-all.sh --local            터널 없이 로컬 주소로만 (같은 Wi-Fi 시연·개발용)
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
-#   ./start-all.sh --no-info          info(병원 정보 주기 전송) 생략
+#   ./start-all.sh --no-info          info(병원 정보 주기 전송)와 E-Gen 스냅샷 수집 생략
+#   ./start-all.sh --no-snapshot      E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델의 관측 기록)만 생략
 #   ./start-all.sh --lidar            lidar3d(3D 뷰어·아이폰 앱 업로드 서버)도 함께 — 병원 대시보드에 3D 버튼이 생긴다
 #                                     (기본은 끔: 3D는 당분간 시연에서 뺀다. 끄면 버튼도 자동으로 숨겨진다)
 #
@@ -42,12 +43,13 @@ DASH_PORT="${DASH_PORT:-3000}"
 LIDAR_PORT="${LIDAR_PORT:-8000}"
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
-MODE=public; BUILD=1; RUN_INFO=1; RUN_LIDAR=0
+MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0
 for a in "$@"; do
   case "$a" in
     --local)      MODE=local ;;
     --skip-build) BUILD=0 ;;
     --no-info)    RUN_INFO=0 ;;
+    --no-snapshot) RUN_SNAPSHOT=0 ;;
     --lidar)      RUN_LIDAR=1 ;;
     --no-lidar)   RUN_LIDAR=0 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
     --setup-dns)
@@ -55,7 +57,7 @@ for a in "$@"; do
       echo "터널 '$TUNNEL_NAME'에 $APP_HOST 를 연결합니다 (Cloudflare DNS에 CNAME 생성)..."
       cloudflared tunnel route dns "$TUNNEL_NAME" "$APP_HOST"
       exit $? ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "❌ 알 수 없는 옵션: $a (도움말: --help)"; exit 1 ;;
   esac
 done
@@ -149,6 +151,15 @@ if [ "$RUN_INFO" = 1 ]; then
   echo "info 시작 (병원 정보 → hub, 기본 30분 주기)..."
   "$INFO_PY" -u info/send_to_hub.py > "$LOG_DIR/info.log" 2>&1 &
   PIDS+=("$!")
+  # E-Gen은 과거 이력을 주지 않아서, 병상 신뢰도 모델(reliability/)과 중증신고 신선도가 쓰는
+  # 관측 기록은 직접 찍어 쌓아야 한다. Windows에선 작업 스케줄러(snapshot_nationwide.bat)로
+  # 돌리던 것을 여기서 같이 띄운다 — 전국 1회 호출 × 20분 = 하루 약 145회(서울만 받을 때와 같음).
+  if [ "$RUN_SNAPSHOT" = 1 ]; then
+    echo "E-Gen 스냅샷 수집 시작 (전국, 20분 주기)..."
+    (cd info/Hospital_inform && PYTHONIOENCODING=utf-8 exec "$INFO_PY" -u info/snapshot.py --stage1 "" \
+        --interval 1200 --dir info/data/snapshots_nationwide) > "$LOG_DIR/snapshot.log" 2>&1 &
+    PIDS+=("$!")
+  fi
 fi
 
 # ── 3. lidar3d (3D 뷰어) ──
@@ -238,7 +249,7 @@ fi
 cat <<BANNER
 
   voice(구급차 노트북)는 HUB_BASE_URL=http://<이 맥의 LAN IP>:$HUB_PORT 로 따로 실행하세요.
-  로그: $LOG_DIR/{hub,info,lidar3d,dashboard,cloudflared}.log
+  로그: $LOG_DIR/{hub,info,snapshot,lidar3d,dashboard,cloudflared}.log
   Ctrl-C 로 전부 종료합니다.
 ==============================================================
 
