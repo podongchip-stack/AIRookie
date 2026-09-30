@@ -162,11 +162,10 @@ def _is_bed_data_stale(info: HospitalInfo, now: datetime) -> bool:
     return updated is not None and now - updated > BED_DATA_STALE_AFTER
 
 
-# info-v2(hospital_score.vocabulary.GROUPS)의 15개 중증질환군 이름을 그대로
-# 옮겨온 것. hub는 별도 브랜치라 info/ 폴더를 import할 수 없어(모노레포
-# 브랜치별 폴더 원칙) 값을 복사해서 쓴다 — egen/mapper.py의 CAPABILITY_TO_
-# DEPARTMENT를 각 브랜치가 따로 들고 있는 것과 같은 패턴. 바뀌면 양쪽을 같이
-# 고쳐야 한다(info의 vocabulary.py 참고).
+# info-v2(hospital_score.vocabulary.GROUPS)의 15개 중증질환군 이름. **폴백 전용**이다
+# (2026-10-01) — 실제 매칭 어휘는 info가 보낸 병원들의 assessment.groups 키에서 만든다
+# (_assessment_vocabulary). 예전엔 이 목록만 써서, info 쪽 어휘가 바뀌면 hub의 질환군 매칭이
+# 조용히 어긋났다. assessment를 가진 병원이 하나도 없을 때(구 feature/info 데이터)만 쓴다.
 _ASSESSMENT_GROUPS = [
     "재관류중재술",
     "뇌출혈수술",
@@ -184,6 +183,12 @@ _ASSESSMENT_GROUPS = [
     "안과적수술",
     "영상의학혈관중재",
 ]
+
+
+def _assessment_vocabulary(infos: list[HospitalInfo]) -> list[str]:
+    """이번 후보들의 assessment에 실제로 있는 질환군 이름들(정렬). 없으면 폴백 목록."""
+    groups = {g for info in infos if info.assessment is not None for g in info.assessment.groups}
+    return sorted(groups) if groups else _ASSESSMENT_GROUPS
 
 
 def _reliability_for(info: HospitalInfo, group: str) -> ReliabilityInfo | None:
@@ -796,7 +801,8 @@ class HubEngine:
         department_lists = [[s.department for s in info.specialties] for info, _ in candidates]
         with self._matcher_lock:
             specialty_results = self._matcher.match_many(expected_diagnosis, department_lists)
-            best_group, _ = self._matcher.match_many(expected_diagnosis, [_ASSESSMENT_GROUPS])[0]
+            vocabulary = _assessment_vocabulary([info for info, _ in candidates])
+            best_group, _ = self._matcher.match_many(expected_diagnosis, [vocabulary])[0]
 
         # 후보 병원별 도로 기준 소요시간(초). 조회 실패·키 없음·반경 10km 밖이면 그 병원만 빠진다.
         etas = (
