@@ -228,7 +228,9 @@ def main() -> None:
     )
     assert all("finalizedTo" not in p for p in _received)
     assert app._sweep_unresolved_cases() == 0, "이미 정리한 사건을 다시 정리하면 안 된다"
-    print("  [확인] 미결 방치 사건의 무응답이 sweep으로 기록됨 (caseFinalized=false, 재정리 없음)")
+    assert engine.get_case_result(unresolved_case) is None, "정리된 미결 사건은 캐시에서 빠져야 한다"
+    assert unresolved_case not in engine.get_active_case_ids(), "정리된 사건은 주기 재계산 대상이 아니다"
+    print("  [확인] 미결 방치 사건의 무응답이 sweep으로 기록되고 사건이 닫힘 (caseFinalized=false, 재정리 없음)")
 
     # 수신구가 꺼져 있어도(연결 거부) 예외가 새어나오지 않아야 한다
     server.shutdown()

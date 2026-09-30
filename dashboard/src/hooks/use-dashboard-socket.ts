@@ -75,6 +75,15 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     }));
   }, []);
 
+  const applyCaseClosed = useCallback((caseId: string) => {
+    setState((prev) => {
+      if (!(caseId in prev.matchResults)) return prev;
+      const rest = { ...prev.matchResults };
+      delete rest[caseId];
+      return { ...prev, matchResults: rest };
+    });
+  }, []);
+
   const applyIdentityInfo = useCallback((info: DashboardIdentityInfo) => {
     setState((prev) => ({ ...prev, identity: { name: info.name, known: info.known } }));
   }, []);
@@ -172,6 +181,9 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
             case "hospital_self_info":
               applySelfInfo(parsed);
               break;
+            case "case_closed":
+              applyCaseClosed(parsed.caseId);
+              break;
             case "match_result":
             case undefined:
               applyMatchResult(parsed);
@@ -193,7 +205,7 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;

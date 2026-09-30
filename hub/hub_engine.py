@@ -508,19 +508,38 @@ class HubEngine:
             cutoff = now - timedelta(minutes=CASE_RETENTION_MIN)
             stale = [cid for cid, at in self._case_confirmed_at.items() if at <= cutoff]
             for cid in stale:
-                self._case_results.pop(cid, None)
-                self._case_apid.pop(cid, None)
-                self._case_max_zone.pop(cid, None)
-                self._case_voice.pop(cid, None)
-                self._case_group.pop(cid, None)
-                self._case_gps_fallback.pop(cid, None)
-                self._case_confirmed_at.pop(cid, None)
-            for key in [k for k in self._case_overlay if k[0] in stale]:
-                del self._case_overlay[key]
+                self._drop_case_locked(cid)
             if stale:
                 self._dirty = True
                 print(f"  [정리] 확정된 지 {CASE_RETENTION_MIN}분 지난 사건 {len(stale)}건 캐시에서 제거: {stale}")
             return stale
+
+    def _drop_case_locked(self, case_id: str) -> None:
+        """사건 하나의 큰 캐시를 지운다(락을 쥔 채로 호출). `_approval_status`는 남긴다 —
+        이유는 _prune_old_cases() 참고."""
+        self._case_results.pop(case_id, None)
+        self._case_apid.pop(case_id, None)
+        self._case_max_zone.pop(case_id, None)
+        self._case_voice.pop(case_id, None)
+        self._case_group.pop(case_id, None)
+        self._case_gps_fallback.pop(case_id, None)
+        self._case_confirmed_at.pop(case_id, None)
+        for key in [k for k in self._case_overlay if k[0] == case_id]:
+            del self._case_overlay[key]
+
+    def close_case(self, case_id: str) -> bool:
+        """확정 없이 끝난 사건(방치 정리·현장 종료)을 캐시·따라잡기·주기 재계산에서 뺀다
+        (2026-10-01). 예전엔 확정된 사건만 60분 뒤 지워서, 취소·중단된 사건이 병원 대시보드
+        따라잡기 목록에 영원히 떴다. 이송 확정된 사건은 여기서 지우지 않는다(병상 차감이 걸려
+        있어 기존 60분 정리를 따른다). 지웠으면 True."""
+        with self._lock:
+            if case_id in self._case_confirmed_at:
+                return False
+            existed = case_id in self._case_results or case_id in self._case_apid
+            self._drop_case_locked(case_id)
+            if existed:
+                self._dirty = True
+            return existed
 
     def _prune_and_count_overlay(self, hospital_id: str, now: datetime) -> int:
         """만료된 차감 기록을 걷어내고, 아직 유효한 개수를 돌려준다."""

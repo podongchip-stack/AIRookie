@@ -283,4 +283,12 @@ export interface DashboardState {
   selfInfo: HospitalSelfInfo | null;
 }
 
-export type InboundMessage = HubMatchResult | DashboardIdentityInfo | HospitalSelfInfo;
+// hub → dashboard: 확정 없이 끝난 사건(방치 정리·현장 종료, 2026-10-01). 받으면 그 사건을
+// 화면에서 지운다 — 예전엔 취소·중단된 사건 카드가 병원 대시보드에 계속 남았다.
+export interface CaseClosed {
+  type: "case_closed";
+  caseId: string;
+  reason: "unresolved_timeout" | "scene_ended" | string;
+}
+
+export type InboundMessage = HubMatchResult | DashboardIdentityInfo | HospitalSelfInfo | CaseClosed;

@@ -468,8 +468,9 @@ def _build_rejection_payload(action: ApprovalAction) -> dict:
 
 
 #: 확정 없이 이 시간(분) 넘게 활동이 없는 사건은 "미결 종료"로 보고 무응답을
-#: 정리 기록한다. 로그만 남기고 엔진의 사건 자체는 건드리지 않는다(미확정
-#: 사건은 지우지 않는다는 기존 보존 정책 유지). 0 이하면 끈다.
+#: 정리 기록한 뒤, 사건을 닫는다(close_case — 캐시·따라잡기·주기 재계산에서 빠지고
+#: 대시보드에 case_closed를 보낸다. 2026-10-01). 사건 내용은 의사결정 로그에 이미
+#: 남아 있다. 0 이하면 끈다.
 UNRESOLVED_CASE_TIMEOUT_MIN = float(os.environ.get("HUB_UNRESOLVED_TIMEOUT_MIN", "120"))
 
 
@@ -531,7 +532,18 @@ def _sweep_unresolved_cases(now: datetime | None = None) -> int:
         ]
     for case_id in due:
         _log_no_responses(case_id, now.isoformat(timespec="seconds"), finalized_to=None)
+        _close_case(case_id, "unresolved_timeout")
     return len(due)
+
+
+def _close_case(case_id: str, reason: str) -> bool:
+    """확정 없이 끝난 사건을 닫고 대시보드에 알린다. 방치 정리(sweep)와 현장 종료가 같이 쓴다."""
+    if not engine.close_case(case_id):
+        return False
+    decision_log.log_decision("case_closed", {"caseId": case_id, "reason": reason})
+    _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": reason})
+    print(f"  [정리] caseId={case_id} 사건 종료({reason}) — 캐시에서 제거, 대시보드에 알림")
+    return True
 
 
 def _handle_dashboard_action(payload: dict) -> None:
