@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { css } from "styled-system/css";
 import { severityBadge } from "styled-system/recipes";
+import { PatientVitals } from "@/components/panels/PatientVitals";
 import { Tag } from "@/components/hospital/Tag";
 import {
   inputStyle,
@@ -101,14 +102,14 @@ export function CallSummaryEditablePanel({ data }: { data: HubMatchResult | null
 
   if (!patientInfo || !draft) {
     return (
-      <CardShell badge={<Tag source="ai">sLLM · KM-BERT</Tag>}>
+      <CardShell badge={<Tag source="ai">Qwen3-ASR · MF_BERT</Tag>}>
         <p className={css({ color: "ink3", fontSize: "sm" })}>수신 대기 중...</p>
       </CardShell>
     );
   }
 
   return (
-    <CardShell subtitle="실시간 음성 필터링 → 항목 추출" badge={<Tag source="ai">sLLM · KM-BERT</Tag>}>
+    <CardShell subtitle="통화 음성 → 항목 추출" badge={<Tag source="ai">Qwen3-ASR · MF_BERT</Tag>}>
       <dl
         className={css({
           display: "grid",
@@ -147,6 +148,9 @@ export function CallSummaryEditablePanel({ data }: { data: HubMatchResult | null
         <span className={severityBadge({ severity: draft.severityTag })}>
           {SEVERITY_RISK_LABEL[draft.severityTag]} · {draft.expectedDiagnosis}
         </span>
+      </div>
+      <div className={css({ marginTop: "2" })}>
+        <PatientVitals patientInfo={draft} />
       </div>
 
       <div className={css({ display: "flex", gap: "2", justifyContent: "flex-end", marginTop: "3" })}>

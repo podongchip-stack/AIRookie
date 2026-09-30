@@ -259,6 +259,7 @@ def main() -> None:
     test_approval_order_and_reselection()
     test_expertise_bonus_and_exact_match()
     test_hospital_roster()
+    test_voice_v2_schema()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -895,6 +896,37 @@ def test_hospital_roster() -> None:
     assert removed == ["R_FAR"] and kept == ["R003"], (removed, kept)
     assert engine.get_hospital("R_FAR") is None and engine.get_hospital("R003") is not None
     print("  [확인] 후보 아닌 병원만 제거, 진행 중 사건 후보는 보류, 목록 급감 시 제거 안 함")
+
+
+def test_voice_v2_schema() -> None:
+    """voice v2(MF_BERT 17필드, 2026-09-29~) 요약을 받아 매칭·표시에 쓰는지(2026-10-01)."""
+    print("\n=== voice v2 스키마 수신: 예전 필드로 변환 + KTAS·활력징후 표시 ===")
+    engine = _engine()
+    internal = _hospital("V001", "[테스트] 내과 있음", 35.1810, 128.1090, 5, beds_by_type={"ER_ADULT": 5})
+    engine.update_hospital_info(internal.model_copy(update={"specialties": [Specialty(department="내과", doctorCount=8)]}))
+    message = VoiceCallSummaryMessage.model_validate({
+        "caseId": "case-v2",
+        "transcript": {"raw_text": "x", "filtered_text": "x", "language": "ko", "timestamp": "t", "duration_sec": 1},
+        "summary": {
+            "call_type": None, "ktas_level": 2, "ktas_evidence": None,
+            "chief_complaint": {"major": "I 심혈관계", "minor": "흉통(심장성)"},
+            "suspected_diagnosis": [{"text": "경색 의심"}],
+            "vitals": [{"sequence": 1, "sbp": 150, "dbp": 90, "hr": 110, "rr": None, "bt": None, "spo2": 96,
+                        "glucose": None, "evidence": ["혈압 150에 90"]}],
+            "consciousness": [{"sequence": 1, "avpu": "A"}], "symptoms": [{"standard_name": "흉통", "status": "확인"}],
+            "onset": {"text": "30분 전부터", "minutes_ago": 30}, "incidents": [{"type": "질병", "detail": None, "primary": True}],
+            "disease_category": "심장질환", "injuries": [], "treatments": [{"category": "ECG", "status": "시행", "detail": None}],
+            "age": {"years": 62, "months": None, "band": None, "evidence": []}, "sex": "남성",
+            "medications": {"status": "미언급", "items": []}, "notes": None, "meta": {},
+        },
+        "source": "ai", "model_used": {"stt": "qwen3-asr-0.6b-119ko-tiny", "llm": "mf-bert-klue-roberta-large"},
+    })
+    result = engine.process_voice_summary(message, _TEST_GPS, max_zone=1)
+    info, top = result.patientInfo, result.hospitals[0]
+    assert info.severityTag == "high" and info.ktasLevel == 2 and info.vitals[0].sbp == 150 and info.consciousness == "명료(A)"
+    assert info.requiredDepartment == "내과" and top.specialtyMatch.basis == "exact", "대응표로 도출한 필요 진료과로 정확 일치"
+    assert info.patient == "62세 남성" and info.injuryStatus == ["흉통"] and "흉통(심장성)" in info.expectedDiagnosis
+    print(f"  [확인] KTAS 2 → high, 필요 진료과 {info.requiredDepartment} 정확 일치, 활력징후·의식 전달, 예상 병명 '{info.expectedDiagnosis}'")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@ feature/voice, feature/info의 출력 JSON, feature/dashboard로 보내는 출�
 """
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from voice_v2 import is_v2, normalize as normalize_v2
 
 Severity = Literal["high", "medium", "low"]
 HospitalStatus = Literal["pending", "approved", "rejected", "confirmed"]
@@ -14,8 +16,23 @@ HospitalStatus = Literal["pending", "approved", "rejected", "confirmed"]
 
 # ── feature/voice → feature/hub (입력) ──────────────────────────────────────
 
+class Vital(BaseModel):
+    """활력징후 1회 측정(voice v2, MF_BERT가 찾은 구간을 규칙으로 읽은 숫자). 없는 값은 None."""
+
+    sequence: int = 1
+    sbp: Optional[float] = None
+    dbp: Optional[float] = None
+    hr: Optional[float] = None
+    rr: Optional[float] = None
+    bt: Optional[float] = None
+    spo2: Optional[float] = None
+    glucose: Optional[float] = None
+
+
 class VoiceSummary(BaseModel):
-    """feature/voice CallSummaryMessage.summary와 동일한 필드만 사용한다."""
+    """feature/voice CallSummaryMessage.summary. 예전 6필드 형식과 v2 스키마(MF_BERT 17필드,
+    2026-09-29~)를 둘 다 받는다 — v2면 voice_v2.normalize()가 예전 필드로 옮기고 표시용 필드
+    (KTAS·활력징후·의식·발생 시점·주 호소)를 더한다(2026-10-01)."""
 
     patient: str
     mechanism: str
@@ -23,6 +40,16 @@ class VoiceSummary(BaseModel):
     treatment: list[str]
     severity_tag: Severity
     required_department: Optional[str] = None
+    ktas_level: Optional[int] = None
+    vitals: list[Vital] = Field(default_factory=list)
+    consciousness: Optional[str] = None
+    onset: Optional[str] = None
+    chief_complaint: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_v2(cls, data):
+        return normalize_v2(data) if is_v2(data) else data
 
 
 class VoiceTranscript(BaseModel):
@@ -217,6 +244,15 @@ class PatientInfo(BaseModel):
     severityTag: Severity
     rawTranscript: str
     filteredTranscript: str
+    # voice v2(2026-10-01~)가 주는 표시용 값(source: ai). 예전 voice면 비어 있다.
+    patient: Optional[str] = None
+    treatment: list[str] = Field(default_factory=list)
+    ktasLevel: Optional[int] = None
+    vitals: list[Vital] = Field(default_factory=list)
+    consciousness: Optional[str] = None
+    onset: Optional[str] = None
+    chiefComplaint: Optional[str] = None
+    requiredDepartment: Optional[str] = None
 
 
 class SpecialtyMatch(BaseModel):

@@ -15,6 +15,27 @@ export interface PatientInfo {
   // VoiceCallSummaryMessage.transcript를 그대로 받아 여기로 넘겨준다.
   rawTranscript: string;
   filteredTranscript: string;
+  // hub 2026-10-01~: voice v2(MF_BERT)가 주는 표시용 값. 예전 voice면 비어 있다.
+  patient?: string | null;
+  treatment?: string[];
+  ktasLevel?: number | null;
+  vitals?: Vital[];
+  consciousness?: string | null;
+  onset?: string | null;
+  chiefComplaint?: string | null;
+  requiredDepartment?: string | null;
+}
+
+// 활력징후 1회 측정. 없는 값은 null.
+export interface Vital {
+  sequence: number;
+  sbp: number | null;
+  dbp: number | null;
+  hr: number | null;
+  rr: number | null;
+  bt: number | null;
+  spo2: number | null;
+  glucose: number | null;
 }
 
 // 예상 병명 ↔ 병원 진료과 임베딩 유사도 매칭 결과. score를 그대로 노출해
