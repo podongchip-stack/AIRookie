@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 골든링크 전체 실행 — hub + info + dashboard + lidar3d(3D 뷰어) + Cloudflare 터널을 한 번에 띄운다.
+# 골든링크 전체 실행 — hub + info + dashboard + Cloudflare 터널을 한 번에 띄운다 (lidar3d는 --lidar로만).
 #
 # 도메인 하나(rookie-goldenlink.xyz)를 Cloudflare named 터널 하나로 나눠 쓴다:
 #
@@ -19,7 +19,8 @@
 #   ./start-all.sh --local            터널 없이 로컬 주소로만 (같은 Wi-Fi 시연·개발용)
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
 #   ./start-all.sh --no-info          info(병원 정보 주기 전송) 생략
-#   ./start-all.sh --no-lidar         lidar3d(3D 뷰어) 생략 — 병원 대시보드의 3D 버튼도 숨겨진다
+#   ./start-all.sh --lidar            lidar3d(3D 뷰어·아이폰 앱 업로드 서버)도 함께 — 병원 대시보드에 3D 버튼이 생긴다
+#                                     (기본은 끔: 3D는 당분간 시연에서 뺀다. 끄면 버튼도 자동으로 숨겨진다)
 #
 # voice는 구급차 노트북마다 따로 뜨므로 여기서 띄우지 않는다(voice/app.py, HUB_BASE_URL로 이 hub를 가리킴).
 # Ctrl-C 한 번으로 띄운 것 전부를 함께 끈다. 로그는 $LOG_DIR 아래에 서버별로 남는다.
@@ -41,13 +42,14 @@ DASH_PORT="${DASH_PORT:-3000}"
 LIDAR_PORT="${LIDAR_PORT:-8000}"
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
-MODE=public; BUILD=1; RUN_INFO=1; RUN_LIDAR=1
+MODE=public; BUILD=1; RUN_INFO=1; RUN_LIDAR=0
 for a in "$@"; do
   case "$a" in
     --local)      MODE=local ;;
     --skip-build) BUILD=0 ;;
     --no-info)    RUN_INFO=0 ;;
-    --no-lidar)   RUN_LIDAR=0 ;;
+    --lidar)      RUN_LIDAR=1 ;;
+    --no-lidar)   RUN_LIDAR=0 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
     --setup-dns)
       command -v cloudflared >/dev/null || { echo "❌ cloudflared가 없습니다: brew install cloudflared"; exit 1; }
       echo "터널 '$TUNNEL_NAME'에 $APP_HOST 를 연결합니다 (Cloudflare DNS에 CNAME 생성)..."
