@@ -266,6 +266,8 @@ export interface DashboardIdentityInfo {
   id: string;
   name: string | null;
   known: boolean;
+  // hub 2026-10-01~: 출동 시뮬레이션이 켜져 있는지. 구급차 화면의 [이동]·[현장 종료] 버튼 표시 여부.
+  simDispatch?: boolean;
 }
 
 // 신원 확인 결과. known=null은 "아직 hub 응답을 못 받음(확인 중)" —
@@ -273,6 +275,7 @@ export interface DashboardIdentityInfo {
 export interface IdentityState {
   name: string | null;
   known: boolean | null;
+  simDispatch?: boolean;
 }
 
 export interface DashboardState {
@@ -282,6 +285,8 @@ export interface DashboardState {
   matchResults: Record<string, HubMatchResult>;
   // caseId -> 매칭 전 현장 후보(구급차 탭만 받는다).
   sceneCandidates: Record<string, SceneCandidates>;
+  // apid -> 출동 시뮬레이션 상태. 위치 메시지엔 경로가 없어서 직전 경로를 이어 쓴다.
+  ambulanceSim: Record<string, AmbulanceSimState>;
   // hub 메시지 자체엔 타임스탬프가 없어서, "정보 수신 후 경과" 표시를 위해
   // 대시보드가 최초 수신 시각을 로컬에서 기록해 둔다.
   receivedAt: string | null;
@@ -323,9 +328,38 @@ export interface SceneCandidates {
   source: "rule";
 }
 
+// hub → dashboard: 구급차 출동 시뮬레이션(시연용 가짜 위치, 2026-10-01). ambulance_phase는 상태가
+// 바뀔 때(경로 포함), ambulance_position은 움직이는 동안 1초마다(경로 없음) 온다. 구급차 탭은 전부,
+// 병원 탭은 자기가 확정 병원일 때 이송 중에만 받는다. 항상 simulated=true.
+export type AmbulancePhase = "idle" | "dispatching" | "on_scene" | "transporting" | "at_hospital" | "returning";
+
+export interface AmbulanceSimState {
+  type: "ambulance_phase" | "ambulance_position";
+  apid: string;
+  caseId: string | null;
+  phase: AmbulancePhase;
+  gps: { lat: number; lng: number } | null;
+  heading: number;
+  etaSec: number | null;
+  path?: [number, number][] | null;
+  base: { lat: number; lng: number };
+  incident: { lat: number; lng: number } | null;
+  hospitalId: string | null;
+  simulated: true;
+}
+
+// dashboard → hub: [이동] · [현장 종료]
+export interface DispatchCommand {
+  type: "dispatch" | "scene_end";
+  apid: string;
+  caseId: string;
+  timestamp: string;
+}
+
 export type InboundMessage =
   | HubMatchResult
   | DashboardIdentityInfo
   | HospitalSelfInfo
   | CaseClosed
-  | SceneCandidates;
+  | SceneCandidates
+  | AmbulanceSimState;

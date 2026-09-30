@@ -8,6 +8,7 @@ import {
   mockHubMatchResultOngoing,
 } from "@/lib/mock-data";
 import type {
+  AmbulanceSimState,
   ApprovalAction,
   ApprovalActionType,
   CallSignal,
@@ -16,6 +17,7 @@ import type {
   DashboardIdentityInfo,
   DashboardRole,
   DashboardState,
+  DispatchCommand,
   HospitalInfoConfirm,
   HospitalSelfInfo,
   HospitalStatus,
@@ -44,6 +46,7 @@ const RECONNECT_MAX_MS = 10000;
 const INITIAL_STATE: DashboardState = {
   matchResults: {},
   sceneCandidates: {},
+  ambulanceSim: {},
   receivedAt: null,
   identity: { name: null, known: null },
   selfInfo: null,
@@ -93,7 +96,18 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
   }, []);
 
   const applyIdentityInfo = useCallback((info: DashboardIdentityInfo) => {
-    setState((prev) => ({ ...prev, identity: { name: info.name, known: info.known } }));
+    setState((prev) => ({
+      ...prev,
+      identity: { name: info.name, known: info.known, simDispatch: info.simDispatch ?? false },
+    }));
+  }, []);
+
+  const applyAmbulanceSim = useCallback((sim: AmbulanceSimState) => {
+    setState((prev) => {
+      const before = prev.ambulanceSim[sim.apid];
+      const path = sim.type === "ambulance_phase" ? sim.path ?? null : before?.path ?? null;
+      return { ...prev, ambulanceSim: { ...prev.ambulanceSim, [sim.apid]: { ...sim, path } } };
+    });
   }, []);
 
   const applySelfInfo = useCallback((info: HospitalSelfInfo) => {
@@ -189,6 +203,10 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
             case "hospital_self_info":
               applySelfInfo(parsed);
               break;
+            case "ambulance_phase":
+            case "ambulance_position":
+              applyAmbulanceSim(parsed);
+              break;
             case "scene_candidates":
               applySceneCandidates(parsed);
               break;
@@ -216,7 +234,7 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
@@ -323,7 +341,16 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     return false;
   }, []);
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm };
+  // [이동] · [현장 종료] (출동 시뮬레이션). 끊겨 있으면 보내지 않고 false.
+  const sendSimCommand = useCallback((type: DispatchCommand["type"], apid: string, caseId: string): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    const payload: DispatchCommand = { type, apid, caseId, timestamp: new Date().toISOString() };
+    socket.send(JSON.stringify(payload));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.

@@ -9,6 +9,7 @@ import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEdit
 import { CallDemoPanel } from "@/components/ambulance/CallDemoPanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
+import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import type { CallSignalType } from "@/types/dashboard";
 
@@ -42,14 +43,14 @@ function saveCaseId(apid: string | null, caseId: string) {
 
 function alertNotSent() {
   window.alert(
-    "hub와 연결이 끊겨 통화 신호를 보내지 못했습니다. 상단에 '실시간 연동'이 다시 뜨면 한 번 더 눌러주세요.",
+    "hub와 연결이 끊겨 신호를 보내지 못했습니다. 상단에 '실시간 연동'이 다시 뜨면 한 번 더 눌러주세요.",
   );
 }
 
 function AmbulanceDashboardContent() {
   const searchParams = useSearchParams();
   const apid = searchParams.get("id");
-  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk } = useDashboardSocket(
+  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand } = useDashboardSocket(
     apid ? { role: "ambulance", id: apid } : null,
   );
   // 이송 승인을 눌렀지만 hub 응답(confirmed)을 아직 못 받은 병원. 화면의 "확정"은 hub 기준으로만
@@ -87,9 +88,33 @@ function AmbulanceDashboardContent() {
     return () => clearTimeout(timer);
   }, [pendingConfirm, connectionMode]);
 
+  // 출동 시뮬레이션(hub --sim-dispatch, 2026-10-01). 켜져 있으면 caseId는 [이동] 때 만들고,
+  // 통화 시작은 현장 도착 뒤 그 사건으로만 한다(hub도 같은 규칙으로 거부한다).
+  const simOn = state.identity.simDispatch === true;
+  const mySim = apid ? state.ambulanceSim[apid] ?? null : null;
+  const [callActive, setCallActive] = useState(false);
+  const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === myCaseId;
+  const startBlockedReason = simOn && !onSceneForMyCase ? "현장 도착 후 통화할 수 있습니다" : null;
+
+  function handleDispatch() {
+    if (!apid) return;
+    const caseId = crypto.randomUUID();
+    setMyCaseId(caseId);
+    setPendingConfirm(null);
+    if (!sendSimCommand("dispatch", apid, caseId)) alertNotSent();
+  }
+
+  function handleSceneEnd() {
+    if (!apid || !activeCaseId) return;
+    if (!sendSimCommand("scene_end", apid, activeCaseId)) alertNotSent();
+  }
+
   function handleCallSignal(signal: CallSignalType) {
     if (!apid) return;
-    if (signal === "call_started") {
+    setCallActive(signal === "call_started");
+    if (signal === "call_started" && simOn) {
+      if (myCaseId && !sendCallSignal(signal, apid, myCaseId)) alertNotSent();
+    } else if (signal === "call_started") {
       // mock 모드에선 고정 caseId를 써야 mock-data.ts의 mockHubMatchResult
       // (caseId: "case-mock-demo")와 실제로 매칭된다 — crypto.randomUUID()로
       // 만들면 mock 데이터의 고정 ID와 절대 일치하지 않아 "통화 시작"을 눌러도
@@ -175,8 +200,21 @@ function AmbulanceDashboardContent() {
           <div className={css({ flex: "0 0 auto" })}>
             <CallSummaryEditablePanel data={myResult} />
           </div>
+          {simOn && (
+            <DispatchControlPanel
+              sim={mySim}
+              confirmed={confirmedHospitalId != null}
+              callActive={callActive}
+              onDispatch={handleDispatch}
+              onSceneEnd={handleSceneEnd}
+            />
+          )}
           <div className={css({ flex: "1", minHeight: "0" })}>
-            <CallDemoPanel onCallSignal={handleCallSignal} onAudioChunk={sendAudioChunk} />
+            <CallDemoPanel
+              onCallSignal={handleCallSignal}
+              onAudioChunk={sendAudioChunk}
+              startBlockedReason={startBlockedReason}
+            />
           </div>
         </div>
 
@@ -193,7 +231,12 @@ function AmbulanceDashboardContent() {
             gridColumn: { base: "1", md: "1 / span 2", lg: "3" },
           })}
         >
-          <CandidateMapPanel data={myResult} confirmedHospitalId={confirmedHospitalId} />
+          <CandidateMapPanel
+            data={myResult}
+            confirmedHospitalId={confirmedHospitalId}
+            sim={simOn ? mySim : null}
+            scene={activeCaseId ? state.sceneCandidates[activeCaseId] ?? null : null}
+          />
         </div>
       </main>
 

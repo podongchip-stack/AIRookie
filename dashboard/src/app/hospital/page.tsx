@@ -186,6 +186,13 @@ function HospitalDashboardContent() {
           hospital={selected?.hospital ?? null}
           caseId={selected?.result.caseId ?? null}
           ambulanceGps={selected?.result.ambulanceGps ?? null}
+          sim={
+            selected?.result.apid &&
+            state.ambulanceSim[selected.result.apid]?.hospitalId === MY_HOSPITAL_ID &&
+            state.ambulanceSim[selected.result.apid]?.caseId === selected.result.caseId
+              ? state.ambulanceSim[selected.result.apid]
+              : null
+          }
         />
       </main>
 
