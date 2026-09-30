@@ -372,6 +372,10 @@ class HubEngine:
         # 구급차 레지스트리(feature/info가 Supabase ambulances 테이블에서
         # 읽어 보내줌). GPS·voicePort 조회에 쓴다.
         self._ambulances: dict[str, AmbulanceInfo] = {}
+        # 출동 시뮬레이션이 얹는 현재 위치(apid -> GPS, 2026-10-01). _ambulances의 GPS는 Supabase
+        # 등록값(= 기지)으로 그대로 두고, 조회할 때만 이 값으로 바꿔 보여준다 — info의 30분 재전송이
+        # 시뮬레이션 위치를 덮어쓰지 않고, 시뮬레이션을 끄면 바로 등록값으로 돌아간다. 저장하지 않는다.
+        self._gps_override: dict[str, GpsPoint] = {}
         # 통화 시작 시점에 dashboard가 보낸 (caseId -> apid) 매핑. 나중에
         # /voice/summary가 도착하면 voice.caseId로 이 apid를 찾아 그 구급차의
         # GPS를 조회하는 데 쓴다 — VoiceCallSummaryMessage엔 apid가 없다
@@ -474,8 +478,29 @@ class HubEngine:
             self._dirty = True
 
     def get_ambulance(self, apid: str) -> AmbulanceInfo | None:
+        """시뮬레이션 위치가 있으면 그 GPS로 바꾼 사본을 돌려준다(매칭·경로·ETA가 전부 이걸 쓴다)."""
+        with self._lock:
+            ambulance = self._ambulances.get(apid)
+            override = self._gps_override.get(apid)
+        if ambulance is not None and override is not None:
+            return ambulance.model_copy(update={"gps": override})
+        return ambulance
+
+    def get_ambulance_base(self, apid: str) -> AmbulanceInfo | None:
+        """등록값 그대로(시뮬레이션의 기지 좌표)."""
         with self._lock:
             return self._ambulances.get(apid)
+
+    def list_ambulances(self) -> list[AmbulanceInfo]:
+        with self._lock:
+            return list(self._ambulances.values())
+
+    def set_gps_override(self, apid: str, gps: GpsPoint | None) -> None:
+        with self._lock:
+            if gps is None:
+                self._gps_override.pop(apid, None)
+            else:
+                self._gps_override[apid] = gps
 
     def register_case(self, case_id: str, apid: str) -> None:
         """통화 시작(CallSignal) 시점에 이 사건이 어느 구급차 것인지 기억해둔다."""
@@ -915,7 +940,7 @@ class HubEngine:
             # 구급차 대시보드 상단바 표시용. 이 사건의 apid를 register_case()로
             # 기억해둔 값에서 찾아, 구급차 레지스트리의 이름을 그대로 붙인다.
             apid = self._case_apid.get(voice.caseId)
-            ambulance = self._ambulances.get(apid) if apid else None
+            ambulance = self.get_ambulance(apid) if apid else None
 
         result = HubMatchResult(
             caseId=voice.caseId,
@@ -983,7 +1008,13 @@ class HubEngine:
             old = self._case_results.get(case_id)
             max_zone = self._case_max_zone.get(case_id, 1)
             gps_fallback = self._case_gps_fallback.get(case_id, False)
+            confirmed = case_id in self._case_confirmed_at
         if voice is None or old is None:
+            return None
+        # 이송이 확정된 사건은 다시 순위를 매기지 않는다(2026-10-01). 목적지가 정해졌는데 구급차가
+        # 움직일 때마다 목록이 뒤섞이고 후보 전체 ETA를 다시 부를 이유가 없다. 남은 도착 시간은
+        # 출동 시뮬레이션의 위치 메시지(etaSec)로 따로 나간다. 승인 액션 뒤 패치는 그대로 된다.
+        if confirmed:
             return None
 
         result, group = self._compute_result(voice, ambulance_gps, max_zone, gps_fallback)

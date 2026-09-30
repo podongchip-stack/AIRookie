@@ -20,6 +20,7 @@
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
 #   ./start-all.sh --no-info          info(병원 정보 주기 전송)와 E-Gen 스냅샷 수집 생략
 #   ./start-all.sh --no-snapshot      E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델의 관측 기록)만 생략
+#   ./start-all.sh --sim-dispatch     구급차 출동 시뮬레이션(시연용 가짜 위치) — 구급차 화면에 [이동] 버튼
 #   ./start-all.sh --lidar            lidar3d(3D 뷰어·아이폰 앱 업로드 서버)도 함께 — 병원 대시보드에 3D 버튼이 생긴다
 #                                     (기본은 끔: 3D는 당분간 시연에서 뺀다. 끄면 버튼도 자동으로 숨겨진다)
 #
@@ -43,13 +44,14 @@ DASH_PORT="${DASH_PORT:-3000}"
 LIDAR_PORT="${LIDAR_PORT:-8000}"
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
-MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0
+MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0; SIM_DISPATCH=0
 for a in "$@"; do
   case "$a" in
     --local)      MODE=local ;;
     --skip-build) BUILD=0 ;;
     --no-info)    RUN_INFO=0 ;;
     --no-snapshot) RUN_SNAPSHOT=0 ;;
+    --sim-dispatch) SIM_DISPATCH=1 ;;
     --lidar)      RUN_LIDAR=1 ;;
     --no-lidar)   RUN_LIDAR=0 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
     --setup-dns)
@@ -57,7 +59,7 @@ for a in "$@"; do
       echo "터널 '$TUNNEL_NAME'에 $APP_HOST 를 연결합니다 (Cloudflare DNS에 CNAME 생성)..."
       cloudflared tunnel route dns "$TUNNEL_NAME" "$APP_HOST"
       exit $? ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "❌ 알 수 없는 옵션: $a (도움말: --help)"; exit 1 ;;
   esac
 done
@@ -136,11 +138,14 @@ VIEWER_URL=""
 [ "$RUN_LIDAR" = 1 ] && VIEWER_URL="$VIEWER_BASE/viewer/?token=$LIDAR_TOKEN"
 
 # ── 1. hub ──
-# app.py의 __main__은 debug=True라서 그대로 쓰지 않는다 — 디버그 모드가 외부에 닿으면
-# 원격 코드 실행 위험이 있다. 0.0.0.0은 유지한다: 구급차 노트북의 voice가 LAN으로 붙어야 한다.
+# 포트를 이 스크립트가 정하려고 app.py의 __main__ 대신 직접 띄운다. debug는 끈다 — 디버그 모드가
+# 외부에 닿으면 원격 코드 실행 위험이 있다. 0.0.0.0은 유지한다: 구급차 노트북의 voice가 LAN으로 붙어야 한다.
 need "$HUB_PY" hub HUB_PY
 echo "hub 시작 (포트 $HUB_PORT, 임베딩 모델 로드에 시간이 걸릴 수 있음)..."
-(cd hub && exec "$HUB_PY" -u -c "import app; app.app.run(host='0.0.0.0', port=$HUB_PORT, debug=False)") \
+# start_background(): 60초 재계산·상태 저장/복구·방치 사건 정리(와 출동 시뮬레이션) 루프. 예전엔
+# app.app.run()만 불러서 이 루프들이 start-all로 띄운 실서버에서는 한 번도 돌지 않았다(2026-10-01 수정).
+(cd hub && HUB_SIM_DISPATCH="$SIM_DISPATCH" exec "$HUB_PY" -u -c \
+    "import app; app.start_background(); app.app.run(host='0.0.0.0', port=$HUB_PORT, debug=False)") \
   > "$LOG_DIR/hub.log" 2>&1 &
 HUB_PID=$!; PIDS+=("$HUB_PID")
 wait_http hub "http://127.0.0.1:$HUB_PORT/identity?role=hospital&id=_" "$HUB_PID" "$LOG_DIR/hub.log" 180

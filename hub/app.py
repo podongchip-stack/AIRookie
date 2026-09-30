@@ -28,6 +28,7 @@ from flask_sock import Sock
 from pydantic import ValidationError
 
 import bed_reliability
+from ambulance_sim import SPEEDUP as SIM_SPEEDUP, DispatchSim
 import decision_log
 from delivery import LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
@@ -38,10 +39,12 @@ from schema import (
     CallSignal,
     DashboardIdentify,
     DashboardIdentityInfo,
+    DispatchRequest,
     GpsPoint,
     HospitalInfo,
     HospitalInfoConfirm,
     HospitalSelfInfo,
+    SceneEnd,
     VoiceCallSummaryMessage,
     VoiceRegistration,
 )
@@ -58,6 +61,10 @@ sock = Sock(app)
 # 없으면 None — 그 경우 ETA·도로 경로 없이 지금처럼 직선거리로만 동작한다.
 router = KakaoRouting.from_env()
 engine = HubEngine(router=router)
+#: 구급차 출동 시뮬레이션(시연용 가짜 위치, 2026-10-01). HUB_SIM_DISPATCH=1일 때만 켠다.
+SIM_DISPATCH = os.environ.get("HUB_SIM_DISPATCH") == "1"
+sim: DispatchSim | None = DispatchSim(router) if SIM_DISPATCH else None
+SIM_TICK_SEC = 1.0
 
 # dashboard는 순수 WebSocket 클라이언트(new WebSocket(), socket.io 아님)라
 # flask-sock(순수 WS)으로 받는다. 구급차 대시보드 여러 개 + 병원 대시보드
@@ -177,6 +184,8 @@ def receive_ambulance_info():
         return jsonify({"error": "invalid AmbulanceInfo", "detail": exc.errors()}), 400
 
     engine.update_ambulance_info(info)
+    if sim is not None:
+        sim.ensure_unit(info.apid, info.gps)
     return jsonify({"status": "ok", "apid": info.apid}), 200
 
 
@@ -381,6 +390,13 @@ def _relay_call_signal(signal: CallSignal) -> None:
     GPS를 찾을 수 있다. voice가 아직 자가등록 전이거나 안 떠 있어도
     dashboard 쪽 흐름은 끊기면 안 되므로 예외를 흡수한다."""
     if signal.signal == "call_started":
+        # 출동 시뮬레이션 중엔 현장 도착 뒤, 그 출동의 사건으로만 통화를 시작한다(버튼만 막는 게
+        # 아니라 hub도 규칙을 지킨다).
+        if sim is not None and (sim.phase_of(signal.apid) != "on_scene" or sim.case_of(signal.apid) != signal.caseId):
+            print(f"  [시뮬레이션] {signal.apid} 통화 시작 거부 — 현장 도착 전이거나 다른 사건")
+            decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
+                                                             "phase": sim.phase_of(signal.apid)})
+            return
         engine.register_case(signal.caseId, signal.apid)
         _send_scene_candidates(signal.caseId, signal.apid)
 
@@ -449,7 +465,9 @@ def _send_identity_info(ws, identify: DashboardIdentify) -> None:
     페이지에서 미리 걸러지므로(GET /identity), 이 소켓 경로는 직접 URL로
     들어온 경우의 이름 표시용으로만 주로 쓰인다."""
     name, known = _resolve_identity(identify.role, identify.id)
-    info = DashboardIdentityInfo(role=identify.role, id=identify.id, name=name, known=known)
+    info = DashboardIdentityInfo(
+        role=identify.role, id=identify.id, name=name, known=known, simDispatch=sim is not None
+    )
     print(f"  [통신] {identify.role} {identify.id} 신원 확인 응답 — known={known}, name={name}")
     _send_to_socket(ws, info.model_dump(), "identity_info")
 
@@ -653,6 +671,12 @@ def _handle_dashboard_action(payload: dict) -> None:
     if updated_result is not None:
         _send_to_dashboard(updated_result.model_dump())
 
+    if sim is not None and action.action == "final_approval" and updated_result is not None:
+        confirmed = next((h for h in updated_result.hospitals if h.status == "confirmed"), None)
+        apid = engine.get_case_apid(action.caseId)
+        if confirmed is not None and apid and sim.on_confirmed(apid, action.caseId, confirmed.hospitalId, confirmed.gps):
+            _broadcast_sim_state(apid)
+
 
 def _handle_info_confirm(confirm: HospitalInfoConfirm) -> None:
     """병원 대시보드의 "현재 정보 확인" 신호 처리(2026-09-29).
@@ -792,6 +816,10 @@ def dashboard_socket(ws):
                     _socket_identity[ws] = (identify.role, identify.id)
                 _send_identity_info(ws, identify)
                 _send_catchup(ws, identify)
+                if sim is not None and identify.role == "ambulance":
+                    state = sim.state(identify.id)
+                    if state is not None:
+                        _send_to_socket(ws, _sim_message("ambulance_phase", state), "시뮬레이션 상태")
                 # 병원이면 사건 유무와 무관하게 "귀원 정보 현황"도 바로 준다.
                 if identify.role == "hospital":
                     self_info = _build_self_info(identify.id)
@@ -804,12 +832,102 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 HospitalInfoConfirm 수신: {exc.errors()}")
                     continue
                 _handle_info_confirm(confirm)
+            elif payload.get("type") in ("dispatch", "scene_end"):
+                _handle_sim_command(payload)
             elif "action" in payload:
                 _handle_dashboard_action(payload)
     finally:
         with _sockets_lock:
             _dashboard_sockets.discard(ws)
             _socket_identity.pop(ws, None)
+
+
+# ── 출동 시뮬레이션 (2026-10-01, HUB_SIM_DISPATCH=1) ─────────────────────────
+
+
+def _sim_message(kind: str, state: dict) -> dict:
+    """ambulance_phase(상태 바뀔 때, 경로 포함) / ambulance_position(움직이는 동안 1초마다, 경로 없음)."""
+    body = dict(state) if kind == "ambulance_phase" else {k: v for k, v in state.items() if k != "path"}
+    return {"type": kind, **body, "simulated": True}
+
+
+def _send_sim(kind: str, state: dict) -> None:
+    """그 구급차 탭 전부 + 이송 중·병원 도착이면 그 확정 병원 탭에만 보낸다(복귀는 병원과 무관)."""
+    message = json.dumps(_sim_message(kind, state), ensure_ascii=False)
+    hospital_id = state.get("hospitalId") if state.get("phase") in ("transporting", "at_hospital") else None
+    with _sockets_lock:
+        for ws, (role, id_) in list(_socket_identity.items()):
+            if (role == "ambulance" and id_ == state["apid"]) or (hospital_id and role == "hospital" and id_ == hospital_id):
+                try:
+                    ws.send(message)
+                except Exception as e:  # noqa: BLE001
+                    print(f"  [통신] 시뮬레이션 위치 전송 실패: {e}")
+
+
+def _broadcast_sim_state(apid: str) -> None:
+    state = sim.state(apid) if sim is not None else None
+    if state is None:
+        return
+    if state.get("gps"):
+        engine.set_gps_override(apid, GpsPoint(**state["gps"]))
+    _send_sim("ambulance_phase", state)
+
+
+def _handle_sim_command(payload: dict) -> None:
+    """[이동](dispatch) · [현장 종료](scene_end)."""
+    if sim is None:
+        print("  [시뮬레이션] 꺼져 있어 출동·현장 종료 명령을 무시 (HUB_SIM_DISPATCH=1로 켬)")
+        return
+    try:
+        cmd = (DispatchRequest if payload.get("type") == "dispatch" else SceneEnd).model_validate(payload)
+    except ValidationError as exc:
+        print(f"  [통신] 잘못된 시뮬레이션 명령: {exc.errors()}")
+        return
+    if isinstance(cmd, DispatchRequest):
+        base = engine.get_ambulance_base(cmd.apid)
+        if base is not None:
+            sim.ensure_unit(cmd.apid, base.gps)
+        ok, reason = sim.dispatch(cmd.apid, cmd.caseId)
+        decision_log.log_decision("ambulance_dispatched" if ok else "dispatch_refused",
+                                  {"apid": cmd.apid, "caseId": cmd.caseId, "reason": reason, "simulated": True})
+        if ok:
+            engine.register_case(cmd.caseId, cmd.apid)
+            print(f"  [시뮬레이션] {cmd.apid} 출동 — caseId={cmd.caseId}")
+        else:
+            print(f"  [시뮬레이션] {cmd.apid} 출동 거부 ({reason})")
+    else:
+        ok = sim.scene_end(cmd.apid, cmd.caseId)
+        if ok:
+            _log_no_responses(cmd.caseId, cmd.timestamp, finalized_to=None)
+            _close_case(cmd.caseId, "scene_ended")
+            print(f"  [시뮬레이션] {cmd.apid} 현장 종료 → 기지 복귀")
+        else:
+            print(f"  [시뮬레이션] {cmd.apid} 현장 종료 거부 — 현장에 있지 않거나 다른 사건")
+    _broadcast_sim_state(cmd.apid)
+
+
+def _sim_tick() -> None:
+    """구급차를 한 칸 옮기고, 위치를 엔진(매칭·경로가 읽는 값)과 대시보드에 반영한다."""
+    changed, moving = sim.tick()
+    for state in changed + moving:
+        if state.get("gps"):
+            engine.set_gps_override(state["apid"], GpsPoint(**state["gps"]))
+    for state in moving:
+        _send_sim("ambulance_position", state)
+    for state in changed:
+        _send_sim("ambulance_phase", state)
+        if state["phase"] == "on_scene" and state.get("caseId"):
+            _send_scene_candidates(state["caseId"], state["apid"])
+        decision_log.log_decision("ambulance_phase", {k: state[k] for k in ("apid", "caseId", "phase")})
+
+
+def _sim_loop() -> None:
+    while True:
+        time.sleep(SIM_TICK_SEC)
+        try:
+            _sim_tick()
+        except Exception as e:  # noqa: BLE001
+            print(f"  [시뮬레이션] 오류(계속 진행): {e!r}")
 
 
 # ── 백그라운드: 주기적 재계산 · 상태 저장 (2026-09-28) ───────────────────────
@@ -897,6 +1015,13 @@ def start_background() -> None:
         # 이게 없어도 잃는 건 최대 몇 초분이다.
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     threading.Thread(target=_maintenance_loop, name="hub-maintenance", daemon=True).start()
+    if sim is not None:
+        # 재시작하면 구급차는 전부 기지(대기)에서 다시 시작한다 — 시뮬레이션 상태는 저장하지 않는다.
+        for ambulance in engine.list_ambulances():
+            sim.ensure_unit(ambulance.apid, ambulance.gps)
+        decision_log.log_decision("sim_dispatch_enabled", {"speedup": SIM_SPEEDUP})
+        print("  [시뮬레이션] 출동 시뮬레이션 켜짐 (구급차 위치는 시연용 가짜 위치)")
+        threading.Thread(target=_sim_loop, name="hub-sim", daemon=True).start()
 
 
 if __name__ == "__main__":

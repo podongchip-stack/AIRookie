@@ -501,3 +501,21 @@ class DashboardIdentityInfo(BaseModel):
     id: str
     name: Optional[str] = None
     known: bool
+    # 출동 시뮬레이션이 켜져 있는지(2026-10-01). 구급차 화면이 [이동]·[현장 종료] 버튼을 띄울지 정한다.
+    simDispatch: bool = False
+
+
+class DispatchRequest(BaseModel):
+    """dashboard → hub: 구급차 대시보드 [이동] (출동 시뮬레이션, 2026-10-01). caseId는 이때 만든다."""
+    type: Literal["dispatch"] = "dispatch"
+    apid: str
+    caseId: str
+    timestamp: str
+
+
+class SceneEnd(BaseModel):
+    """dashboard → hub: [현장 종료] — 이송 확정 없이 현장에서 끝내고 기지로 복귀."""
+    type: Literal["scene_end"] = "scene_end"
+    apid: str
+    caseId: str
+    timestamp: str
