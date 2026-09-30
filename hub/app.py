@@ -271,16 +271,42 @@ def get_identity():
     return response, 200
 
 
+#: 매칭 결과를 한 번이라도 받은 병원들(caseId -> hpid 집합). 후보에서 빠진 병원도
+#: 다음 결과를 받아야 자기 화면의 카드를 지울 수 있어서, 역할별 전송의 수신 대상에 남긴다.
+_case_audience: dict[str, set[str]] = {}
+
+
+def _match_recipients(payload: dict) -> tuple[str | None, set[str]]:
+    """매칭 결과를 받을 (구급차 apid, 병원 hpid 집합). _sockets_lock을 쥔 채로 부른다."""
+    case_id = payload["caseId"]
+    hospital_ids = {h.get("hospitalId") for h in payload.get("hospitals") or []}
+    audience = _case_audience.setdefault(case_id, set())
+    audience.update(hospital_ids)
+    return payload.get("apid") or engine.get_case_apid(case_id), set(audience)
+
+
 def _send_to_dashboard(payload: dict) -> None:
-    """연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다.
+    """dashboard 소켓들에 보낸다. 매칭 결과는 **그 사건과 관련된 소켓에만** 보낸다
+    (2026-10-01 역할별 전송) — 그 구급차(apid) 탭과, 후보에 오른 적 있는 병원(hpid) 탭.
+    예전엔 모든 사건이 모든 탭으로 나가 무관한 병원 탭도 통화 전문까지 받았다. identify를
+    아직 안 보낸 소켓은 매칭 결과를 받지 않는다(연결 직후 identify → 따라잡기로 받는다).
+    매칭 결과가 아닌 메시지(case_closed 등)는 전부에게 보낸다 — 사건 식별자뿐이다.
+
     delivery.py의 send_to_dashboard()는 로컬 저장 스텁 그대로 두고, 실제
     실시간 전송은 WebSocket 연결을 쥐고 있는 여기서 처리한다. 전송 실패한
     소켓은 죽은 것으로 보고 집합에서 뺀다 (voice의 send_to_hub()와 동일한
     방어 패턴 — 연결이 없거나 끊겼어도 본 요청은 계속돼야 함)."""
     message = json.dumps(payload, ensure_ascii=False)
+    is_match = payload.get("type") == "match_result" and bool(payload.get("caseId"))
     with _sockets_lock:
+        if is_match:
+            apid, hospital_ids = _match_recipients(payload)
         dead = set()
         for ws in _dashboard_sockets:
+            if is_match:
+                role, id_ = _socket_identity.get(ws, (None, None))
+                if not ((role == "ambulance" and id_ == apid) or (role == "hospital" and id_ in hospital_ids)):
+                    continue
             try:
                 ws.send(message)
             except Exception as e:  # noqa: BLE001
@@ -540,6 +566,8 @@ def _close_case(case_id: str, reason: str) -> bool:
     """확정 없이 끝난 사건을 닫고 대시보드에 알린다. 방치 정리(sweep)와 현장 종료가 같이 쓴다."""
     if not engine.close_case(case_id):
         return False
+    with _sockets_lock:
+        _case_audience.pop(case_id, None)
     decision_log.log_decision("case_closed", {"caseId": case_id, "reason": reason})
     _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": reason})
     print(f"  [정리] caseId={case_id} 사건 종료({reason}) — 캐시에서 제거, 대시보드에 알림")

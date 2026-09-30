@@ -56,7 +56,10 @@ def _flush_worker() -> None:
 
 def main() -> None:
     socket = _FakeSocket()
-    app._dashboard_sockets.add(socket)
+    stranger = _FakeSocket()  # 이 사건 후보가 아닌 병원 탭 — 매칭 결과를 받으면 안 된다
+    app._dashboard_sockets.update({socket, stranger})
+    app._socket_identity[socket] = ("hospital", _hospital(beds=3).hospitalId)
+    app._socket_identity[stranger] = ("hospital", "OTHER-HOSPITAL")
     app.engine.update_hospital_info(_hospital(beds=3))
     case_id = "case-app-background"
     secret = "통화 원문 — 상태 파일에 남으면 안 됨"
@@ -77,7 +80,8 @@ def main() -> None:
     results = [m for m in socket.sent if m.get("type") == "match_result" and m["caseId"] == case_id]
     assert len(results) == 1, "매칭이 끝나면 WebSocket으로 결과가 한 번 나가야 한다"
     assert results[0]["ambulanceGpsFallback"] is True, "통화 시작 신호 없이 온 사건은 기본 좌표 대체로 표시돼야 한다"
-    print("  [확인] 202 응답, 결과는 type=match_result로 브로드캐스트, 기본 좌표 대체 표시")
+    assert not stranger.sent, "후보가 아닌 병원 탭은 이 사건을 받지 않는다(역할별 전송)"
+    print("  [확인] 202 응답, 결과는 type=match_result로 후보 병원 탭에만 전송, 기본 좌표 대체 표시")
 
     print("=== 주기적 재계산: 바뀐 사건만 다시 보냄 ===")
     socket.sent.clear()
