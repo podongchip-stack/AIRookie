@@ -485,6 +485,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **운영**: `/voice/summary`는 202로 바로 답하고 매칭은 작업 스레드에서(voice는 본문을 안 씀). 진행 중 사건을 `HUB_REFRESH_INTERVAL_SEC`(기본 60초)마다 재계산해 바뀐 것만 재전송. 상태(병원·구급차·승인·병상 오버레이·사건·voice 주소)를 `data/state/hub_state.json`에 저장·복구 — **통화 원문은 저장하지 않는다**. 엔진·소켓·로그 쓰기에 락. `debug` 기본 끔(`HUB_DEBUG=1`)
   - **의사결정 로그 해시 체인**: 기록마다 `prevHash`(앞 기록 hash). 예전엔 줄마다 자기 내용만 해시해 수정 후 재해시·삭제·순서 변경을 못 잡았다. 체인 이전 기록은 기존 방식으로 검증
   - 실서버 결과 사본 경로를 `data/test/output/`에서 `data/live/output/`으로 분리
+  - **승인 흐름**: 병원 승인·거절은 `hospital`, 이송 승인은 `paramedic`만 받고, 이송 승인은 병원이 `approved`한 병원에만 허용한다(어긋나면 `approval_action_refused` 로그만 남김). 이송 병원을 재선택하면 이전 확정 병원을 `approved`로 되돌리고 병상 차감을 회수한다(`approval_released`). dashboard는 이미 이 규칙대로 버튼을 열어 수정 불필요
 
 ## feature/dashboard 담당자 참고사항
 

@@ -149,6 +149,8 @@ def main() -> None:
     hospital_before = engine.get_hospital(top_hospital_id)
     raw_before = hospital_before.availableBedCount
     effective_before = engine.effective_bed_count(hospital_before)
+    # 이송 승인은 병원이 먼저 승인(후보 등록)한 병원에만 가능하다(2026-09-28 순서 검사)
+    engine.apply_approval_action(_action(CASE_ID, "hospital_approve", top_hospital_id))
     action = ApprovalAction(
         caseId=CASE_ID,
         action="final_approval",
@@ -213,6 +215,7 @@ def main() -> None:
     )
     print(f"  [확인] {other_case_id}의 병원 상태가 전부 pending — {CASE_ID}의 승인 상태와 안 섞임")
 
+    engine.apply_approval_action(_action(other_case_id, "hospital_approve", other_top_hospital_id))
     engine.apply_approval_action(
         ApprovalAction(
             caseId=other_case_id,
@@ -253,6 +256,7 @@ def main() -> None:
     test_refresh_case()
     test_state_roundtrip()
     test_decision_log_chain()
+    test_approval_order_and_reselection()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -355,6 +359,7 @@ def test_case_eviction() -> None:
 
     # 1) 오래된 사건: 매칭 → 확정 → 확정 시각을 CASE_RETENTION_MIN+5분 과거로 강제
     engine.process_voice_summary(_voice(old_case), gps, max_zone=1)
+    engine.apply_approval_action(_action(old_case, "hospital_approve", "E001"))
     engine.apply_approval_action(ApprovalAction(
         caseId=old_case, action="final_approval", hospital_id="E001",
         actor="paramedic", timestamp="2026-09-10T00:00:00Z",
@@ -744,6 +749,7 @@ def test_state_roundtrip() -> None:
     secret = "환자 홍길동 010-0000-0000 통화 원문"
     engine.register_case(case_id, "A9")
     engine.process_voice_summary(_voice(case_id, raw_text=secret), _TEST_GPS, max_zone=1)
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "S001"))
     engine.apply_approval_action(_action(case_id, "final_approval", "S001"))
     assert engine.take_dirty() is True and engine.take_dirty() is False, "변경 표시는 한 번 읽으면 지워져야 한다"
 
@@ -799,6 +805,44 @@ def test_decision_log_chain() -> None:
         path.write_text("\n".join(lines[:3] + [lines[0]] + lines[3:]) + "\n", encoding="utf-8")
         assert decision_log.verify_log(path)[0] is False, "체인 시작 뒤 끼워 넣은 체인 밖 줄을 잡아야 한다"
     print("  [확인] 체인 이전 기록 통과, 중간 삭제·수정 후 재해시·끼워 넣기 모두 탐지")
+
+
+def test_approval_order_and_reselection() -> None:
+    """승인 흐름(2026-09-28): 병원 승인 없는 이송 승인·주체가 어긋난 액션은 거부하고,
+    이송 병원을 다시 고르면 이전 병원의 확정을 풀고 병상 차감을 회수한다."""
+    print("\n=== 승인 흐름 확인: 순서·주체 검사 + 재선택 시 이전 병원 해제 ===")
+    engine = _engine()
+    for h in (
+        _hospital("Q001", "[테스트] 병원 A", 35.1810, 128.1090, 5, beds_by_type={"ER_ADULT": 5}),
+        _hospital("Q002", "[테스트] 병원 B", 35.1850, 128.1120, 5, beds_by_type={"ER_ADULT": 5}),
+    ):
+        engine.update_hospital_info(h)
+    case_id = "case-approval-flow"
+    engine.process_voice_summary(_voice(case_id), _TEST_GPS, max_zone=1)
+    status = lambda hid: next(h.status for h in engine.get_case_result(case_id).hospitals if h.hospitalId == hid)
+    beds = lambda hid: engine.effective_bed_count(engine.get_hospital(hid))
+    log_lines = lambda: [line for line in decision_log.LOG_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    start = len(log_lines())
+
+    # 1) 병원 승인 없이 이송 승인 → 거부, 병상 그대로
+    engine.apply_approval_action(_action(case_id, "final_approval", "Q001"))
+    assert status("Q001") == "pending" and beds("Q001") == 5, "병원 승인 전 이송 승인은 거부돼야 한다"
+    # 2) 주체가 어긋난 액션(구급대원이 병원 승인을 누름) → 거부
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "Q001").model_copy(update={"actor": "paramedic"}))
+    assert status("Q001") == "pending", "구급대원이 보낸 병원 승인은 거부돼야 한다"
+    # 3) 정상 순서 → A 확정, 병상 1 차감
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "Q001"))
+    engine.apply_approval_action(_action(case_id, "final_approval", "Q001"))
+    assert status("Q001") == "confirmed" and beds("Q001") == 4
+    # 4) B로 재선택 → A는 approved로 풀리고 병상 회수, B 확정·차감
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "Q002"))
+    engine.apply_approval_action(_action(case_id, "final_approval", "Q002"))
+    assert status("Q001") == "approved" and beds("Q001") == 5, "재선택 시 이전 병원 확정 해제 + 병상 회수"
+    assert status("Q002") == "confirmed" and beds("Q002") == 4
+    events = log_lines()[start:]
+    assert sum('"approval_action_refused"' in e for e in events) == 2, "거부된 액션 2건은 사유와 함께 로그에 남아야 한다"
+    assert sum('"approval_released"' in e for e in events) == 1, "재선택 해제는 의사결정 로그에 남아야 한다"
+    print("  [확인] 승인 전 이송 승인·주체 불일치 거부, 재선택 시 A 해제(병상 4→5)·B 확정(5→4)")
 
 
 if __name__ == "__main__":

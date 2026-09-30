@@ -166,6 +166,14 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
   신고했는가)로 채우는 프록시라 실제 야간 당직 정보가 아니고, 진료과 점수와 같은 신호를
   두 번 반영하게 된다.
 
+## 승인 흐름 규칙 (2026-09-28)
+
+- **주체 짝**: `hospital_approve`·`hospital_reject`는 `actor: "hospital"`, `final_approval`은 `actor: "paramedic"`만 받는다
+- **순서**: `final_approval`은 병원이 그 사건에 `approved`한 병원에만 허용한다(병원 승인 = 후보 등록, 이송 승인 = 최종 확정)
+- 어긋난 액션은 상태를 바꾸지 않고 `approval_action_refused` 이벤트로 사유만 의사결정 로그에 남긴다
+- **재선택**: 같은 사건에서 다른 병원을 이송 승인하면, 이전 확정 병원은 `approved`로 되돌리고(새 상태값 없음 — dashboard 타입 유지) 그 확정이 얹은 병상 차감을 회수한다(`approval_released` 이벤트)
+- dashboard는 이미 이 규칙대로만 버튼을 연다(`HospitalCandidateListPanel.tsx`의 `approvable`, `ApprovalActions.tsx`의 role 분기)
+
 ## 병상 정보 신뢰도(bedReliability) 반영 (2026-09-24 신설)
 
 위 hospital_score(중증질환 **수용 신고**의 신뢰도)와는 다른 축으로, feature/info의
