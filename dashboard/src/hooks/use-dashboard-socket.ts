@@ -162,14 +162,20 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
       socket.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data) as InboundMessage;
-          // HubMatchResult엔 type 필드 자체가 없어서 "type" in parsed로 구분한다
-          // (parsed.type만 비교하면 두 타입 모두에 type이 있어야 좁혀지지 않는다).
-          if ("type" in parsed && parsed.type === "identity_info") {
-            applyIdentityInfo(parsed);
-          } else if ("type" in parsed && parsed.type === "hospital_self_info") {
-            applySelfInfo(parsed);
-          } else {
-            applyMatchResult(parsed as HubMatchResult);
+          // type으로 구분한다(2026-10-01). type이 없으면 2026-09-28 이전 hub의 매칭 결과다.
+          // 모르는 type은 버린다 — 예전엔 나머지를 전부 매칭 결과로 취급해서, hub가 새 메시지
+          // 종류를 보내기 시작하면 사건 목록이 깨졌다.
+          switch (parsed.type) {
+            case "identity_info":
+              applyIdentityInfo(parsed);
+              break;
+            case "hospital_self_info":
+              applySelfInfo(parsed);
+              break;
+            case "match_result":
+            case undefined:
+              applyMatchResult(parsed);
+              break;
           }
         } catch {
           // 파싱 불가능한 메시지는 무시

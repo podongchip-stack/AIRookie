@@ -148,6 +148,8 @@ export interface HospitalCandidate {
 }
 
 export interface HubMatchResult {
+  // hub가 2026-09-28부터 붙이는 구분자. 그 전 hub는 이 필드 없이 보냈다.
+  type?: "match_result";
   // 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 결과를 어느 사건
   // 것인지 구분하는 값. dashboard는 이 값을 키로 여러 사건을 동시에 들고
   // 있는다(DashboardState.matchResults 참고) — 구급차 대시보드는 자기
