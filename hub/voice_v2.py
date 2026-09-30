@@ -32,6 +32,9 @@ BODY_PART_OVERRIDES_CAUSE_FOR = frozenset({"교통사고", "낙상", "추락", "
 #: KTAS 1~2 = 소생·긴급, 3 = 응급, 4~5 = 준응급·비응급. hub의 3단계 중증도로 줄인다.
 KTAS_TO_SEVERITY = {1: "high", 2: "high", 3: "medium", 4: "low", 5: "low"}
 
+#: 예상 병명에 넣을 손상 개수. 많이 넣으면 진료과 임베딩 매칭의 입력이 흐려진다(주요 손상 몇 개면 충분).
+MAX_INJURIES_IN_MECHANISM = 3
+
 AVPU_LABEL = {"A": "명료(A)", "V": "음성 반응(V)", "P": "통증 반응(P)", "U": "무반응(U)"}
 
 
@@ -83,10 +86,10 @@ def _mechanism(summary: dict) -> str:
     parts += [d["text"] for d in summary.get("suspected_diagnosis") or [] if d.get("text")]
     parts += [
         " ".join(p for p in (i.get("side"), i.get("region"), i.get("type")) if p)
-        for i in summary.get("injuries") or []
+        for i in (summary.get("injuries") or [])[:MAX_INJURIES_IN_MECHANISM]
     ]
     seen: list[str] = []
-    for p in parts:
+    for p in (" ".join(str(p).split()) for p in parts):  # 모델이 찾은 구간의 앞뒤·중복 공백 정리
         if p and p not in seen:
             seen.append(p)
     return " · ".join(seen) or (summary.get("chief_complaint") or {}).get("major") or "미상"
@@ -149,6 +152,9 @@ def _selftest() -> None:
     assert required_department({"ktas_level": 5, "incidents": [{"type": "기타 손상", "primary": True}]}) is None
     assert normalize({"ktas_level": 4})["mechanism"] == "미상", "비어 있어도 깨지지 않는다"
     assert not is_v2(normalize(cardiac)), "변환된 요약을 다시 v2로 보면 안 된다(상태 복구)"
+    many = {"ktas_level": 2, "suspected_diagnosis": [{"text": "  혈압  "}],
+            "injuries": [{"region": r, "type": "골절"} for r in ("머리", "가슴", "배", "팔", "다리")]}
+    assert normalize(many)["mechanism"] == "혈압 · 머리 골절 · 가슴 골절 · 배 골절", "손상은 3개까지, 공백 정리"
     print("voice_v2 자체 검사 통과")
 
 
