@@ -188,7 +188,7 @@ def parse_hvidate(raw: str | None) -> datetime | None:
         return None
 
 
-def parse_bed_count(raw: str | None) -> int | None:
+def parse_bed_count(raw: str | None, *, minus_one_missing: bool = True) -> int | None:
     """가용 병상 수. 미입력(-1)은 None, 과밀(음수)은 음수 그대로 돌려준다.
 
     과밀을 0으로 낮추는 건 hub로 내보내는 스키마가 음수를 막기 때문에 하는 일이고
@@ -203,7 +203,7 @@ def parse_bed_count(raw: str | None) -> int | None:
         value = int(text)
     except ValueError:
         return None
-    return None if value == MISSING_SENTINEL else value
+    return None if minus_one_missing and value == MISSING_SENTINEL else value
 
 
 def _to_float(raw: str | None) -> float | None:

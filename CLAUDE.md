@@ -408,6 +408,7 @@ Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-
 - `HospitalInfo.emergencyLevel`: E-Gen 목록의 `dutyEmclsName`(권역/지역응급의료센터 등). hub가 중증 환자 가산에 쓴다
 - `send_to_hub.py`가 한 주기 병원을 다 보낸 뒤 `POST /info/hospitals/roster`로 전체 hpid 목록을 보낸다 — hub가 피드에서 빠진 병원을 지운다
 - **스냅샷 수집은 이제 `start-all.sh`가 info와 함께 20분 주기로 띄운다**(`--no-snapshot`으로 끔). Windows 작업 스케줄러(`snapshot_nationwide.bat`)로만 돌아서 이 맥에선 8월 13일 이후 멈춰 있었다
+- **응급실 `hvec`의 `-1`은 미상이 아니라 과밀 1명(만실 0)으로 읽는다(2026-10-01).** 다른 병상 필드의 -1은 그대로 미입력. 전국 스냅샷에서 hvec -1의 앞뒤 값 77%가 -3~1(0 → -1 → -2처럼 이어짐)이라 미입력일 수 없다. 예전엔 서울아산처럼 꽉 찬 응급실이 "미상"으로 떠서 만실 표시·승인 차단이 안 걸렸다. 신뢰도 모델은 이미 이렇게 읽고 있었다(`egen/mapper.py`의 `MINUS_ONE_IS_VALUE_FIELDS`, `hospital_score/scoring.py`도 같게). 폐기 판정·리포트 재현 스크립트는 기록된 수치를 바꾸지 않도록 그대로 둠. 검사 `python -m egen.test_hvec_minus_one`
 - ⚠️ `info/requirements.txt`의 `xgboost==3.4.1`·`numpy==2.5.1`·`scipy==1.18.0`은 Python 3.12 이상용이라 파일 머리의 "3.11" 환경엔 안 깔린다. 3.11 환경은 호환 버전(xgboost 3.2 등)을 깔면 되고, 모델 로드·selftest 통과를 확인했다(2026-10-01). 이게 빠지면 `[reliability] 엔진 초기화 실패` 한 줄만 남기고 `bedReliability` 없이 조용히 보내진다
 
 ### 거절 로그 — dashboard·hub·info 연동 (2026-08-12 인터페이스, 2026-09-10 배선 완료)

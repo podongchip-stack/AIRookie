@@ -26,7 +26,9 @@ feature/info의 본체다. 하는 일은 세 가지다.
   위 실측(서울 55곳 1회)에서는 "`-24 ~ -2` 관측, `-1`은 없음"이라고 적었으나,
   전국 34일치 313,371칸으로 넓히자 `-1`이 1,398칸(0.45%), `-25` 이하가 654칸
   관측됐다. 표본 하나로 값의 범위를 단정한 것이 틀렸던 것이고, 처리 자체는
-  그대로 맞다 — `-1`은 미입력, `-2` 이하는 과밀. 재현은
+  그대로 맞다 — `-1`은 미입력, `-2` 이하는 과밀. ~~재현은~~
+  → [갱신됨 2026-10-01] **`hvec`만은 `-1`도 과밀(1명 초과)이다** — 앞뒤 값이 이웃 숫자
+  (0 → -1 → -2)라 미입력일 수 없다. `MINUS_ONE_IS_VALUE_FIELDS` 참고. 재현은
   `python -m hospital_score.report`의 3절(응급실 과밀 지속시간)
 - [확인됨] 필드 자체가 빠지는 것도 미입력의 표현이다 (`hv11`은 55건 중 31건만 등장)
 - [확인됨] `hvidate` = `yyyyMMddHHmmss` (예: `20260810232018`)
@@ -53,6 +55,12 @@ KST = timezone(timedelta(hours=9))
 #: E-Gen이 "병원이 입력하지 않음"을 나타내는 값. [확인됨]
 #: 이 값**만** 미입력이다. `-2` 이하는 미입력이 아니라 과밀(정원 초과 수용)이다.
 MISSING_SENTINEL = -1
+
+#: 예외: 응급실 일반 병상(`hvec`)의 `-1`은 미입력이 아니라 "정원보다 1명 많음"(과밀)이다
+#: (2026-10-01 실측). 전국 스냅샷에서 `hvec=-1`의 앞뒤 값 193개 중 149개(77%)가 -3~1로,
+#: 0 → -1 → -2처럼 이웃한 숫자 사이에 끼어 나온다. 신뢰도 모델(reliability/engine.py의
+#: `minus_one_missing=False`)도 이미 이렇게 읽는다.
+MINUS_ONE_IS_VALUE_FIELDS = frozenset({"hvec"})
 
 
 # --- 매핑표 (실측 후 여기부터 교정한다) --------------------------------------
@@ -119,7 +127,7 @@ CAPABILITY_TO_DEPARTMENT: dict[str, str] = {
 # --- 값 정리 ----------------------------------------------------------------
 
 
-def clean_count(raw: object) -> int | None:
+def clean_count(raw: object, field: str | None = None) -> int | None:
     """병상 수를 정리한다. 미입력이면 `None`(미상)을 돌려준다.
 
     세 가지를 구분해야 한다.
@@ -137,7 +145,9 @@ def clean_count(raw: object) -> int | None:
         value = int(raw)
     except (TypeError, ValueError):
         return None
-    return None if value == MISSING_SENTINEL else value
+    if value == MISSING_SENTINEL and field not in MINUS_ONE_IS_VALUE_FIELDS:
+        return None
+    return value
 
 
 def clamp_available(count: int) -> int:
@@ -213,7 +223,7 @@ def implausible_fields(bed_row: dict) -> list[str]:
     total = total_bed_count(bed_row)
     dropped = []
     for field_name in BED_FIELD_MAP:
-        count = clean_count(bed_row.get(field_name))
+        count = clean_count(bed_row.get(field_name), field_name)
         if count is not None and is_implausible(count, total):
             dropped.append(f"{field_name}={count}")
     return dropped
@@ -230,7 +240,7 @@ def build_beds_by_type(bed_row: dict) -> dict[str, int]:
     total = total_bed_count(bed_row)
 
     for field_name, code in BED_FIELD_MAP.items():
-        count = clean_count(bed_row.get(field_name))
+        count = clean_count(bed_row.get(field_name), field_name)
         if count is None or is_implausible(count, total):
             continue
         beds[code] = clamp_available(count)
@@ -405,7 +415,7 @@ def map_all(
         hpid = bed_row["hpid"]
         name = bed_row.get("dutyName", hpid)
 
-        er_count = clean_count(bed_row.get("hvec"))
+        er_count = clean_count(bed_row.get("hvec"), "hvec")
         if er_count is None:
             report.bed_count_unknown.append(name)
         elif er_count < 0:
