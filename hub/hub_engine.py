@@ -22,6 +22,7 @@ from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
+    ArrivalResult,
     GpsPoint,
     HospitalInfo,
     HospitalMatch,
@@ -117,6 +118,8 @@ _ACTION_TO_STATUS: dict[str, HospitalStatus] = {
     "hospital_approve": "approved",
     "hospital_reject": "rejected",
     "final_approval": "confirmed",
+    "arrival_accepted": "confirmed",
+    "arrival_refused": "rejected",
 }
 
 # 액션마다 보낼 수 있는 주체(2026-09-28). 병원 승인·거절은 병원만, 이송 승인은 구급대원만.
@@ -126,6 +129,8 @@ _ACTION_ACTOR: dict[str, str] = {
     "hospital_approve": "hospital",
     "hospital_reject": "hospital",
     "final_approval": "paramedic",
+    "arrival_accepted": "hospital",
+    "arrival_refused": "hospital",
 }
 
 
@@ -408,6 +413,8 @@ class HubEngine:
         # CASE_RETENTION_MIN이 지난 사건을 골라 모든 사건 dict에서 걷어낸다
         # (_prune_old_cases). _bed_overlay와 같은 "조회 시점 lazy 정리" 패턴이다.
         self._case_confirmed_at: dict[str, datetime] = {}
+        # 확정 병원 도착 뒤 병원이 기록한 수용 결과(caseId -> ArrivalResult, 2026-10-01). 수용만 들어간다.
+        self._case_arrival: dict[str, ArrivalResult] = {}
         # hospitalId -> 병원 대시보드가 "현재 정보 확인"을 누른 시각(2026-09-29).
         # infosurv의 조건부 생존 갱신 S(a)/S(u)에 쓰는 유효 확인 이력 —
         # E-Gen 자기 신고 바깥에서 처음 생기는 관측이다. 값이 바뀌면(새 claim
@@ -583,6 +590,7 @@ class HubEngine:
         self._case_group.pop(case_id, None)
         self._case_gps_fallback.pop(case_id, None)
         self._case_confirmed_at.pop(case_id, None)
+        self._case_arrival.pop(case_id, None)
         for key in [k for k in self._case_overlay if k[0] == case_id]:
             del self._case_overlay[key]
 
@@ -664,11 +672,11 @@ class HubEngine:
             self._case_results[case_id] = result.model_copy(update={"hospitals": _sort_matches(hospitals)})
             self._dirty = True
 
-    def apply_approval_action(self, action: ApprovalAction) -> None:
+    def apply_approval_action(self, action: ApprovalAction) -> bool:
         """dashboard가 보낸 승인 액션을 반영한다 (dashboard는 이 브랜치와만 직접
         통신하므로 수신은 여기서 한다). hospitals[].status에 반영될 내부 상태를
         갱신하고, 병상이 실제로 줄어드는 경우(final_approval)에는 TTL 오버레이에
-        차감 기록을 얹는다.
+        차감 기록을 얹는다. 실제로 반영했으면 True, 거부·중복이면 False.
         """
         with self._lock:
             self._prune_old_cases()
@@ -684,7 +692,7 @@ class HubEngine:
                     "approval_action_ignored_duplicate",
                     {"action": action.model_dump(), "reason": "already confirmed"},
                 )
-                return
+                return False
 
             # 순서·권한 검사(2026-09-28). 거부된 액션은 상태를 바꾸지 않고 사유만 남긴다.
             # - 주체 짝: 병원 승인·거절은 병원, 이송 승인은 구급대원
@@ -695,11 +703,32 @@ class HubEngine:
                 refuse_reason = f"actor mismatch: {action.action} requires {_ACTION_ACTOR[action.action]}"
             elif action.action == "final_approval" and current != "approved":
                 refuse_reason = f"final_approval requires hospital approval (current: {current})"
+            elif action.action.startswith("arrival_") and current != "confirmed":
+                refuse_reason = f"{action.action} requires this hospital to be the confirmed destination (current: {current})"
+            elif action.action.startswith("arrival_") and action.caseId in self._case_arrival:
+                refuse_reason = "arrival result already recorded"
             if refuse_reason is not None:
                 decision_log.log_decision(
                     "approval_action_refused", {"action": action.model_dump(), "reason": refuse_reason}
                 )
-                return
+                return False
+
+            if action.action == "arrival_accepted":
+                # 실제 수용 — 이송이 끝났다. status는 confirmed 그대로, 결과만 기록한다.
+                arrival = ArrivalResult(hospitalId=action.hospital_id, result="accepted", at=action.timestamp)
+                self._case_arrival[action.caseId] = arrival
+                cached = self._case_results.get(action.caseId)
+                if cached is not None:
+                    self._case_results[action.caseId] = cached.model_copy(update={"arrival": arrival})
+                decision_log.log_decision("arrival_accepted", {"action": action.model_dump()})
+                return True
+            if action.action == "arrival_refused":
+                # 도착 후 수용 불가 — 가장 강한 "정보가 틀렸다" 관측. 확정을 풀고(거절로) 병상 차감을
+                # 회수하며, 사건은 다시 미확정이 된다(재선택·재계산 대상). 도착 결과는 "수용"만 최종이라
+                # 기록은 남기되 다음 도착 결과를 막지 않도록 _case_arrival엔 넣지 않는다.
+                self._release_confirmation(action.caseId, action.hospital_id, action, "arrival_refused")
+                self._case_confirmed_at.pop(action.caseId, None)
+                return True
 
             if action.action == "final_approval":
                 # 재선택: 이 사건에서 이미 확정된 다른 병원이 있으면 확정을 풀고(approved로
@@ -707,7 +736,7 @@ class HubEngine:
                 # 새 상태값을 만들지 않는 건 dashboard의 HospitalStatus 타입을 그대로 쓰기 위해서다.
                 for (cid, hid), status in list(self._approval_status.items()):
                     if cid == action.caseId and hid != action.hospital_id and status == "confirmed":
-                        self._release_confirmation(cid, hid, action)
+                        self._release_confirmation(cid, hid, action, "paramedic_reselect")
 
             new_status = _ACTION_TO_STATUS[action.action]
             self._approval_status[status_key] = new_status
@@ -721,7 +750,7 @@ class HubEngine:
                 # 병상은 안 건드리는 액션이라 지금 self._hospitals 값 그대로 패치해도 된다.
                 self._patch_case_result_status(action.caseId, action.hospital_id, new_status)
                 decision_log.log_decision("approval_action_applied", {"action": action.model_dump(), "bedUpdate": None})
-                return
+                return True
 
             info = self._hospitals.get(action.hospital_id)
             # 병상을 깎지 않고 넘어가는 경우를 이유별로 남긴다. "미상"과 "확인된 만실"은
@@ -746,7 +775,7 @@ class HubEngine:
                     "approval_action_ignored_no_bed",
                     {"action": action.model_dump(), "reason": skip_reason},
                 )
-                return
+                return True
 
             expires_at = _utcnow() + timedelta(minutes=BED_OVERLAY_TTL_MIN)
             self._bed_overlay.setdefault(info.hospitalId, []).append(expires_at)
@@ -767,10 +796,19 @@ class HubEngine:
                     },
                 },
             )
+            return True
 
-    def _release_confirmation(self, case_id: str, hospital_id: str, action: ApprovalAction) -> None:
-        """재선택으로 밀려난 병원의 확정을 풀고 병상 차감을 회수한다(락 안에서만 호출)."""
-        self._approval_status[(case_id, hospital_id)] = "approved"
+    def _release_confirmation(self, case_id: str, hospital_id: str, action: ApprovalAction, cause: str) -> None:
+        """확정을 풀고 병상 차감을 회수한다(락 안에서만 호출).
+
+        cause별 의미가 다르다 — 신뢰도 라벨을 만들 때 섞으면 안 된다(2026-10-01):
+        - paramedic_reselect: 더 나은 병원이 승인해 구급대원이 바꿨다. 이 병원은 받겠다고 했으므로
+          **병상 정보가 맞았다는 근거**다(실패 아님). 상태는 approved로 되돌린다.
+        - arrival_refused: 도착했는데 병원이 못 받았다. **정보가 틀렸다는 가장 강한 독립 관측.**
+          상태는 rejected.
+        """
+        new_status = "rejected" if cause == "arrival_refused" else "approved"
+        self._approval_status[(case_id, hospital_id)] = new_status
         expires_at = self._case_overlay.pop((case_id, hospital_id), None)
         overlay = self._bed_overlay.get(hospital_id, [])
         reclaimed = expires_at in overlay  # 이미 만료돼 정리됐으면 회수할 것이 없다
@@ -778,13 +816,22 @@ class HubEngine:
             overlay.remove(expires_at)
             if not overlay:
                 del self._bed_overlay[hospital_id]
-        self._patch_case_result_status(case_id, hospital_id, "approved")
+        result = self._case_results.get(case_id)
+        snapshot = {
+            h.hospitalId: {"travelMin": h.travelMin, "finalScore": h.finalScore}
+            for h in (result.hospitals if result else [])
+            if h.hospitalId in (hospital_id, action.hospital_id)
+        }
+        self._patch_case_result_status(case_id, hospital_id, new_status)
         decision_log.log_decision(
-            "approval_released",
+            "arrival_refused" if cause == "arrival_refused" else "approval_released",
             {
                 "caseId": case_id,
                 "hospitalId": hospital_id,
-                "reason": f"reselected: {action.hospital_id}",
+                "cause": cause,
+                "newHospitalId": action.hospital_id if cause == "paramedic_reselect" else None,
+                "reason": action.reason,
+                "atDecision": snapshot,
                 "bedOverlayReclaimed": reclaimed,
             },
         )
@@ -971,6 +1018,7 @@ class HubEngine:
             apid=apid,
             ambulanceGps=ambulance_gps,
             ambulanceGpsFallback=gps_fallback,
+            arrival=self._case_arrival.get(voice.caseId),
         )
         return result, best_group
 
@@ -1073,6 +1121,36 @@ class HubEngine:
     def get_case_max_zone(self, case_id: str) -> int:
         with self._lock:
             return self._case_max_zone.get(case_id, 1)
+
+    def force_expand_zone(self, case_id: str, ambulance_gps: GpsPoint) -> HubMatchResult | None:
+        """존을 한 단계 넓혀 **기존 환자 정보(통화 요약) 그대로** 다시 매칭한다(2026-10-01).
+        도착 후 수용 불가로 갈 곳이 없어졌을 때 — 다시 통화하지 않고 넓어진 존의 병원들에게 같은
+        요청을 보내려는 것이다(역할별 전송이 새 후보 병원 탭에도 보낸다). 새 존이 비면 후보가 잡힐
+        때까지 넓힌다. 확장할 수 없으면 None."""
+        with self._lock:
+            current = self._case_max_zone.get(case_id, 1)
+            voice = self._case_voice.get(case_id)
+            gps_fallback = self._case_gps_fallback.get(case_id, False)
+        if voice is None:
+            return None
+        new_max = self._expand_until_nonempty(ambulance_gps, current + 1)
+        if new_max <= current:
+            return None
+        print(f"  [존 확장] case={case_id} 도착 후 수용 불가 — zone 1~{current} -> 1~{new_max}")
+        decision_log.log_decision("zone_expanded", {"caseId": case_id, "from": current, "to": new_max,
+                                                    "cause": "arrival_refused"})
+        return self.process_voice_summary(voice, ambulance_gps, max_zone=new_max, gps_fallback=gps_fallback)
+
+    def get_case_status(self, case_id: str, hospital_id: str) -> str:
+        with self._lock:
+            return self._approval_status.get((case_id, hospital_id), "pending")
+
+    def has_other_approved(self, case_id: str, except_hospital: str) -> bool:
+        with self._lock:
+            return any(
+                cid == case_id and hid != except_hospital and status == "approved"
+                for (cid, hid), status in self._approval_status.items()
+            )
 
     def maybe_expand_zone(self, case_id: str, ambulance_gps: GpsPoint) -> HubMatchResult | None:
         """거절(hospital_reject) 액션 처리 후에만 호출해야 한다. 지금 zone에

@@ -545,9 +545,13 @@ def _rejection_payload(case_id: str, hospital_id: str, timestamp: str, reason_co
 
 
 def _build_rejection_payload(action: ApprovalAction) -> dict:
-    return _rejection_payload(
+    payload = _rejection_payload(
         action.caseId, action.hospital_id, action.timestamp, action.reason or "UNSPECIFIED"
     )
+    # 도착 전 응답(병원 화면의 "불가")과 도착 후 수용 불가를 구분한다(2026-10-01). 도착 후 거절은
+    # 구급차가 실제로 가서 확인한 결과라 신뢰도 모델의 가장 강한 독립 관측(G2)이다.
+    payload["stage"] = "arrival" if action.action == "arrival_refused" else "request"
+    return payload
 
 
 #: 확정 없이 이 시간(분) 넘게 활동이 없는 사건은 "미결 종료"로 보고 무응답을
@@ -558,7 +562,7 @@ UNRESOLVED_CASE_TIMEOUT_MIN = float(os.environ.get("HUB_UNRESOLVED_TIMEOUT_MIN",
 
 
 def _log_no_responses(case_id: str, timestamp: str, finalized_to: str | None) -> None:
-    """사건이 결말(이송 확정 또는 미결 방치)에 이른 시점에, 여전히 무응답
+    """사건이 끝난 시점(도착 수용·현장 종료·미결 방치, 2026-10-01부터)에, 여전히 무응답
     (pending)인 후보들을 거절 로그에 남긴다 — CLAUDE.md 거절 로그 절의
     "무응답(NO_RESPONSE)도 반드시 남길 것"(없으면 낮은 점수가 낮은 점수를
     재생산하는 되먹임이 생긴다).
@@ -614,7 +618,9 @@ def _sweep_unresolved_cases(now: datetime | None = None) -> int:
             and (now - last).total_seconds() >= UNRESOLVED_CASE_TIMEOUT_MIN * 60
         ]
     for case_id in due:
-        _log_no_responses(case_id, now.isoformat(timespec="seconds"), finalized_to=None)
+        result = engine.get_case_result(case_id)
+        confirmed = next((h.hospitalId for h in result.hospitals if h.status == "confirmed"), None) if result else None
+        _log_no_responses(case_id, now.isoformat(timespec="seconds"), finalized_to=confirmed)
         _close_case(case_id, "unresolved_timeout")
     return len(due)
 
@@ -649,7 +655,23 @@ def _handle_dashboard_action(payload: dict) -> None:
         if action.caseId not in _case_swept:
             _case_last_activity[action.caseId] = datetime.now(timezone.utc)
 
-    engine.apply_approval_action(action)
+    # 출동 시뮬레이션 중엔 구급차가 그 병원에 실제로 도착했을 때만 도착 결과를 받는다(2026-10-01). 버튼만
+    # 막는 게 아니라 hub도 지킨다 — 이송 중에 "도착 후 수용 불가"가 들어와 엔진만 바뀌고 구급차는 계속 달리는
+    # 어긋남이 실서버 E2E에서 실제로 났다.
+    if sim is not None and action.action in ("arrival_accepted", "arrival_refused"):
+        apid = engine.get_case_apid(action.caseId)
+        state = sim.state(apid) if apid else None
+        if not state or state["phase"] != "at_hospital" or state["caseId"] != action.caseId \
+                or state["hospitalId"] != action.hospital_id:
+            print(f"  [시뮬레이션] 도착 결과 거부 — 구급차가 {action.hospital_id}에 아직 도착하지 않음")
+            decision_log.log_decision("approval_action_refused", {
+                "action": action.model_dump(), "reason": "ambulance has not arrived (simulation)",
+                "ambulancePhase": state["phase"] if state else None})
+            return
+
+    # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
+    arrival_refusal = _build_rejection_payload(action) if action.action == "arrival_refused" else None
+    applied = engine.apply_approval_action(action)
 
     # maybe_expand_zone()은 거절 액션에만 부른다 — reject_ratio가 누적 계산이라
     # 승인/최종승인 뒤에도 부르면 새 거절이 없는데도 계속 확장돼버린다
@@ -663,13 +685,25 @@ def _handle_dashboard_action(payload: dict) -> None:
 
         ambulance_gps, _ = _resolve_ambulance_gps(action.caseId)
         expanded_result = engine.maybe_expand_zone(action.caseId, ambulance_gps)
-    elif action.action == "final_approval":
-        # 확정 순간 여전히 응답 없던 후보들도 로그에 남긴다 (NO_RESPONSE).
+    elif action.action == "arrival_refused" and arrival_refusal is not None and applied:
+        send_rejection_to_info(arrival_refusal)
+        # 승인한 다른 병원이 없으면 그 자리에서 존을 넓혀 같은 환자 정보로 다시 요청한다(재통화 없음).
+        if not engine.has_other_approved(action.caseId, action.hospital_id):
+            ambulance_gps, _ = _resolve_ambulance_gps(action.caseId)
+            expanded_result = engine.force_expand_zone(action.caseId, ambulance_gps)
+    elif action.action == "arrival_accepted" and applied:
+        # 무응답은 사건이 끝날 때 기록한다(2026-10-01). 예전엔 첫 이송 승인 순간에 기록해서, 그 뒤
+        # 승인하고 재선택된 병원까지 "무응답"으로 남았다.
         _log_no_responses(action.caseId, action.timestamp, finalized_to=action.hospital_id)
 
     updated_result = expanded_result or engine.get_case_result(action.caseId)
     if updated_result is not None:
         _send_to_dashboard(updated_result.model_dump())
+
+    if sim is not None and applied and action.action in ("arrival_accepted", "arrival_refused"):
+        apid = engine.get_case_apid(action.caseId)
+        if apid and sim.on_arrival_result(apid, action.caseId, accepted=action.action == "arrival_accepted"):
+            _broadcast_sim_state(apid)
 
     if sim is not None and action.action == "final_approval" and updated_result is not None:
         confirmed = next((h for h in updated_result.hospitals if h.status == "confirmed"), None)

@@ -159,17 +159,28 @@ def main() -> None:
     )
     print("  [확인] 사유 없는 거절도 reasonCode=UNSPECIFIED로 전달됨")
 
-    # 이송 확정 시점에 무응답인 후보는 NO_RESPONSE로 일괄 기록돼야 한다
+    # 이송 확정만으로는 무응답을 기록하지 않는다(2026-10-01) — 확정 뒤에 다른 병원이 승인하고
+    # 재선택될 수 있어서, 그 병원까지 "무응답"으로 남는 문제가 있었다. 사건이 끝날 때(도착 수용) 기록한다.
     _received.clear()
+    app._handle_dashboard_action({  # 거절했던 병원이 병상이 나서 다시 승인
+        "caseId": case_id, "action": "hospital_approve", "hospital_id": "A1100017",
+        "actor": "hospital", "timestamp": "2026-09-10T14:34:00Z",
+    })
     app._handle_dashboard_action({
         "caseId": case_id, "action": "final_approval", "hospital_id": "A1100017",
         "actor": "paramedic", "timestamp": "2026-09-10T14:35:00Z",
+    })
+    threading.Event().wait(0.3)
+    assert not _received, "이송 확정 순간에 NO_RESPONSE를 기록하면 안 된다"
+    app._handle_dashboard_action({
+        "caseId": case_id, "action": "arrival_accepted", "hospital_id": "A1100017",
+        "actor": "hospital", "timestamp": "2026-09-10T14:50:00Z",
     })
     for _ in range(50):
         if _received:
             break
         threading.Event().wait(0.05)
-    assert _received, "final_approval인데 무응답 후보의 NO_RESPONSE 로그가 안 왔다"
+    assert _received, "도착 수용인데 무응답 후보의 NO_RESPONSE 로그가 안 왔다"
     no_response = _received[0]
     print("  NO_RESPONSE payload:", json.dumps(no_response, ensure_ascii=False))
     assert no_response["hospitalId"] == "A1100099", "무응답 후보(A1100099)가 기록돼야 한다"
@@ -182,17 +193,17 @@ def main() -> None:
     assert no_response["reachedAtBroadcast"] is False, (
         "병원 소켓이 한 번도 연결된 적 없으니 도달 이력도 없어야 한다"
     )
-    print("  [확인] 확정 시점 무응답 후보가 NO_RESPONSE + 도달/확정 구분과 함께 기록됨")
+    print("  [확인] 확정 때가 아니라 도착 수용 때 무응답 후보가 NO_RESPONSE + 도달/확정 구분과 함께 기록됨")
 
-    # 같은 사건에 final_approval이 중복 도착해도 무응답을 두 번 기록하지 않는다
+    # 도착 결과가 중복 도착해도 무응답을 두 번 기록하지 않는다
     _received.clear()
     app._handle_dashboard_action({
-        "caseId": case_id, "action": "final_approval", "hospital_id": "A1100017",
-        "actor": "paramedic", "timestamp": "2026-09-10T14:36:00Z",
+        "caseId": case_id, "action": "arrival_accepted", "hospital_id": "A1100017",
+        "actor": "hospital", "timestamp": "2026-09-10T14:51:00Z",
     })
     threading.Event().wait(0.3)
-    assert not _received, "중복 final_approval에 NO_RESPONSE가 또 기록되면 안 된다"
-    print("  [확인] 중복 final_approval에는 무응답 재기록 없음 (멱등)")
+    assert not _received, "중복 도착 수용에 NO_RESPONSE가 또 기록되면 안 된다"
+    print("  [확인] 중복 도착 결과에는 무응답 재기록 없음 (멱등)")
 
     # 확정 없이 방치된 사건은 sweep이 NO_RESPONSE(caseFinalized=false)로 정리한다
     _received.clear()

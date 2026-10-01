@@ -176,7 +176,16 @@ export interface HospitalCandidate {
   bonusReasons?: string[];
 }
 
+// 확정 병원 도착 뒤 병원이 기록한 수용 결과(hub 2026-10-01~). 수용만 남는다(수용 불가는 그 병원이 rejected로 바뀜).
+export interface ArrivalResult {
+  hospitalId: string;
+  result: "accepted" | "refused";
+  at: string;
+  reason?: string | null;
+}
+
 export interface HubMatchResult {
+  arrival?: ArrivalResult | null;
   // hub가 2026-09-28부터 붙이는 구분자. 그 전 hub는 이 필드 없이 보냈다.
   type?: "match_result";
   // 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 결과를 어느 사건
@@ -205,7 +214,10 @@ export interface HubMatchResult {
 export type ApprovalActionType =
   | "hospital_approve"
   | "hospital_reject"
-  | "final_approval";
+  | "final_approval"
+  // 2026-10-01: 구급차가 확정 병원에 도착한 뒤 병원이 기록하는 실제 수용 결과
+  | "arrival_accepted"
+  | "arrival_refused";
 
 export type Actor = "hospital" | "paramedic";
 
@@ -352,7 +364,14 @@ export interface SceneCandidates {
 // hub → dashboard: 구급차 출동 시뮬레이션(시연용 가짜 위치, 2026-10-01). ambulance_phase는 상태가
 // 바뀔 때(경로 포함), ambulance_position은 움직이는 동안 1초마다(경로 없음) 온다. 구급차 탭은 전부,
 // 병원 탭은 자기가 확정 병원일 때 이송 중에만 받는다. 항상 simulated=true.
-export type AmbulancePhase = "idle" | "dispatching" | "on_scene" | "transporting" | "at_hospital" | "returning";
+export type AmbulancePhase =
+  | "idle"
+  | "dispatching"
+  | "on_scene"
+  | "transporting"
+  | "at_hospital"
+  | "rerouting"
+  | "returning";
 
 export interface AmbulanceSimState {
   type: "ambulance_phase" | "ambulance_position";

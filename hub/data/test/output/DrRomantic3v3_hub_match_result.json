@@ -130,5 +130,6 @@
     "lat": 35.18,
     "lng": 128.108
   },
-  "ambulanceGpsFallback": false
+  "ambulanceGpsFallback": false,
+  "arrival": null
 }

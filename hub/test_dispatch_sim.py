@@ -21,6 +21,9 @@ from ambulance_sim import HOSPITAL_DWELL_SEC, DispatchSim  # noqa: E402
 from schema import AmbulanceInfo, CallSignal, GpsPoint, VoiceCallSummaryMessage, VoiceSummary, VoiceTranscript  # noqa: E402
 from test_app_background import _FakeSocket, _hospital  # noqa: E402
 
+_REJECTIONS: list[dict] = []
+app.send_rejection_to_info = _REJECTIONS.append  # 거절 로그 수신구 대역(전송 내용만 모은다)
+
 BASE = GpsPoint(lat=37.5665, lng=126.9780)
 
 
@@ -48,14 +51,18 @@ def main() -> None:
     app.sim = DispatchSim(None, random.Random(3), clock, Path(_TMP.name) / "sim")
     app._voice_addresses.clear()
     app.engine.update_hospital_info(_hospital(beds=3))
+    far = _hospital(beds=3).model_copy(update={  # 존 1(0~5km) 밖 — 도착 후 수용 불가 때 존 확장으로 들어온다
+        "hospitalId": "T_FAR", "name": "[테스트] 먼 병원", "gps": GpsPoint(lat=37.6400, lng=126.9780)})
+    app.engine.update_hospital_info(far)
     client = app.app.test_client()
     client.post("/info/ambulances", json=AmbulanceInfo(
         apid="A_SIM", name="[테스트] 시뮬레이션 구급차", gps=BASE, voicePort=6000, updatedAt="2026-10-01T00:00:00Z",
     ).model_dump())
 
-    amb, hosp, other = _FakeSocket(), _FakeSocket(), _FakeSocket()
-    app._dashboard_sockets.update({amb, hosp, other})
-    app._socket_identity.update({amb: ("ambulance", "A_SIM"), hosp: ("hospital", "T001"), other: ("hospital", "ZZZ")})
+    amb, hosp, other, far_tab = _FakeSocket(), _FakeSocket(), _FakeSocket(), _FakeSocket()
+    app._dashboard_sockets.update({amb, hosp, other, far_tab})
+    app._socket_identity.update({amb: ("ambulance", "A_SIM"), hosp: ("hospital", "T001"), other: ("hospital", "ZZZ"),
+                                 far_tab: ("hospital", "T_FAR")})
 
     print("=== [이동] → 출동, 현장 도착 전엔 통화 시작 거부 ===")
     case_id = "case-sim"
@@ -101,10 +108,41 @@ def main() -> None:
     assert app.engine.refresh_case(case_id, gps) is None, "확정된 사건은 재정렬하지 않는다"
     print("  [확인] 확정 → 이송, 확정 병원 탭만 위치 수신, 확정 사건 재정렬 중단")
 
-    print("=== 병원 도착 15초 → 기지 복귀(병원 탭은 안 받음) → 대기 ===")
+    print("=== 병원 도착 → 결과를 고를 때까지 대기 → 도착 후 수용 불가 → 그 자리에서 존 확장 ===")
+    app._handle_dashboard_action({"caseId": case_id, "action": "arrival_refused", "hospital_id": "T001",
+                                  "actor": "hospital", "timestamp": "2026-10-01T00:10:00Z", "reason": "BEDS_FULL"})
+    assert app.engine.get_case_status(case_id, "T001") == "confirmed", "도착 전 도착 결과는 hub가 거부한다"
     clock.t += 3600
     app._sim_tick()
-    assert app.sim.phase_of("A_SIM") == "at_hospital"
+    clock.t += 3600
+    app._sim_tick()
+    assert app.sim.phase_of("A_SIM") == "at_hospital", "도착 결과가 없으면 병원에서 계속 기다린다"
+    assert "T_FAR" not in [h.hospitalId for h in app.engine.get_case_result(case_id).hospitals]
+    _REJECTIONS.clear()
+    app._handle_dashboard_action({"caseId": case_id, "action": "arrival_refused", "hospital_id": "T001",
+                                  "actor": "hospital", "timestamp": "2026-10-01T00:20:00Z", "reason": "BEDS_FULL"})
+    assert app.sim.phase_of("A_SIM") == "rerouting", "그 자리에서 재선택 대기"
+    refusal = _REJECTIONS[0]
+    assert refusal["stage"] == "arrival" and refusal["reasonCode"] == "BEDS_FULL" and "availableBedCountAtRequest" in refusal
+    result = app.engine.get_case_result(case_id)
+    assert {h.hospitalId: h.status for h in result.hospitals}["T001"] == "rejected"
+    assert "T_FAR" in [h.hospitalId for h in result.hospitals], "승인 병원이 없으면 존을 넓혀 다시 요청"
+    assert any(m.get("type") == "match_result" and m["caseId"] == case_id for m in far_tab.sent), \
+        "넓어진 존의 병원 탭이 같은 환자 정보로 요청을 받는다(재통화 없음)"
+    assert not any(r["reasonCode"] == "NO_RESPONSE" for r in _REJECTIONS), "사건이 안 끝났으니 무응답 기록은 아직"
+    print("  [확인] 결과 대기, 수용 불가 → 재선택 대기 · 거절 로그(stage=arrival, 결정 시점 스냅샷) · 존 확장 · 새 병원 탭 수신")
+
+    print("=== 새 병원 승인 → 이송 → 도착 수용 → 15초 → 기지 복귀(병원 탭은 안 받음) → 대기 ===")
+    app._handle_dashboard_action({"caseId": case_id, "action": "hospital_approve", "hospital_id": "T_FAR",
+                                  "actor": "hospital", "timestamp": "2026-10-01T00:21:00Z"})
+    app._handle_dashboard_action({"caseId": case_id, "action": "final_approval", "hospital_id": "T_FAR",
+                                  "actor": "paramedic", "timestamp": "2026-10-01T00:22:00Z"})
+    assert app.sim.phase_of("A_SIM") == "transporting"
+    clock.t += 3600
+    app._sim_tick()
+    app._handle_dashboard_action({"caseId": case_id, "action": "arrival_accepted", "hospital_id": "T_FAR",
+                                  "actor": "hospital", "timestamp": "2026-10-01T00:40:00Z"})
+    assert app.engine.get_case_result(case_id).arrival.result == "accepted"
     clock.t += HOSPITAL_DWELL_SEC + 1
     hosp.sent.clear()
     app._sim_tick()

@@ -141,3 +141,64 @@ export function ApprovalActions({ role, hospitalId, caseId, onAction }: Approval
     </div>
   );
 }
+
+// 확정 병원 도착 뒤의 실제 수용 결과(2026-10-01). 구급차가 도착하면 이 결과를 꼭 골라야 한다 — 구급차는
+// 결과가 나올 때까지 병원 앞에서 기다린다. 도착 후 수용 불가는 신뢰도 모델의 가장 강한 "정보가 틀렸다"
+// 관측이라 사유를 같이 받는다. ready가 false면(구급차 도착 전) 버튼을 막는다.
+export function ArrivalActions({
+  hospitalId,
+  caseId,
+  ready,
+  onAction,
+}: {
+  hospitalId: string;
+  caseId: string;
+  ready: boolean;
+  onAction: (action: ApprovalAction) => void;
+}) {
+  const [reasonValue, setReasonValue] = useState("");
+
+  function dispatch(action: "arrival_accepted" | "arrival_refused", reason?: RejectionReason) {
+    onAction({
+      caseId,
+      action,
+      hospital_id: hospitalId,
+      actor: "hospital",
+      timestamp: new Date().toISOString(),
+      ...(reason ? { reason } : {}),
+    });
+  }
+
+  return (
+    <div className={css({ display: "flex", gap: "2", justifyContent: "flex-end" })}>
+      <select
+        disabled={!ready}
+        value={reasonValue}
+        onChange={(event) => {
+          const value = event.target.value as RejectionReason | "";
+          if (!value) return;
+          dispatch("arrival_refused", value);
+          setReasonValue("");
+        }}
+        className={rejectSelectStyle}
+      >
+        <option value="" disabled>
+          도착 후 수용 불가 (사유)
+        </option>
+        <option value="UNSPECIFIED">사유 없음</option>
+        {REJECTION_REASON_GROUPS.map((group) => (
+          <optgroup key={group.label} label={group.label}>
+            {group.options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <button type="button" disabled={!ready} className={mintButtonStyle} onClick={() => dispatch("arrival_accepted")}>
+        환자 수용 완료
+      </button>
+    </div>
+  );
+}
