@@ -197,7 +197,8 @@ function AmbulanceDashboardContent() {
           minHeight: "0",
         })}
       >
-        {/* 출동 조작부·검색 결과가 늘어나면 왼쪽 열만 스크롤된다(2026-10-01) — 예전엔 화면 높이에 고정돼
+        {/* 순서(2026-10-01): 출동 조작부(시뮬레이션) → 통화 요약 → 통화 시연 — 시연은 출동부터 시작한다.
+            출동 조작부·검색 결과가 늘어나면 왼쪽 열만 스크롤된다(2026-10-01) — 예전엔 화면 높이에 고정돼
             아래 통화 시연 패널이 눌려 잘렸다. */}
         <div
           className={cx(
@@ -209,9 +210,6 @@ function AmbulanceDashboardContent() {
               늘어나도록 높이를 내용에 맡긴다(flex-basis:auto, flex-grow:0) —
               대신 통화 시연 쪽이 flex:1로 남는 공간을 전부 흡수한다(2026-08-12,
               고정 비율(2:3)로 나누던 이전 방식에서 전환). */}
-          <div className={css({ flex: "0 0 auto" })}>
-            <CallSummaryEditablePanel data={myResult} />
-          </div>
           {simOn && (
             <DispatchControlPanel
               apid={apid}
@@ -224,6 +222,9 @@ function AmbulanceDashboardContent() {
               onSceneEnd={handleSceneEnd}
             />
           )}
+          <div className={css({ flex: "0 0 auto" })}>
+            <CallSummaryEditablePanel data={myResult} />
+          </div>
           <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
             <CallDemoPanel
               onCallSignal={handleCallSignal}

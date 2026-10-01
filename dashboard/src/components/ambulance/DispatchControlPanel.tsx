@@ -188,7 +188,14 @@ export function DispatchControlPanel({
             <input
               className={inputStyle}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                // 검색어를 지우면 지난 검색 결과도 같이 지운다.
+                if (!event.target.value.trim()) {
+                  setResults([]);
+                  setSearchError(null);
+                }
+              }}
               placeholder="주소 또는 장소 이름 (예: 코엑스, 강남구 테헤란로 152)"
               maxLength={60}
             />
