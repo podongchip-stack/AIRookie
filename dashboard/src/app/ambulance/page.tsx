@@ -11,7 +11,7 @@ import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandi
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
-import type { CallSignalType } from "@/types/dashboard";
+import type { CallSignalType, DispatchTarget } from "@/types/dashboard";
 
 // 이 프로세스(voice)는 구급차 1대 전용이라 사건도 한 번에 하나만 진행된다 —
 // 병원과 달리 여러 사건을 동시에 다룰 필요가 없다. 다만 hub가 어느 구급차·
@@ -93,6 +93,9 @@ function AmbulanceDashboardContent() {
   const simOn = state.identity.simDispatch === true;
   const mySim = apid ? state.ambulanceSim[apid] ?? null : null;
   const [callActive, setCallActive] = useState(false);
+  // 출동 위치(주소 검색·지도 클릭). 없으면 무작위. 출동하면 비운다.
+  const [dispatchTarget, setDispatchTarget] = useState<DispatchTarget | null>(null);
+  const canPickTarget = simOn && ["idle", "returning"].includes(mySim?.phase ?? "idle");
   const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === myCaseId;
   const startBlockedReason = simOn && !onSceneForMyCase ? "현장 도착 후 통화할 수 있습니다" : null;
 
@@ -101,7 +104,8 @@ function AmbulanceDashboardContent() {
     const caseId = crypto.randomUUID();
     setMyCaseId(caseId);
     setPendingConfirm(null);
-    if (!sendSimCommand("dispatch", apid, caseId)) alertNotSent();
+    if (!sendSimCommand("dispatch", apid, caseId, dispatchTarget)) alertNotSent();
+    else setDispatchTarget(null);
   }
 
   function handleSceneEnd() {
@@ -202,7 +206,10 @@ function AmbulanceDashboardContent() {
           </div>
           {simOn && (
             <DispatchControlPanel
+              apid={apid}
               sim={mySim}
+              target={dispatchTarget}
+              onTargetChange={setDispatchTarget}
               confirmed={confirmedHospitalId != null}
               callActive={callActive}
               onDispatch={handleDispatch}
@@ -236,6 +243,12 @@ function AmbulanceDashboardContent() {
             confirmedHospitalId={confirmedHospitalId}
             sim={simOn ? mySim : null}
             scene={activeCaseId ? state.sceneCandidates[activeCaseId] ?? null : null}
+            target={canPickTarget ? dispatchTarget : null}
+            onMapClick={
+              canPickTarget
+                ? (lat, lng) => setDispatchTarget({ lat, lng, label: "지도에서 고른 위치", mode: "map" })
+                : undefined
+            }
           />
         </div>
       </main>

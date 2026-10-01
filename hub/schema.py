@@ -562,6 +562,9 @@ class DispatchRequest(BaseModel):
     apid: str
     caseId: str
     timestamp: str
+    # 주소 검색·지도 클릭으로 고른 출동 위치(2026-10-01). 없으면 기지 근처 무작위. 주소 글자는 받지 않는다(개인정보).
+    target: Optional[GpsPoint] = None
+    targetMode: Optional[Literal["address", "map"]] = None
 
 
 class SceneEnd(BaseModel):

@@ -162,6 +162,17 @@ def main() -> None:
     assert app.sim.phase_of("A_SIM") == "returning" and "case_closed" in _types(amb)
     print("  [확인] 현장 종료 → case_closed 전송, 복귀")
 
+    print("=== 지정 위치 출동(주소 검색·지도 클릭) ===")
+    clock.t += 3600
+    app._sim_tick()  # 복귀 완료
+    picked = {"lat": 37.5512, "lng": 126.9882}
+    app._handle_sim_command({"type": "dispatch", "apid": "A_SIM", "caseId": "case-sim-target",
+                             "timestamp": "2026-10-01T00:30:00Z", "target": picked, "targetMode": "map"})
+    state = app.sim.state("A_SIM")
+    assert state["phase"] == "dispatching" and state["incident"] == picked, "지정 위치로 출동"
+    assert state["etaSec"] / state["speedup"] <= 90 + 1e-6, "화면 이동 시간은 상한(90초) 안"
+    print("  [확인] 지정 위치로 출동, 구간 배속 자동 조정")
+
     app._dashboard_sockets.difference_update({amb, hosp, other})
     print("\n모든 검사 통과")
 
