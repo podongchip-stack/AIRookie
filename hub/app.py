@@ -641,6 +641,9 @@ def _log_no_responses(case_id: str, timestamp: str, finalized_to: str | None) ->
     for match in result.hospitals:
         if match.hospitalId == finalized_to or match.status != "pending":
             continue
+        if "beds_full" in match.demoteReasons:
+            # 병상 0이 확인돼 승인 버튼이 막혀 있던 병원 — 응답할 수 없었던 것이지 무시한 게 아니다(2026-10-01).
+            continue
         payload = _rejection_payload(case_id, match.hospitalId, timestamp, "NO_RESPONSE")
         payload["reachedAtBroadcast"] = match.hospitalId in reach
         payload["hospitalDashboardConnected"] = _hospital_dashboard_connected(match.hospitalId)

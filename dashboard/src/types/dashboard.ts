@@ -159,6 +159,8 @@ export interface HospitalCandidate {
   // 한다 — 미상을 만실처럼 보여주면 구급대원이 실제로 자리가 있을 수도 있는
   // 병원을 스스로 후보에서 빼게 되어 뺑뺑이 방지 목적과 어긋난다.
   bedCountUnknown: boolean;
+  // 병상 값이 오래됐거나(1일 초과) 피드에서 빠짐 — 이 경우 0이어도 "확인된 만실"로 보지 않는다(hub 2026-09-28~).
+  bedDataStale?: boolean;
   status: HospitalStatus;
   etaMin?: number;
   reliability?: ReliabilityInfo;

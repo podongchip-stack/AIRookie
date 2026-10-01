@@ -117,6 +117,15 @@ export function CaseMatchPanel({
                 <ArrivalActions hospitalId={hospitalId} caseId={caseId} ready={arrivalReady} onAction={onAction} />
               </>
             )
+          ) : hospital.status !== "approved" &&
+            !hospital.bedCountUnknown &&
+            !hospital.bedDataStale &&
+            hospital.availableBedCount <= 0 ? (
+            // 응급실 병상 0이 확인된 상태(E-Gen) — 승인할 수 없다(hub도 거부한다, 2026-10-01). 병상이 미상이거나
+            // 값이 오래됐으면 막지 않는다. 병상이 다시 생기면(E-Gen 갱신) 버튼이 돌아온다.
+            <p className={css({ fontSize: "sm", color: "coral", textAlign: "center", fontWeight: "semibold" })}>
+              응급실 병상 없음(E-Gen 0) — 지금은 수용 승인을 할 수 없습니다
+            </p>
           ) : (
             <>
               {/* 병원의 승인/불가는 최종 결정이 아니라 후보 등록일 뿐이라(CLAUDE.md),

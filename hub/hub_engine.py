@@ -713,6 +713,10 @@ class HubEngine:
                 refuse_reason = f"actor mismatch: {action.action} requires {_ACTION_ACTOR[action.action]}"
             elif action.action == "final_approval" and current != "approved":
                 refuse_reason = f"final_approval requires hospital approval (current: {current})"
+            elif action.action == "hospital_approve" and self._is_confirmed_full(action.hospital_id):
+                # 응급실 병상 0이 확인된 병원은 승인을 받지 않는다(2026-10-01). 화면에서만 막으면 승인이 통과해
+                # 구급차 화면에 이송 승인이 열렸다. 미상·오래된 값은 막지 않는다(미상으로 막으면 뺑뺑이가 는다).
+                refuse_reason = "hospital_approve refused: ER beds confirmed 0 (E-Gen)"
             elif action.action.startswith("arrival_") and current != "confirmed":
                 refuse_reason = f"{action.action} requires this hospital to be the confirmed destination (current: {current})"
             elif action.action.startswith("arrival_") and action.caseId in self._case_arrival:
@@ -1149,6 +1153,15 @@ class HubEngine:
         decision_log.log_decision("zone_expanded", {"caseId": case_id, "from": current, "to": new_max,
                                                     "cause": "arrival_refused"})
         return self.process_voice_summary(voice, ambulance_gps, max_zone=new_max, gps_fallback=gps_fallback)
+
+    def _is_confirmed_full(self, hospital_id: str) -> bool:
+        """응급실 병상 0이 '확인된' 만실인지 — 미상·오래된 값(1일 초과·피드 누락)은 아니다. beds_full 내림과 같은 기준."""
+        with self._lock:
+            info = self._hospitals.get(hospital_id)
+            if info is None:
+                return False
+            return (not _is_bed_count_unknown(info) and not _is_bed_data_stale(info, _utcnow())
+                    and self.effective_bed_count(info) <= 0)
 
     def get_case_status(self, case_id: str, hospital_id: str) -> str:
         with self._lock:

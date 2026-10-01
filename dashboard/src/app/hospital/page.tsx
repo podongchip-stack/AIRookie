@@ -127,9 +127,12 @@ function HospitalDashboardContent() {
         >
         <div
           className={cx(
+            // 수용 요청 카드를 2열 세로 카드로(2026-10-01) — 가로로 긴 한 줄 카드는 여백이 너무 넓었다.
+            // 카드가 많아져도 페이지가 아니라 이 목록 안에서만 스크롤된다.
             css({
-              display: "flex",
-              flexDirection: "column",
+              display: "grid",
+              gridTemplateColumns: { base: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+              alignContent: "start",
               gap: "3.5",
               flex: "1",
               minHeight: "0",
@@ -140,7 +143,9 @@ function HospitalDashboardContent() {
           )}
         >
           {myCases.length === 0 ? (
-            <CaseMatchPanel patientInfo={null} hospital={null} hospitalId={MY_HOSPITAL_ID} caseId="" onAction={sendAction} />
+            <div className={css({ gridColumn: "1 / -1" })}>
+              <CaseMatchPanel patientInfo={null} hospital={null} hospitalId={MY_HOSPITAL_ID} caseId="" onAction={sendAction} />
+            </div>
           ) : (
             myCases.map(({ result, hospital }) => {
               const isSelected = selected?.result.caseId === result.caseId;
