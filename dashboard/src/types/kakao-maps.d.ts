@@ -86,6 +86,15 @@ declare global {
       setPosition(position: LatLng): void;
     }
 
+    interface MouseEvent {
+      latLng: LatLng;
+    }
+
+    namespace event {
+      function addListener(target: Map, type: "click", handler: (event: MouseEvent) => void): void;
+      function removeListener(target: Map, type: "click", handler: (event: MouseEvent) => void): void;
+    }
+
     function load(callback: () => void): void;
   }
 

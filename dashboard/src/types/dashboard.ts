@@ -381,6 +381,8 @@ export interface AmbulanceSimState {
   gps: { lat: number; lng: number } | null;
   heading: number;
   etaSec: number | null;
+  // 이 구간의 배속(2026-10-01). 먼 곳은 화면 시간 상한(기본 90초) 안에 도착하도록 hub가 자동으로 올린다.
+  speedup?: number | null;
   path?: [number, number][] | null;
   base: { lat: number; lng: number };
   incident: { lat: number; lng: number } | null;
@@ -394,6 +396,28 @@ export interface DispatchCommand {
   apid: string;
   caseId: string;
   timestamp: string;
+  // 주소 검색·지도 클릭으로 고른 출동 위치(2026-10-01). 없으면 기지 근처 무작위. 주소 글자는 보내지 않는다.
+  target?: { lat: number; lng: number };
+  targetMode?: "address" | "map";
+}
+
+// 출동 위치 선택(구급차 화면 상태). label은 화면 표시용으로만 이 탭에 남는다.
+export interface DispatchTarget {
+  lat: number;
+  lng: number;
+  label: string;
+  mode: "address" | "map";
+  etaMin?: number | null;
+}
+
+// hub GET /geocode 결과 1건
+export interface GeocodeResult {
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  etaMin?: number;
+  etaBasis?: "eta" | "estimate";
 }
 
 export type InboundMessage =

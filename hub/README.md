@@ -780,7 +780,13 @@ idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transp
 
 - 환자 발생 위치: 기지(Supabase 등록 좌표)에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오
   다중 목적지 ETA로 골라 `data/sim/incident_points_<apid>.json`에 저장(이후 호출 0회)
-- 구간마다 도로 경로 1회, `HUB_SIM_SPEEDUP`(기본 5)배속으로 따라감. 남은 ETA는 실제 도로 기준
+- 구간마다 도로 경로 1회. **배속은 구간마다 자동**(2026-10-01): 기본 `HUB_SIM_SPEEDUP`(5)배로 가되, 화면 시간이
+  `HUB_SIM_MAX_TRIP_SEC`(출동·이송, 기본 90초)·`HUB_SIM_RETURN_SEC`(복귀, 기본 30초)를 넘으면 그 구간만 배속을 올린다 —
+  어디로 가도 1~2분. 남은 ETA는 실제 도로 기준, 배속은 위치 메시지 `speedup`으로 화면에 표시
+- **출동 위치 지정**(2026-10-01): `dispatch`에 `target {lat,lng}`·`targetMode("address"|"map")`를 주면 그곳으로, 없으면 무작위.
+  대시보드는 주소 검색(`GET /geocode?query=&apid=` — hub가 카카오 장소·주소 검색을 대신 부르고 기지에서의 예상 분을 붙임,
+  서버 전체 1분 `HUB_GEOCODE_PER_MIN`(30)회 제한·5분 캐시)과 지도 클릭으로 고른다. **주소 글자는 hub로 안 보내고**, 검색어는
+  저장·로그하지 않으며, 의사결정 로그엔 약 1km로 뭉갠 좌표만 남긴다(집 주소일 수 있음)
 - 위치는 레지스트리 GPS를 덮어쓰지 않고 조회 시점에 얹는다 — info의 30분 재전송과 안 부딪히고, 재시작하면 기지 대기
 - 통화 시작은 `on_scene`이고 caseId가 같을 때만 voice로 중계한다(아니면 `call_start_refused`)
 - dashboard ↔ hub 메시지

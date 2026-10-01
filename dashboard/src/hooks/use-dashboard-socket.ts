@@ -18,6 +18,7 @@ import type {
   DashboardRole,
   DashboardState,
   DispatchCommand,
+  DispatchTarget,
   HospitalInfoConfirm,
   HospitalSelfInfo,
   HospitalStatus,
@@ -344,13 +345,22 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
   }, []);
 
   // [이동] · [현장 종료] (출동 시뮬레이션). 끊겨 있으면 보내지 않고 false.
-  const sendSimCommand = useCallback((type: DispatchCommand["type"], apid: string, caseId: string): boolean => {
+  const sendSimCommand = useCallback(
+    (type: DispatchCommand["type"], apid: string, caseId: string, target?: DispatchTarget | null): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    const payload: DispatchCommand = { type, apid, caseId, timestamp: new Date().toISOString() };
+    const payload: DispatchCommand = {
+      type,
+      apid,
+      caseId,
+      timestamp: new Date().toISOString(),
+      ...(target ? { target: { lat: target.lat, lng: target.lng }, targetMode: target.mode } : {}),
+    };
     socket.send(JSON.stringify(payload));
     return true;
-  }, []);
+    },
+    [],
+  );
 
   return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand };
 }

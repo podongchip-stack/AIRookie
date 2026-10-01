@@ -32,6 +32,8 @@ from ambulance_sim import SPEEDUP as SIM_SPEEDUP, DispatchSim
 import decision_log
 from delivery import LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
+from geo import haversine_km
+from scoring import DEFAULT_MIN_PER_KM
 from hub_engine import HubEngine, _is_bed_count_unknown
 from schema import (
     AmbulanceInfo,
@@ -269,6 +271,54 @@ def get_route():
     response = jsonify(body)
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response, 200
+
+
+#: /geocode 호출 제한(2026-10-01). 도메인이 공개라 누구나 부를 수 있어서, 카카오 무료 한도가 소진되지 않게
+#: 서버 전체로 1분에 이만큼만 받는다(같은 검색어는 routing.py가 5분 캐시).
+GEOCODE_PER_MIN = int(os.environ.get("HUB_GEOCODE_PER_MIN", "30"))
+_geocode_calls: list[float] = []
+_geocode_lock = threading.Lock()
+
+
+@app.get("/geocode")
+def get_geocode():
+    """출동 시뮬레이션의 "주소 지정"(2026-10-01). 카카오 키를 브라우저에 노출하지 않게 hub가 대신 검색한다
+    (/route와 같은 방식). apid를 주면 각 결과까지 그 구급차 기지에서의 예상 시간(분)을 붙인다.
+    검색어는 저장·로그하지 않는다(집 주소일 수 있음)."""
+    query = (request.args.get("query") or "").strip()
+    apid = request.args.get("apid")
+    body: dict = {"results": [], "source": "rule"}
+    status = 200
+    if router is None:
+        body["error"] = "주소 검색을 쓸 수 없습니다(KAKAO_REST_API_KEY 없음)"
+    elif not 2 <= len(query) <= 60:
+        body["error"] = "검색어는 2~60자"
+        status = 400
+    else:
+        now = time.time()
+        with _geocode_lock:
+            _geocode_calls[:] = [t for t in _geocode_calls if now - t < 60]
+            limited = len(_geocode_calls) >= GEOCODE_PER_MIN
+            if not limited:
+                _geocode_calls.append(now)
+        if limited:
+            body["error"] = "검색이 너무 잦습니다 — 잠시 뒤 다시 시도"
+            status = 429
+        else:
+            results = router.search_places(query)
+            base = engine.get_ambulance_base(apid) if apid else None
+            if base is not None and results:
+                points = {str(i): GpsPoint(lat=r["lat"], lng=r["lng"]) for i, r in enumerate(results)}
+                etas = router.etas(base.gps, points)
+                for i, r in enumerate(results):
+                    eta = etas.get(str(i))
+                    km = haversine_km(base.gps.lat, base.gps.lng, r["lat"], r["lng"])
+                    r["etaMin"] = max(1, round(eta[0] / 60)) if eta else max(1, round(km * DEFAULT_MIN_PER_KM))
+                    r["etaBasis"] = "eta" if eta else "estimate"
+            body["results"] = results
+    response = jsonify(body)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
 
 
 @app.get("/identity")
@@ -921,9 +971,12 @@ def _handle_sim_command(payload: dict) -> None:
         base = engine.get_ambulance_base(cmd.apid)
         if base is not None:
             sim.ensure_unit(cmd.apid, base.gps)
-        ok, reason = sim.dispatch(cmd.apid, cmd.caseId)
+        ok, reason = sim.dispatch(cmd.apid, cmd.caseId, cmd.target)
+        # 지정 위치는 집 주소일 수 있어 로그엔 약 1km 단위로 뭉갠 좌표만 남긴다(주소 글자는 애초에 안 받음).
+        coarse = {"lat": round(cmd.target.lat, 2), "lng": round(cmd.target.lng, 2)} if cmd.target else None
         decision_log.log_decision("ambulance_dispatched" if ok else "dispatch_refused",
-                                  {"apid": cmd.apid, "caseId": cmd.caseId, "reason": reason, "simulated": True})
+                                  {"apid": cmd.apid, "caseId": cmd.caseId, "reason": reason, "simulated": True,
+                                   "targetMode": cmd.targetMode or "random", "targetCoarse": coarse})
         if ok:
             engine.register_case(cmd.caseId, cmd.apid)
             print(f"  [시뮬레이션] {cmd.apid} 출동 — caseId={cmd.caseId}")
