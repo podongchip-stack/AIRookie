@@ -96,6 +96,9 @@ function AmbulanceDashboardContent() {
   const [callActive, setCallActive] = useState(false);
   // 출동 위치(주소 검색·지도 클릭). 없으면 무작위. 출동하면 비운다.
   const [dispatchTarget, setDispatchTarget] = useState<DispatchTarget | null>(null);
+  // [이동]·[현장 종료] 때 올려서 출동 조작부(검색어·결과)와 통화 시연(인식 텍스트)을 새로 그린다 — 지난 사건의
+  // 내용이 다음 출동 화면에 남지 않게(2026-10-01). 통화 시연은 내려갈 때 마이크·인식을 스스로 멈춘다.
+  const [resetSeq, setResetSeq] = useState(0);
   const canPickTarget = simOn && ["idle", "returning"].includes(mySim?.phase ?? "idle");
   const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === myCaseId;
   const startBlockedReason = simOn && !onSceneForMyCase ? "현장 도착 후 통화할 수 있습니다" : null;
@@ -106,12 +109,19 @@ function AmbulanceDashboardContent() {
     setMyCaseId(caseId);
     setPendingConfirm(null);
     if (!sendSimCommand("dispatch", apid, caseId, dispatchTarget)) alertNotSent();
-    else setDispatchTarget(null);
+    else {
+      setDispatchTarget(null);
+      setResetSeq((n) => n + 1);
+    }
   }
 
   function handleSceneEnd() {
     if (!apid || !activeCaseId) return;
     if (!sendSimCommand("scene_end", apid, activeCaseId)) alertNotSent();
+    else {
+      setCallActive(false);
+      setResetSeq((n) => n + 1);
+    }
   }
 
   function handleCallSignal(signal: CallSignalType) {
@@ -212,6 +222,7 @@ function AmbulanceDashboardContent() {
               고정 비율(2:3)로 나누던 이전 방식에서 전환). */}
           {simOn && (
             <DispatchControlPanel
+              key={`dispatch-${resetSeq}`}
               apid={apid}
               sim={mySim}
               target={dispatchTarget}
@@ -227,6 +238,7 @@ function AmbulanceDashboardContent() {
           </div>
           <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
             <CallDemoPanel
+              key={`call-${resetSeq}`}
               onCallSignal={handleCallSignal}
               onAudioChunk={sendAudioChunk}
               startBlockedReason={startBlockedReason}
