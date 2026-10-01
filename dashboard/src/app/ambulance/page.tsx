@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { css } from "styled-system/css";
+import { css, cx } from "styled-system/css";
+import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
 import { Legend } from "@/components/hospital/Legend";
 import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEditablePanel";
@@ -196,7 +197,14 @@ function AmbulanceDashboardContent() {
           minHeight: "0",
         })}
       >
-        <div className={css({ display: "flex", flexDirection: "column", gap: "6", minHeight: "0" })}>
+        {/* 출동 조작부·검색 결과가 늘어나면 왼쪽 열만 스크롤된다(2026-10-01) — 예전엔 화면 높이에 고정돼
+            아래 통화 시연 패널이 눌려 잘렸다. */}
+        <div
+          className={cx(
+            css({ display: "flex", flexDirection: "column", gap: "6", minHeight: "0", overflowY: "auto" }),
+            thinScrollbarStyle,
+          )}
+        >
           {/* 통화 요약은 내용(예상 병명·증상)이 길어지면 스크롤 대신 카드 자체가
               늘어나도록 높이를 내용에 맡긴다(flex-basis:auto, flex-grow:0) —
               대신 통화 시연 쪽이 flex:1로 남는 공간을 전부 흡수한다(2026-08-12,
@@ -216,7 +224,7 @@ function AmbulanceDashboardContent() {
               onSceneEnd={handleSceneEnd}
             />
           )}
-          <div className={css({ flex: "1", minHeight: "0" })}>
+          <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
             <CallDemoPanel
               onCallSignal={handleCallSignal}
               onAudioChunk={sendAudioChunk}

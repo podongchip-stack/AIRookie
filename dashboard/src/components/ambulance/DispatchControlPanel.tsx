@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { css } from "styled-system/css";
+import { css, cx } from "styled-system/css";
 import {
   dangerButtonStyle,
   inputStyle,
   primaryButtonStyle,
   secondaryButtonStyle,
 } from "@/components/ui/button-styles";
+import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { searchPlaces } from "@/lib/geocode";
 import type { AmbulancePhase, AmbulanceSimState, DispatchTarget, GeocodeResult } from "@/types/dashboard";
 
@@ -191,13 +192,30 @@ export function DispatchControlPanel({
               placeholder="주소 또는 장소 이름 (예: 코엑스, 강남구 테헤란로 152)"
               maxLength={60}
             />
-            <button type="submit" className={secondaryButtonStyle} disabled={searching || query.trim().length < 2}>
+            <button
+              type="submit"
+              className={cx(secondaryButtonStyle, css({ whiteSpace: "nowrap", flexShrink: "0" }))}
+              disabled={searching || query.trim().length < 2}
+            >
               {searching ? "검색 중" : "검색"}
             </button>
           </form>
           {searchError && <span className={css({ fontSize: "xs", color: "coral" })}>{searchError}</span>}
           {results.length > 0 && (
-            <ul className={css({ display: "flex", flexDirection: "column", borderWidth: "1px", borderColor: "line", borderRadius: "field" })}>
+            <ul
+              className={cx(
+                css({
+                  display: "flex",
+                  flexDirection: "column",
+                  borderWidth: "1px",
+                  borderColor: "line",
+                  borderRadius: "field",
+                  maxHeight: "176px",
+                  overflowY: "auto",
+                }),
+                thinScrollbarStyle,
+              )}
+            >
               {results.map((result) => (
                 <li key={`${result.lat},${result.lng},${result.name}`}>
                   <button type="button" className={resultButtonStyle} onClick={() => pick(result)}>
