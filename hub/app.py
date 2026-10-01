@@ -30,7 +30,7 @@ from pydantic import ValidationError
 import bed_reliability
 from ambulance_sim import SPEEDUP as SIM_SPEEDUP, DispatchSim
 import decision_log
-from delivery import LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
+from delivery import HUB_REJECTION_URL, LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
 from geo import haversine_km
 from scoring import DEFAULT_MIN_PER_KM
@@ -278,6 +278,21 @@ def get_route():
 GEOCODE_PER_MIN = int(os.environ.get("HUB_GEOCODE_PER_MIN", "30"))
 _geocode_calls: list[float] = []
 _geocode_lock = threading.Lock()
+
+
+@app.get("/verification")
+def get_verification():
+    """시연용 신뢰도 검증 화면(2026-10-02). 집계는 info 거절 로그 수신구(5003)가 만들고 hub는 그대로 중계한다
+    — dashboard는 hub와만 통신한다. 수신구가 안 떠 있으면 503."""
+    url = HUB_REJECTION_URL.rsplit("/hub/rejection", 1)[0] + "/verification/summary"
+    try:
+        upstream = requests.get(url, timeout=30)  # 1시간마다 재생성(수 초)이 끼면 느릴 수 있다
+        upstream.raise_for_status()
+        response, status = jsonify(upstream.json()), 200
+    except (requests.RequestException, ValueError) as e:
+        response, status = jsonify({"error": f"검증 집계를 가져오지 못했습니다(거절 로그 수신구 5003): {e}"}), 503
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
 
 
 @app.get("/geocode")
