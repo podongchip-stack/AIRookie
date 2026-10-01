@@ -143,6 +143,9 @@ def main() -> None:
     app._handle_dashboard_action({"caseId": case_id, "action": "arrival_accepted", "hospital_id": "T_FAR",
                                   "actor": "hospital", "timestamp": "2026-10-01T00:40:00Z"})
     assert app.engine.get_case_result(case_id).arrival.result == "accepted"
+    assert any(m.get("type") == "case_closed" and m["caseId"] == case_id for m in amb.sent), "수용 완료 → 화면에서 사건 지움"
+    assert not app.engine.get_cases_for_apid("A_SIM") and not app.engine.get_cases_for_hospital("T_FAR"), \
+        "수용이 끝난 사건은 따라잡기에서 빠진다"
     clock.t += HOSPITAL_DWELL_SEC + 1
     hosp.sent.clear()
     app._sim_tick()
