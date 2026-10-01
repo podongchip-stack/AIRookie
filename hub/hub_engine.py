@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import bed_reliability
 import decision_log
+from disease_group import match_group
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
     AmbulanceInfo,
@@ -909,14 +910,13 @@ class HubEngine:
         expected_diagnosis = voice.summary.mechanism
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
 
-        # 진료과 매칭 + info-v2 15개 질환군 중 이번 사건에 해당하는 것 하나. 질환군은 병원마다
-        # 다른 게 아니라 사건 전체에 하나뿐이라 한 번만 매칭한다(같은 SpecialtyMatcher, 대상
-        # 어휘만 다름). 질환군은 finalScore에 안 들어가고 설명·declared_no 판정에만 쓰인다.
+        # 진료과 매칭(임베딩) + info-v2 15개 질환군 중 이번 사건에 해당하는 것 하나(키워드 규칙, 없으면 None —
+        # disease_group.py). 질환군은 사건 전체에 하나뿐이고 finalScore에 안 들어가며 설명·declared_no 판정에만
+        # 쓰인다. 예전엔 질환군도 임베딩으로 골라 어떤 환자든 엉뚱한 질환군이 붙었다(2026-10-02).
         department_lists = [[s.department for s in info.specialties] for info, _ in candidates]
         with self._matcher_lock:
             specialty_results = self._matcher.match_many(expected_diagnosis, department_lists)
-            vocabulary = _assessment_vocabulary([info for info, _ in candidates])
-            best_group, _ = self._matcher.match_many(expected_diagnosis, [vocabulary])[0]
+        best_group = match_group(expected_diagnosis, _assessment_vocabulary([info for info, _ in candidates]))
 
         # 후보 병원별 도로 기준 소요시간(초). 조회 실패·키 없음·반경 10km 밖이면 그 병원만 빠진다.
         etas = (
