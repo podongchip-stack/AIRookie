@@ -548,6 +548,11 @@ class HubEngine:
             results = [self._case_results.get(cid) for cid in case_ids]
             return [result for result in results if result is not None]
 
+    def get_unconfirmed_case_ids(self) -> list[str]:
+        """확정 전 사건(재시작 뒤 정리용)."""
+        with self._lock:
+            return [cid for cid in self._case_results if cid not in self._case_confirmed_at]
+
     def get_active_case_ids(self) -> list[str]:
         """매칭 결과가 있는(주기적 재계산 대상) 사건 목록."""
         with self._lock:
@@ -1283,6 +1288,10 @@ class HubEngine:
                         self._case_voice[cid] = VoiceCallSummaryMessage.model_validate(case["voice"])
                     if case.get("result"):
                         self._case_results[cid] = HubMatchResult.model_validate(case["result"])
+                        # 수용이 끝난 사건 표시도 되살린다 — 안 하면 재시작 뒤 따라잡기로 다시 화면에 뜬다(2026-10-01).
+                        arrival = self._case_results[cid].arrival
+                        if arrival is not None and arrival.result == "accepted":
+                            self._case_arrival[cid] = arrival
                     self._case_group[cid] = case.get("group")
                     self._case_gps_fallback[cid] = bool(case.get("gpsFallback"))
                     confirmed_at = _parse_iso(case["confirmedAt"]) if case.get("confirmedAt") else None

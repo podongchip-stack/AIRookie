@@ -1100,6 +1100,29 @@ def _maintenance_loop() -> None:
             print(f"  [백그라운드] 오류(계속 진행): {e!r}")
 
 
+def _settle_restored_cases() -> None:
+    """재시작 때 복구된 확정 전 사건을 정리한다(2026-10-01).
+
+    - 출동 시뮬레이션 중이면: 재시작하면 구급차가 전부 기지 대기로 돌아가서, 확정 전 사건은 이어갈 구급차가
+      없다 → 바로 닫는다. 병원이 무시한 게 아니라 hub가 재시작한 것이라 무응답(NO_RESPONSE)은 남기지 않는다.
+    - 아니면: 120분 방치 정리(sweep)의 기준인 마지막 활동 시각이 메모리에만 있어 재시작 뒤엔 영영 정리되지
+      않았다 → 지금을 마지막 활동으로 잡아 둔다.
+    """
+    case_ids = engine.get_unconfirmed_case_ids()
+    if not case_ids:
+        return
+    if sim is not None:
+        for case_id in case_ids:
+            if engine.close_case(case_id):
+                decision_log.log_decision("case_closed", {"caseId": case_id, "reason": "hub_restart_sim_reset"})
+        print(f"  [상태 복구] 출동 시뮬레이션 — 확정 전 사건 {len(case_ids)}건은 구급차가 기지로 돌아가 닫음")
+        return
+    now = datetime.now(timezone.utc)
+    with _sockets_lock:
+        for case_id in case_ids:
+            _case_last_activity.setdefault(case_id, now)
+
+
 def start_background() -> None:
     """상태 복구 + 재계산·저장 루프 시작. `python app.py`로 띄울 때만 부른다 — 테스트
     (test_rejection_forward.py)가 app을 import해도 디스크 상태를 건드리지 않게."""
@@ -1110,6 +1133,7 @@ def start_background() -> None:
         # 정상 종료(sys.exit)로 바꿔 마지막 상태를 저장하게 한다. 저장 루프가 5초마다 돌므로
         # 이게 없어도 잃는 건 최대 몇 초분이다.
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    _settle_restored_cases()
     threading.Thread(target=_maintenance_loop, name="hub-maintenance", daemon=True).start()
     if sim is not None:
         # 재시작하면 구급차는 전부 기지(대기)에서 다시 시작한다 — 시뮬레이션 상태는 저장하지 않는다.
