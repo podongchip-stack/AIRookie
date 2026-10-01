@@ -46,7 +46,13 @@ POOL_MIN_SIZE, POOL_MAX_SIZE = 30, 50
 FALLBACK_RADIUS_KM = 3.5      # 카카오 키가 없을 때 직선 기준 반경
 FALLBACK_SPEED_KMH = 30.0     # 도로 경로가 없을 때 직선 이동 속도
 
+#: 최소 배속. 가까운 곳은 이 배속으로 간다(너무 빨라 보이지 않게).
 SPEEDUP = float(os.environ.get("HUB_SIM_SPEEDUP", "5"))
+#: 화면 이동 시간 상한(초, 2026-10-01). 먼 곳은 이 안에 도착하도록 그 구간만 배속을 올린다 — 시연장에서
+#: 주소를 어디로 넣어도 1~2분이면 도착한다. 남은 ETA는 계속 실제 도로 기준으로 보여준다.
+MAX_TRIP_SEC = float(os.environ.get("HUB_SIM_MAX_TRIP_SEC", "90"))
+#: 기지 복귀 화면 시간 상한(초). 시연에서 기다릴 이유가 없어 더 짧다.
+RETURN_SEC = float(os.environ.get("HUB_SIM_RETURN_SEC", "30"))
 HOSPITAL_DWELL_SEC = float(os.environ.get("HUB_SIM_HOSPITAL_DWELL_SEC", "15"))
 POOL_DIR = Path(__file__).resolve().parent / "data" / "sim"
 
@@ -107,13 +113,22 @@ class Trip:
         return a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, _bearing(a, b)
 
 
-def plan_trip(router, origin: GpsPoint, dest: GpsPoint, now: float) -> Trip:
-    """도로 경로로 Trip을 만든다. 키가 없거나 실패하면 직선 + 기본 속도."""
+def adaptive_speedup(duration_sec: float, max_display_sec: float) -> float:
+    """기본 배속으로 가되, 화면 시간이 상한을 넘으면 그 구간만 배속을 올린다."""
+    if max_display_sec <= 0:
+        return SPEEDUP
+    return max(SPEEDUP, duration_sec / max_display_sec)
+
+
+def plan_trip(router, origin: GpsPoint, dest: GpsPoint, now: float, max_display_sec: float = MAX_TRIP_SEC) -> Trip:
+    """도로 경로로 Trip을 만든다. 키가 없거나 실패하면 직선 + 기본 속도. 배속은 구간마다 자동(adaptive_speedup)."""
     route = router.route(origin, dest) if router is not None else None
     if route and route.get("path"):
-        return Trip([tuple(p) for p in route["path"]], float(route["durationSec"]), now)
-    km = haversine_km(origin.lat, origin.lng, dest.lat, dest.lng)
-    return Trip([(origin.lat, origin.lng), (dest.lat, dest.lng)], km / FALLBACK_SPEED_KMH * 3600.0, now)
+        path, duration = [tuple(p) for p in route["path"]], float(route["durationSec"])
+    else:
+        km = haversine_km(origin.lat, origin.lng, dest.lat, dest.lng)
+        path, duration = [(origin.lat, origin.lng), (dest.lat, dest.lng)], km / FALLBACK_SPEED_KMH * 3600.0
+    return Trip(path, duration, now, speedup=adaptive_speedup(duration, max_display_sec))
 
 
 # ── 환자 발생 위치 후보 ──────────────────────────────────────────────────────
@@ -211,6 +226,7 @@ class Unit:
             "gps": self.gps.model_dump() if self.gps else None,
             "heading": round(self.heading, 1),
             "etaSec": self.trip.remaining_sec(now) if self.trip is not None else None,
+            "speedup": round(self.trip.speedup, 1) if self.trip is not None else None,
             "path": [list(p) for p in self.trip.path] if self.trip is not None else None,
             "base": self.base.model_dump(),
             "incident": self.incident.model_dump() if self.incident else None,
@@ -261,8 +277,9 @@ class DispatchSim:
             unit = self._units.get(apid)
             return unit.case_id if unit else None
 
-    def dispatch(self, apid: str, case_id: str) -> tuple[bool, str]:
-        """[이동]: 대기 또는 복귀 중일 때만. 그 순간 위치에서 현장으로 간다."""
+    def dispatch(self, apid: str, case_id: str, target: GpsPoint | None = None) -> tuple[bool, str]:
+        """[이동]: 대기 또는 복귀 중일 때만. 그 순간 위치에서 현장으로 간다. target(주소 검색·지도 클릭으로
+        고른 위치, 2026-10-01)이 있으면 그곳으로, 없으면 기지 근처 후보 중 무작위."""
         with self._lock:
             unit = self._units.get(apid)
             if unit is None:
@@ -271,6 +288,13 @@ class DispatchSim:
                 return False, f"phase_{unit.phase}"
             origin = unit.gps or unit.base
             base = unit.base
+        if target is not None:
+            trip = plan_trip(self._router, origin, target, self._clock())
+            with self._lock:
+                unit = self._units[apid]
+                unit.phase, unit.case_id, unit.incident, unit.trip = "dispatching", case_id, target, trip
+                unit.hospital_id = unit.hospital_gps = None
+            return True, "ok"
         pool = load_or_build_pool(apid, base, self._router, self._rng, self._pool_dir)  # 락 밖(카카오 호출)
         with self._lock:
             unit = self._units[apid]
@@ -296,7 +320,7 @@ class DispatchSim:
             if unit is None or unit.phase not in ("on_scene", "rerouting") or unit.case_id != case_id:
                 return False
             origin, base = unit.gps or unit.base, unit.base
-        trip = plan_trip(self._router, origin, base, self._clock())
+        trip = plan_trip(self._router, origin, base, self._clock(), RETURN_SEC)
         with self._lock:
             unit = self._units[apid]
             unit.phase, unit.trip, unit.case_id, unit.incident = "returning", trip, None, None
@@ -355,7 +379,7 @@ class DispatchSim:
                 elif unit.phase == "at_hospital" and unit.dwell_until is not None and now >= unit.dwell_until:
                     to_plan_return.append(unit)
         for unit in to_plan_return:  # 락 밖에서 경로 조회
-            trip = plan_trip(self._router, unit.gps or unit.base, unit.base, now)
+            trip = plan_trip(self._router, unit.gps or unit.base, unit.base, now, RETURN_SEC)
             with self._lock:
                 unit.phase, unit.trip, unit.case_id, unit.incident = "returning", trip, None, None
                 unit.dwell_until = None
@@ -390,10 +414,22 @@ def _selftest() -> None:
     assert abs(trip.position(60)[1] - 127.05) < 1e-9, "10분 경로를 5배속이면 60초에 절반"
     assert trip.remaining_sec(60) == 300 and trip.done(120)
     assert abs(trip.position(60)[2] - 90) < 1, "동쪽으로 가면 진행 방향 90°"
+    assert adaptive_speedup(300, 90) == SPEEDUP, "가까운 곳(5분)은 기본 배속"
+    assert abs(adaptive_speedup(3600, 90) - 40) < 1e-9, "1시간 거리는 90초에 도착하도록 40배속"
+    far = plan_trip(None, base, GpsPoint(lat=35.1796, lng=129.0756), 0)  # 서울시청 → 부산(직선 대체)
+    assert far.duration_sec / far.speedup <= MAX_TRIP_SEC + 1e-6, "어디를 넣어도 화면 시간은 상한 안"
 
     with tempfile.TemporaryDirectory() as d:
         sim = DispatchSim(None, rng, clock, Path(d))
         sim.ensure_unit("A1", base)
+        target = GpsPoint(lat=37.5512, lng=126.9882)  # 지정 위치(주소 검색·지도 클릭)
+        assert sim.dispatch("A1", "c0", target) == (True, "ok")
+        assert sim.state("A1")["incident"] == target.model_dump(), "지정 위치가 있으면 그곳으로 출동"
+        clock.t += 3600
+        sim.tick()
+        assert sim.scene_end("A1", "c0")
+        clock.t += 3600
+        sim.tick()
         assert sim.dispatch("A1", "c1") == (True, "ok") and sim.phase_of("A1") == "dispatching"
         assert sim.dispatch("A1", "c2")[0] is False, "출동 중에는 다시 출동할 수 없다"
         assert not sim.on_confirmed("A1", "c1", "H1", base), "현장 도착 전엔 이송 확정을 받지 않는다"

@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { css } from "styled-system/css";
+import { css, cx } from "styled-system/css";
+import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
 import { Legend } from "@/components/hospital/Legend";
 import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEditablePanel";
@@ -11,7 +12,7 @@ import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandi
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
-import type { CallSignalType } from "@/types/dashboard";
+import type { CallSignalType, DispatchTarget } from "@/types/dashboard";
 
 // 이 프로세스(voice)는 구급차 1대 전용이라 사건도 한 번에 하나만 진행된다 —
 // 병원과 달리 여러 사건을 동시에 다룰 필요가 없다. 다만 hub가 어느 구급차·
@@ -93,6 +94,12 @@ function AmbulanceDashboardContent() {
   const simOn = state.identity.simDispatch === true;
   const mySim = apid ? state.ambulanceSim[apid] ?? null : null;
   const [callActive, setCallActive] = useState(false);
+  // 출동 위치(주소 검색·지도 클릭). 없으면 무작위. 출동하면 비운다.
+  const [dispatchTarget, setDispatchTarget] = useState<DispatchTarget | null>(null);
+  // [이동]·[현장 종료] 때 올려서 출동 조작부(검색어·결과)와 통화 시연(인식 텍스트)을 새로 그린다 — 지난 사건의
+  // 내용이 다음 출동 화면에 남지 않게(2026-10-01). 통화 시연은 내려갈 때 마이크·인식을 스스로 멈춘다.
+  const [resetSeq, setResetSeq] = useState(0);
+  const canPickTarget = simOn && ["idle", "returning"].includes(mySim?.phase ?? "idle");
   const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === myCaseId;
   const startBlockedReason = simOn && !onSceneForMyCase ? "현장 도착 후 통화할 수 있습니다" : null;
 
@@ -101,12 +108,20 @@ function AmbulanceDashboardContent() {
     const caseId = crypto.randomUUID();
     setMyCaseId(caseId);
     setPendingConfirm(null);
-    if (!sendSimCommand("dispatch", apid, caseId)) alertNotSent();
+    if (!sendSimCommand("dispatch", apid, caseId, dispatchTarget)) alertNotSent();
+    else {
+      setDispatchTarget(null);
+      setResetSeq((n) => n + 1);
+    }
   }
 
   function handleSceneEnd() {
     if (!apid || !activeCaseId) return;
     if (!sendSimCommand("scene_end", apid, activeCaseId)) alertNotSent();
+    else {
+      setCallActive(false);
+      setResetSeq((n) => n + 1);
+    }
   }
 
   function handleCallSignal(signal: CallSignalType) {
@@ -192,25 +207,38 @@ function AmbulanceDashboardContent() {
           minHeight: "0",
         })}
       >
-        <div className={css({ display: "flex", flexDirection: "column", gap: "6", minHeight: "0" })}>
+        {/* 순서(2026-10-01): 출동 조작부(시뮬레이션) → 통화 요약 → 통화 시연 — 시연은 출동부터 시작한다.
+            출동 조작부·검색 결과가 늘어나면 왼쪽 열만 스크롤된다(2026-10-01) — 예전엔 화면 높이에 고정돼
+            아래 통화 시연 패널이 눌려 잘렸다. */}
+        <div
+          className={cx(
+            css({ display: "flex", flexDirection: "column", gap: "6", minHeight: "0", overflowY: "auto" }),
+            thinScrollbarStyle,
+          )}
+        >
           {/* 통화 요약은 내용(예상 병명·증상)이 길어지면 스크롤 대신 카드 자체가
               늘어나도록 높이를 내용에 맡긴다(flex-basis:auto, flex-grow:0) —
               대신 통화 시연 쪽이 flex:1로 남는 공간을 전부 흡수한다(2026-08-12,
               고정 비율(2:3)로 나누던 이전 방식에서 전환). */}
-          <div className={css({ flex: "0 0 auto" })}>
-            <CallSummaryEditablePanel data={myResult} />
-          </div>
           {simOn && (
             <DispatchControlPanel
+              key={`dispatch-${resetSeq}`}
+              apid={apid}
               sim={mySim}
+              target={dispatchTarget}
+              onTargetChange={setDispatchTarget}
               confirmed={confirmedHospitalId != null}
               callActive={callActive}
               onDispatch={handleDispatch}
               onSceneEnd={handleSceneEnd}
             />
           )}
-          <div className={css({ flex: "1", minHeight: "0" })}>
+          <div className={css({ flex: "0 0 auto" })}>
+            <CallSummaryEditablePanel data={myResult} />
+          </div>
+          <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
             <CallDemoPanel
+              key={`call-${resetSeq}`}
               onCallSignal={handleCallSignal}
               onAudioChunk={sendAudioChunk}
               startBlockedReason={startBlockedReason}
@@ -236,6 +264,12 @@ function AmbulanceDashboardContent() {
             confirmedHospitalId={confirmedHospitalId}
             sim={simOn ? mySim : null}
             scene={activeCaseId ? state.sceneCandidates[activeCaseId] ?? null : null}
+            target={canPickTarget ? dispatchTarget : null}
+            onMapClick={
+              canPickTarget
+                ? (lat, lng) => setDispatchTarget({ lat, lng, label: "지도에서 고른 위치", mode: "map" })
+                : undefined
+            }
           />
         </div>
       </main>

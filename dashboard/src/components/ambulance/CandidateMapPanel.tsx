@@ -7,7 +7,7 @@ import { Tag } from "@/components/hospital/Tag";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { createColoredMarkerImage, createLabelOverlay } from "@/lib/kakao-map-markers";
 import { fetchRoadPath } from "@/lib/route";
-import type { AmbulanceSimState, HospitalCandidate, HubMatchResult, SceneCandidates } from "@/types/dashboard";
+import type { AmbulanceSimState, DispatchTarget, HospitalCandidate, HubMatchResult, SceneCandidates } from "@/types/dashboard";
 
 const sideBoxStyle = css({
   flex: "1",
@@ -40,6 +40,8 @@ export function CandidateMapPanel({
   confirmedHospitalId,
   sim = null,
   scene = null,
+  target = null,
+  onMapClick,
 }: {
   data: HubMatchResult | null;
   confirmedHospitalId: string | null;
@@ -48,6 +50,10 @@ export function CandidateMapPanel({
   sim?: AmbulanceSimState | null;
   // 매칭 전 현장 후보(거리순). 매칭 결과가 없을 때 병원 위치만 보여준다.
   scene?: SceneCandidates | null;
+  // 출동 전에 고른 위치(주소 검색·지도 클릭) 미리 보기, 그리고 지도를 눌러 출동 위치를 고르는 콜백(2026-10-01).
+  // onMapClick이 없으면(출동 중 등) 클릭해도 아무 일 없다.
+  target?: DispatchTarget | null;
+  onMapClick?: (lat: number, lng: number) => void;
 }) {
   const hospitals: Pick<HospitalCandidate, "hospitalId" | "name" | "gps" | "status">[] =
     data?.hospitals ?? scene?.hospitals.map((h) => ({ ...h, status: "pending" as const })) ?? [];
@@ -71,14 +77,24 @@ export function CandidateMapPanel({
   const simLabelRef = useRef<kakao.maps.CustomOverlay | null>(null);
   const simPathRef = useRef<kakao.maps.Polyline | null>(null);
   const simPinsRef = useRef<{ marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay }[]>([]);
+  const targetPinRef = useRef<{ marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay } | null>(null);
+  // 지도 클릭 핸들러는 최신 콜백을 ref로 읽는다 — 리스너를 렌더마다 다시 붙이지 않게.
+  const onMapClickRef = useRef(onMapClick);
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
 
   function ensureMap(center: { lat: number; lng: number }): kakao.maps.Map | null {
     if (!containerRef.current) return null;
     if (!mapRef.current) {
-      mapRef.current = new window.kakao.maps.Map(containerRef.current, {
+      const map = new window.kakao.maps.Map(containerRef.current, {
         center: new window.kakao.maps.LatLng(center.lat, center.lng),
         level: 6,
       });
+      window.kakao.maps.event.addListener(map, "click", (event) => {
+        onMapClickRef.current?.(event.latLng.getLat(), event.latLng.getLng());
+      });
+      mapRef.current = map;
     }
     return mapRef.current;
   }
@@ -251,6 +267,25 @@ export function CandidateMapPanel({
     // 상태·사건·확정 병원·경로가 바뀔 때만 다시 그린다(1초 위치 갱신엔 반응하지 않음).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, sim?.phase, sim?.caseId, sim?.hospitalId, sim?.path?.length]);
+
+  // 출동 전에 고른 위치 미리 보기(주소 검색·지도 클릭).
+  useEffect(() => {
+    if (!ready) return;
+    targetPinRef.current?.marker.setMap(null);
+    targetPinRef.current?.label.setMap(null);
+    targetPinRef.current = null;
+    if (!target) return;
+    const map = ensureMap(target);
+    if (!map) return;
+    const pos = new window.kakao.maps.LatLng(target.lat, target.lng);
+    targetPinRef.current = {
+      marker: new window.kakao.maps.Marker({ position: pos, map, title: "출동 위치", image: createColoredMarkerImage("#E5484D"), zIndex: 25 }),
+      label: createLabelOverlay(pos, target.mode === "map" ? "출동 위치(지도)" : `출동 위치 · ${target.label}`),
+    };
+    targetPinRef.current.label.setMap(map);
+    map.setCenter(pos);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, target?.lat, target?.lng, target?.label]);
 
   // 시뮬레이션: 1초마다 구급차 마커만 옮긴다.
   useEffect(() => {
