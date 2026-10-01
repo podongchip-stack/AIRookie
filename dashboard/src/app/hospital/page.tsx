@@ -173,6 +173,14 @@ function HospitalDashboardContent() {
                     hospitalId={MY_HOSPITAL_ID}
                     caseId={result.caseId}
                     ambulanceName={result.ambulanceName}
+                    arrivalReady={
+                      // 출동 시뮬레이션이 켜져 있으면 구급차가 실제로 병원에 도착했을 때만 결과 버튼을 연다.
+                      !state.identity.simDispatch ||
+                      (result.apid != null &&
+                        state.ambulanceSim[result.apid]?.caseId === result.caseId &&
+                        state.ambulanceSim[result.apid]?.phase === "at_hospital")
+                    }
+                    arrived={result.arrival?.result === "accepted" && result.arrival.hospitalId === MY_HOSPITAL_ID}
                     onAction={sendAction}
                   />
                 </div>

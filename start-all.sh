@@ -18,7 +18,7 @@
 #   ./start-all.sh                    공개 모드 (도메인 주소로 접속)
 #   ./start-all.sh --local            터널 없이 로컬 주소로만 (같은 Wi-Fi 시연·개발용)
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
-#   ./start-all.sh --no-info          info(병원 정보 주기 전송)와 E-Gen 스냅샷 수집 생략
+#   ./start-all.sh --no-info          info(병원 정보 주기 전송)·E-Gen 스냅샷 수집·거절 로그 수신구 생략
 #   ./start-all.sh --no-snapshot      E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델의 관측 기록)만 생략
 #   ./start-all.sh --sim-dispatch     구급차 출동 시뮬레이션(시연용 가짜 위치) — 구급차 화면에 [이동] 버튼
 #   ./start-all.sh --lidar            lidar3d(3D 뷰어·아이폰 앱 업로드 서버)도 함께 — 병원 대시보드에 3D 버튼이 생긴다
@@ -88,6 +88,7 @@ port_free(){  # 이름, 포트, 바꿀 때 쓸 환경변수
   exit 1
 }
 port_free hub "$HUB_PORT" ""
+[ "$RUN_INFO" = 1 ] && port_free "거절 로그 수신구" 5003 ""
 port_free dashboard "$DASH_PORT" DASH_PORT
 [ "$RUN_LIDAR" = 1 ] && port_free lidar3d "$LIDAR_PORT" LIDAR_PORT
 
@@ -159,6 +160,13 @@ if [ "$RUN_INFO" = 1 ]; then
   # E-Gen은 과거 이력을 주지 않아서, 병상 신뢰도 모델(reliability/)과 중증신고 신선도가 쓰는
   # 관측 기록은 직접 찍어 쌓아야 한다. Windows에선 작업 스케줄러(snapshot_nationwide.bat)로
   # 돌리던 것을 여기서 같이 띄운다 — 전국 1회 호출 × 20분 = 하루 약 145회(서울만 받을 때와 같음).
+  # 거절 로그 수신구(포트 5003). hub가 병원 거절·도착 후 수용 불가·무응답을 그때 화면에 보였던 병상 수·
+  # 신뢰도 확률과 함께 보낸다 — 신뢰도 모델의 정답(G2 라벨) 재료라 안 띄우면 그 기간 로그는 영영 사라진다
+  # (소급 생성 불가). 예전엔 따로 켜야 해서 실제로는 버려지고 있었다(2026-10-01 기본 실행).
+  echo "거절 로그 수신구 시작 (포트 5003)..."
+  (cd info/Hospital_inform/info && PYTHONIOENCODING=utf-8 exec "$INFO_PY" -u -m hospital_score.ingest) \
+      > "$LOG_DIR/rejection.log" 2>&1 &
+  PIDS+=("$!")
   if [ "$RUN_SNAPSHOT" = 1 ]; then
     echo "E-Gen 스냅샷 수집 시작 (전국, 20분 주기)..."
     (cd info/Hospital_inform && PYTHONIOENCODING=utf-8 exec "$INFO_PY" -u info/snapshot.py --stage1 "" \
@@ -254,7 +262,7 @@ fi
 cat <<BANNER
 
   voice(구급차 노트북)는 HUB_BASE_URL=http://<이 맥의 LAN IP>:$HUB_PORT 로 따로 실행하세요.
-  로그: $LOG_DIR/{hub,info,snapshot,lidar3d,dashboard,cloudflared}.log
+  로그: $LOG_DIR/{hub,info,snapshot,rejection,lidar3d,dashboard,cloudflared}.log
   Ctrl-C 로 전부 종료합니다.
 ==============================================================
 

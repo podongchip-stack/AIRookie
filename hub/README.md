@@ -192,6 +192,25 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 - **재선택**: 같은 사건에서 다른 병원을 이송 승인하면, 이전 확정 병원은 `approved`로 되돌리고(새 상태값 없음 — dashboard 타입 유지) 그 확정이 얹은 병상 차감을 회수한다(`approval_released` 이벤트)
 - dashboard는 이미 이 규칙대로만 버튼을 연다(`HospitalCandidateListPanel.tsx`의 `approvable`, `ApprovalActions.tsx`의 role 분기)
 
+### 도착 결과와 신뢰도 정답 데이터 (2026-10-01)
+
+신뢰도 모델(AIROOKIE-EGEN.md)의 지금 정답은 "병원이 나중에 숫자를 스스로 고쳤는가"(G1)뿐이다. 병원 신고와
+무관한 **독립 관측(G2)**은 "실제로 받았는가"이고, 그건 운영에서만 생긴다(§7 ④ 도착 결과). 그래서:
+
+- **도착 결과 액션**: `arrival_accepted` / `arrival_refused`(`actor: "hospital"`, 거절 사유 4축 어휘). 이 사건의
+  **확정 병원에만**, 결과는 한 번만. 출동 시뮬레이션 중엔 구급차가 그 병원에 **실제로 도착했을 때만** 받는다
+  (이송 중 도착 결과가 들어와 엔진만 바뀌는 어긋남이 E2E에서 실제로 났다)
+- **도착 후 수용 불가**: 확정을 풀고 `rejected`, 병상 차감 회수, 사건은 다시 미확정. 거절 로그에 `stage: "arrival"`과
+  **결정 시점 스냅샷**(그때 보였던 병상 수·authority·rArrive)이 남는다 — "확실하다고 봤는데 틀렸다"를 셀 수 있는 유일한 기록.
+  승인한 다른 병원이 없으면 **같은 환자 정보로 존을 한 단계 넓혀** 새 후보 병원들에게 다시 보낸다(재통화 없음, `force_expand_zone`)
+- **도착 수용**: `HubMatchResult.arrival`에 기록. 사건 종료
+- **재선택 해제 사유**: `approval_released.cause = "paramedic_reselect"` + 두 병원의 당시 이동시간·점수(`atDecision`).
+  재선택은 "더 나은 병원"이지 "정보가 틀림"이 아니라서, 라벨을 만들 때 실패로 세면 안 된다(그 병원은 받겠다고 했다)
+- **무응답(`NO_RESPONSE`)은 사건이 끝날 때 기록한다** — 도착 수용·현장 종료·방치 정리. 예전엔 첫 이송 승인 순간에
+  기록해서, 그 뒤 승인하고 재선택된 병원까지 "무응답"으로 남았다(거부된 이송 승인에도 기록되던 문제 포함)
+- 실서버 E2E(재선택 → 도착 후 수용 불가 → 다른 승인 병원 → 수용) 결과: 거절 로그에 도착 후 BEDS_FULL 1건(당시 병상 3·authority 1.0),
+  끝까지 응답 안 한 2곳만 NO_RESPONSE, 승인했던 병원은 무응답으로 안 찍힘
+
 ## 병상 정보 신뢰도(bedReliability) 반영 (2026-09-24 신설)
 
 위 hospital_score(중증질환 **수용 신고**의 신뢰도)와는 다른 축으로, feature/info의
@@ -753,8 +772,10 @@ HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화�
 구급차가 움직인다(`ambulance_sim.py`, 설계는 `documents/1001v1_0134_...`).
 
 ```
-idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─15초→ returning ─도착→ idle
-                                    └─[현장 종료]→ returning          (returning 중 [이동] = 재출동)
+idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─수용→15초→ returning ─도착→ idle
+                                    └─[현장 종료]→ returning          │ 수용 불가
+                                                                       └→ rerouting(그 자리 대기) ─이송 승인→ transporting
+   (returning 중 [이동] = 재출동, rerouting에서 [현장 종료]도 가능)    at_hospital은 병원이 결과를 고를 때까지 기다린다
 ```
 
 - 환자 발생 위치: 기지(Supabase 등록 좌표)에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오

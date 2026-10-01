@@ -32,6 +32,8 @@ const MOCK_ACTION_TO_STATUS: Record<ApprovalActionType, HospitalStatus> = {
   hospital_approve: "approved",
   hospital_reject: "rejected",
   final_approval: "confirmed",
+  arrival_accepted: "confirmed",
+  arrival_refused: "rejected",
 };
 
 // hub 연결 상태. "reconnecting"은 hub 주소는 설정돼 있는데 연결이 끊겨 다시 붙는 중이라는

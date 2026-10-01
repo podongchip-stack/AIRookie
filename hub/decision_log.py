@@ -19,13 +19,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
-LOG_PATH = BASE_DIR / "data" / "logs" / "decision_log.jsonl"
+# HUB_DECISION_LOG_PATH: 실서버 E2E 테스트가 진짜 로그(해시 체인)를 더럽히지 않게 따로 쓸 때(2026-10-01).
+LOG_PATH = Path(os.environ.get("HUB_DECISION_LOG_PATH") or BASE_DIR / "data" / "logs" / "decision_log.jsonl")
 
 # 파일이 비어 있을 때 첫 기록의 prevHash.
 GENESIS_HASH = "0" * 64

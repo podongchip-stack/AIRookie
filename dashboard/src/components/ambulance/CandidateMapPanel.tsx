@@ -310,7 +310,8 @@ export function CandidateMapPanel({
             // 이유, 2026-08-12).
             className={css({ position: "absolute", inset: "0", zIndex: "0" })}
           />
-          {(!ready || error || hospitals.length === 0) && (
+          {/* 출동 시뮬레이션 중엔 병원 후보가 없어도 지도를 가리지 않는다 — 출동 중 움직이는 구급차를 보여야 한다. */}
+          {(!ready || error || (hospitals.length === 0 && !sim)) && (
             <div
               className={css({
                 position: "absolute",

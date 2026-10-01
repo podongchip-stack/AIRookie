@@ -382,6 +382,15 @@ class HospitalMatch(BaseModel):
     bonusReasons: list[str] = Field(default_factory=list)
 
 
+class ArrivalResult(BaseModel):
+    """확정 병원 도착 뒤 병원이 기록한 실제 수용 결과(2026-10-01)."""
+
+    hospitalId: str
+    result: Literal["accepted", "refused"]
+    at: str
+    reason: Optional[str] = None
+
+
 class HubMatchResult(BaseModel):
     # 메시지 종류 구분자(2026-09-28 신설). dashboard로 나가는 메시지 중 이것만 type이 없어서
     # dashboard가 `"type" in parsed`로 구분하고 있었다. 기존 판별(identity_info인지 먼저 확인)과
@@ -411,11 +420,17 @@ class HubMatchResult(BaseModel):
     # ambulanceGps가 실제 구급차 위치가 아니라 기본 좌표(서울시청)로 대체된 값인지(2026-09-28
     # 신설). True면 거리·존·순위가 전부 엉뚱한 기준일 수 있다 — 예전엔 콘솔 로그에만 남았다.
     ambulanceGpsFallback: bool = False
+    # 확정 병원 도착 뒤 병원이 기록한 수용 결과(2026-10-01). 아직 없으면 None.
+    arrival: Optional[ArrivalResult] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
 
-ApprovalActionType = Literal["hospital_approve", "hospital_reject", "final_approval"]
+# arrival_accepted / arrival_refused(2026-10-01): 구급차가 확정 병원에 도착한 뒤 병원이 누르는 실제 수용
+# 결과. 신뢰도 모델의 독립 관측(G2 라벨, AIROOKIE-EGEN.md §7 ④)이 생기는 지점이다.
+ApprovalActionType = Literal[
+    "hospital_approve", "hospital_reject", "final_approval", "arrival_accepted", "arrival_refused"
+]
 Actor = Literal["hospital", "paramedic"]
 
 

@@ -3,7 +3,7 @@ import { hospitalStatusBadge, severityBadge } from "styled-system/recipes";
 import { Panel } from "@/components/layout/Panel";
 import { PatientVitals } from "@/components/panels/PatientVitals";
 import { Tag } from "@/components/hospital/Tag";
-import { ApprovalActions } from "@/components/panels/ApprovalActions";
+import { ApprovalActions, ArrivalActions } from "@/components/panels/ApprovalActions";
 import type { ApprovalAction, HospitalCandidate, HospitalStatus, PatientInfo, Severity } from "@/types/dashboard";
 
 const SEVERITY_RISK_LABEL: Record<Severity, string> = {
@@ -47,6 +47,8 @@ export function CaseMatchPanel({
   hospitalId,
   caseId,
   ambulanceName,
+  arrivalReady = true,
+  arrived = false,
   onAction,
 }: {
   patientInfo: PatientInfo | null;
@@ -58,6 +60,11 @@ export function CaseMatchPanel({
   // 카드가 여러 개 동시에 나열되므로(사건마다 하나씩), 어느 구급차가 보낸
   // 요청인지 카드 자체에서 구분할 수 있어야 한다(2026-08-11 요청).
   ambulanceName?: string;
+  // 이송 확정 뒤 도착 결과 버튼을 열지(2026-10-01). 출동 시뮬레이션이면 구급차가 병원에 도착했을 때만 true,
+  // 시뮬레이션이 없으면 항상 true(실제 도착 시점을 hub가 모르므로 병원이 판단).
+  arrivalReady?: boolean;
+  // 이미 "환자 수용 완료"를 기록했는지.
+  arrived?: boolean;
   onAction: (action: ApprovalAction) => void;
 }) {
   if (!patientInfo) {
@@ -96,11 +103,20 @@ export function CaseMatchPanel({
             </span>
           </div>
           {hospital.status === "confirmed" ? (
-            // 구급대원이 이미 이 병원으로 이송을 최종 승인한 상태다 — 병원 쪽에서
-            // 뒤집을 수 있는 결정이 아니라서 버튼 대신 확정 안내만 보여준다.
-            <p className={css({ fontSize: "sm", color: "mint", textAlign: "center", fontWeight: "semibold" })}>
-              이 사건은 본원으로 이송이 확정됐습니다
-            </p>
+            // 구급대원이 이 병원으로 이송을 최종 승인한 상태. 도착 전엔 뒤집을 수 없고, 도착하면 실제 수용
+            // 결과(수용 완료 / 도착 후 수용 불가)를 꼭 고른다 — 구급차는 결과가 나올 때까지 병원 앞에서 기다린다.
+            arrived ? (
+              <p className={css({ fontSize: "sm", color: "mint", textAlign: "center", fontWeight: "semibold" })}>
+                환자 수용 완료 — 이송이 끝났습니다
+              </p>
+            ) : (
+              <>
+                <p className={css({ fontSize: "sm", color: "mint", textAlign: "center", fontWeight: "semibold", marginBottom: "2" })}>
+                  {arrivalReady ? "구급차가 도착했습니다 — 수용 결과를 선택하세요" : "본원으로 이송 중입니다"}
+                </p>
+                <ArrivalActions hospitalId={hospitalId} caseId={caseId} ready={arrivalReady} onAction={onAction} />
+              </>
+            )
           ) : (
             <>
               {/* 병원의 승인/불가는 최종 결정이 아니라 후보 등록일 뿐이라(CLAUDE.md),
