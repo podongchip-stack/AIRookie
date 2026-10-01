@@ -124,7 +124,10 @@ def _in_seoul(lat: float, lng: float) -> bool:
 
 
 def _sample_around(base: GpsPoint, radius_km: float, n: int, rng: random.Random) -> list[GpsPoint]:
+    """기지 반경 안 무작위 지점. 기지가 서울이면 서울 안에서만 뽑는다 — 기지가 서울 밖이면(예: 수원) 그 기준을
+    적용하면 뽑을 지점이 없어 출동이 실패하므로, 그때는 반경만 본다."""
     points: list[GpsPoint] = []
+    seoul_only = _in_seoul(base.lat, base.lng)
     for _ in range(n * 20):
         if len(points) >= n:
             break
@@ -132,7 +135,7 @@ def _sample_around(base: GpsPoint, radius_km: float, n: int, rng: random.Random)
         theta = rng.random() * 2 * math.pi
         lat = base.lat + (r / 111.0) * math.cos(theta)
         lng = base.lng + (r / (111.0 * math.cos(math.radians(base.lat)))) * math.sin(theta)
-        if _in_seoul(lat, lng):
+        if not seoul_only or _in_seoul(lat, lng):
             points.append(GpsPoint(lat=lat, lng=lng))
     return points
 
@@ -379,6 +382,8 @@ def _selftest() -> None:
 
     pool = build_incident_pool(base, None, rng)
     assert len(pool) == POOL_MIN_SIZE and all(_in_seoul(p["lat"], p["lng"]) for p in pool)
+    suwon = GpsPoint(lat=37.2636, lng=127.0286)
+    assert len(build_incident_pool(suwon, None, rng)) == POOL_MIN_SIZE, "서울 밖 기지도 출동 위치를 뽑을 수 있어야 한다"
     assert all(haversine_km(base.lat, base.lng, p["lat"], p["lng"]) <= FALLBACK_RADIUS_KM + 0.01 for p in pool)
 
     trip = Trip([(37.0, 127.0), (37.0, 127.1)], duration_sec=600, started_at=0, speedup=5)
