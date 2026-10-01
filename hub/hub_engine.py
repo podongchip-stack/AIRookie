@@ -526,12 +526,14 @@ class HubEngine:
             return self._case_results.get(case_id)
 
     def get_cases_for_hospital(self, hospital_id: str) -> list[HubMatchResult]:
-        """이 hospitalId가 후보로 들어있는 사건 전부(따라잡기용, app.py `_send_catchup()`)."""
+        """이 hospitalId가 후보로 들어있는 진행 중 사건(따라잡기용, app.py `_send_catchup()`). 환자 수용이 끝난
+        사건(도착 결과 accepted)은 뺀다 — 화면에서는 이미 지웠다(case_closed). 기록·병상 차감 때문에 엔진에는
+        확정 60분 동안 남는다."""
         with self._lock:
             return [
                 result
-                for result in self._case_results.values()
-                if any(h.hospitalId == hospital_id for h in result.hospitals)
+                for cid, result in self._case_results.items()
+                if cid not in self._case_arrival and any(h.hospitalId == hospital_id for h in result.hospitals)
             ]
 
     def get_cases_for_apid(self, apid: str) -> list[HubMatchResult]:
@@ -539,7 +541,10 @@ class HubEngine:
         한 번에 사건 하나만 진행하지만(voice 마이크가 한 대뿐이라), 같은
         방식으로 여러 건이 나와도 안전하게 동작하도록 리스트로 반환한다."""
         with self._lock:
-            case_ids = [cid for cid, registered_apid in self._case_apid.items() if registered_apid == apid]
+            case_ids = [
+                cid for cid, registered_apid in self._case_apid.items()
+                if registered_apid == apid and cid not in self._case_arrival  # 수용이 끝난 사건은 뺀다
+            ]
             results = [self._case_results.get(cid) for cid in case_ids]
             return [result for result in results if result is not None]
 

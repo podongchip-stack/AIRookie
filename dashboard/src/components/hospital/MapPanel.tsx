@@ -105,19 +105,25 @@ export function MapPanel({
     ambulanceMarkerRef.current?.setMap(null);
     ambulanceLabelRef.current?.setMap(null);
     polylineRef.current?.setMap(null);
-    if (sim?.path && sim.path.length > 1) {
-      // 출동 시뮬레이션: 구급차 마커는 아래 effect가 1초마다 옮긴다.
+    if (sim) {
+      // 출동 시뮬레이션: 구급차 마커는 아래 effect가 1초마다 옮긴다. 병원에 도착했으면(at_hospital) 경로 선 없이
+      // 병원 자리에 "도착"으로 둔다 — 예전엔 이때 경로가 없어 매칭 때의 사고 현장 좌표와 직선을 그렸다.
       ambulanceMarkerRef.current = null;
       ambulanceLabelRef.current = null;
-      const simPath = sim.path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng));
-      polylineRef.current = new kakao.maps.Polyline({
-        path: simPath, strokeWeight: 4, strokeColor: "#1E5FA8", strokeOpacity: 0.9, strokeStyle: "solid",
-      });
-      polylineRef.current.setMap(map);
+      polylineRef.current = null;
       const simBounds = new kakao.maps.LatLngBounds();
-      simPath.forEach((point) => simBounds.extend(point));
       simBounds.extend(hospitalPos);
-      map.setBounds(simBounds);
+      if (sim.phase === "transporting" && sim.path && sim.path.length > 1) {
+        const simPath = sim.path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng));
+        polylineRef.current = new kakao.maps.Polyline({
+          path: simPath, strokeWeight: 4, strokeColor: "#1E5FA8", strokeOpacity: 0.9, strokeStyle: "solid",
+        });
+        polylineRef.current.setMap(map);
+        simPath.forEach((point) => simBounds.extend(point));
+        map.setBounds(simBounds);
+      } else {
+        map.setCenter(hospitalPos);
+      }
       return;
     }
     ambulanceMarkerRef.current = new kakao.maps.Marker({
@@ -174,6 +180,7 @@ export function MapPanel({
   // 출동 시뮬레이션: 1초마다 구급차 마커만 옮긴다.
   const simMarkerRef = useRef<kakao.maps.Marker | null>(null);
   const simLabelRef = useRef<kakao.maps.CustomOverlay | null>(null);
+  const simLabelTextRef = useRef<string | null>(null);
   useEffect(() => {
     if (!ready || !mapRef.current || !sim?.gps) {
       simMarkerRef.current?.setMap(null);
@@ -188,14 +195,21 @@ export function MapPanel({
         position: pos, map: mapRef.current, title: "구급차 (시뮬레이션 위치)",
         image: createColoredMarkerImage("#1E5FA8"), zIndex: 30,
       });
-      simLabelRef.current = createLabelOverlay(pos, "구급차 (시뮬레이션)");
-      simLabelRef.current.setMap(mapRef.current);
     } else {
       simMarkerRef.current.setPosition(pos);
-      simLabelRef.current?.setPosition(pos);
+    }
+    // 이름표는 문구가 바뀔 때(도착)만 새로 단다. 나머지는 위치만 옮긴다.
+    const labelText = sim.phase === "at_hospital" ? "구급차 도착" : "구급차 (시뮬레이션)";
+    if (!simLabelRef.current || simLabelTextRef.current !== labelText) {
+      simLabelRef.current?.setMap(null);
+      simLabelRef.current = createLabelOverlay(pos, labelText);
+      simLabelRef.current.setMap(mapRef.current);
+      simLabelTextRef.current = labelText;
+    } else {
+      simLabelRef.current.setPosition(pos);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, sim?.gps?.lat, sim?.gps?.lng]);
+  }, [ready, sim?.gps?.lat, sim?.gps?.lng, sim?.phase]);
 
   const etaMin =
     sim?.phase === "transporting" && sim.etaSec != null ? Math.max(1, Math.ceil(sim.etaSec / 60)) : hospital?.etaMin ?? null;
@@ -277,7 +291,7 @@ export function MapPanel({
                 color: confirmed ? "#0A7351" : "ink",
               })}
             >
-              {etaMin != null ? `${etaMin}분` : "-"}
+              {sim?.phase === "at_hospital" ? "도착" : etaMin != null ? `${etaMin}분` : "-"}
             </div>
             <div className={css({ fontSize: "xs", color: "ink", marginTop: "0.5" })}>
               실시간 교통 반영

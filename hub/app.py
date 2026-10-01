@@ -749,6 +749,10 @@ def _handle_dashboard_action(payload: dict) -> None:
     updated_result = expanded_result or engine.get_case_result(action.caseId)
     if updated_result is not None:
         _send_to_dashboard(updated_result.model_dump())
+    if action.action == "arrival_accepted" and applied:
+        # 환자 수용으로 이송이 끝났다 — 두 대시보드에서 이 사건(병원 후보·수용 요청·통화 요약)을 지운다
+        # (2026-10-01). 엔진에는 기록·병상 차감 때문에 확정 60분 동안 남지만, 따라잡기에서도 빠진다.
+        _send_to_dashboard({"type": "case_closed", "caseId": action.caseId, "reason": "arrival_accepted"})
 
     if sim is not None and applied and action.action in ("arrival_accepted", "arrival_refused"):
         apid = engine.get_case_apid(action.caseId)
