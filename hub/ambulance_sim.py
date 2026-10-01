@@ -5,9 +5,10 @@
 설계 문서: documents/1001v1_0134_구급차 출동 시뮬레이션 작업 계획.md
 
     idle ──[이동]──> dispatching ──도착──> on_scene ──이송 승인──> transporting ──도착──> at_hospital
-     ▲                  ▲                    │ [현장 종료]                                   │ 15초
-     └── 기지 도착 ── returning <────────────┴──────────────────────────────────────────────┘
-                        │ [이동] (복귀 중 재출동)
+     ▲                  ▲                    │ [현장 종료]       ▲                            │ 병원이 도착 결과를 고를 때까지 대기
+     │                  │                    │                   └─ 이송 승인 ── rerouting ◀─┤ 수용 불가 (그 자리에서 재선택 대기)
+     └── 기지 도착 ── returning <────────────┴───────────────── 15초 ◀── 수용 ───────────────┘
+                        │ [이동] (복귀 중 재출동)          rerouting에서 [현장 종료]도 가능 → returning
 
 - 환자 발생 위치: 기지에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오 다중 목적지
   ETA로 골라 파일로 저장한다(이후 호출 0회). 키가 없으면 반경 3.5km 직선 지점으로 대신한다.
@@ -33,7 +34,7 @@ from typing import Callable, Optional
 from geo import haversine_km
 from schema import GpsPoint
 
-PHASES = ("idle", "dispatching", "on_scene", "transporting", "at_hospital", "returning")
+PHASES = ("idle", "dispatching", "on_scene", "transporting", "at_hospital", "rerouting", "returning")
 
 #: 서울 범위(대략의 사각형 — 경기 일부 포함). 무작위 지점은 이 안에서만 뽑는다.
 SEOUL_BBOX = (37.43, 37.70, 126.76, 127.18)  # (위도 최소, 최대, 경도 최소, 최대)
@@ -123,7 +124,10 @@ def _in_seoul(lat: float, lng: float) -> bool:
 
 
 def _sample_around(base: GpsPoint, radius_km: float, n: int, rng: random.Random) -> list[GpsPoint]:
+    """기지 반경 안 무작위 지점. 기지가 서울이면 서울 안에서만 뽑는다 — 기지가 서울 밖이면(예: 수원) 그 기준을
+    적용하면 뽑을 지점이 없어 출동이 실패하므로, 그때는 반경만 본다."""
     points: list[GpsPoint] = []
+    seoul_only = _in_seoul(base.lat, base.lng)
     for _ in range(n * 20):
         if len(points) >= n:
             break
@@ -131,7 +135,7 @@ def _sample_around(base: GpsPoint, radius_km: float, n: int, rng: random.Random)
         theta = rng.random() * 2 * math.pi
         lat = base.lat + (r / 111.0) * math.cos(theta)
         lng = base.lng + (r / (111.0 * math.cos(math.radians(base.lat)))) * math.sin(theta)
-        if _in_seoul(lat, lng):
+        if not seoul_only or _in_seoul(lat, lng):
             points.append(GpsPoint(lat=lat, lng=lng))
     return points
 
@@ -194,7 +198,8 @@ class Unit:
     incident: Optional[GpsPoint] = None
     hospital_id: Optional[str] = None
     hospital_gps: Optional[GpsPoint] = None
-    dwell_until: float = 0.0
+    # 병원 도착 뒤 복귀 시각. 병원이 "수용"을 누르기 전엔 None — 결과가 나올 때까지 병원에서 기다린다.
+    dwell_until: Optional[float] = None
     last_incident: Optional[tuple[float, float]] = None
 
     def snapshot(self, now: float) -> dict:
@@ -285,10 +290,10 @@ class DispatchSim:
         return True, "ok"
 
     def scene_end(self, apid: str, case_id: str) -> bool:
-        """[현장 종료]: 현장에서 이송 확정 없이 끝낸다 → 바로 기지로."""
+        """[현장 종료]: 현장(또는 도착 후 수용 불가로 재선택 대기 중)에서 이송 없이 끝낸다 → 바로 기지로."""
         with self._lock:
             unit = self._units.get(apid)
-            if unit is None or unit.phase != "on_scene" or unit.case_id != case_id:
+            if unit is None or unit.phase not in ("on_scene", "rerouting") or unit.case_id != case_id:
                 return False
             origin, base = unit.gps or unit.base, unit.base
         trip = plan_trip(self._router, origin, base, self._clock())
@@ -301,7 +306,7 @@ class DispatchSim:
         """이송 확정(재선택 포함): 그 순간 위치에서 확정 병원으로 간다."""
         with self._lock:
             unit = self._units.get(apid)
-            if unit is None or unit.case_id != case_id or unit.phase not in ("on_scene", "transporting"):
+            if unit is None or unit.case_id != case_id or unit.phase not in ("on_scene", "transporting", "rerouting"):
                 return False
             if unit.phase == "transporting" and unit.hospital_id == hospital_id:
                 return False
@@ -311,6 +316,19 @@ class DispatchSim:
             unit = self._units[apid]
             unit.phase, unit.trip, unit.hospital_id, unit.hospital_gps = "transporting", trip, hospital_id, hospital_gps
         return True
+
+    def on_arrival_result(self, apid: str, case_id: str, accepted: bool) -> bool:
+        """병원 도착 뒤 병원의 결과: 수용이면 HOSPITAL_DWELL_SEC 뒤 기지로, 수용 불가면 그 자리에서
+        재선택 대기(rerouting) — 승인한 다른 병원으로 이송 승인하면 다시 출발한다."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None or unit.phase != "at_hospital" or unit.case_id != case_id:
+                return False
+            if accepted:
+                unit.dwell_until = self._clock() + HOSPITAL_DWELL_SEC
+            else:
+                unit.phase, unit.hospital_id, unit.hospital_gps, unit.dwell_until = "rerouting", None, None, None
+            return True
 
     def tick(self) -> tuple[list[dict], list[dict]]:
         """위치를 한 칸 옮긴다. (상태가 바뀐 구급차들의 snapshot, 움직이는 구급차들의 snapshot)."""
@@ -329,17 +347,18 @@ class DispatchSim:
                             unit.phase, unit.trip, unit.gps = "on_scene", None, unit.incident
                         elif unit.phase == "transporting":
                             unit.phase, unit.trip = "at_hospital", None
-                            unit.gps, unit.dwell_until = unit.hospital_gps, now + HOSPITAL_DWELL_SEC
+                            unit.gps, unit.dwell_until = unit.hospital_gps, None
                         else:
                             unit.phase, unit.trip, unit.gps, unit.case_id = "idle", None, unit.base, None
                             unit.hospital_id = unit.hospital_gps = None
                         changed.append(unit)
-                elif unit.phase == "at_hospital" and now >= unit.dwell_until:
+                elif unit.phase == "at_hospital" and unit.dwell_until is not None and now >= unit.dwell_until:
                     to_plan_return.append(unit)
         for unit in to_plan_return:  # 락 밖에서 경로 조회
             trip = plan_trip(self._router, unit.gps or unit.base, unit.base, now)
             with self._lock:
                 unit.phase, unit.trip, unit.case_id, unit.incident = "returning", trip, None, None
+                unit.dwell_until = None
                 changed.append(unit)
         with self._lock:
             return [u.snapshot(now) for u in changed], [u.snapshot(now) for u in moving if u not in changed]
@@ -363,6 +382,8 @@ def _selftest() -> None:
 
     pool = build_incident_pool(base, None, rng)
     assert len(pool) == POOL_MIN_SIZE and all(_in_seoul(p["lat"], p["lng"]) for p in pool)
+    suwon = GpsPoint(lat=37.2636, lng=127.0286)
+    assert len(build_incident_pool(suwon, None, rng)) == POOL_MIN_SIZE, "서울 밖 기지도 출동 위치를 뽑을 수 있어야 한다"
     assert all(haversine_km(base.lat, base.lng, p["lat"], p["lng"]) <= FALLBACK_RADIUS_KM + 0.01 for p in pool)
 
     trip = Trip([(37.0, 127.0), (37.0, 127.1)], duration_sec=600, started_at=0, speedup=5)
@@ -386,9 +407,17 @@ def _selftest() -> None:
         clock.t += 3600
         sim.tick()
         assert sim.phase_of("A1") == "at_hospital"
+        clock.t += 3600
+        sim.tick()
+        assert sim.phase_of("A1") == "at_hospital", "도착 결과가 나올 때까지 병원에서 기다린다"
+        assert sim.on_arrival_result("A1", "c1", accepted=False) and sim.phase_of("A1") == "rerouting"
+        assert sim.on_confirmed("A1", "c1", "H3", GpsPoint(lat=37.56, lng=127.01)), "재선택 대기에서 다른 병원으로"
+        clock.t += 3600
+        sim.tick()
+        assert sim.on_arrival_result("A1", "c1", accepted=True)
         clock.t += HOSPITAL_DWELL_SEC - 1
         sim.tick()
-        assert sim.phase_of("A1") == "at_hospital", "15초는 병원에 머문다"
+        assert sim.phase_of("A1") == "at_hospital", "수용 뒤 15초는 병원에 머문다"
         clock.t += 2
         sim.tick()
         assert sim.phase_of("A1") == "returning" and sim.case_of("A1") is None

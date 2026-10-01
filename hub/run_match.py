@@ -847,6 +847,10 @@ def test_approval_order_and_reselection() -> None:
     events = log_lines()[start:]
     assert sum('"approval_action_refused"' in e for e in events) == 2, "거부된 액션 2건은 사유와 함께 로그에 남아야 한다"
     assert sum('"approval_released"' in e for e in events) == 1, "재선택 해제는 의사결정 로그에 남아야 한다"
+    released = next(e for e in events if '"approval_released"' in e)
+    assert '"paramedic_reselect"' in released and '"atDecision"' in released, (
+        "재선택 해제는 '정보가 틀려서'가 아니라 '더 나은 병원' 때문임과 당시 이동시간·점수를 남겨야 한다(라벨 오염 방지)"
+    )
     print("  [확인] 승인 전 이송 승인·주체 불일치 거부, 재선택 시 A 해제(병상 4→5)·B 확정(5→4), 순서 확정→승인")
 
 
