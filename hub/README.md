@@ -876,7 +876,7 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 
 ## 알려진 제약사항 / TODO
 
-- 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`),
+- 존 확장 임계값(`REJECT_RATIO_THRESHOLD` = 0.4, 2026-10-01부터 **존 안 후보 전체 대비** 거절 비율), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`),
   이동시간 반감기(`TRAVEL_HALF_LIFE_MIN`)는 `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
 - 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다. 시연에서는 출동

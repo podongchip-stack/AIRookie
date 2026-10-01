@@ -849,19 +849,18 @@ class HubEngine:
     # ── 존 · 후보 ─────────────────────────────────────────────────────────────
 
     def reject_ratio(self, case_id: str, ambulance_gps: GpsPoint, max_zone: int) -> float:
-        """현재 존(1~max_zone) 안 병원들 중, 명시적으로 응답(approved/rejected/
-        confirmed)한 병원 대비 거절(rejected)한 병원의 비율. 아직 아무도 응답하지
-        않았으면(전부 pending) 0.0을 반환한다 — 시간 기반이 아닌 거절 비율 기반
-        존 확장 판단에 쓴다.
+        """현재 존(1~max_zone) 안 **후보 병원 전체** 대비 명시적으로 거절(rejected)한 병원의 비율.
+        시간 기반이 아닌 거절 비율 기반 존 확장 판단에 쓴다. 후보가 없으면 0.0(빈 존은 따로 넓힌다).
+
+        2026-10-01: 분모를 "응답한 병원"에서 "존 안 후보 전체"로 바꿨다. 예전엔 첫 응답이 거절이면 1/1 = 100%라
+        후보가 10곳이어도 한 곳의 거절로 바로 넓어졌다. 지금은 10곳 중 4곳(40%)이 거절해야 넓어진다.
         """
         with self._lock:
             candidates = self._candidates_in_zone(ambulance_gps, max_zone)
             statuses = [self._approval_status.get((case_id, info.hospitalId), "pending") for info, _ in candidates]
-        responded = [s for s in statuses if s in ("approved", "rejected", "confirmed")]
-        if not responded:
+        if not statuses:
             return 0.0
-        rejected = sum(1 for s in responded if s == "rejected")
-        return rejected / len(responded)
+        return sum(1 for s in statuses if s == "rejected") / len(statuses)
 
     def _candidates_in_zone(
         self, ambulance_gps: GpsPoint, max_zone: int

@@ -117,7 +117,13 @@ def main() -> None:
     assert ratio_before == 0.0, "아무도 응답 안 했는데 거절 비율이 0이 아니면 안 된다"
     print(f"  거절 비율(응답 전): {ratio_before:.0%}")
 
-    print("\n=== 존 확장 시나리오: 병원 두 곳이 거절하면 실제 거절 비율로 확장 판단 ===")
+    print("\n=== 존 확장 시나리오: 존 안 후보 전체 대비 거절 비율 40% 이상이면 확장 ===")
+    reject_one = ApprovalAction(caseId=CASE_ID, action="hospital_reject", hospital_id="H001", actor="hospital",
+                                timestamp="2026-07-30T14:14:00Z")
+    engine.apply_approval_action(reject_one)
+    one = engine.reject_ratio(CASE_ID, AMBULANCE_GPS, 1)
+    assert engine.expand_if_needed(1, one) == 1, f"3곳 중 1곳 거절({one:.0%})은 40% 미만이라 확장하면 안 된다"
+    print(f"  H001만 거절 → {one:.0%} → 확장 안 함 (예전엔 응답 1곳 중 1곳이라 100%로 바로 확장됐다)")
     for hospital_id in ("H001", "H002"):
         engine.apply_approval_action(
             ApprovalAction(
@@ -133,7 +139,7 @@ def main() -> None:
     new_max_zone = engine.expand_if_needed(max_zone, ratio_after)
     print(f"  H001, H002 거절 → 거절 비율 {ratio_after:.0%} (임계값 넘으면 확장)")
     print(f"  존 확장 {'O' if new_max_zone != max_zone else 'X'} (zone 1~{new_max_zone})")
-    assert new_max_zone == 2, "2/3 병원이 거절했으면 임계값(50%)을 넘어 존이 확장돼야 한다"
+    assert new_max_zone == 2, "2/3 병원이 거절했으면 임계값(40%)을 넘어 존이 확장돼야 한다"
 
     print("\n=== 존 확장 후 재매칭: zone=2까지 넓히면 H003도 후보에 포함되는지 확인 ===")
     result_zone2 = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=new_max_zone)
