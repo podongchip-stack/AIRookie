@@ -238,7 +238,8 @@ function AmbulanceDashboardContent() {
           </div>
           <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
             <CallDemoPanel
-              key={`call-${resetSeq}`}
+              // 이송이 끝나 기지로 돌아가는 동안·대기 중엔 지난 통화 텍스트를 비운다(이송 완료 뒤 남지 않게).
+              key={`call-${resetSeq}-${simOn && ["returning", "idle"].includes(mySim?.phase ?? "idle") ? "done" : "live"}`}
               onCallSignal={handleCallSignal}
               onAudioChunk={sendAudioChunk}
               startBlockedReason={startBlockedReason}
