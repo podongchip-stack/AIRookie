@@ -465,6 +465,17 @@ class HubEngine:
         with self._lock:
             return self._hospitals.get(hospital_id)
 
+    def list_hospitals(self) -> list[HospitalInfo]:
+        """관제 지도(2026-10-03)에 병원 마커를 찍기 위한 전체 목록."""
+        with self._lock:
+            return list(self._hospitals.values())
+
+    def list_case_results(self) -> list[HubMatchResult]:
+        """진행 중 사건 전부(관제 지도 따라잡기, 2026-10-03). get_cases_for_hospital()과 같이 환자 수용이
+        끝난 사건은 뺀다."""
+        with self._lock:
+            return [result for cid, result in self._case_results.items() if cid not in self._case_arrival]
+
     def confirm_hospital_info(self, hospital_id: str, ts: datetime) -> bool:
         """병원 대시보드의 "현재 정보 확인" 신호를 기록한다(2026-09-29).
         모르는 병원이면 False — 잘못된 hpid의 확인이 조용히 쌓이지 않게."""
@@ -549,6 +560,16 @@ class HubEngine:
             results = [self._case_results.get(cid) for cid in case_ids]
             return [result for result in results if result is not None]
 
+    def get_case_ids_for_apid(self, apid: str) -> list[str]:
+        """이 구급차의 진행 중 사건 id — 매칭 결과가 아직 없는(출동·통화 중) 사건도 포함, 수용이 끝난 사건은 뺀다."""
+        with self._lock:
+            return [cid for cid, a in self._case_apid.items() if a == apid and cid not in self._case_arrival]
+
+    def list_case_ids(self) -> list[str]:
+        """엔진이 들고 있는 사건 전부(확정·미확정·결과 전 사건 포함)."""
+        with self._lock:
+            return list(set(self._case_results) | set(self._case_apid))
+
     def get_unconfirmed_case_ids(self) -> list[str]:
         """확정 전 사건(재시작 뒤 정리용)."""
         with self._lock:
@@ -605,13 +626,15 @@ class HubEngine:
         for key in [k for k in self._case_overlay if k[0] == case_id]:
             del self._case_overlay[key]
 
-    def close_case(self, case_id: str) -> bool:
+    def close_case(self, case_id: str, include_confirmed: bool = False) -> bool:
         """확정 없이 끝난 사건(방치 정리·현장 종료)을 캐시·따라잡기·주기 재계산에서 뺀다
         (2026-10-01). 예전엔 확정된 사건만 60분 뒤 지워서, 취소·중단된 사건이 병원 대시보드
-        따라잡기 목록에 영원히 떴다. 이송 확정된 사건은 여기서 지우지 않는다(병상 차감이 걸려
-        있어 기존 60분 정리를 따른다). 지웠으면 True."""
+        따라잡기 목록에 영원히 떴다. 이송 확정된 사건은 기본적으로 지우지 않는다(기존 60분 정리를
+        따른다). include_confirmed=True면 확정 사건도 지운다(출동 시뮬레이션 재시작, 2026-10-03) —
+        병상 차감(_bed_overlay)은 병원 단위로 따로 남아 TTL대로 풀리므로 사건을 지워도 그대로다.
+        지웠으면 True."""
         with self._lock:
-            if case_id in self._case_confirmed_at:
+            if case_id in self._case_confirmed_at and not include_confirmed:
                 return False
             existed = case_id in self._case_results or case_id in self._case_apid
             self._drop_case_locked(case_id)

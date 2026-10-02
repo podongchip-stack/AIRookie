@@ -17,7 +17,7 @@ _TMP = tempfile.TemporaryDirectory()
 os.environ["HUB_STATE_PATH"] = str(Path(_TMP.name) / "hub_state.json")
 
 import app  # noqa: E402
-from ambulance_sim import HOSPITAL_DWELL_SEC, DispatchSim  # noqa: E402
+from ambulance_sim import HOSPITAL_DWELL_SEC, TRIP_SEC, DispatchSim  # noqa: E402
 from schema import AmbulanceInfo, CallSignal, GpsPoint, VoiceCallSummaryMessage, VoiceSummary, VoiceTranscript  # noqa: E402
 from test_app_background import _FakeSocket, _hospital  # noqa: E402
 
@@ -76,8 +76,18 @@ def main() -> None:
     assert not hosp.sent, "병원 탭은 출동 단계 위치를 받지 않는다"
     print("  [확인] 출동 상태·경로 전송, 재출동·조기 통화 시작 거부")
 
+    print("=== [정지] → 위치·단계 그대로, [상황 재개] → 멈춘 자리에서 이어서 (2026-10-03) ===")
+    app._handle_sim_command({"type": "sim_pause", "apid": "A_SIM", "caseId": case_id, "timestamp": "t"})
+    assert amb.sent[-1]["type"] == "ambulance_phase" and amb.sent[-1]["paused"] is True
+    clock.t += 3600
+    app._sim_tick()
+    assert app.sim.phase_of("A_SIM") == "dispatching", "정지 중엔 현장에 도착하지 않는다"
+    app._handle_sim_command({"type": "sim_resume", "apid": "A_SIM", "caseId": case_id, "timestamp": "t"})
+    assert amb.sent[-1]["paused"] is False
+    print("  [확인] 정지 중 진행 멈춤, 재개 상태 전송")
+
     print("=== 현장 도착 → 위치 고정, 거리순 후보, 통화 시작 허용 ===")
-    clock.t += 5.0
+    clock.t += TRIP_SEC / 2  # 모든 이동은 5초 고정(2026-10-03) — 중간에 한 번 본다
     app._sim_tick()
     assert "ambulance_position" in _types(amb), "움직이는 동안 위치를 보낸다"
     clock.t += 3600
@@ -173,8 +183,8 @@ def main() -> None:
                              "timestamp": "2026-10-01T00:30:00Z", "target": picked, "targetMode": "map"})
     state = app.sim.state("A_SIM")
     assert state["phase"] == "dispatching" and state["incident"] == picked, "지정 위치로 출동"
-    assert state["etaSec"] / state["speedup"] <= 90 + 1e-6, "화면 이동 시간은 상한(90초) 안"
-    print("  [확인] 지정 위치로 출동, 구간 배속 자동 조정")
+    assert abs(state["etaSec"] / state["speedup"] - TRIP_SEC) < 1, "화면 이동 시간은 5초 고정"
+    print("  [확인] 지정 위치로 출동, 화면 이동 시간 5초 고정")
 
     app._dashboard_sockets.difference_update({amb, hosp, other})
     print("\n모든 검사 통과")

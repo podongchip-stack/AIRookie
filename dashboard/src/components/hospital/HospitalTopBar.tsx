@@ -5,6 +5,7 @@ import { CONNECTION_LABEL, type ConnectionMode } from "@/hooks/use-dashboard-soc
 import { formatElapsed, useElapsedSeconds } from "@/hooks/use-elapsed-time";
 import { Viewer3DButton } from "@/components/hospital/Viewer3DButton";
 import { VerificationButton } from "@/components/ui/VerificationButton";
+import { secondaryButtonStyle } from "@/components/ui/button-styles";
 
 export function HospitalTopBar({
   caseCount,
@@ -12,6 +13,7 @@ export function HospitalTopBar({
   since,
   hospitalId,
   hospitalName,
+  onClose,
 }: {
   // 여러 구급차가 동시에 본원을 후보로 걸 수 있어(다중 사건 지원), 사건 하나의
   // status 대신 "본원이 후보로 걸린 사건이 몇 건인지"를 보여준다 — 개별 사건의
@@ -23,6 +25,8 @@ export function HospitalTopBar({
   // hub가 이번 사건의 병원 후보 목록에서 준 실제 병원명(E-Gen/Supabase 기반).
   // 아직 매칭된 사건이 없으면 null이라, 그동안은 ID로 대체 표시한다.
   hospitalName: string | null;
+  // 관제 지도 위에 띄웠을 때(2026-10-03) — [닫기]로 지도로 돌아간다.
+  onClose?: () => void;
 }) {
   const elapsed = useElapsedSeconds(since);
 
@@ -132,6 +136,11 @@ export function HospitalTopBar({
           </b>{" "}
           경과
         </span>
+        {onClose && (
+          <button type="button" className={secondaryButtonStyle} onClick={onClose}>
+            닫기 · 지도로 돌아가기
+          </button>
+        )}
       </div>
     </header>
   );

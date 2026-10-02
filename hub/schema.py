@@ -224,6 +224,19 @@ class AmbulanceInfo(BaseModel):
     updatedAt: str
 
 
+class VoiceUtterance(BaseModel):
+    """feature/voice → feature/hub : 통화 중 발화 하나의 인식 결과(2026-10-03). hub는 그 구급차 대시보드에만
+    call_transcript로 넘긴다 — 통화 시연 패널의 실시간 자막(실제 STT). 저장·로그하지 않는다(통화 원문은 voice
+    로컬 파일과 통화 요약에만 남는다)."""
+
+    apid: str
+    caseId: Optional[str] = None
+    start: float
+    end: float
+    text: str
+    source: Literal["ai"] = "ai"
+
+
 class VoiceRegistration(BaseModel):
     """feature/voice → feature/hub : voice가 뜰 때 자기 IP를 자동 탐지해서
     hub에 알려주는 자가 등록. 포트는 AmbulanceInfo.voicePort로 이미 알고
@@ -495,7 +508,9 @@ class CallSignal(BaseModel):
 # 연결 시점에 관련된 사건들을 즉시 찾아 그 소켓에만 돌려준다(app.py의
 # `_send_catchup()` 참고).
 
-DashboardRole = Literal["hospital", "ambulance"]
+# monitor(2026-10-03): 관제 지도. 병원 대시보드는 직접 접속하지 않고 이 지도에서 환자 요청이 온 병원을
+# 눌러 연다. 지도는 전체 병원·구급차 위치와 사건 요약(MonitorCase)만 받는다 — 통화 전문 등 환자 상세는 받지 않는다.
+DashboardRole = Literal["hospital", "ambulance", "monitor"]
 
 
 class DashboardIdentify(BaseModel):
@@ -556,6 +571,58 @@ class DashboardIdentityInfo(BaseModel):
     simDispatch: bool = False
 
 
+# ── feature/hub → 관제 지도(role=monitor, 2026-10-03) ────────────────────────
+
+
+class MapHospital(BaseModel):
+    """관제 지도의 병원 마커 하나(규칙 기반 — E-Gen 목록 좌표)."""
+    hospitalId: str
+    name: str
+    gps: GpsPoint
+    emergencyLevel: Optional[str] = None
+
+
+class MapAmbulance(BaseModel):
+    """관제 지도의 구급차 마커 하나. gps는 출동 시뮬레이션 위치가 있으면 그것, 없으면 등록된 기지 좌표."""
+    apid: str
+    name: str
+    gps: GpsPoint
+    base: GpsPoint
+
+
+class MapOverview(BaseModel):
+    """관제 지도가 연결할 때·병원/구급차 목록이 바뀔 때 받는 전체 목록."""
+    type: Literal["map_overview"] = "map_overview"
+    hospitals: list[MapHospital]
+    ambulances: list[MapAmbulance]
+    simDispatch: bool = False
+    source: Literal["rule"] = "rule"
+
+
+class MonitorCaseHospital(BaseModel):
+    hospitalId: str
+    name: str
+    status: HospitalStatus
+    distanceKm: float
+    # 이 병원이 든 존(1부터, 5km 간격). 존이 넓혀지면 바깥 존 병원들이 새로 들어온다.
+    zone: int
+
+
+class MonitorCase(BaseModel):
+    """사건 요약 — 매칭 결과(HubMatchResult)에서 지도에 필요한 것만 뽑았다. 통화 전문·활력징후 등 환자 상세는
+    뺀다(그건 요청을 받은 병원 대시보드만 본다). 매칭 결과가 바뀔 때마다 다시 온다."""
+    type: Literal["case_overview"] = "case_overview"
+    caseId: str
+    apid: Optional[str] = None
+    ambulanceName: Optional[str] = None
+    ambulanceGps: Optional[GpsPoint] = None
+    severityTag: Optional[Severity] = None
+    zoneActive: list[int]
+    zoneBandKm: float
+    hospitals: list[MonitorCaseHospital]
+    source: Literal["rule"] = "rule"
+
+
 class DispatchRequest(BaseModel):
     """dashboard → hub: 구급차 대시보드 [이동] (출동 시뮬레이션, 2026-10-01). caseId는 이때 만든다."""
     type: Literal["dispatch"] = "dispatch"
@@ -572,4 +639,13 @@ class SceneEnd(BaseModel):
     type: Literal["scene_end"] = "scene_end"
     apid: str
     caseId: str
+    timestamp: str
+
+
+class SimControl(BaseModel):
+    """dashboard → hub: [정지]·[상황 재개](2026-10-03) — 출동 중·현장·이송 중인 시연 상황을 멈추고 이어 간다.
+    구급차는 apid로 가린다(한 대는 한 번에 한 사건). caseId는 로그용."""
+    type: Literal["sim_pause", "sim_resume"]
+    apid: str
+    caseId: Optional[str] = None
     timestamp: str

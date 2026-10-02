@@ -47,6 +47,10 @@ HUB_BASE_URL = os.environ.get("HUB_BASE_URL", "http://127.0.0.1:5001")
 # 자체가 안 떠 있으면 등록이 실패한다 — 한 번 실패하고 포기하지 않고 이
 # 주기로 계속 재시도한다(info/send_to_hub.py와 동일한 재시도 철학).
 VOICE_REGISTER_RETRY_SEC = int(os.environ.get("VOICE_REGISTER_RETRY_SEC", 5))
+# 통화 중 발화 하나를 인식할 때마다 그 문장을 보내는 hub 주소(2026-10-03). hub가 그 구급차 대시보드의 통화
+# 시연 패널에만 실시간으로 띄운다(저장하지 않음). 예전엔 인식 결과가 통화가 끝나 요약에 실릴 때까지 화면에
+# 안 나왔다. 따로 안 주면 HUB_BASE_URL의 /voice/utterance.
+HUB_VOICE_UTTERANCE_URL = os.environ.get("HUB_VOICE_UTTERANCE_URL", f"{HUB_BASE_URL.rstrip('/')}/voice/utterance")
 
 # 이 voice 인스턴스가 실제로 바인딩할 포트. 포트 배정표(hub=5001, info=5002
 # 고정, voice=구급차 장비마다 6000대, 팀 합의 2026-08-11)의 voice 몫 — 구급차
@@ -105,6 +109,22 @@ def _register_with_hub() -> None:
             time.sleep(VOICE_REGISTER_RETRY_SEC)
 
 
+def _send_utterance(case_id: str | None, segment) -> None:
+    """인식한 발화 하나를 hub로 보낸다 — 통화·인식을 막지 않게 별도 스레드에서, 실패는 흡수(화면 표시용일 뿐)."""
+    if not VOICE_APID:
+        return
+    payload = {"apid": VOICE_APID, "caseId": case_id, "start": round(segment.start, 1),
+               "end": round(segment.end, 1), "text": segment.text}
+
+    def post() -> None:
+        try:
+            requests.post(HUB_VOICE_UTTERANCE_URL, json=payload, timeout=3)
+        except requests.RequestException as e:
+            print(f"  [통신] 실시간 발화 전달 실패(통화 요약에는 그대로 들어간다): {e}")
+
+    threading.Thread(target=post, daemon=True).start()
+
+
 def _run_pipeline(live: LiveTranscriber, duration_sec: float, session: str, case_id: str | None) -> None:
     """남은 발화 인식 + 구조화 + hub 전송을 백그라운드 스레드에서 실행한다.
     통화 중 인식이 밀려 있으면 몇 초 걸릴 수 있어 /call/end 응답을 막지 않으려고
@@ -132,7 +152,7 @@ def call_start():
             recorder.start()
         except RuntimeError as e:
             return jsonify({"error": str(e)}), 500
-        live = LiveTranscriber(recorder, _asr_model)
+        live = LiveTranscriber(recorder, _asr_model, on_segment=lambda seg: _send_utterance(case_id, seg))
         live.start()
 
         _recorder = recorder
@@ -174,6 +194,9 @@ def call_end():
 
 
 if __name__ == "__main__":
+    from console import use_utf8_console
+
+    use_utf8_console()  # Windows(cp949) 콘솔에서도 로그 출력으로 죽지 않게
     # hub가 살아있든 아니든 서버는 바로 뜨게, 자가등록은 별도 스레드에서
     # 재시도하며 진행한다 (hub/info가 이 voice보다 늦게 뜨는 순서도 흔할 것).
     threading.Thread(target=_register_with_hub, daemon=True).start()

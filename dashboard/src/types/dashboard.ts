@@ -276,6 +276,8 @@ export interface CallSignal {
 }
 
 export type DashboardRole = "ambulance" | "hospital";
+// hub 소켓 접속 역할. monitor(2026-10-03)는 관제 지도 — 승인 같은 행위는 하지 않고 보기만 한다.
+export type SocketRole = DashboardRole | "monitor";
 
 // dashboard → feature/hub. 소켓 연결 직후 보내는 자기소개. hub는 그동안 연결을
 // 완전히 익명으로 취급해서, 새 탭이 이미 진행 중인 사건이 있는 상태로 뒤늦게
@@ -284,7 +286,7 @@ export type DashboardRole = "ambulance" | "hospital";
 // hpid/apid인지 알려주면 hub가 관련된 사건들을 연결 시점에 바로 되돌려준다.
 export interface DashboardIdentify {
   type: "identify";
-  role: DashboardRole;
+  role: SocketRole;
   // role="hospital"이면 hpid, role="ambulance"면 apid.
   id: string;
 }
@@ -297,7 +299,7 @@ export interface DashboardIdentify {
 // 판단할 수 있다(hub README "출력 스키마 6" 참고).
 export interface DashboardIdentityInfo {
   type: "identity_info";
-  role: DashboardRole;
+  role: SocketRole;
   id: string;
   name: string | null;
   known: boolean;
@@ -331,6 +333,89 @@ export interface DashboardState {
   // 병원 대시보드 전용 — hub가 보내주는 "귀원 정보 현황". 구급차 화면·mock
   // 모드·구버전 hub에서는 null로 남는다.
   selfInfo: HospitalSelfInfo | null;
+  // 관제 지도 전용(2026-10-03) — 전체 병원·구급차 목록과 사건 요약(caseId -> 요약).
+  mapOverview: MapOverview | null;
+  monitorCases: Record<string, MonitorCase>;
+  // caseId -> 통화 중 voice가 인식한 발화(2026-10-03, 구급차 탭만 받는다). 통화 시연 패널의 실시간 자막.
+  callTranscripts: Record<string, CallTranscriptLine[]>;
+  // 관제 지도의 "병원 응답" 기록(2026-10-03) — 사건 요약이 바뀔 때 병원 상태가 달라진 것을 쌓는다(최근 것이 앞).
+  monitorEvents: MonitorEvent[];
+}
+
+// hub → dashboard: 연결(재연결) 직후 따라잡기 끝에 오는 "지금 진행 중인 사건 목록"(2026-10-03). 탭은 hub가
+// 꺼졌다 켜져도 자동 재연결하며 화면 상태를 들고 있어서, 그 사이 끝난 사건이 계속 남았다 — 목록에 없는 사건은 지운다.
+export interface CaseSync {
+  type: "case_sync";
+  caseIds: string[];
+}
+
+// hub → 구급차 탭: 통화 중 voice(Qwen3-ASR)가 발화 하나를 인식할 때마다(2026-10-03). AI 처리 결과.
+export interface CallTranscriptLine {
+  type: "call_transcript";
+  apid: string;
+  caseId: string | null;
+  start: number;
+  end: number;
+  text: string;
+  source: "ai";
+}
+
+export interface MonitorEvent {
+  at: string;
+  caseId: string;
+  ambulanceName: string;
+  hospitalId: string;
+  hospitalName: string;
+  status: HospitalStatus;
+}
+
+// ── hub → 관제 지도(role=monitor, 2026-10-03) ───────────────────────────────
+// 병원 대시보드는 직접 접속하지 않고, 관제 지도에서 환자 요청이 온 병원을 눌러 연다.
+
+export interface MapHospital {
+  hospitalId: string;
+  name: string;
+  gps: { lat: number; lng: number };
+  emergencyLevel?: string | null;
+}
+
+export interface MapAmbulance {
+  apid: string;
+  name: string;
+  // 출동 시뮬레이션 위치가 있으면 그것, 없으면 기지 좌표. 움직이는 동안은 ambulanceSim이 더 새 값이다.
+  gps: { lat: number; lng: number };
+  base: { lat: number; lng: number };
+}
+
+export interface MapOverview {
+  type: "map_overview";
+  hospitals: MapHospital[];
+  ambulances: MapAmbulance[];
+  simDispatch: boolean;
+  source: "rule";
+}
+
+export interface MonitorCaseHospital {
+  hospitalId: string;
+  name: string;
+  status: HospitalStatus;
+  distanceKm: number;
+  // 이 병원이 든 존(1부터, zoneBandKm 간격). 거절 비율로 존이 넓혀지면 바깥 존 병원이 새로 들어온다.
+  zone: number;
+}
+
+// 사건 요약 — 통화 전문·활력징후 등 환자 상세는 없다(그건 요청을 받은 병원 대시보드만 본다).
+export interface MonitorCase {
+  type: "case_overview";
+  caseId: string;
+  apid: string | null;
+  ambulanceName: string | null;
+  ambulanceGps: { lat: number; lng: number } | null;
+  severityTag: Severity | null;
+  zoneActive: number[];
+  zoneBandKm: number;
+  hospitals: MonitorCaseHospital[];
+  source: "rule";
 }
 
 // hub → dashboard: 확정 없이 끝난 사건(방치 정리·현장 종료, 2026-10-01). 받으면 그 사건을
@@ -383,18 +468,20 @@ export interface AmbulanceSimState {
   gps: { lat: number; lng: number } | null;
   heading: number;
   etaSec: number | null;
-  // 이 구간의 배속(2026-10-01). 먼 곳은 화면 시간 상한(기본 90초) 안에 도착하도록 hub가 자동으로 올린다.
+  // 이 구간의 배속(2026-10-01). 화면 이동 시간이 5초 고정(2026-10-03)이라 먼 곳일수록 hub가 배속을 올린다.
   speedup?: number | null;
   path?: [number, number][] | null;
   base: { lat: number; lng: number };
   incident: { lat: number; lng: number } | null;
   hospitalId: string | null;
+  // [정지] 중(2026-10-03). 위치·남은 시간이 그대로 멈춰 있다. 구버전 hub면 없음.
+  paused?: boolean;
   simulated: true;
 }
 
-// dashboard → hub: [이동] · [현장 종료]
+// dashboard → hub: [이동] · [현장 종료] · [정지] · [상황 재개](2026-10-03)
 export interface DispatchCommand {
-  type: "dispatch" | "scene_end";
+  type: "dispatch" | "scene_end" | "sim_pause" | "sim_resume";
   apid: string;
   caseId: string;
   timestamp: string;
@@ -428,4 +515,8 @@ export type InboundMessage =
   | HospitalSelfInfo
   | CaseClosed
   | SceneCandidates
-  | AmbulanceSimState;
+  | AmbulanceSimState
+  | MapOverview
+  | MonitorCase
+  | CallTranscriptLine
+  | CaseSync;

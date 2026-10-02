@@ -66,15 +66,26 @@ function AmbulanceDashboardContent() {
     saveCaseId(apid, caseId);
   };
 
-  // 기본은 내가 연 통화(myCaseId)의 결과다. 그 caseId조차 모를 때(새 탭 등)는 hub가 준
+  // 출동 시뮬레이션(start-all.sh 기본값, 2026-10-01). 켜져 있으면 caseId는 [이동] 때 만들고,
+  // 통화 시작은 현장 도착 뒤 그 사건으로만 한다(hub도 같은 규칙으로 거부한다).
+  const simOn = state.identity.simDispatch === true;
+  const mySim = apid ? state.ambulanceSim[apid] ?? null : null;
+  // 이 구급차의 사건은 hub의 시뮬레이션 상태가 기준이다(2026-10-03). 탭에 기억해 둔 caseId는 세션 저장소라
+  // 브라우저를 껐다 켜면 사라지거나 지난 사건 것이 남는데, 그러면 [현장 종료]·통화 시작이 엉뚱한 caseId로
+  // 나가 hub가 조용히 거부했다(버튼은 켜져 있는데 눌러도 안 되는 문제). hub가 사건을 알려 주면 그것을 쓰고,
+  // 대기·복귀 중처럼 hub의 caseId가 비어 있을 때만 탭의 값([이동]으로 막 만든 caseId 포함)을 쓴다.
+  const simCaseId = simOn ? mySim?.caseId ?? null : null;
+  const currentCaseId = simCaseId ?? myCaseId;
+
+  // 기본은 내가 연 통화(currentCaseId)의 결과다. 그 caseId조차 모를 때(새 탭 등)는 hub가 준
   // 결과 중 이 구급차(apid)의 가장 최근 사건을 되찾아 쓴다 — hub는 연결 때 이 구급차의
   // 진행 중인 사건을 따라잡기로 보내준다. myCaseId가 있으면(새 통화 진행 중) 예전
   // 사건으로 대체하지 않는다: 새 결과가 오기 전에 지난 환자 정보를 띄우면 안 된다.
   const ownResults = Object.values(state.matchResults).filter((r) => r.apid === apid);
-  const myResult = myCaseId
-    ? state.matchResults[myCaseId] ?? null
+  const myResult = currentCaseId
+    ? state.matchResults[currentCaseId] ?? null
     : ownResults[ownResults.length - 1] ?? null;
-  const activeCaseId = myResult?.caseId ?? myCaseId;
+  const activeCaseId = myResult?.caseId ?? currentCaseId;
   const hubConfirmedId = myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
   // 요청 중 표시는 누른 순간의 결과가 그대로일 때만 유효하다 — hub가 새 결과를 보내면(확정
   // 반영이든 거부로 그대로든) 자연히 풀린다. 거부되면 hub가 재전송하지 않을 수 있어 5초 뒤에도 푼다.
@@ -89,10 +100,6 @@ function AmbulanceDashboardContent() {
     return () => clearTimeout(timer);
   }, [pendingConfirm, connectionMode]);
 
-  // 출동 시뮬레이션(hub --sim-dispatch, 2026-10-01). 켜져 있으면 caseId는 [이동] 때 만들고,
-  // 통화 시작은 현장 도착 뒤 그 사건으로만 한다(hub도 같은 규칙으로 거부한다).
-  const simOn = state.identity.simDispatch === true;
-  const mySim = apid ? state.ambulanceSim[apid] ?? null : null;
   const [callActive, setCallActive] = useState(false);
   // 출동 위치(주소 검색·지도 클릭). 없으면 무작위. 출동하면 비운다.
   const [dispatchTarget, setDispatchTarget] = useState<DispatchTarget | null>(null);
@@ -100,7 +107,7 @@ function AmbulanceDashboardContent() {
   // 내용이 다음 출동 화면에 남지 않게(2026-10-01). 통화 시연은 내려갈 때 마이크·인식을 스스로 멈춘다.
   const [resetSeq, setResetSeq] = useState(0);
   const canPickTarget = simOn && ["idle", "returning"].includes(mySim?.phase ?? "idle");
-  const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === myCaseId;
+  const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === currentCaseId;
   const startBlockedReason = simOn && !onSceneForMyCase ? "현장 도착 후 통화할 수 있습니다" : null;
 
   function handleDispatch() {
@@ -116,19 +123,27 @@ function AmbulanceDashboardContent() {
   }
 
   function handleSceneEnd() {
-    if (!apid || !activeCaseId) return;
-    if (!sendSimCommand("scene_end", apid, activeCaseId)) alertNotSent();
+    // hub가 기억하는 이 구급차의 사건으로 보낸다 — 다른 caseId면 hub가 거부한다.
+    const caseId = simCaseId ?? activeCaseId;
+    if (!apid || !caseId) return;
+    if (!sendSimCommand("scene_end", apid, caseId)) alertNotSent();
     else {
       setCallActive(false);
       setResetSeq((n) => n + 1);
     }
   }
 
+  // [정지]·[상황 재개](2026-10-03): 출동 중·현장·이송 중인 시연 상황을 멈추고 이어 간다.
+  function handleSimControl(type: "sim_pause" | "sim_resume") {
+    if (!apid) return;
+    if (!sendSimCommand(type, apid, simCaseId ?? activeCaseId ?? "")) alertNotSent();
+  }
+
   function handleCallSignal(signal: CallSignalType) {
     if (!apid) return;
     setCallActive(signal === "call_started");
     if (signal === "call_started" && simOn) {
-      if (myCaseId && !sendCallSignal(signal, apid, myCaseId)) alertNotSent();
+      if (currentCaseId && !sendCallSignal(signal, apid, currentCaseId)) alertNotSent();
     } else if (signal === "call_started") {
       // mock 모드에선 고정 caseId를 써야 mock-data.ts의 mockHubMatchResult
       // (caseId: "case-mock-demo")와 실제로 매칭된다 — crypto.randomUUID()로
@@ -231,6 +246,8 @@ function AmbulanceDashboardContent() {
               callActive={callActive}
               onDispatch={handleDispatch}
               onSceneEnd={handleSceneEnd}
+              onPause={() => handleSimControl("sim_pause")}
+              onResume={() => handleSimControl("sim_resume")}
             />
           )}
           <div className={css({ flex: "0 0 auto" })}>
@@ -243,6 +260,7 @@ function AmbulanceDashboardContent() {
               onCallSignal={handleCallSignal}
               onAudioChunk={sendAudioChunk}
               startBlockedReason={startBlockedReason}
+              voiceLines={currentCaseId ? state.callTranscripts[currentCaseId] ?? [] : []}
             />
           </div>
         </div>
