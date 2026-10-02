@@ -252,7 +252,7 @@ def build_conditions(row: dict | None, now: datetime) -> Conditions:
         # 명부에는 있는데 응답에 등장하지 않는다. "병상 0"과 절대 같지 않다
         return Conditions(missingFromFeed=True)
 
-    available = D.parse_bed_count(row.get("hvec"))
+    available = D.parse_bed_count(row.get("hvec"), minus_one_missing=False)  # hvec의 -1은 과밀 1명(mapper.py)
     total = D.parse_bed_count(row.get("hvs38"))
     updated = D.parse_hvidate(row.get("hvidate"))
     age = int((now - updated).total_seconds() // 60) if updated else None

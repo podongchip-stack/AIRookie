@@ -1,6 +1,7 @@
 "use client";
 
 import { css } from "styled-system/css";
+import { VerificationButton } from "@/components/ui/VerificationButton";
 import { CONNECTION_LABEL, type ConnectionMode } from "@/hooks/use-dashboard-socket";
 import { formatElapsed, useElapsedSeconds } from "@/hooks/use-elapsed-time";
 
@@ -90,6 +91,7 @@ export function AmbulanceTopBar({
       </div>
 
       <div className={css({ display: "flex", alignItems: "center", gap: "4.5" })}>
+        <VerificationButton />
         <span
           className={css({
             display: "inline-flex",

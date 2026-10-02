@@ -117,7 +117,13 @@ def main() -> None:
     assert ratio_before == 0.0, "아무도 응답 안 했는데 거절 비율이 0이 아니면 안 된다"
     print(f"  거절 비율(응답 전): {ratio_before:.0%}")
 
-    print("\n=== 존 확장 시나리오: 병원 두 곳이 거절하면 실제 거절 비율로 확장 판단 ===")
+    print("\n=== 존 확장 시나리오: 존 안 후보 전체 대비 거절 비율 40% 이상이면 확장 ===")
+    reject_one = ApprovalAction(caseId=CASE_ID, action="hospital_reject", hospital_id="H001", actor="hospital",
+                                timestamp="2026-07-30T14:14:00Z")
+    engine.apply_approval_action(reject_one)
+    one = engine.reject_ratio(CASE_ID, AMBULANCE_GPS, 1)
+    assert engine.expand_if_needed(1, one) == 1, f"3곳 중 1곳 거절({one:.0%})은 40% 미만이라 확장하면 안 된다"
+    print(f"  H001만 거절 → {one:.0%} → 확장 안 함 (예전엔 응답 1곳 중 1곳이라 100%로 바로 확장됐다)")
     for hospital_id in ("H001", "H002"):
         engine.apply_approval_action(
             ApprovalAction(
@@ -133,7 +139,7 @@ def main() -> None:
     new_max_zone = engine.expand_if_needed(max_zone, ratio_after)
     print(f"  H001, H002 거절 → 거절 비율 {ratio_after:.0%} (임계값 넘으면 확장)")
     print(f"  존 확장 {'O' if new_max_zone != max_zone else 'X'} (zone 1~{new_max_zone})")
-    assert new_max_zone == 2, "2/3 병원이 거절했으면 임계값(50%)을 넘어 존이 확장돼야 한다"
+    assert new_max_zone == 2, "2/3 병원이 거절했으면 임계값(40%)을 넘어 존이 확장돼야 한다"
 
     print("\n=== 존 확장 후 재매칭: zone=2까지 넓히면 H003도 후보에 포함되는지 확인 ===")
     result_zone2 = engine.process_voice_summary(voice, AMBULANCE_GPS, max_zone=new_max_zone)
@@ -260,6 +266,7 @@ def main() -> None:
     test_expertise_bonus_and_exact_match()
     test_hospital_roster()
     test_voice_v2_schema()
+    test_full_hospital_cannot_approve()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -650,14 +657,16 @@ def test_bed_full_and_rejected_ranking() -> None:
     assert by_id["F002"].bedDataStale and not by_id["F002"].demoteReasons, "오래된 값의 0은 만실로 믿으면 안 된다"
     assert by_id["F003"].bedCountUnknown and not by_id["F003"].demoteReasons, "미상은 순위를 막으면 안 된다"
 
-    engine.apply_approval_action(_action(case_id, "hospital_approve", "F001"))
+    assert not engine.apply_approval_action(_action(case_id, "hospital_approve", "F001")), \
+        "확인된 만실 병원의 승인은 거부된다(2026-10-01)"
+    engine.apply_approval_action(_action(case_id, "hospital_approve", "F004"))
     engine.apply_approval_action(_action(case_id, "hospital_reject", "F002"))
     patched = engine.get_case_result(case_id)
     order = [h.hospitalId for h in patched.hospitals]
-    print(f"  F001 승인·F002 거절 후 캐시 순위: {order}")
-    assert order[0] == "F001", "병원이 승인했으면 병상 0이어도 내리지 않는다(명시적 응답 우선)"
+    print(f"  F001 승인 거부·F004 승인·F002 거절 후 캐시 순위: {order}")
+    assert order[0] == "F004", "승인한 병원은 맨 앞(가장 멀어도)"
     assert order[-1] == "F002" and patched.hospitals[-1].demoteReasons == ["rejected"], "거절한 병원은 맨 뒤"
-    print("  [확인] 확인된 만실만 뒤로, 승인 응답은 만실 판정보다 우선, 거절은 캐시에서도 즉시 맨 뒤로 재정렬")
+    print("  [확인] 확인된 만실만 뒤로·그 병원 승인은 거부, 승인 병원은 맨 앞, 거절은 캐시에서도 즉시 맨 뒤로 재정렬")
 
 
 class _FakeRouter:
@@ -931,6 +940,26 @@ def test_voice_v2_schema() -> None:
     assert info.requiredDepartment == "내과" and top.specialtyMatch.basis == "exact", "대응표로 도출한 필요 진료과로 정확 일치"
     assert info.patient == "62세 남성" and info.injuryStatus == ["흉통"] and "흉통(심장성)" in info.expectedDiagnosis
     print(f"  [확인] KTAS 2 → high, 필요 진료과 {info.requiredDepartment} 정확 일치, 활력징후·의식 전달, 예상 병명 '{info.expectedDiagnosis}'")
+
+
+def test_full_hospital_cannot_approve() -> None:
+    """응급실 병상 0이 확인된 병원은 병원 승인을 못 한다(2026-10-01). 미상·오래된 값은 막지 않는다."""
+    print("\n=== 확인된 만실 병원의 병원 승인 거부 ===")
+    engine = _engine()
+    old = "2020-01-01T00:00:00+00:00"
+    for h in (
+        _hospital("F001", "[테스트] 만실", 35.1810, 128.1090, 0, beds_by_type={"ER_ADULT": 0}),
+        _hospital("F002", "[테스트] 병상 미상", 35.1812, 128.1091, 0, beds_by_type=None),
+        _hospital("F003", "[테스트] 오래된 0", 35.1814, 128.1092, 0, beds_by_type={"ER_ADULT": 0}, updated_at=old),
+        _hospital("F004", "[테스트] 병상 있음", 35.1816, 128.1093, 3, beds_by_type={"ER_ADULT": 3}),
+    ):
+        engine.update_hospital_info(h)
+    engine.process_voice_summary(_voice("case-full"), _TEST_GPS, max_zone=1)
+    results = {hid: engine.apply_approval_action(_action("case-full", "hospital_approve", hid))
+               for hid in ("F001", "F002", "F003", "F004")}
+    assert results == {"F001": False, "F002": True, "F003": True, "F004": True}, results
+    assert engine.get_case_status("case-full", "F001") == "pending"
+    print("  [확인] 확인된 만실(F001)만 승인 거부, 미상(F002)·오래된 0(F003)·병상 있음(F004)은 승인")
 
 
 if __name__ == "__main__":
