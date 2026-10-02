@@ -435,6 +435,13 @@ export interface SceneCandidate {
   gps: { lat: number; lng: number };
   availableBedCount: number;
   bedCountUnknown: boolean;
+  // 병상 신뢰도(AI) — 매칭 결과의 bedReliability와 같은 형태(2026-10-03). 신뢰도
+  // 모델 미연동 병원·구버전 hub면 없다(그 병원 칩만 안 그리면 된다, Optional 패턴).
+  bedReliability?: BedReliabilityMatch | null;
+  // 첫 연락 추천(2026-10-03): 빈 병상이 확인되고 도착 시점 유효 확률(rArrive)이 가장
+  // 높은 한 곳에만 true. 순위(거리순)는 바꾸지 않는다 — 첫 통화 상대 제안일 뿐,
+  // 틀려도 통화 뒤 존 전체 동시 전달이 뒤를 받친다.
+  firstCallRecommended?: boolean;
 }
 
 export interface SceneCandidates {

@@ -230,6 +230,25 @@ function bedReliabilityChipStyle(rArrive: number): string {
   return bedRelLowStyle;
 }
 
+// 첫 연락 추천(2026-10-03) 배지 — hub가 현장 후보(scene_candidates) 중 "빈 병상이
+// 확인되고 도착 시점 유효 확률(AI, rArrive)이 가장 높은 한 곳"에 표시해 보낸다.
+// 첫 통화 상대 제안일 뿐 순위(거리순)는 바꾸지 않으므로, 줄 순서가 아니라 배지로만
+// 드러낸다. 좋은 신호라 mint — 테두리를 둘러 일반 칩과 구분한다.
+const firstCallBadgeStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "bold",
+  color: "mint",
+  backgroundColor: "mintSoft",
+  borderWidth: "1px",
+  borderColor: "mint",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+  flexShrink: "0",
+});
+
 // 확장 필드(수술실·입원실·소아)의 E-Gen 필드명 → 한글 라벨.
 // info의 reliability/train_field.py FIELD_LABELS와 같은 값 — 모르는 필드가
 // 오면 필드명을 그대로 보여준다(조용히 숨기면 확장을 눈치채지 못한다).
@@ -308,27 +327,55 @@ export function HospitalCandidateListPanel({
             thinScrollbarStyle,
           )}
         >
-          {scene.hospitals.map((h) => (
-            <li
-              key={h.hospitalId}
-              className={css({
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "2",
-                paddingX: "3",
-                paddingY: "2",
-                borderWidth: "1px",
-                borderColor: "line",
-                borderRadius: "field",
-                fontSize: "sm",
-              })}
-            >
-              <span className={css({ fontWeight: "semibold", color: "ink" })}>{h.name}</span>
-              <span className={css({ color: "ink3", fontVariantNumeric: "tabular-nums", flexShrink: "0" })}>
-                {h.distanceKm}km · 병상 {h.bedCountUnknown ? "미상" : h.availableBedCount}
-              </span>
-            </li>
-          ))}
+          {scene.hospitals.map((h) => {
+            // 병상 신뢰도(AI) — 매칭 결과 카드와 같은 실시간 감쇠 칩. 없는 병원은
+            // 칩만 안 그린다(fail-soft, Optional 패턴).
+            const rel = h.bedReliability ? liveBedReliability(h.bedReliability, nowMs) : null;
+            return (
+              <li
+                key={h.hospitalId}
+                className={css({
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "1",
+                  paddingX: "3",
+                  paddingY: "2",
+                  borderWidth: "1px",
+                  borderColor: h.firstCallRecommended ? "mint" : "line",
+                  borderRadius: "field",
+                  fontSize: "sm",
+                })}
+              >
+                <div className={css({ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "2" })}>
+                  <span className={css({ display: "inline-flex", alignItems: "center", gap: "1.5", fontWeight: "semibold", color: "ink", minWidth: "0" })}>
+                    {h.name}
+                    {h.firstCallRecommended && (
+                      <span
+                        className={firstCallBadgeStyle}
+                        title="빈 병상이 확인된 후보 중 도착 시점 유효 확률(AI)이 가장 높은 병원 — 첫 통화 상대 제안이며 목록 순서(거리순)는 그대로입니다."
+                      >
+                        첫 연락 추천
+                      </span>
+                    )}
+                  </span>
+                  <span className={css({ color: "ink3", fontVariantNumeric: "tabular-nums", flexShrink: "0" })}>
+                    {h.distanceKm}km · 병상 {h.bedCountUnknown ? "미상" : h.availableBedCount}
+                  </span>
+                </div>
+                {rel && h.bedReliability && (
+                  <div className={css({ display: "flex" })}>
+                    <span
+                      className={bedReliabilityChipStyle(rel.rArrive)}
+                      title={`지금 유효 ${Math.round(rel.authority * 100)}%${h.bedReliability.confirmedAgeSec != null ? " · 병원이 직접 확인한 값" : ""} · ${h.bedReliability.modelTag}`}
+                    >
+                      AI · 도착 시 유효 {Math.round(rel.rArrive * 100)}%
+                      {h.bedReliability.confirmedAgeSec != null ? " ✓" : ""}
+                    </span>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </ListPanelShell>
     );
