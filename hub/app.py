@@ -28,11 +28,11 @@ from flask_sock import Sock
 from pydantic import ValidationError
 
 import bed_reliability
-from ambulance_sim import SPEEDUP as SIM_SPEEDUP, DispatchSim
+from ambulance_sim import TRIP_SEC as SIM_TRIP_SEC, DispatchSim
 import decision_log
 from delivery import HUB_REJECTION_URL, LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
-from geo import haversine_km
+from geo import ZONE_BAND_KM, haversine_km, zone_of
 from scoring import DEFAULT_MIN_PER_KM
 from hub_engine import HubEngine, _is_bed_count_unknown
 from schema import (
@@ -46,7 +46,13 @@ from schema import (
     HospitalInfo,
     HospitalInfoConfirm,
     HospitalSelfInfo,
+    MapAmbulance,
+    MapHospital,
+    MapOverview,
+    MonitorCase,
+    MonitorCaseHospital,
     SceneEnd,
+    SimControl,
     VoiceCallSummaryMessage,
     VoiceRegistration,
 )
@@ -173,6 +179,9 @@ def receive_hospital_roster():
     if removed or kept:
         decision_log.log_decision("hospital_roster_applied", {"removed": removed, "kept": kept, "rosterSize": len(ids)})
         print(f"  [통신] 병원 목록 반영 — 피드에서 빠진 병원 {len(removed)}곳 제거, {len(kept)}곳 보류(진행 중 사건 후보이거나 목록 급감)")
+    # info가 한 주기 병원을 다 보낸 뒤 오는 신호라, 관제 지도의 병원 마커를 여기서 한 번에 갱신한다
+    # (병원 하나 받을 때마다 보내면 주기마다 400여 번 보내게 된다).
+    _send_map_overview()
     return jsonify({"status": "ok", "removed": removed, "kept": kept}), 200
 
 
@@ -188,6 +197,7 @@ def receive_ambulance_info():
     engine.update_ambulance_info(info)
     if sim is not None:
         sim.ensure_unit(info.apid, info.gps)
+    _send_map_overview()
     return jsonify({"status": "ok", "apid": info.apid}), 200
 
 
@@ -453,6 +463,8 @@ def _send_to_dashboard(payload: dict) -> None:
                 print(f"  [통신] dashboard WebSocket 전송 실패, 연결 제거: {e}")
                 dead.add(ws)
         _dashboard_sockets.difference_update(dead)
+        if is_match:
+            _send_to_monitors_locked(_monitor_case(payload))
 
         # 매칭 결과라면 "이 사건이 어느 병원 대시보드에 실제로 도달했나"를
         # 누적 기록한다 (무응답 로그의 reachedAtBroadcast 판정 재료).
@@ -465,6 +477,69 @@ def _send_to_dashboard(payload: dict) -> None:
             }
             _case_reach.setdefault(case_id, set()).update(hospital_ids & connected)
             _case_last_activity[case_id] = datetime.now(timezone.utc)
+
+
+# ── 관제 지도(role=monitor, 2026-10-03) ─────────────────────────────────────
+# 병원 대시보드는 직접 접속하지 않고, 관제 지도에서 환자 요청이 온 병원을 눌러 연다. 지도는 전체 병원·구급차
+# 위치(map_overview), 사건 요약(case_overview), 구급차 이동(ambulance_phase·position)을 받는다. 통화 전문·
+# 활력징후 등 환자 상세는 보내지 않는다 — 그건 요청을 받은 병원 대시보드(role=hospital)만 받는다.
+
+
+def _monitor_case(payload: dict) -> dict:
+    """매칭 결과(HubMatchResult를 dump한 dict) → 관제 지도용 사건 요약."""
+    patient = payload.get("patientInfo") or {}
+    return MonitorCase(
+        caseId=payload["caseId"],
+        apid=payload.get("apid"),
+        ambulanceName=payload.get("ambulanceName"),
+        ambulanceGps=payload.get("ambulanceGps"),
+        severityTag=patient.get("severityTag"),
+        zoneActive=payload.get("zoneActive") or [],
+        zoneBandKm=ZONE_BAND_KM,
+        hospitals=[
+            MonitorCaseHospital(
+                hospitalId=h["hospitalId"], name=h["name"], status=h.get("status", "pending"),
+                distanceKm=h["distanceKm"], zone=zone_of(h["distanceKm"]),
+            )
+            for h in payload.get("hospitals") or []
+        ],
+    ).model_dump()
+
+
+def _build_map_overview() -> dict:
+    ambulances = []
+    for info in engine.list_ambulances():
+        gps = (sim.gps_for(info.apid) if sim is not None else None) or info.gps
+        ambulances.append(MapAmbulance(apid=info.apid, name=info.name, gps=gps, base=info.gps))
+    return MapOverview(
+        hospitals=[
+            MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel)
+            for h in engine.list_hospitals()
+        ],
+        ambulances=ambulances,
+        simDispatch=sim is not None,
+    ).model_dump()
+
+
+def _send_to_monitors_locked(payload: dict) -> None:
+    """관제 지도 탭 전부에 보낸다. _sockets_lock을 쥔 채로 부른다."""
+    message = json.dumps(payload, ensure_ascii=False)
+    for ws, (role, _id) in list(_socket_identity.items()):
+        if role != "monitor":
+            continue
+        try:
+            ws.send(message)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [통신] 관제 지도 전송 실패: {e}")
+
+
+def _send_map_overview() -> None:
+    with _sockets_lock:
+        if not any(role == "monitor" for role, _id in _socket_identity.values()):
+            return
+    overview = _build_map_overview()
+    with _sockets_lock:
+        _send_to_monitors_locked(overview)
 
 
 def _send_to_socket(ws, payload: dict, label: str) -> None:
@@ -542,6 +617,12 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
     즉시 이 소켓에만 한 번씩 보내준다 — 형식은 평소 브로드캐스트와 같은
     HubMatchResult라 dashboard는 "따라잡기 메시지"인지 구분할 필요 없이
     받은 대로 처리하면 된다."""
+    if identify.role == "monitor":
+        cases = engine.list_case_results()
+        print(f"  [통신] 관제 지도 연결 — 진행 중인 사건 {len(cases)}건 요약 전송")
+        for result in cases:
+            _send_to_socket(ws, _monitor_case(result.model_dump()), "관제 지도 따라잡기")
+        return
     cases = (
         engine.get_cases_for_hospital(identify.id)
         if identify.role == "hospital"
@@ -563,6 +644,8 @@ def _resolve_identity(role: str, id_: str) -> tuple[str | None, bool]:
     """role(hospital/ambulance)과 id(hpid/apid)로 hub가 아는 실제 이름과
     존재 여부를 찾는다. WebSocket의 identify 응답과 HTTP `GET /identity`
     양쪽이 같은 로직을 쓴다."""
+    if role == "monitor":
+        return "관제 지도", True
     if role == "hospital":
         hospital = engine.get_hospital(id_)
         return (hospital.name if hospital is not None else None), hospital is not None
@@ -928,6 +1011,27 @@ def _refresh_cases_for_hospital(hospital_id: str) -> None:
             _send_to_dashboard(updated.model_dump())
 
 
+def _handle_identify(ws, identify: DashboardIdentify) -> None:
+    """연결 직후 자기소개 처리: 신원 확인 → (관제 지도면 전체 목록) → 따라잡기 → 구급차 위치 → (병원이면 귀원 정보)."""
+    with _sockets_lock:
+        _socket_identity[ws] = (identify.role, identify.id)
+    _send_identity_info(ws, identify)
+    if identify.role == "monitor":
+        _send_to_socket(ws, _build_map_overview(), "관제 지도 목록")
+    _send_catchup(ws, identify)
+    if sim is not None and identify.role in ("ambulance", "monitor"):
+        apids = [identify.id] if identify.role == "ambulance" else [a.apid for a in engine.list_ambulances()]
+        for apid in apids:
+            state = sim.state(apid)
+            if state is not None:
+                _send_to_socket(ws, _sim_message("ambulance_phase", state), "시뮬레이션 상태")
+    # 병원이면 사건 유무와 무관하게 "귀원 정보 현황"도 바로 준다.
+    if identify.role == "hospital":
+        self_info = _build_self_info(identify.id)
+        if self_info is not None:
+            _send_to_socket(ws, self_info.model_dump(), "self_info")
+
+
 @sock.route("/ws/dashboard")
 def dashboard_socket(ws):
     """dashboard와의 WebSocket 연결. 구급차 대시보드 여러 개 + 병원 대시보드
@@ -969,19 +1073,7 @@ def dashboard_socket(ws):
                 except ValidationError as exc:
                     print(f"  [통신] 잘못된 DashboardIdentify 수신: {exc.errors()}")
                     continue
-                with _sockets_lock:
-                    _socket_identity[ws] = (identify.role, identify.id)
-                _send_identity_info(ws, identify)
-                _send_catchup(ws, identify)
-                if sim is not None and identify.role == "ambulance":
-                    state = sim.state(identify.id)
-                    if state is not None:
-                        _send_to_socket(ws, _sim_message("ambulance_phase", state), "시뮬레이션 상태")
-                # 병원이면 사건 유무와 무관하게 "귀원 정보 현황"도 바로 준다.
-                if identify.role == "hospital":
-                    self_info = _build_self_info(identify.id)
-                    if self_info is not None:
-                        _send_to_socket(ws, self_info.model_dump(), "self_info")
+                _handle_identify(ws, identify)
             elif payload.get("type") == "info_confirm":
                 try:
                     confirm = HospitalInfoConfirm.model_validate(payload)
@@ -989,7 +1081,7 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 HospitalInfoConfirm 수신: {exc.errors()}")
                     continue
                 _handle_info_confirm(confirm)
-            elif payload.get("type") in ("dispatch", "scene_end"):
+            elif payload.get("type") in ("dispatch", "scene_end", "sim_pause", "sim_resume"):
                 _handle_sim_command(payload)
             elif "action" in payload:
                 _handle_dashboard_action(payload)
@@ -1009,12 +1101,13 @@ def _sim_message(kind: str, state: dict) -> dict:
 
 
 def _send_sim(kind: str, state: dict) -> None:
-    """그 구급차 탭 전부 + 이송 중·병원 도착이면 그 확정 병원 탭에만 보낸다(복귀는 병원과 무관)."""
+    """그 구급차 탭 전부 + 이송 중·병원 도착이면 그 확정 병원 탭 + 관제 지도 탭 전부(2026-10-03)에 보낸다."""
     message = json.dumps(_sim_message(kind, state), ensure_ascii=False)
     hospital_id = state.get("hospitalId") if state.get("phase") in ("transporting", "at_hospital") else None
     with _sockets_lock:
         for ws, (role, id_) in list(_socket_identity.items()):
-            if (role == "ambulance" and id_ == state["apid"]) or (hospital_id and role == "hospital" and id_ == hospital_id):
+            if role == "monitor" or (role == "ambulance" and id_ == state["apid"]) or \
+                    (hospital_id and role == "hospital" and id_ == hospital_id):
                 try:
                     ws.send(message)
                 except Exception as e:  # noqa: BLE001
@@ -1031,16 +1124,25 @@ def _broadcast_sim_state(apid: str) -> None:
 
 
 def _handle_sim_command(payload: dict) -> None:
-    """[이동](dispatch) · [현장 종료](scene_end)."""
+    """[이동](dispatch) · [현장 종료](scene_end) · [정지](sim_pause) · [상황 재개](sim_resume, 2026-10-03)."""
     if sim is None:
         print("  [시뮬레이션] 꺼져 있어 출동·현장 종료 명령을 무시 (HUB_SIM_DISPATCH=1로 켬)")
         return
     try:
-        cmd = (DispatchRequest if payload.get("type") == "dispatch" else SceneEnd).model_validate(payload)
+        model = {"dispatch": DispatchRequest, "sim_pause": SimControl, "sim_resume": SimControl}.get(
+            payload.get("type"), SceneEnd)
+        cmd = model.model_validate(payload)
     except ValidationError as exc:
         print(f"  [통신] 잘못된 시뮬레이션 명령: {exc.errors()}")
         return
-    if isinstance(cmd, DispatchRequest):
+    if isinstance(cmd, SimControl):
+        pausing = cmd.type == "sim_pause"
+        ok, reason = sim.pause(cmd.apid) if pausing else sim.resume(cmd.apid)
+        event = ("sim_paused" if pausing else "sim_resumed") if ok else "sim_control_refused"
+        decision_log.log_decision(event, {"apid": cmd.apid, "caseId": cmd.caseId, "command": cmd.type,
+                                          "reason": reason, "simulated": True})
+        print(f"  [시뮬레이션] {cmd.apid} {'정지' if pausing else '상황 재개'}" + ("" if ok else f" 거부 ({reason})"))
+    elif isinstance(cmd, DispatchRequest):
         base = engine.get_ambulance_base(cmd.apid)
         if base is not None:
             sim.ensure_unit(cmd.apid, base.gps)
@@ -1208,7 +1310,7 @@ def start_background() -> None:
         # 재시작하면 구급차는 전부 기지(대기)에서 다시 시작한다 — 시뮬레이션 상태는 저장하지 않는다.
         for ambulance in engine.list_ambulances():
             sim.ensure_unit(ambulance.apid, ambulance.gps)
-        decision_log.log_decision("sim_dispatch_enabled", {"speedup": SIM_SPEEDUP})
+        decision_log.log_decision("sim_dispatch_enabled", {"tripSec": SIM_TRIP_SEC})
         print("  [시뮬레이션] 출동 시뮬레이션 켜짐 (구급차 위치는 시연용 가짜 위치)")
         threading.Thread(target=_sim_loop, name="hub-sim", daemon=True).start()
 

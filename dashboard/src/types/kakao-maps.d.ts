@@ -27,6 +27,8 @@ declare global {
       setBounds(bounds: LatLngBounds): void;
       setCenter(latlng: LatLng): void;
       relayout(): void;
+      getLevel(): number;
+      setLevel(level: number): void;
     }
 
     interface MarkerOptions {
@@ -40,6 +42,27 @@ declare global {
     class Marker {
       constructor(options: MarkerOptions);
       setMap(map: Map | null): void;
+      setPosition(latlng: LatLng): void;
+      setImage(image: MarkerImage): void;
+      setZIndex(zIndex: number): void;
+    }
+
+    // 관제 지도의 존(Zone) 범위 표시(2026-10-03). radius는 미터.
+    interface CircleOptions {
+      center: LatLng;
+      radius: number;
+      strokeWeight?: number;
+      strokeColor?: string;
+      strokeOpacity?: number;
+      strokeStyle?: string;
+      fillColor?: string;
+      fillOpacity?: number;
+    }
+
+    class Circle {
+      constructor(options: CircleOptions);
+      setMap(map: Map | null): void;
+      setRadius(radius: number): void;
       setPosition(latlng: LatLng): void;
     }
 
@@ -70,6 +93,7 @@ declare global {
     class Polyline {
       constructor(options: PolylineOptions);
       setMap(map: Map | null): void;
+      setPath(path: LatLng[]): void;
     }
 
     interface CustomOverlayOptions {
@@ -78,12 +102,15 @@ declare global {
       xAnchor?: number;
       yAnchor?: number;
       zIndex?: number;
+      // true면 오버레이 위 클릭이 지도로 번지지 않는다(관제 지도의 환자 요청 표시를 누를 때).
+      clickable?: boolean;
     }
 
     class CustomOverlay {
       constructor(options: CustomOverlayOptions);
       setMap(map: Map | null): void;
       setPosition(position: LatLng): void;
+      setZIndex(zIndex: number): void;
     }
 
     interface MouseEvent {
@@ -92,7 +119,10 @@ declare global {
 
     namespace event {
       function addListener(target: Map, type: "click", handler: (event: MouseEvent) => void): void;
+      function addListener(target: Map, type: "zoom_changed", handler: () => void): void;
+      function addListener(target: Marker, type: "click", handler: () => void): void;
       function removeListener(target: Map, type: "click", handler: (event: MouseEvent) => void): void;
+      function removeListener(target: Map, type: "zoom_changed", handler: () => void): void;
     }
 
     function load(callback: () => void): void;

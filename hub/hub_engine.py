@@ -465,6 +465,17 @@ class HubEngine:
         with self._lock:
             return self._hospitals.get(hospital_id)
 
+    def list_hospitals(self) -> list[HospitalInfo]:
+        """관제 지도(2026-10-03)에 병원 마커를 찍기 위한 전체 목록."""
+        with self._lock:
+            return list(self._hospitals.values())
+
+    def list_case_results(self) -> list[HubMatchResult]:
+        """진행 중 사건 전부(관제 지도 따라잡기, 2026-10-03). get_cases_for_hospital()과 같이 환자 수용이
+        끝난 사건은 뺀다."""
+        with self._lock:
+            return [result for cid, result in self._case_results.items() if cid not in self._case_arrival]
+
     def confirm_hospital_info(self, hospital_id: str, ts: datetime) -> bool:
         """병원 대시보드의 "현재 정보 확인" 신호를 기록한다(2026-09-29).
         모르는 병원이면 False — 잘못된 hpid의 확인이 조용히 쌓이지 않게."""
