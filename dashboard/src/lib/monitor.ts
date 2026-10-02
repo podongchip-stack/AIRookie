@@ -2,14 +2,16 @@ import type { AmbulancePhase, HospitalStatus, MonitorCase, Severity } from "@/ty
 
 // 관제 지도(2026-10-03) 공용 계산. 지도 마커와 왼쪽 사건 목록이 같은 규칙을 쓰도록 한 곳에 둔다.
 
+// 병원 응답 상태 색(2026-10-03): 판단 대기 노랑 · 수용 승인 연두 · 수용 불가 빨강 · 이송 확정 초록.
+// 요청 존 범위는 노랑과 헷갈리지 않게 보라색.
 export const MAP_COLORS = {
   hospital: "#1E5FA8",
   ambulance: "#E8590C",
-  request: "#D93F35",
-  approved: "#1E5FA8",
+  request: "#F5C518",
+  approved: "#8BC34A",
   confirmed: "#0E9F6E",
-  rejected: "#8A97A6",
-  zone: "#B87514",
+  rejected: "#D93F35",
+  zone: "#7048E8",
   incident: "#D93F35",
 } as const;
 
@@ -63,8 +65,8 @@ export function hospitalRequests(cases: Record<string, MonitorCase>): Map<string
   return byHospital;
 }
 
-// 요청 표시·마커 색은 그 병원에서 가장 진행된 상태를 따른다: 이송 확정(초록) > 수용 승인(남색) > 판단 대기
-// (빨강) > 전부 수용 불가(회색). 거절한 병원까지 빨강이면 지도에서 "아직 답해야 할 병원"이 안 보인다.
+// 요청 표시·마커 색은 그 병원에서 가장 진행된 상태를 따른다: 이송 확정(초록) > 수용 승인(연두) > 판단 대기
+// (노랑) > 전부 수용 불가(빨강).
 const STATUS_RANK: Record<HospitalStatus, number> = { confirmed: 3, approved: 2, pending: 1, rejected: 0 };
 const STATUS_COLOR: Record<HospitalStatus, string> = {
   confirmed: MAP_COLORS.confirmed,
@@ -84,8 +86,21 @@ export function requestColor(requests: HospitalRequest[]): string {
   return STATUS_COLOR[topStatus(requests)];
 }
 
+// 흰 바탕 위 글자색 — 노랑·연두는 그대로 쓰면 안 읽혀서 같은 계열의 진한 색을 쓴다.
+const STATUS_TEXT_COLOR: Record<HospitalStatus, string> = {
+  pending: "#A16207",
+  approved: "#4D7C0F",
+  rejected: MAP_COLORS.rejected,
+  confirmed: MAP_COLORS.confirmed,
+};
+
 export function statusColor(status: HospitalStatus): string {
-  return STATUS_COLOR[status];
+  return STATUS_TEXT_COLOR[status];
+}
+
+// 색 칩 위 글자색 — 노랑·연두 배경엔 어두운 글자, 빨강·초록엔 흰 글자.
+export function statusInk(status: HospitalStatus): string {
+  return status === "pending" || status === "approved" ? "#1F2933" : "#FFFFFF";
 }
 
 // 상태 기호 — 색만으로 구분하지 않게(색약·흑백 화면) 글자 앞에 붙인다.

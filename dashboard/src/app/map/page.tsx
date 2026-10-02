@@ -59,8 +59,8 @@ export default function MonitorMapPage() {
           <LegendDot color={MAP_COLORS.hospital} label="병원" round />
           <LegendDot color={MAP_COLORS.request} label="🚨 판단 대기 (눌러서 대시보드 열기)" round />
           <LegendDot color={MAP_COLORS.approved} label="✓ 수용 승인" round />
-          <LegendDot color={MAP_COLORS.confirmed} label="🚑 이송 확정" round />
           <LegendDot color={MAP_COLORS.rejected} label="✕ 수용 불가" round />
+          <LegendDot color={MAP_COLORS.confirmed} label="🚑 이송 확정" round />
           <LegendDot color={MAP_COLORS.ambulance} label="구급차 (시뮬레이션 위치)" />
           <LegendDot color={MAP_COLORS.zone} label="요청 존 범위" dashed />
           <span className={css({ color: CONNECTION_LABEL[connectionMode].color })}>{CONNECTION_LABEL[connectionMode].text}</span>

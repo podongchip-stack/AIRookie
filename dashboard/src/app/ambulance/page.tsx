@@ -260,6 +260,7 @@ function AmbulanceDashboardContent() {
               onCallSignal={handleCallSignal}
               onAudioChunk={sendAudioChunk}
               startBlockedReason={startBlockedReason}
+              voiceLines={currentCaseId ? state.callTranscripts[currentCaseId] ?? [] : []}
             />
           </div>
         </div>

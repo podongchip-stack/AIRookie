@@ -10,7 +10,7 @@ import {
   escapeHtml,
 } from "@/lib/kakao-map-markers";
 import {
-  MAP_COLORS, PHASE_SHORT, STATUS_ICON, STATUS_SHORT, requestColor, topStatus, type HospitalRequest,
+  MAP_COLORS, PHASE_SHORT, STATUS_ICON, STATUS_SHORT, requestColor, statusInk, topStatus, type HospitalRequest,
 } from "@/lib/monitor";
 import type { AmbulanceSimState, MapOverview, MonitorCase } from "@/types/dashboard";
 
@@ -33,7 +33,7 @@ type HospitalLayer = { marker: kakao.maps.Marker; label: kakao.maps.CustomOverla
 type AmbulanceLayer = { marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay; text: string };
 
 // 요청 표시는 짧게(상태만) — 요청 병원이 존 확장으로 20곳 가까이 되면 긴 표시는 서로 겹쳐 지도를 가렸다.
-// 어느 구급대의 요청인지는 마우스를 올리면(title) 보인다. 수용 불가만 남은 병원은 회색으로 흐리게.
+// 어느 구급대의 요청인지는 마우스를 올리면(title) 보인다. 색은 상태별(노랑·연두·빨강·초록).
 function badgeElement(requests: HospitalRequest[], onClick: () => void): HTMLElement {
   const status = topStatus(requests);
   const text = requests.length > 1 ? `${STATUS_ICON[status]} ${requests.length}건` : `${STATUS_ICON[status]} ${STATUS_SHORT[status]}`;
@@ -43,9 +43,9 @@ function badgeElement(requests: HospitalRequest[], onClick: () => void): HTMLEle
     requests.map((r) => `${r.ambulanceName} · ${STATUS_SHORT[r.status]} · 존 ${r.zone}`).join("\n") +
     "\n눌러서 병원 대시보드 열기";
   el.style.cssText =
-    `transform:translateY(-14px);cursor:pointer;white-space:nowrap;font-size:11px;font-weight:700;color:#FFFFFF;` +
-    `background:${requestColor(requests)};border:2px solid #FFFFFF;border-radius:999px;padding:1px 7px;` +
-    `box-shadow:0 1px 4px rgba(22,34,46,.35);opacity:${status === "rejected" ? 0.75 : 1};`;
+    `transform:translateY(-14px);cursor:pointer;white-space:nowrap;font-size:11px;font-weight:700;` +
+    `color:${statusInk(status)};background:${requestColor(requests)};border:2px solid #FFFFFF;border-radius:999px;` +
+    `padding:1px 7px;box-shadow:0 1px 4px rgba(22,34,46,.35);`;
   el.textContent = text;
   el.onclick = (event) => {
     event.stopPropagation();

@@ -224,6 +224,19 @@ class AmbulanceInfo(BaseModel):
     updatedAt: str
 
 
+class VoiceUtterance(BaseModel):
+    """feature/voice → feature/hub : 통화 중 발화 하나의 인식 결과(2026-10-03). hub는 그 구급차 대시보드에만
+    call_transcript로 넘긴다 — 통화 시연 패널의 실시간 자막(실제 STT). 저장·로그하지 않는다(통화 원문은 voice
+    로컬 파일과 통화 요약에만 남는다)."""
+
+    apid: str
+    caseId: Optional[str] = None
+    start: float
+    end: float
+    text: str
+    source: Literal["ai"] = "ai"
+
+
 class VoiceRegistration(BaseModel):
     """feature/voice → feature/hub : voice가 뜰 때 자기 IP를 자동 탐지해서
     hub에 알려주는 자가 등록. 포트는 AmbulanceInfo.voicePort로 이미 알고

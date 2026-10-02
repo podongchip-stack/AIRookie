@@ -23,6 +23,7 @@ import type {
   HospitalStatus,
   HubMatchResult,
   InboundMessage,
+  CallTranscriptLine,
   MapOverview,
   MonitorCase,
   MonitorEvent,
@@ -59,6 +60,7 @@ const INITIAL_STATE: DashboardState = {
   mapOverview: null,
   monitorCases: {},
   monitorEvents: [],
+  callTranscripts: {},
 };
 
 // 관제 지도 "병원 응답" 기록에 남길 최대 개수
@@ -100,11 +102,36 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       const matchResults = { ...prev.matchResults };
       const sceneCandidates = { ...prev.sceneCandidates };
       const monitorCases = { ...prev.monitorCases };
+      const callTranscripts = { ...prev.callTranscripts };
       delete matchResults[caseId];
       delete sceneCandidates[caseId];
       delete monitorCases[caseId];
-      return { ...prev, matchResults, sceneCandidates, monitorCases };
+      delete callTranscripts[caseId];
+      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts };
     });
+  }, []);
+
+  // 재연결 직후 hub가 알려주는 진행 중 사건 목록에 없는 사건은 화면에서 지운다(hub 재시작 등으로 끝난 사건).
+  const applyCaseSync = useCallback((caseIds: string[]) => {
+    const keep = new Set(caseIds);
+    const pick = <T,>(record: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(record).filter(([caseId]) => keep.has(caseId)));
+    setState((prev) => ({
+      ...prev,
+      matchResults: pick(prev.matchResults),
+      sceneCandidates: pick(prev.sceneCandidates),
+      monitorCases: pick(prev.monitorCases),
+      callTranscripts: pick(prev.callTranscripts),
+    }));
+  }, []);
+
+  const applyCallTranscript = useCallback((line: CallTranscriptLine) => {
+    if (!line.caseId) return;
+    const caseId = line.caseId;
+    setState((prev) => ({
+      ...prev,
+      callTranscripts: { ...prev.callTranscripts, [caseId]: [...(prev.callTranscripts[caseId] ?? []), line] },
+    }));
   }, []);
 
   const applyMapOverview = useCallback((overview: MapOverview) => {
@@ -270,6 +297,12 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "case_overview":
               applyMonitorCase(parsed);
               break;
+            case "call_transcript":
+              applyCallTranscript(parsed);
+              break;
+            case "case_sync":
+              applyCaseSync(parsed.caseIds);
+              break;
             case "match_result":
             case undefined:
               applyMatchResult(parsed);
@@ -291,7 +324,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, applyCallTranscript, applyCaseSync, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;

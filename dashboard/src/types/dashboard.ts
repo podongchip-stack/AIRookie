@@ -336,8 +336,28 @@ export interface DashboardState {
   // 관제 지도 전용(2026-10-03) — 전체 병원·구급차 목록과 사건 요약(caseId -> 요약).
   mapOverview: MapOverview | null;
   monitorCases: Record<string, MonitorCase>;
+  // caseId -> 통화 중 voice가 인식한 발화(2026-10-03, 구급차 탭만 받는다). 통화 시연 패널의 실시간 자막.
+  callTranscripts: Record<string, CallTranscriptLine[]>;
   // 관제 지도의 "병원 응답" 기록(2026-10-03) — 사건 요약이 바뀔 때 병원 상태가 달라진 것을 쌓는다(최근 것이 앞).
   monitorEvents: MonitorEvent[];
+}
+
+// hub → dashboard: 연결(재연결) 직후 따라잡기 끝에 오는 "지금 진행 중인 사건 목록"(2026-10-03). 탭은 hub가
+// 꺼졌다 켜져도 자동 재연결하며 화면 상태를 들고 있어서, 그 사이 끝난 사건이 계속 남았다 — 목록에 없는 사건은 지운다.
+export interface CaseSync {
+  type: "case_sync";
+  caseIds: string[];
+}
+
+// hub → 구급차 탭: 통화 중 voice(Qwen3-ASR)가 발화 하나를 인식할 때마다(2026-10-03). AI 처리 결과.
+export interface CallTranscriptLine {
+  type: "call_transcript";
+  apid: string;
+  caseId: string | null;
+  start: number;
+  end: number;
+  text: string;
+  source: "ai";
 }
 
 export interface MonitorEvent {
@@ -497,4 +517,6 @@ export type InboundMessage =
   | SceneCandidates
   | AmbulanceSimState
   | MapOverview
-  | MonitorCase;
+  | MonitorCase
+  | CallTranscriptLine
+  | CaseSync;

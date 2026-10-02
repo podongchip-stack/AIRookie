@@ -106,6 +106,50 @@ def main() -> None:
     client.post("/info/hospitals/roster", json={"hospitalIds": [near.hospitalId, "T_FAR"]})
     assert "map_overview" in _types(monitor), "병원 목록 한 주기가 끝나면 지도 목록을 다시 보낸다"
     print("  [확인] 구급차 상태·case_closed·map_overview 수신")
+
+    print("=== 통화 중 발화 인식(voice → hub) → 그 구급차 탭에만 실시간 자막 ===")
+    for sock in (monitor, amb, hosp):
+        sock.sent.clear()
+    r = client.post("/voice/utterance", json={"apid": "A_MAP", "caseId": "case-move", "start": 1.2, "end": 3.4,
+                                              "text": SECRET})
+    assert r.status_code == 202 and r.get_json()["delivered"] == 1
+    line = _last(amb, "call_transcript")
+    assert line["text"] == SECRET and line["caseId"] == "case-move" and line["source"] == "ai"
+    assert SECRET not in str(monitor.sent) and SECRET not in str(hosp.sent), "발화 원문은 구급차 탭에만"
+    assert client.post("/voice/utterance", json={"apid": "A_MAP"}).status_code == 400
+    print("  [확인] 구급차 탭만 call_transcript 수신, 병원·관제 지도는 안 받음")
+
+    print("=== (재)연결하면 진행 중 사건 목록(case_sync) — 화면에 남은 지난 사건을 지우게 ===")
+    case2 = "case-sync"
+    app.engine.register_case(case2, "A_MAP")
+    result2 = app.engine.process_voice_summary(
+        VoiceCallSummaryMessage(
+            caseId=case2, transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+            summary=VoiceSummary(patient="70대 여성", mechanism="낙상", symptoms=[], treatment=[], severity_tag="medium"),
+            source="ai",
+        ),
+        GpsPoint(lat=37.5665, lng=126.9780),
+    )
+    app.engine.register_case("case-dispatch-only", "A_MAP")  # 출동만 하고 아직 매칭 결과가 없는 사건
+    again_mon, again_amb = _FakeSocket(), _FakeSocket()
+    app._dashboard_sockets.update({again_mon, again_amb})
+    app._handle_identify(again_mon, DashboardIdentify(role="monitor", id="map"))
+    app._handle_identify(again_amb, DashboardIdentify(role="ambulance", id="A_MAP"))
+    assert case2 in _last(again_mon, "case_sync")["caseIds"]
+    amb_sync = _last(again_amb, "case_sync")["caseIds"]
+    assert case2 in amb_sync and "case-dispatch-only" in amb_sync, "구급차엔 결과 전 사건도 포함(자막·현장 후보 보존)"
+    print(f"  [확인] 관제 지도·구급차 탭이 진행 중 사건 목록 수신 — 구급차 {sorted(amb_sync)}")
+
+    print("=== 출동 시뮬레이션 재시작 → 이송 확정 사건까지 닫는다(구급차는 기지로 돌아가므로) ===")
+    hospital_id = result2.hospitals[0].hospitalId
+    app._handle_dashboard_action({"caseId": case2, "action": "hospital_approve", "hospital_id": hospital_id,
+                                  "actor": "hospital", "timestamp": "2026-10-03T00:02:00Z"})
+    app._handle_dashboard_action({"caseId": case2, "action": "final_approval", "hospital_id": hospital_id,
+                                  "actor": "paramedic", "timestamp": "2026-10-03T00:03:00Z"})
+    assert case2 not in app.engine.get_unconfirmed_case_ids(), "이송 확정 상태여야 한다"
+    app._settle_restored_cases()
+    assert app.engine.list_case_ids() == [], app.engine.list_case_ids()
+    print("  [확인] 재시작 정리 후 남은 사건 0건(확정 사건 포함)")
     print("모든 검사 통과")
 
 

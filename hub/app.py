@@ -55,6 +55,7 @@ from schema import (
     SimControl,
     VoiceCallSummaryMessage,
     VoiceRegistration,
+    VoiceUtterance,
 )
 
 app = Flask(__name__)
@@ -223,6 +224,23 @@ def receive_voice_registration():
     _mark_voice_addresses_dirty()
     print(f"  [통신] voice 자가등록 완료 — {registration.apid} -> {address}")
     return jsonify({"status": "ok", "apid": registration.apid}), 200
+
+
+@app.post("/voice/utterance")
+def receive_voice_utterance():
+    """통화 중 voice가 발화 하나를 인식할 때마다 보낸다(2026-10-03). 그 구급차 대시보드 탭에만 call_transcript로
+    넘긴다 — 병원·관제 지도로는 보내지 않고, 상태 파일·의사결정 로그에도 남기지 않는다(통화 원문은 voice 로컬
+    파일과 통화 요약에만). 탭이 없으면 그냥 버린다."""
+    try:
+        utterance = VoiceUtterance.model_validate(request.get_json(force=True))
+    except ValidationError as exc:
+        return jsonify({"error": "invalid VoiceUtterance", "detail": exc.errors()}), 400
+    payload = {"type": "call_transcript", **utterance.model_dump()}
+    with _sockets_lock:
+        targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and id_ == utterance.apid]
+    for ws in targets:
+        _send_to_socket(ws, payload, "실시간 발화")
+    return jsonify({"status": "ok", "delivered": len(targets)}), 202
 
 
 @app.post("/voice/summary")
@@ -608,7 +626,7 @@ def _relay_call_signal(signal: CallSignal) -> None:
         print(f"  [통신] {signal.apid}의 feature/voice로 통화 신호 중계 실패 ({path}): {e}")
 
 
-def _send_catchup(ws, identify: DashboardIdentify) -> None:
+def _send_catchup(ws, identify: DashboardIdentify) -> list[str]:
     """소켓이 연결 직후 보낸 자기소개(DashboardIdentify)에 답한다. hub는
     보통 새 매칭 결과가 생길 때만 그 순간 연결된 소켓들에 브로드캐스트하는데,
     이미 진행 중인 사건이 있는 상태에서 새 탭이 뒤늦게 연결되면 그 브로드캐스트를
@@ -622,7 +640,7 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
         print(f"  [통신] 관제 지도 연결 — 진행 중인 사건 {len(cases)}건 요약 전송")
         for result in cases:
             _send_to_socket(ws, _monitor_case(result.model_dump()), "관제 지도 따라잡기")
-        return
+        return [result.caseId for result in cases]
     cases = (
         engine.get_cases_for_hospital(identify.id)
         if identify.role == "hospital"
@@ -638,6 +656,7 @@ def _send_catchup(ws, identify: DashboardIdentify) -> None:
         ):
             with _sockets_lock:
                 _case_reach.setdefault(result.caseId, set()).add(identify.id)
+    return [result.caseId for result in cases]
 
 
 def _resolve_identity(role: str, id_: str) -> tuple[str | None, bool]:
@@ -1018,7 +1037,12 @@ def _handle_identify(ws, identify: DashboardIdentify) -> None:
     _send_identity_info(ws, identify)
     if identify.role == "monitor":
         _send_to_socket(ws, _build_map_overview(), "관제 지도 목록")
-    _send_catchup(ws, identify)
+    active = _send_catchup(ws, identify)
+    if identify.role == "ambulance":  # 결과 전(출동·통화 중) 사건의 현장 후보·실시간 자막도 지우지 않게
+        active = sorted(set(active) | set(engine.get_case_ids_for_apid(identify.id)))
+    # 탭은 hub가 꺼졌다 켜져도 자동 재연결하며 화면 상태를 그대로 들고 있다 — 그 사이 끝난 사건(재시작 정리·
+    # 방치 정리 등)은 case_closed를 못 받았으니, 지금 진행 중인 목록을 알려 나머지를 지우게 한다(2026-10-03).
+    _send_to_socket(ws, {"type": "case_sync", "caseIds": active}, "사건 목록 동기화")
     if sim is not None and identify.role in ("ambulance", "monitor"):
         apids = [identify.id] if identify.role == "ambulance" else [a.apid for a in engine.list_ambulances()]
         for apid in apids:
@@ -1272,21 +1296,25 @@ def _maintenance_loop() -> None:
 
 
 def _settle_restored_cases() -> None:
-    """재시작 때 복구된 확정 전 사건을 정리한다(2026-10-01).
+    """재시작 때 복구된 사건을 정리한다(2026-10-01).
 
-    - 출동 시뮬레이션 중이면: 재시작하면 구급차가 전부 기지 대기로 돌아가서, 확정 전 사건은 이어갈 구급차가
-      없다 → 바로 닫는다. 병원이 무시한 게 아니라 hub가 재시작한 것이라 무응답(NO_RESPONSE)은 남기지 않는다.
+    - 출동 시뮬레이션 중이면: 재시작하면 구급차가 전부 기지 대기로 돌아가서 어떤 사건도 이어갈 구급차가 없다 →
+      바로 닫는다. 2026-10-03부터는 이송 확정된 사건도 닫는다 — 예전엔 확정 사건을 60분 남겨서, 서버를 껐다 켜면
+      구급차는 기지에 있는데 대시보드엔 지난 사건(이송 확정)이 계속 떴다. 병상 차감은 병원 단위로 남는다.
+      병원이 무시한 게 아니라 hub가 재시작한 것이라 무응답(NO_RESPONSE)은 남기지 않는다.
     - 아니면: 120분 방치 정리(sweep)의 기준인 마지막 활동 시각이 메모리에만 있어 재시작 뒤엔 영영 정리되지
       않았다 → 지금을 마지막 활동으로 잡아 둔다.
     """
+    if sim is not None:
+        case_ids = engine.list_case_ids()
+        for case_id in case_ids:
+            if engine.close_case(case_id, include_confirmed=True):
+                decision_log.log_decision("case_closed", {"caseId": case_id, "reason": "hub_restart_sim_reset"})
+        if case_ids:
+            print(f"  [상태 복구] 출동 시뮬레이션 — 지난 사건 {len(case_ids)}건은 구급차가 기지로 돌아가 닫음")
+        return
     case_ids = engine.get_unconfirmed_case_ids()
     if not case_ids:
-        return
-    if sim is not None:
-        for case_id in case_ids:
-            if engine.close_case(case_id):
-                decision_log.log_decision("case_closed", {"caseId": case_id, "reason": "hub_restart_sim_reset"})
-        print(f"  [상태 복구] 출동 시뮬레이션 — 확정 전 사건 {len(case_ids)}건은 구급차가 기지로 돌아가 닫음")
         return
     now = datetime.now(timezone.utc)
     with _sockets_lock:

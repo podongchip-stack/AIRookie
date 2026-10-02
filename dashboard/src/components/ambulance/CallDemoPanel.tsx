@@ -5,7 +5,7 @@ import { css, cx } from "styled-system/css";
 import { Tag } from "@/components/hospital/Tag";
 import { dangerButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
-import type { CallSignalType } from "@/types/dashboard";
+import type { CallSignalType, CallTranscriptLine } from "@/types/dashboard";
 
 const BAR_COUNT = 24;
 const SILENT_LEVELS = Array<number>(BAR_COUNT).fill(0);
@@ -43,21 +43,30 @@ function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
 // 통화 시연: 버튼을 누르면 마이크를 캡처해 화면에 실시간으로 보여주고, 캡처된
 // 오디오 조각을 hub로 실시간 스트리밍한다. 통화 종료를 누르면 캡처를 멈추고
 // hub에 종료 신호를 보내 통화 요약 처리를 트리거한다.
-// 실시간 텍스트 표시는 브라우저 내장 Web Speech API(SpeechRecognition)로 시연용
-// 즉석 인식만 하는 것이다 — 실제 STT(Whisper/Qwen3-ASR)는 feature/voice 담당
-// 영역이라 이 텍스트는 hub로 보내는 값과 무관하다(hub에는 오디오 원본만 전달).
-// Chrome 계열 브라우저에서만 동작한다.
+// 실시간 텍스트는 voice(Qwen3-ASR, 실제 STT)가 발화를 하나 인식할 때마다 hub를 거쳐 오는 문장을 우선
+// 보여준다(voiceLines, 2026-10-03). voice 문장이 아직 없을 때만 브라우저 내장 Web Speech API(SpeechRecognition)
+// 즉석 인식을 예비로 보여준다 — 이건 hub로 보내는 값과 무관한 시연용이고 Chrome 계열에서만 동작한다.
+// 예전엔 브라우저 인식만 있어서, voice는 잘 인식하는데 화면엔 아무것도 안 뜨는 일이 있었다.
 // hub README에는 아직 이 오디오 스트리밍 스키마가 없다 — "hub가 직접 오디오를
 // 받는다"는 이 흐름은 voice/hub 팀과 별도로 확정이 필요한 가안이다.
+// 통화 시작부터 몇 초인지 — voice가 주는 발화 시작 시각(초)을 분:초로
+function formatSec(sec: number): string {
+  const total = Math.max(0, Math.floor(sec));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
 export function CallDemoPanel({
   onCallSignal,
   onAudioChunk,
   startBlockedReason,
+  voiceLines = [],
 }: {
   onCallSignal: (signal: CallSignalType) => void;
   onAudioChunk: (chunk: Blob) => void;
   // 값이 있으면 통화 시작을 막고 이유를 보여준다(출동 시뮬레이션: 현장 도착 전, 2026-10-01).
   startBlockedReason?: string | null;
+  // 이번 통화에서 voice가 인식한 발화(시간순)
+  voiceLines?: CallTranscriptLine[];
 }) {
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +95,7 @@ export function CallDemoPanel({
   useEffect(() => {
     const box = transcriptBoxRef.current;
     if (box) box.scrollTop = box.scrollHeight;
-  }, [transcript, interimText]);
+  }, [transcript, interimText, voiceLines.length]);
 
   const stopAll = useCallback(() => {
     if (rafRef.current != null) {
@@ -299,7 +308,18 @@ export function CallDemoPanel({
             thinScrollbarStyle,
           )}
         >
-          {recognitionUnavailable ? (
+          {voiceLines.length > 0 ? (
+            <ol className={css({ display: "flex", flexDirection: "column", gap: "1" })}>
+              {voiceLines.map((line) => (
+                <li key={`${line.start}-${line.text}`} className={css({ display: "flex", gap: "2" })}>
+                  <span className={css({ color: "ink3", fontVariantNumeric: "tabular-nums", flexShrink: "0" })}>
+                    {formatSec(line.start)}
+                  </span>
+                  <span>{line.text}</span>
+                </li>
+              ))}
+            </ol>
+          ) : recognitionUnavailable ? (
             <p className={css({ color: "ink3" })}>
               이 브라우저는 실시간 텍스트 변환을 지원하지 않습니다 (Chrome 계열 권장). 오디오 캡처·전송은 정상 동작합니다.
             </p>
@@ -330,6 +350,9 @@ export function CallDemoPanel({
         >
           <span className={css({ fontSize: "xs", color: "ink2" })}>
             {active ? "통화 중 · 실시간 전송" : startBlockedReason ?? "통화 대기 중"}
+            {voiceLines.length > 0 && (
+              <span className={css({ color: "navy", marginLeft: "1.5" })}>· voice 음성 인식(AI) {voiceLines.length}문장</span>
+            )}
           </span>
           {active ? (
             <button type="button" className={dangerButtonStyle} onClick={handleEnd}>
