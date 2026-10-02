@@ -393,6 +393,13 @@ class HospitalMatch(BaseModel):
     emergencyLevel: Optional[str] = None
     travelBonusMin: float = 0.0
     bonusReasons: list[str] = Field(default_factory=list)
+    # ── 이송 중 부하 페널티 (2026-10-03, scoring.load_penalty_min) ──
+    # 이 병원으로 지금 이송 중(확정, TTL 오버레이)인 건수와, 그 압력만큼 이동시간에 더한 분.
+    # 평시(이송 중 0건)는 둘 다 0 — 기존 순위와 완전히 같다. 대량사고처럼 확정이 쌓일 때만
+    # 작동해, 만실 절벽 강등(beds_full) 전에 연속적으로 분산시킨다. loadReason은 설명 문구.
+    inFlightCount: int = 0
+    loadPenaltyMin: float = 0.0
+    loadReason: Optional[str] = None
 
 
 class ArrivalResult(BaseModel):
@@ -580,6 +587,9 @@ class MapHospital(BaseModel):
     name: str
     gps: GpsPoint
     emergencyLevel: Optional[str] = None
+    # 이 병원으로 지금 이송 중(확정, TTL 오버레이)인 건수(2026-10-03) — 관제 지도가
+    # "이 병원에 N건 몰리는 중"을 보여주는 재료. 확정·도착 결과 때마다 overview가 다시 간다.
+    inFlightCount: int = 0
 
 
 class MapAmbulance(BaseModel):

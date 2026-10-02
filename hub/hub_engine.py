@@ -35,7 +35,7 @@ from schema import (
     SpecialtyMatch,
     VoiceCallSummaryMessage,
 )
-from scoring import calibrate_min_per_km, expertise_bonus_min, final_score, rank_key
+from scoring import calibrate_min_per_km, expertise_bonus_min, final_score, load_penalty_min, rank_key
 from specialty_matcher import SpecialtyMatcher
 
 if TYPE_CHECKING:
@@ -662,6 +662,12 @@ class HubEngine:
             overlay = self._prune_and_count_overlay(info.hospitalId, _utcnow())
             return max(0, info.availableBedCount - overlay)
 
+    def in_flight_count(self, hospital_id: str) -> int:
+        """이 병원으로 확정돼 아직 TTL 안에 있는 이송 건수(병원 단위 — 사건 무관).
+        부하 페널티(scoring.load_penalty_min)와 관제 지도 표시가 쓴다(2026-10-03)."""
+        with self._lock:
+            return self._prune_and_count_overlay(hospital_id, _utcnow())
+
     # ── 승인 액션 ─────────────────────────────────────────────────────────────
 
     def _refresh_match(
@@ -1002,6 +1008,10 @@ class HubEngine:
                 beds = self.effective_bed_count(info)
                 unknown = _is_bed_count_unknown(info)
                 stale = _is_bed_data_stale(info, now)
+                # 이송 중 부하 페널티(2026-10-03): 이 병원으로 확정돼 아직 TTL 안에 있는
+                # 건수(병원 단위 — 다른 사건 포함)만큼 이동시간에 분을 더한다. 평시엔 0.
+                in_flight = self._prune_and_count_overlay(info.hospitalId, now)
+                load_min, load_reason = load_penalty_min(in_flight, beds, unknown)
                 # 병원의 "현재 정보 확인" 이력 — 현재 claim에 유효한지는
                 # evaluate()가 bornAt과 대조해 판단한다.
                 confirmed = self._info_confirmations.get(info.hospitalId)
@@ -1041,10 +1051,13 @@ class HubEngine:
                         ),
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
-                        finalScore=round(final_score(similarity, travel_min, bonus_min), 6),
+                        finalScore=round(final_score(similarity, travel_min, bonus_min, load_min), 6),
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),
                         bonusReasons=bonus_reasons,
+                        inFlightCount=in_flight,
+                        loadPenaltyMin=load_min,
+                        loadReason=load_reason,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
                         demoteReasons=_demote_reasons(info, best_group, status, beds, unknown, stale),

@@ -538,6 +538,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **거절 로그 수신구(포트 5003)를 `start-all.sh`가 기본으로 띄운다** — 예전엔 따로 켜야 해서 실제로는 버려지고 있었다
   - 테스트용 경로 분리: `HUB_DECISION_LOG_PATH`·`HOSPITAL_REJECTION_LOG_DIR`(+기존 `HUB_STATE_PATH`) — 실서버 E2E가 진짜 로그(해시 체인·정답 데이터)를 더럽히지 않게
 - **현장 후보에 첫 연락 추천(2026-10-03)**: `scene_candidates`의 후보마다 `bedReliability`(AI, 매칭 결과와 같은 `BedReliabilityMatch` 형태·거리 기반 horizon)를 얹고, 빈 병상이 확인된 곳(미상·확인된 만실·1일 넘은 값 제외) 중 rArrive 최고 한 곳에 `firstCallRecommended: true`를 표시한다(`hub_engine.build_zone_candidates`). 신뢰도를 finalScore·순위에 안 쓴다는 원칙은 그대로 — 첫 통화 상대 제안은 틀려도 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라 여기만 확률을 직접 쓴다. 추천은 의사결정 로그 `first_call_recommended`로 남아 적중률(추천 병원이 실제 수용했는가)을 나중에 셀 수 있다. 검증은 `test_app_background.py`
+- **이송 중 부하 페널티(2026-10-03)**: 같은 병원으로 확정돼 이송 중(TTL 오버레이)인 건수만큼 이동시간에 분을 더한다 — `10분 × 이송 중/(이송 중+실질 가용)`(`scoring.load_penalty_min`). 예전엔 차감 병상이 표시·만실 판정에만 쓰여 병상 20개 병원에 19명을 확정해도 20번째에 1순위로 떴다(만실 절벽 강등뿐). 평시(이송 중 0건)는 페널티 0이라 동작 불변이고, 대량사고처럼 확정이 쌓일 때만 만실 전에 연속 분산한다. `HospitalMatch.inFlightCount·loadPenaltyMin·loadReason`, 관제 지도 `map_overview` 병원에도 `inFlightCount`(확정·도착 결과마다 재전송). 검증 `run_match.py test_load_penalty()`. 대량사고 시뮬레이션(`sim/`, feature/sim)의 goldenlink 팔과 로직 일치
 
 ## feature/dashboard 담당자 참고사항
 

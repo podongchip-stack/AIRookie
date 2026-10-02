@@ -531,7 +531,8 @@ def _build_map_overview() -> dict:
         ambulances.append(MapAmbulance(apid=info.apid, name=info.name, gps=gps, base=info.gps))
     return MapOverview(
         hospitals=[
-            MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel)
+            MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel,
+                        inFlightCount=engine.in_flight_count(h.hospitalId))
             for h in engine.list_hospitals()
         ],
         ambulances=ambulances,
@@ -948,6 +949,11 @@ def _handle_dashboard_action(payload: dict) -> None:
         apid = engine.get_case_apid(action.caseId)
         if confirmed is not None and apid and sim.on_confirmed(apid, action.caseId, confirmed.hospitalId, confirmed.gps):
             _broadcast_sim_state(apid)
+
+    # 확정·도착 결과는 병원별 이송 중 건수(TTL 오버레이)를 바꾼다 — 관제 지도의
+    # "이 병원으로 이송 중 N건" 표시가 따라오도록 overview를 다시 보낸다(2026-10-03).
+    if action.action in ("final_approval", "arrival_accepted", "arrival_refused"):
+        _send_map_overview()
 
 
 def _handle_info_confirm(confirm: HospitalInfoConfirm) -> None:
