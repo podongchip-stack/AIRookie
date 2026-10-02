@@ -200,4 +200,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    from console import use_utf8_console
+
+    use_utf8_console()  # Windows(cp949) 콘솔에서도 로그 출력으로 죽지 않게
     main()

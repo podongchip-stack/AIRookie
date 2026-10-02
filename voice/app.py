@@ -174,6 +174,9 @@ def call_end():
 
 
 if __name__ == "__main__":
+    from console import use_utf8_console
+
+    use_utf8_console()  # Windows(cp949) 콘솔에서도 로그 출력으로 죽지 않게
     # hub가 살아있든 아니든 서버는 바로 뜨게, 자가등록은 별도 스레드에서
     # 재시도하며 진행한다 (hub/info가 이 voice보다 늦게 뜨는 순서도 흔할 것).
     threading.Thread(target=_register_with_hub, daemon=True).start()

@@ -47,6 +47,8 @@ pip install -r requirements.txt
 | [`podongchip/MF_BERT`](https://huggingface.co/podongchip/MF_BERT) | MF_BERT 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` | `MF_BERT_DIR` |
 
 환경변수를 주면 Hub에서 받지 않고 그 폴더를 쓴다(재학습한 가중치를 올리기 전에 시험할 때 등, `weights.py`).
+MF_BERT는 **`v1-2026-09-30` 태그로 고정**해서 받는다(`MF_BERT_REVISION`, 2026-10-03) — Hub의 최신(10-02)은 구조가 바뀌어
+이 코드로는 못 올린다. 새 구조 코드를 들여오면 이 값을 함께 바꾼다.
 ASR 베이스 모델(`Qwen/Qwen3-ASR-0.6B-hf`)과 MF_BERT 인코더 설정(`klue/roberta-large`의 config만 — 인코더 가중치는
 체크포인트에 들어 있어 받지 않는다)도 같은 캐시로 자동으로 내려받는다. 이전 구조화 모델 저장소
 `podongchip/goldenlink-voice-models`(HMM v1·v2 가중치)는 더 이상 쓰지 않는다.
@@ -150,6 +152,20 @@ python call_capture.py --session live_test1
 ```bash
 VOICE_APID=A0000001 VOICE_PORT=6000 python app.py
 ```
+
+**실행 스크립트(2026-10-03, 권장)** — macOS·Linux·Windows(Git Bash) 공통. OS를 보고 conda 환경의 파이썬
+(`rookie_voice` → `AIRookieProject` → `rookie` 순, `VOICE_PY`로 지정 가능)을 찾고, 구급차별 포트(역삼 6001·성산 6002·
+회현 6003)와 hub 주소를 맞춰 넣는다. `HUB_BASE_URL`만 바꾸면 `HUB_VOICE_SUMMARY_URL`도 같은 hub로 따라간다 —
+예전엔 둘을 따로 줘야 해서, hub 주소만 바꾸면 환자 정보가 voice 자신(127.0.0.1)으로 가서 사라졌다.
+
+```bash
+./voice/start-voice.sh A0000001                                  # hub가 같은 장비
+HUB_BASE_URL=http://192.168.0.3:5001 ./voice/start-voice.sh A0000001   # hub가 다른 장비
+```
+
+Windows 콘솔 기본 인코딩(cp949)은 이모지 등을 못 써서 로그 한 줄에 서버가 죽을 수 있었다. 실행 진입점(`app.py`·
+`call_capture.py`·`transcribe.py`·`mic_recorder.py`)이 시작할 때 `console.py`의 `use_utf8_console()`로 출력을
+UTF-8로 바꾸므로 `PYTHONUTF8=1` 없이도 된다(파일 읽기·쓰기는 원래 전부 `encoding="utf-8"`).
 
 | 환경변수 | 기본값 | 설명 |
 | --- | --- | --- |
