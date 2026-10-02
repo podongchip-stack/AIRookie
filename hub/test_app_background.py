@@ -20,13 +20,18 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-# 이 테스트가 실제 상태 파일(data/state/)을 건드리지 않게 import 전에 임시 경로로 돌린다.
+# 이 테스트가 실제 상태 파일(data/state/)·의사결정 로그(해시 체인)를 건드리지 않게
+# import 전에 임시 경로로 돌린다.
 _TMP = tempfile.TemporaryDirectory()
 os.environ["HUB_STATE_PATH"] = str(Path(_TMP.name) / "hub_state.json")
+os.environ["HUB_DECISION_LOG_PATH"] = str(Path(_TMP.name) / "decision_log.jsonl")
 
 import app  # noqa: E402
+import decision_log  # noqa: E402
 from hub_engine import TRANSCRIPT_NOT_PERSISTED, HubEngine  # noqa: E402
-from schema import AmbulanceInfo, CallSignal, GpsPoint, HospitalInfo, Specialty  # noqa: E402
+from schema import (  # noqa: E402
+    AmbulanceInfo, BedReliabilityInput, CallSignal, GpsPoint, HospitalInfo, Specialty,
+)
 
 
 class _FakeSocket:
@@ -111,7 +116,7 @@ def main() -> None:
         app.engine = original
     print("  [확인] 병원·사건·voice 주소 복구, 통화 원문은 저장·복구되지 않음")
 
-    print("=== 통화 시작: 매칭 전 현장 후보를 그 구급차 탭에만 ===")
+    print("=== 통화 시작: 매칭 전 현장 후보를 그 구급차 탭에만 + 첫 연락 추천 ===")
     ambulance_tab = _FakeSocket()
     app._dashboard_sockets.add(ambulance_tab)
     app._socket_identity[ambulance_tab] = ("ambulance", "A_SCENE")
@@ -120,13 +125,36 @@ def main() -> None:
         AmbulanceInfo(apid="A_SCENE", name="[테스트] 구급차", gps=GpsPoint(lat=37.5665, lng=126.9780), voicePort=6000,
                       updatedAt="2026-10-01T00:00:00Z")
     )
+    # T001보다 조금 먼, 병상 신뢰도 예측이 붙은 병원 — 빈 병상이 확인되고 rArrive가
+    # 있는 유일한 곳이라 첫 연락 추천을 받아야 한다(T001은 신뢰도 데이터가 없어 제외,
+    # fail-soft 확인). 거리순 정렬 자체는 추천과 무관하게 유지돼야 한다.
+    app.engine.update_hospital_info(HospitalInfo(
+        hospitalId="T_REL", name="[테스트] 신뢰도 병원",
+        gps=GpsPoint(lat=37.5750, lng=126.9900), availableBedCount=2, nightDutyAvailable=True,
+        specialties=[Specialty(department="외과", doctorCount=1)],
+        updatedAt=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        bedsByType={"ER_ADULT": 2},
+        bedReliability=BedReliabilityInput(
+            predictedSurvivalSec=4 * 3600.0, bornAt=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            sigma=1.0, authorityAtSend=0.95, ttlSec=3600.0, modelTag="test-aft",
+        ),
+    ))
     app._relay_call_signal(CallSignal(
         type="call_signal", signal="call_started", timestamp="2026-10-01T00:00:00Z", apid="A_SCENE", caseId="case-scene",
     ))
     scene = [m for m in ambulance_tab.sent if m.get("type") == "scene_candidates"]
     assert len(scene) == 1 and scene[0]["hospitals"][0]["hospitalId"] == "T001" and scene[0]["source"] == "rule"
     assert not any(m.get("type") == "scene_candidates" for m in socket.sent), "병원 탭은 현장 후보를 받지 않는다"
-    print("  [확인] 거리순 후보가 구급차 탭에만 전송됨")
+    by_id = {h["hospitalId"]: h for h in scene[0]["hospitals"]}
+    assert by_id["T_REL"]["firstCallRecommended"] is True, "신뢰도 있는 빈 병상 병원이 첫 연락 추천을 받아야 한다"
+    assert by_id["T_REL"]["bedReliability"]["rArrive"] > 0.5
+    assert by_id["T001"]["firstCallRecommended"] is False and by_id["T001"]["bedReliability"] is None, \
+        "신뢰도 데이터 없는 병원은 추천 없이 그대로(fail-soft)"
+    logged = [json.loads(line) for line in decision_log.LOG_PATH.read_text(encoding="utf-8").splitlines()]
+    first_call = [e for e in logged if e["eventType"] == "first_call_recommended"]
+    assert len(first_call) == 1 and first_call[0]["payload"]["hospitalId"] == "T_REL", \
+        "첫 연락 추천이 의사결정 로그에 남아야 한다(적중률 측정 재료)"
+    print("  [확인] 거리순 후보가 구급차 탭에만 전송, T_REL 첫 연락 추천 + 로그 기록, T001은 fail-soft")
 
     app._dashboard_sockets.difference_update({socket, stranger, ambulance_tab})
     print("\n모든 검사 통과")

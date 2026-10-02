@@ -532,6 +532,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - 재선택 해제는 `cause: "paramedic_reselect"`로 구분(실패 아님). **무응답은 사건이 끝날 때만 기록**(예전엔 첫 이송 승인 때 기록해 나중에 승인한 병원까지 무응답으로 남았다)
   - **거절 로그 수신구(포트 5003)를 `start-all.sh`가 기본으로 띄운다** — 예전엔 따로 켜야 해서 실제로는 버려지고 있었다
   - 테스트용 경로 분리: `HUB_DECISION_LOG_PATH`·`HOSPITAL_REJECTION_LOG_DIR`(+기존 `HUB_STATE_PATH`) — 실서버 E2E가 진짜 로그(해시 체인·정답 데이터)를 더럽히지 않게
+- **현장 후보에 첫 연락 추천(2026-10-03)**: `scene_candidates`의 후보마다 `bedReliability`(AI, 매칭 결과와 같은 `BedReliabilityMatch` 형태·거리 기반 horizon)를 얹고, 빈 병상이 확인된 곳(미상·확인된 만실·1일 넘은 값 제외) 중 rArrive 최고 한 곳에 `firstCallRecommended: true`를 표시한다(`hub_engine.build_zone_candidates`). 신뢰도를 finalScore·순위에 안 쓴다는 원칙은 그대로 — 첫 통화 상대 제안은 틀려도 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라 여기만 확률을 직접 쓴다. 추천은 의사결정 로그 `first_call_recommended`로 남아 적중률(추천 병원이 실제 수용했는가)을 나중에 셀 수 있다. 검증은 `test_app_background.py`
 
 ## feature/dashboard 담당자 참고사항
 

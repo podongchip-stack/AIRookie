@@ -881,20 +881,47 @@ class HubEngine:
     def build_zone_candidates(self, ambulance_gps: GpsPoint, max_zone: int = 1) -> list[dict]:
         """1단계: voice 정보가 도착하기 전, GPS+병원 정보만으로 존 기반 후보 리스트를
         만들어 보관해둔다. 진료과 매칭 없이 거리만으로 정렬한 중간 상태를 반환한다.
+
+        2026-10-03: 후보마다 병상 신뢰도(bedReliability, AI)를 얹고 "첫 연락 추천"
+        (firstCallRecommended) 한 곳을 고른다 — 빈 병상이 실제로 확인됐고(미상·확인된
+        만실·1일 넘은 묵은 값 제외) 도착 시점 유효 확률(rArrive)이 가장 높은 병원,
+        동률이면 가까운 쪽. 신뢰도를 finalScore에 안 쓴다는 원칙은 그대로다 — 첫 통화
+        상대 제안은 틀려도 통화 뒤 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라,
+        검증 전의 확률을 써도 되는 유일한 자리다. 거리순 정렬 자체는 바꾸지 않는다.
         """
+        now = _utcnow()
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
         candidates.sort(key=lambda pair: pair[1])
-        return [
-            {
-                "hospitalId": info.hospitalId,
-                "name": info.name,
-                "distanceKm": round(distance, 2),
-                "gps": info.gps.model_dump(),
-                "availableBedCount": self.effective_bed_count(info),
-                "bedCountUnknown": _is_bed_count_unknown(info),
-            }
-            for info, distance in candidates
-        ]
+        rows: list[dict] = []
+        best_index: int | None = None
+        best_r_arrive = 0.0
+        for info, distance in candidates:
+            beds = self.effective_bed_count(info)
+            unknown = _is_bed_count_unknown(info)
+            # horizon은 매칭 때와 달리 카카오 ETA가 아직 없어 거리/평균속도 추정이다
+            # (evaluate가 horizon_sec 없으면 직접 추정).
+            rel = bed_reliability.evaluate(
+                info.bedReliability, distance, now=now,
+                confirmed_at=self.get_info_confirmation(info.hospitalId),
+            )
+            rows.append(
+                {
+                    "hospitalId": info.hospitalId,
+                    "name": info.name,
+                    "distanceKm": round(distance, 2),
+                    "gps": info.gps.model_dump(),
+                    "availableBedCount": beds,
+                    "bedCountUnknown": unknown,
+                    "bedReliability": rel.model_dump() if rel is not None else None,
+                    "firstCallRecommended": False,
+                }
+            )
+            if rel is not None and beds >= 1 and not unknown and not _is_bed_data_stale(info, now):
+                if rel.rArrive > best_r_arrive:  # 동률이면 먼저 담긴(더 가까운) 쪽 유지
+                    best_r_arrive, best_index = rel.rArrive, len(rows) - 1
+        if best_index is not None:
+            rows[best_index]["firstCallRecommended"] = True
+        return rows
 
     # ── 매칭 ──────────────────────────────────────────────────────────────────
 

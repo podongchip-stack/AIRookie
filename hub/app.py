@@ -483,6 +483,7 @@ def _send_scene_candidates(case_id: str, apid: str) -> None:
     병원 탭에는 보내지 않는다 — 환자 정보 없는 요청이 병원 화면에 쌓이지 않게."""
     gps, fallback = _resolve_ambulance_gps(case_id)
     zone = engine.resolve_start_zone(gps)
+    hospitals = engine.build_zone_candidates(gps, max_zone=zone)
     payload = {
         "type": "scene_candidates",
         "caseId": case_id,
@@ -490,9 +491,21 @@ def _send_scene_candidates(case_id: str, apid: str) -> None:
         "ambulanceGps": gps.model_dump(),
         "ambulanceGpsFallback": fallback,
         "zoneActive": list(range(1, zone + 1)),
-        "hospitals": engine.build_zone_candidates(gps, max_zone=zone),
+        "hospitals": hospitals,
         "source": "rule",
     }
+    # 첫 연락 추천(2026-10-03)을 의사결정 로그에 남긴다 — 추천 병원이 실제 첫 통화·수용으로
+    # 이어졌는지(적중률)를 나중에 승인 액션·거절 로그와 대조해 셀 수 있는 유일한 재료라서다.
+    recommended = next((h for h in hospitals if h.get("firstCallRecommended")), None)
+    if recommended is not None:
+        decision_log.log_decision("first_call_recommended", {
+            "caseId": case_id,
+            "apid": apid,
+            "hospitalId": recommended["hospitalId"],
+            "rArrive": round(recommended["bedReliability"]["rArrive"], 4),
+            "distanceKm": recommended["distanceKm"],
+            "availableBedCount": recommended["availableBedCount"],
+        })
     with _sockets_lock:
         targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and id_ == apid]
     for ws in targets:
