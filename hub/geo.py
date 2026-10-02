@@ -2,7 +2,8 @@
 import math
 
 ZONE_BAND_KM = 5.0  # 존 하나의 폭(km). zone 1 = 0~5km, zone 2 = 5~10km, ...
-REJECT_RATIO_THRESHOLD = 0.5  # 활성 존 내 명시적 거절 비율이 이 값 이상이면 다음 존까지 확장
+# 활성 존 안 후보 병원 전체 중 명시적으로 거절한 병원 비율이 이 값 이상이면 다음 존까지 확장(2026-10-01: 0.5 → 0.4)
+REJECT_RATIO_THRESHOLD = 0.4
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:

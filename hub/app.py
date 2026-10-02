@@ -30,7 +30,7 @@ from pydantic import ValidationError
 import bed_reliability
 from ambulance_sim import SPEEDUP as SIM_SPEEDUP, DispatchSim
 import decision_log
-from delivery import LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
+from delivery import HUB_REJECTION_URL, LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
 from geo import haversine_km
 from scoring import DEFAULT_MIN_PER_KM
@@ -278,6 +278,72 @@ def get_route():
 GEOCODE_PER_MIN = int(os.environ.get("HUB_GEOCODE_PER_MIN", "30"))
 _geocode_calls: list[float] = []
 _geocode_lock = threading.Lock()
+
+
+@app.get("/verification")
+def get_verification():
+    """시연용 신뢰도 검증 화면(2026-10-02). 집계는 info 거절 로그 수신구(5003)가 만들고 hub는 그대로 중계한다
+    — dashboard는 hub와만 통신한다. 수신구가 안 떠 있으면 503."""
+    url = HUB_REJECTION_URL.rsplit("/hub/rejection", 1)[0] + "/verification/summary"
+    hpid = (request.args.get("hpid") or "").strip()
+    try:
+        upstream = requests.get(url, params={"hpid": hpid} if hpid else None, timeout=30)  # 1시간마다 재생성(수 초)
+        upstream.raise_for_status()
+        body = upstream.json()
+        if hpid:
+            self_info = _build_self_info(hpid)
+            body["hospitalHub"] = {
+                "selfInfo": self_info.model_dump() if self_info else None,
+                "activity": _hospital_activity(hpid),
+            }
+        response, status = jsonify(body), 200
+    except (requests.RequestException, ValueError) as e:
+        response, status = jsonify({"error": f"검증 집계를 가져오지 못했습니다(거절 로그 수신구 5003): {e}"}), 503
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
+
+
+#: 병원 활동 기록에 셀 의사결정 로그 항목 — 승인·거절·이송 확정·도착 결과·정보 확인
+_ACTIVITY_LABEL = {
+    "hospital_approve": "수용 승인", "hospital_reject": "수용 불가", "final_approval": "이송 확정(구급대)",
+    "arrival_accepted": "환자 수용 완료", "arrival_refused": "도착 후 수용 불가", "hospital_info_confirmed": "정보 확인",
+}
+
+
+def _hospital_activity(hospital_id: str) -> dict:
+    """의사결정 로그에서 이 병원 관련 기록만 센다(검증 화면 '우리 병원'). 통화 원문은 로그에 지문만 있다."""
+    requested: set[str] = set()
+    counts: dict[str, int] = {}
+    recent: list[dict] = []
+    try:
+        lines = decision_log.LOG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        event, payload = entry.get("eventType"), entry.get("payload") or {}
+        if event == "hub_match_result":
+            if any(h.get("hospitalId") == hospital_id for h in payload.get("hospitals") or []):
+                requested.add(payload.get("caseId"))
+            continue
+        action = payload.get("action") if isinstance(payload.get("action"), dict) else None
+        if event in ("approval_action_applied", "arrival_accepted") and action and action.get("hospital_id") == hospital_id:
+            kind = action.get("action")
+        elif event in ("arrival_refused", "hospital_info_confirmed") and payload.get("hospitalId") == hospital_id:
+            kind = event
+        else:
+            continue
+        if kind in _ACTIVITY_LABEL:
+            counts[kind] = counts.get(kind, 0) + 1
+            recent.append({"timestamp": entry.get("timestamp"), "kind": kind, "label": _ACTIVITY_LABEL[kind]})
+    return {
+        "requestedCases": len(requested),
+        "counts": [{"kind": k, "label": _ACTIVITY_LABEL[k], "count": n} for k, n in counts.items()],
+        "recent": recent[-8:],
+    }
 
 
 @app.get("/geocode")
@@ -640,6 +706,9 @@ def _log_no_responses(case_id: str, timestamp: str, finalized_to: str | None) ->
     logged = 0
     for match in result.hospitals:
         if match.hospitalId == finalized_to or match.status != "pending":
+            continue
+        if "beds_full" in match.demoteReasons:
+            # 병상 0이 확인돼 승인 버튼이 막혀 있던 병원 — 응답할 수 없었던 것이지 무시한 게 아니다(2026-10-01).
             continue
         payload = _rejection_payload(case_id, match.hospitalId, timestamp, "NO_RESPONSE")
         payload["reachedAtBroadcast"] = match.hospitalId in reach
@@ -1100,6 +1169,29 @@ def _maintenance_loop() -> None:
             print(f"  [백그라운드] 오류(계속 진행): {e!r}")
 
 
+def _settle_restored_cases() -> None:
+    """재시작 때 복구된 확정 전 사건을 정리한다(2026-10-01).
+
+    - 출동 시뮬레이션 중이면: 재시작하면 구급차가 전부 기지 대기로 돌아가서, 확정 전 사건은 이어갈 구급차가
+      없다 → 바로 닫는다. 병원이 무시한 게 아니라 hub가 재시작한 것이라 무응답(NO_RESPONSE)은 남기지 않는다.
+    - 아니면: 120분 방치 정리(sweep)의 기준인 마지막 활동 시각이 메모리에만 있어 재시작 뒤엔 영영 정리되지
+      않았다 → 지금을 마지막 활동으로 잡아 둔다.
+    """
+    case_ids = engine.get_unconfirmed_case_ids()
+    if not case_ids:
+        return
+    if sim is not None:
+        for case_id in case_ids:
+            if engine.close_case(case_id):
+                decision_log.log_decision("case_closed", {"caseId": case_id, "reason": "hub_restart_sim_reset"})
+        print(f"  [상태 복구] 출동 시뮬레이션 — 확정 전 사건 {len(case_ids)}건은 구급차가 기지로 돌아가 닫음")
+        return
+    now = datetime.now(timezone.utc)
+    with _sockets_lock:
+        for case_id in case_ids:
+            _case_last_activity.setdefault(case_id, now)
+
+
 def start_background() -> None:
     """상태 복구 + 재계산·저장 루프 시작. `python app.py`로 띄울 때만 부른다 — 테스트
     (test_rejection_forward.py)가 app을 import해도 디스크 상태를 건드리지 않게."""
@@ -1110,6 +1202,7 @@ def start_background() -> None:
         # 정상 종료(sys.exit)로 바꿔 마지막 상태를 저장하게 한다. 저장 루프가 5초마다 돌므로
         # 이게 없어도 잃는 건 최대 몇 초분이다.
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    _settle_restored_cases()
     threading.Thread(target=_maintenance_loop, name="hub-maintenance", daemon=True).start()
     if sim is not None:
         # 재시작하면 구급차는 전부 기지(대기)에서 다시 시작한다 — 시뮬레이션 상태는 저장하지 않는다.

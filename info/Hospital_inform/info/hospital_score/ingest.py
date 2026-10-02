@@ -20,9 +20,15 @@ POST한다. `hospital_id` 하나만 있으면 기록되고(이유 없으면 `UNS
 ----------
     POST /hub/rejection          한 건 또는 배열
     GET  /hub/rejection/summary  축별 집계 (사람이 읽는 텍스트)
+    GET  /verification/summary   시연용 신뢰도 검증 화면 집계(JSON) — hub가 대시보드로 중계한다
+                                 (?hpid=를 주면 그 병원 기록 전부를 hospital로 덧붙인다)
 """
 
 from __future__ import annotations
+
+import threading
+import time
+from collections import Counter
 
 from flask import Blueprint, jsonify, request
 
@@ -64,6 +70,57 @@ def receive_rejection():
 @rejection_bp.get("/hub/rejection/summary")
 def rejection_summary():
     return R.summarize(R.load_all()), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+#: 시연용 재생 로그를 이 주기로 다시 만든다 — 그 사이 쌓인 스냅샷이 반영된다(생성 수 초)
+REPLAY_REFRESH_SEC = 3600
+_replay_lock = threading.Lock()
+
+
+@rejection_bp.get("/verification/summary")
+def verification_summary():
+    """시연용 검증 화면 집계: 실제 E-Gen 재생 채점(reliability.replay_demo) + E-Gen↔심평원 대조(crosscheck)
+    + 거절 로그 사유 집계."""
+    body: dict = {"demo": True}
+    try:
+        from reliability import replay_demo
+
+        with _replay_lock:
+            path = replay_demo.OUTPUT_PATH
+            if not path.is_file() or time.time() - path.stat().st_mtime > REPLAY_REFRESH_SEC:
+                replay_demo.generate()
+        body["replay"] = replay_demo.summarize()
+    except Exception as exc:  # 신뢰도 엔진이 없는 환경 — 거절 로그 집계만 보낸다
+        body["replay"] = None
+        body["replayError"] = f"{type(exc).__name__}: {exc}"
+    try:
+        from . import crosscheck
+
+        body["crosscheck"] = crosscheck.summarize()
+    except Exception as exc:  # 스냅샷·심평원 캐시가 없는 장비 — 이 블록만 빠진다
+        body["crosscheck"] = None
+        body["crosscheckError"] = f"{type(exc).__name__}: {exc}"
+    hpid = (request.args.get("hpid") or "").strip()
+    if hpid:  # 병원 대시보드에서 열었을 때 — 그 병원 기록 전부(hospital_view)
+        try:
+            from . import hospital_view
+
+            body["hospital"] = hospital_view.summarize(hpid)
+        except Exception as exc:
+            body["hospital"] = None
+            body["hospitalError"] = f"{type(exc).__name__}: {exc}"
+    records = R.load_all()
+    counts = Counter(r.get("reasonCode") or "UNSPECIFIED" for r in records)
+    body["rejections"] = {
+        "count": len(records),
+        "demoCount": sum(bool(r.get("demo") or (r.get("extra") or {}).get("demo")) for r in records),
+        "byReason": [
+            {"code": code, "axis": R.REASON_AXIS.get(code, (R.AXIS_UNKNOWN, code))[0],
+             "label": R.REASON_AXIS.get(code, (R.AXIS_UNKNOWN, code))[1], "count": n}
+            for code, n in counts.most_common()
+        ],
+    }
+    return jsonify(body)
 
 
 def create_app():

@@ -110,8 +110,9 @@ info-v2(`hospital_score/`)가 병원마다 15개 중증질환군에 대해 5단�
 직접 영향, 2026-08-14 추가)**로 층이 다르다.
 
 **① 설명 — `HospitalMatch.reliability`.** `process_voice_summary()`가 예상
-병명을 이 15개 질환군 어휘와 한 번 더 매칭해(기존 진료과 임베딩 매칭과는 별도
-호출), 매칭된 병원의 그 그룹 판정을 dashboard에 그대로 전달한다. `finalScore`
+병명에서 이 15개 질환군 중 하나를 **키워드 규칙으로** 고르고(`disease_group.py`, 2026-10-02 —
+예전 임베딩은 다리 골절·심근경색·"미상"까지 전부 담낭담관질환으로 골랐다), 매칭된 병원의 그 그룹 판정을
+dashboard에 그대로 전달한다. 해당 질환군이 없으면(골절·타박상·발열 등) 칩도 `declared_no` 내림도 없다. `finalScore`
 계산식(`0.6×진료과매칭 + 0.4×이동시간 점수`) 자체는 이 값과 무관하다 — "왜 이 순위인지"의
 설명 근거로만 쓰인다.
 
@@ -876,7 +877,7 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
 
 ## 알려진 제약사항 / TODO
 
-- 존 확장 임계값(`REJECT_RATIO_THRESHOLD`), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`),
+- 존 확장 임계값(`REJECT_RATIO_THRESHOLD` = 0.4, 2026-10-01부터 **존 안 후보 전체 대비** 거절 비율), 스코어링 가중치(`W_SPECIALTY`/`W_DISTANCE`),
   이동시간 반감기(`TRAVEL_HALF_LIFE_MIN`)는 `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
 - 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다. 시연에서는 출동

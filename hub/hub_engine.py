@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import bed_reliability
 import decision_log
+from disease_group import match_group
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
     AmbulanceInfo,
@@ -548,6 +549,11 @@ class HubEngine:
             results = [self._case_results.get(cid) for cid in case_ids]
             return [result for result in results if result is not None]
 
+    def get_unconfirmed_case_ids(self) -> list[str]:
+        """확정 전 사건(재시작 뒤 정리용)."""
+        with self._lock:
+            return [cid for cid in self._case_results if cid not in self._case_confirmed_at]
+
     def get_active_case_ids(self) -> list[str]:
         """매칭 결과가 있는(주기적 재계산 대상) 사건 목록."""
         with self._lock:
@@ -708,6 +714,10 @@ class HubEngine:
                 refuse_reason = f"actor mismatch: {action.action} requires {_ACTION_ACTOR[action.action]}"
             elif action.action == "final_approval" and current != "approved":
                 refuse_reason = f"final_approval requires hospital approval (current: {current})"
+            elif action.action == "hospital_approve" and self._is_confirmed_full(action.hospital_id):
+                # 응급실 병상 0이 확인된 병원은 승인을 받지 않는다(2026-10-01). 화면에서만 막으면 승인이 통과해
+                # 구급차 화면에 이송 승인이 열렸다. 미상·오래된 값은 막지 않는다(미상으로 막으면 뺑뺑이가 는다).
+                refuse_reason = "hospital_approve refused: ER beds confirmed 0 (E-Gen)"
             elif action.action.startswith("arrival_") and current != "confirmed":
                 refuse_reason = f"{action.action} requires this hospital to be the confirmed destination (current: {current})"
             elif action.action.startswith("arrival_") and action.caseId in self._case_arrival:
@@ -844,19 +854,18 @@ class HubEngine:
     # ── 존 · 후보 ─────────────────────────────────────────────────────────────
 
     def reject_ratio(self, case_id: str, ambulance_gps: GpsPoint, max_zone: int) -> float:
-        """현재 존(1~max_zone) 안 병원들 중, 명시적으로 응답(approved/rejected/
-        confirmed)한 병원 대비 거절(rejected)한 병원의 비율. 아직 아무도 응답하지
-        않았으면(전부 pending) 0.0을 반환한다 — 시간 기반이 아닌 거절 비율 기반
-        존 확장 판단에 쓴다.
+        """현재 존(1~max_zone) 안 **후보 병원 전체** 대비 명시적으로 거절(rejected)한 병원의 비율.
+        시간 기반이 아닌 거절 비율 기반 존 확장 판단에 쓴다. 후보가 없으면 0.0(빈 존은 따로 넓힌다).
+
+        2026-10-01: 분모를 "응답한 병원"에서 "존 안 후보 전체"로 바꿨다. 예전엔 첫 응답이 거절이면 1/1 = 100%라
+        후보가 10곳이어도 한 곳의 거절로 바로 넓어졌다. 지금은 10곳 중 4곳(40%)이 거절해야 넓어진다.
         """
         with self._lock:
             candidates = self._candidates_in_zone(ambulance_gps, max_zone)
             statuses = [self._approval_status.get((case_id, info.hospitalId), "pending") for info, _ in candidates]
-        responded = [s for s in statuses if s in ("approved", "rejected", "confirmed")]
-        if not responded:
+        if not statuses:
             return 0.0
-        rejected = sum(1 for s in responded if s == "rejected")
-        return rejected / len(responded)
+        return sum(1 for s in statuses if s == "rejected") / len(statuses)
 
     def _candidates_in_zone(
         self, ambulance_gps: GpsPoint, max_zone: int
@@ -901,14 +910,13 @@ class HubEngine:
         expected_diagnosis = voice.summary.mechanism
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
 
-        # 진료과 매칭 + info-v2 15개 질환군 중 이번 사건에 해당하는 것 하나. 질환군은 병원마다
-        # 다른 게 아니라 사건 전체에 하나뿐이라 한 번만 매칭한다(같은 SpecialtyMatcher, 대상
-        # 어휘만 다름). 질환군은 finalScore에 안 들어가고 설명·declared_no 판정에만 쓰인다.
+        # 진료과 매칭(임베딩) + info-v2 15개 질환군 중 이번 사건에 해당하는 것 하나(키워드 규칙, 없으면 None —
+        # disease_group.py). 질환군은 사건 전체에 하나뿐이고 finalScore에 안 들어가며 설명·declared_no 판정에만
+        # 쓰인다. 예전엔 질환군도 임베딩으로 골라 어떤 환자든 엉뚱한 질환군이 붙었다(2026-10-02).
         department_lists = [[s.department for s in info.specialties] for info, _ in candidates]
         with self._matcher_lock:
             specialty_results = self._matcher.match_many(expected_diagnosis, department_lists)
-            vocabulary = _assessment_vocabulary([info for info, _ in candidates])
-            best_group, _ = self._matcher.match_many(expected_diagnosis, [vocabulary])[0]
+        best_group = match_group(expected_diagnosis, _assessment_vocabulary([info for info, _ in candidates]))
 
         # 후보 병원별 도로 기준 소요시간(초). 조회 실패·키 없음·반경 10km 밖이면 그 병원만 빠진다.
         etas = (
@@ -1146,6 +1154,15 @@ class HubEngine:
                                                     "cause": "arrival_refused"})
         return self.process_voice_summary(voice, ambulance_gps, max_zone=new_max, gps_fallback=gps_fallback)
 
+    def _is_confirmed_full(self, hospital_id: str) -> bool:
+        """응급실 병상 0이 '확인된' 만실인지 — 미상·오래된 값(1일 초과·피드 누락)은 아니다. beds_full 내림과 같은 기준."""
+        with self._lock:
+            info = self._hospitals.get(hospital_id)
+            if info is None:
+                return False
+            return (not _is_bed_count_unknown(info) and not _is_bed_data_stale(info, _utcnow())
+                    and self.effective_bed_count(info) <= 0)
+
     def get_case_status(self, case_id: str, hospital_id: str) -> str:
         with self._lock:
             return self._approval_status.get((case_id, hospital_id), "pending")
@@ -1283,6 +1300,10 @@ class HubEngine:
                         self._case_voice[cid] = VoiceCallSummaryMessage.model_validate(case["voice"])
                     if case.get("result"):
                         self._case_results[cid] = HubMatchResult.model_validate(case["result"])
+                        # 수용이 끝난 사건 표시도 되살린다 — 안 하면 재시작 뒤 따라잡기로 다시 화면에 뜬다(2026-10-01).
+                        arrival = self._case_results[cid].arrival
+                        if arrival is not None and arrival.result == "accepted":
+                            self._case_arrival[cid] = arrival
                     self._case_group[cid] = case.get("group")
                     self._case_gps_fallback[cid] = bool(case.get("gpsFallback"))
                     confirmed_at = _parse_iso(case["confirmedAt"]) if case.get("confirmedAt") else None

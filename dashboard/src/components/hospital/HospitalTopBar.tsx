@@ -4,6 +4,7 @@ import { css } from "styled-system/css";
 import { CONNECTION_LABEL, type ConnectionMode } from "@/hooks/use-dashboard-socket";
 import { formatElapsed, useElapsedSeconds } from "@/hooks/use-elapsed-time";
 import { Viewer3DButton } from "@/components/hospital/Viewer3DButton";
+import { VerificationButton } from "@/components/ui/VerificationButton";
 
 export function HospitalTopBar({
   caseCount,
@@ -93,6 +94,7 @@ export function HospitalTopBar({
       </div>
 
       <div className={css({ display: "flex", alignItems: "center", gap: "4.5" })}>
+        <VerificationButton hpid={hospitalId} />
         <Viewer3DButton />
         <span
           className={css({
