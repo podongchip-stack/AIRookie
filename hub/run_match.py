@@ -267,6 +267,7 @@ def main() -> None:
     test_hospital_roster()
     test_voice_v2_schema()
     test_full_hospital_cannot_approve()
+    test_load_penalty()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -960,6 +961,53 @@ def test_full_hospital_cannot_approve() -> None:
     assert results == {"F001": False, "F002": True, "F003": True, "F004": True}, results
     assert engine.get_case_status("case-full", "F001") == "pending"
     print("  [확인] 확인된 만실(F001)만 승인 거부, 미상(F002)·오래된 0(F003)·병상 있음(F004)은 승인")
+
+
+def test_load_penalty() -> None:
+    """이송 중 부하 페널티(2026-10-03): 같은 병원으로 확정이 쌓이면 만실 전에 순위가
+    연속적으로 밀리고, 평시(이송 중 0건)에는 점수·순위가 완전히 같아야 한다.
+
+    예전엔 병상 20개 병원에 19명을 확정해도 20번째 환자에게 그 병원이 1순위로 떴다 —
+    병상이 순위에 닿는 건 beds_full(확인된 0) 절벽 강등뿐이었기 때문. 대량사고 분산의
+    실제 작동 지점이라 시뮬레이션(sim/)의 goldenlink 팔과 같은 로직이 되도록 넣었다.
+    """
+    print("\n=== 이송 중 부하 페널티: 확정이 쌓이면 만실 전에 뒤로, 평시엔 불변 ===")
+    from scoring import LOAD_PENALTY_MAX_MIN, load_penalty_min
+
+    assert load_penalty_min(0, 5) == (0.0, None), "이송 중 0건이면 페널티 0 — 평시 동작 불변"
+    assert load_penalty_min(3, 2, bed_count_unknown=True)[0] == 0.0, "병상 미상이면 압력 정의 불가 — 페널티 없음"
+    for in_flight, beds in ((1, 19), (10, 10), (19, 1), (5, 0)):
+        assert 0.0 < load_penalty_min(in_flight, beds)[0] <= LOAD_PENALTY_MAX_MIN, "페널티 상한 불변식"
+
+    engine = _engine()
+    for h in (
+        _hospital("L001", "[테스트] 가까운 대형 — 부하 집중", 35.1805, 128.1085, 20, beds_by_type={"ER_ADULT": 20}),
+        _hospital("L002", "[테스트] 조금 더 먼 한산한 병원", 35.1860, 128.1130, 20, beds_by_type={"ER_ADULT": 20}),
+    ):
+        engine.update_hospital_info(h)
+
+    baseline = engine.process_voice_summary(_voice("case-load-base"), _TEST_GPS, max_zone=1)
+    b = {h.hospitalId: h for h in baseline.hospitals}
+    assert baseline.hospitals[0].hospitalId == "L001", "평시엔 가까운 병원이 1순위"
+    assert b["L001"].inFlightCount == 0 and b["L001"].loadPenaltyMin == 0.0 and b["L001"].loadReason is None
+
+    # L001에 확정 16건을 쌓는다 (병원 승인 → 이송 승인, 전부 서로 다른 사건)
+    for i in range(16):
+        cid = f"case-load-stack-{i}"
+        engine.process_voice_summary(_voice(cid), _TEST_GPS, max_zone=1)
+        assert engine.apply_approval_action(_action(cid, "hospital_approve", "L001"))
+        assert engine.apply_approval_action(_action(cid, "final_approval", "L001"))
+
+    loaded = engine.process_voice_summary(_voice("case-load-17"), _TEST_GPS, max_zone=1)
+    by_id = {h.hospitalId: h for h in loaded.hospitals}
+    l1 = by_id["L001"]
+    print(f"  L001: 이송 중 {l1.inFlightCount}건, 남은 병상 {l1.availableBedCount}, "
+          f"페널티 +{l1.loadPenaltyMin}분 ({l1.loadReason}) → 순위 {[h.hospitalId for h in loaded.hospitals]}")
+    assert l1.inFlightCount == 16 and l1.availableBedCount == 4, "오버레이 16건이 병상 20에서 차감돼야 한다"
+    assert l1.loadPenaltyMin == 8.0 and l1.loadReason, "압력 16/(16+4)=0.8 → 10분 × 0.8 = 8분"
+    assert loaded.hospitals[0].hospitalId == "L002", "부하가 쌓인 병원은 만실이 되기 전에 뒤로 밀려야 한다"
+    assert not l1.demoteReasons, "만실은 아니므로 절벽 강등(beds_full)과는 별개여야 한다"
+    print("  [확인] 평시 불변(페널티 0), 확정 16건 → +8분 페널티로 만실 전 분산, 상한 10분 불변식")
 
 
 if __name__ == "__main__":

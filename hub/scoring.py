@@ -59,8 +59,33 @@ def expertise_bonus_min(
     return bonus, reasons
 
 
-def final_score(specialty_score: float, travel_min: float, bonus_min: float = 0.0) -> float:
-    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(max(0.0, travel_min - bonus_min))
+# ── 이송 중 부하 페널티 (2026-10-03) ─────────────────────────────────────────────
+# 같은 병원으로 이미 확정돼 이송 중인 환자(TTL 오버레이)가 많을수록, 그 병원의 이동시간에
+# 분을 **더해** 순위를 뒤로 민다. 가산과 같은 '분' 통화라 불변식이 똑같이 선다:
+#   **페널티를 다 받아도 LOAD_PENALTY_MAX_MIN분 넘게 가까운 병원이 역전당하지 않는다.**
+# 평시(이송 중 0건)는 페널티 0이라 기존 순위와 완전히 같고, 대량사고처럼 확정이 연달아
+# 쌓일 때만 작동한다 — beds_full(만실 절벽 강등)이 오기 **전에** 연속적으로 분산시키는
+# 장치다. 예전엔 병상 20개 병원에 19명을 보내도 20번째 환자에게 1순위로 떴다.
+LOAD_PENALTY_MAX_MIN = 10.0
+
+
+def load_penalty_min(in_flight: int, effective_beds: int, bed_count_unknown: bool = False) -> tuple[float, str | None]:
+    """(이동시간에 더할 분, 설명 문구). 압력 = 이송 중 / (이송 중 + 실질 가용).
+
+    실질 가용은 오버레이 차감 후 값(effective_bed_count)을 받는다. 병상 미상이면 압력을
+    정의할 수 없어 0분 — 미상을 이유로 불리하게 두지 않는 기존 원칙 그대로다.
+    """
+    if in_flight <= 0 or bed_count_unknown:
+        return 0.0, None
+    pressure = in_flight / (in_flight + max(effective_beds, 0))
+    minutes = round(LOAD_PENALTY_MAX_MIN * pressure, 1)
+    return minutes, f"이송 중 {in_flight}건/남은 병상 {max(effective_beds, 0)} +{minutes:g}분"
+
+
+def final_score(
+    specialty_score: float, travel_min: float, bonus_min: float = 0.0, load_min: float = 0.0
+) -> float:
+    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(max(0.0, travel_min - bonus_min + load_min))
 
 
 def calibrate_min_per_km(samples: list[tuple[float, float]]) -> float:

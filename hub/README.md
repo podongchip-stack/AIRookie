@@ -137,7 +137,7 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 
 ## 순위 규칙 (2026-09-28 정비, 2026-10-01 보강)
 
-`finalScore = 0.6 × 진료과 점수 + 0.4 × 이동시간 점수(이동분 − 가산분)`으로 매기고, 아래 순서로
+`finalScore = 0.6 × 진료과 점수 + 0.4 × 이동시간 점수(이동분 − 가산분 + 부하 페널티분)`으로 매기고, 아래 순서로
 정렬한다(`scoring.rank_key()`). 후보에서 빼는 병원은 없다 — 뒤로 내릴 뿐이다. **순위는 hub 한 곳에서만
 정한다** — dashboard는 받은 `hospitals[]` 순서를 그대로 쓴다(2026-10-01, 그 전엔 dashboard가 자체
 정렬로 이 규칙을 덮어써서 화면에 반영되지 않았다).
@@ -159,6 +159,18 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 - 중증(`severity_tag = "high"`)일 때만 응급의료기관 등급: 권역응급의료센터 5분, 지역응급의료센터 2분
 - 모르는 값은 0분(불리하게 두지 않음). 쓴 값과 이유는 `travelBonusMin`·`bonusReasons`로 나간다
 - 값은 수용 결과 데이터 없이 정한 보수적 초기값이다 — 거절 로그가 쌓이면 재보정한다
+
+**이송 중 부하 페널티** (2026-10-03, `scoring.load_penalty_min()`): 가산의 대칭형으로, 같은 병원으로
+확정돼 이송 중인 건수(TTL 오버레이, 사건 무관 병원 단위)가 많을수록 **이동시간에 분을 더한다** —
+`페널티 = 10분 × 이송 중 / (이송 중 + 실질 가용)`. 예전엔 차감된 병상이 화면 표시·만실 판정에만 쓰이고
+순위에는 닿지 않아서, 병상 20개 병원에 19명을 확정해도 20번째 환자에게 1순위로 떴다(만실이 되는 순간에야
+beds_full 절벽 강등). 이 페널티는 만실 **전에** 연속적으로 분산시킨다 — 대량사고(MCI) 분산의 실제 작동
+지점이고, 대량사고 시뮬레이션(`sim/`)의 goldenlink 팔과 로직이 일치하게 됐다.
+- **평시 불변**: 이송 중 0건이면 페널티 0 — 단일 사건 평시 순위는 이 변경 전과 완전히 같다
+- 상한 10분(`LOAD_PENALTY_MAX_MIN`) — 가산 불변식과 같은 틀. 병상 미상이면 압력을 정의할 수 없어 0분
+- 쓴 값과 이유는 `inFlightCount`·`loadPenaltyMin`·`loadReason`으로 나간다. 검증 `run_match.py`의
+  `test_load_penalty()` (평시 불변 + 확정 16건 → +8분 → 만실 전 분산)
+- 관제 지도(`map_overview`)의 병원마다 `inFlightCount`가 실려, 확정·도착 결과 때마다 다시 간다
 
 내린 이유는 `hospitals[].demoteReasons`로 나간다. 세부 규칙:
 
@@ -648,6 +660,37 @@ GET /identity?role=hospital&id=S0000001
 이 엔드포인트만 `Access-Control-Allow-Origin: *`을 붙인다 — 인증이 없는 단순
 조회라 전체 허용해도 안전하다고 판단했다.
 
+### 입력 스키마 10: feature/voice로부터 (통화 중 발화 인식, 2026-10-03 신설)
+
+`POST /voice/utterance` — voice가 통화 중 발화 하나를 인식할 때마다 보낸다. hub는 그 구급차(apid) 대시보드 탭에만
+`{"type": "call_transcript", apid, caseId, start, end, text, source: "ai"}`로 넘긴다(통화 시연 패널의 실시간 자막).
+병원·관제 지도로는 보내지 않고, 상태 파일·의사결정 로그에도 남기지 않는다. 응답 202 `{"delivered": 탭 수}`.
+
+```json
+{ "apid": "A0000001", "caseId": "case-abc123", "start": 1.2, "end": 3.4, "text": "62세 남자 환자고요" }
+```
+
+### 출력 스키마 7: feature/hub → 관제 지도 (role=monitor, 2026-10-03 신설)
+
+병원 대시보드를 주소로 직접 열지 않고, dashboard의 관제 지도(`/map`)에서 환자 요청이 온 병원을 눌러 연다.
+관제 지도는 `identify`에 `role: "monitor"`(id 아무 값, 보통 `"map"`)로 붙고 아래를 받는다. **통화 전문·활력징후 등
+환자 상세는 보내지 않는다** — 그건 요청을 받은 병원 대시보드(role=hospital)만 받는다.
+
+| 메시지 | 언제 | 내용 |
+|---|---|---|
+| `identity_info` | 연결 직후 | `name: "관제 지도"`, `known: true` |
+| `map_overview` | 연결 직후 · 병원 목록 한 주기 끝(`POST /info/hospitals/roster`) · 구급차 정보 갱신 | `hospitals[] {hospitalId, name, gps, emergencyLevel}`, `ambulances[] {apid, name, gps(시뮬레이션 위치 우선), base}`, `simDispatch` |
+| `case_overview` | 연결 직후(진행 중 사건 전부) · 매칭 결과가 나갈 때마다 | `caseId, apid, ambulanceName, ambulanceGps, severityTag, zoneActive, zoneBandKm(5), hospitals[] {hospitalId, name, status, distanceKm, zone}` — 거절 비율로 존이 넓혀지면 바깥 존 병원이 `hospitals`에 새로 들어온다 |
+| `ambulance_phase`·`ambulance_position` | 연결 직후(구급차 전부) · 이동 중 1초마다 | 출동 시뮬레이션 상태(구급차 탭과 같은 형식, 전 구급차) |
+| `case_closed` | 사건이 끝날 때 | 지도에서 그 사건의 요청 표시·존 범위를 지운다 |
+| `case_sync` | 연결(재연결) 직후 따라잡기 끝(모든 역할 공통, 2026-10-03) | `caseIds` — 지금 진행 중인 사건. 탭은 이 목록에 없는 사건을 지운다(hub 재시작 등으로 그 사이 끝난 사건). 구급차 탭은 매칭 결과 전(출동·통화 중) 사건도 포함 |
+
+- `GET /identity`는 여전히 `hospital`/`ambulance`만 받는다(관제 지도는 사전 확인이 필요 없다)
+- ⚠ 무응답 로그의 `reachedAtBroadcast`·`hospitalDashboardConnected`는 "그 병원 대시보드 소켓이 연결돼 있었나"
+  기준이다. 이제 병원 대시보드는 관제 지도에서 눌러야 열리므로, 시연 중엔 요청을 받고도 아무도 그 병원을 안
+  열면 "미도달"로 분류된다(따라잡기로 열면 도달로 기록) — 실 운영(병원마다 상시 대시보드)과 해석이 다르다
+- 검증: `python test_monitor_map.py`(실제 로그를 건드리지 않게 임시 경로로 돌린다)
+
 ## 결과 저장 및 전송 방식 (`delivery.py`)
 
 로컬 파일 저장은 항상 하고, 실시간 dashboard 전송은 `app.py`가 처리한다.
@@ -763,13 +806,13 @@ HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화�
 | 백그라운드 시작 | 위 재계산·저장·방치 사건 정리 루프는 `start_background()`가 띄운다. `start-all.sh`가 예전엔 `app.app.run()`만 불러 **실서버에서 이 루프들이 한 번도 돌지 않았다**(2026-10-01 수정) | — |
 | 역할별 전송 | 매칭 결과는 그 구급차(apid) 탭과 후보에 오른 적 있는 병원(hpid) 탭에만 보낸다(2026-10-01). identify 전 소켓은 따라잡기로 받는다 | — |
 | 방치 사건 닫기 | 확정 없이 120분 활동이 없으면 무응답(`NO_RESPONSE`)을 기록한 뒤 사건을 닫고 `{"type":"case_closed"}`를 보낸다 — 대시보드가 카드를 지운다(2026-10-01) | `HUB_UNRESOLVED_TIMEOUT_MIN` |
-| 현장 후보 | 통화 시작(출동 시뮬레이션이면 현장 도착) 때 거리순 후보를 `{"type":"scene_candidates"}`로 그 구급차 탭에만 보낸다(규칙 기반, 환자 정보 전이라 병원 탭엔 안 보냄) | — |
+| 현장 후보 | 통화 시작(출동 시뮬레이션이면 현장 도착) 때 거리순 후보를 `{"type":"scene_candidates"}`로 그 구급차 탭에만 보낸다(규칙 기반, 환자 정보 전이라 병원 탭엔 안 보냄). 2026-10-03부터 후보마다 `bedReliability`(병상 신뢰도, AI — 매칭 결과와 같은 `BedReliabilityMatch` 형태, 없으면 null)가 붙고, **첫 연락 추천** 한 곳에 `firstCallRecommended: true`가 표시된다 — 빈 병상이 실제로 확인됐고(미상·확인된 만실·1일 넘은 값 제외) 도착 시점 유효 확률(rArrive)이 가장 높은 병원, 동률이면 가까운 쪽. 순위(거리순)·finalScore에는 여전히 신뢰도를 안 쓴다 — 첫 통화 상대 제안은 틀려도 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라 여기만 확률을 직접 쓴다. 추천은 `first_call_recommended`로 의사결정 로그에 남아, 나중에 승인·거절 로그와 대조해 적중률(추천 병원이 실제로 수용했는가)을 셀 수 있다 | — |
 | 병원 목록 동기화 | info가 한 주기 끝에 `POST /info/hospitals/roster {"hospitalIds": [...]}`를 보내면 목록에 없는 병원을 뺀다. 진행 중 사건 후보는 보류, 목록이 절반 아래로 급감하면 부분 조회 실패로 보고 안 뺀다 | — |
 | 출동 시뮬레이션 | 아래 "출동 시뮬레이션" 절 | `HUB_SIM_DISPATCH=1` |
 
 ### 출동 시뮬레이션 (2026-10-01, 시연용 가짜 위치)
 
-`start-all.sh --sim-dispatch`(= `HUB_SIM_DISPATCH=1`)일 때만 켜진다. 구급차 대시보드의 [이동]을 누를 때만
+`start-all.sh`가 기본으로 켠다(= `HUB_SIM_DISPATCH=1`, 2026-10-03부터 기본값 — 실제 구급차 GPS 수신 경로가 없어서다. 끄려면 `--no-sim-dispatch`). 구급차 대시보드의 [이동]을 누를 때만
 구급차가 움직인다(`ambulance_sim.py`, 설계는 `documents/1001v1_0134_...`).
 
 ```
@@ -781,9 +824,12 @@ idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transp
 
 - 환자 발생 위치: 기지(Supabase 등록 좌표)에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오
   다중 목적지 ETA로 골라 `data/sim/incident_points_<apid>.json`에 저장(이후 호출 0회)
-- 구간마다 도로 경로 1회. **배속은 구간마다 자동**(2026-10-01): 기본 `HUB_SIM_SPEEDUP`(5)배로 가되, 화면 시간이
-  `HUB_SIM_MAX_TRIP_SEC`(출동·이송, 기본 90초)·`HUB_SIM_RETURN_SEC`(복귀, 기본 30초)를 넘으면 그 구간만 배속을 올린다 —
-  어디로 가도 1~2분. 남은 ETA는 실제 도로 기준, 배속은 위치 메시지 `speedup`으로 화면에 표시
+- 구간마다 도로 경로 1회. **모든 이동(출동·이송·복귀)은 화면 시간 5초 고정**(2026-10-03, `HUB_SIM_TRIP_SEC`):
+  가까워도 멀어도 그 시간에 도착하도록 구간마다 배속을 정한다(먼 곳일수록 빠름). 남은 ETA는 실제 도로 기준,
+  배속은 위치 메시지 `speedup`으로 화면에 표시. 예전(2026-10-01)엔 기본 5배속에 출동·이송 90초·복귀 30초 상한이었다
+- **정지·상황 재개**(2026-10-03): `dispatching`·`on_scene`·`transporting`에서 `sim_pause`하면 위치·남은 시간·진행이
+  그 자리에 멈추고(`paused: true`), `sim_resume`하면 멈춘 자리에서 이어 간다. 정지 중에도 통화·병원 승인·이송 승인은
+  받으며, 정지 중 이송 확정되면 경로만 잡아 두고 재개 때 출발한다. 정지 중 [현장 종료]는 정지를 풀고 복귀
 - **출동 위치 지정**(2026-10-01): `dispatch`에 `target {lat,lng}`·`targetMode("address"|"map")`를 주면 그곳으로, 없으면 무작위.
   대시보드는 주소 검색(`GET /geocode?query=&apid=` — hub가 카카오 장소·주소 검색을 대신 부르고 기지에서의 예상 분을 붙임,
   서버 전체 1분 `HUB_GEOCODE_PER_MIN`(30)회 제한·5분 캐시)과 지도 클릭으로 고른다. **주소 글자는 hub로 안 보내고**, 검색어는
@@ -791,10 +837,14 @@ idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transp
 - 위치는 레지스트리 GPS를 덮어쓰지 않고 조회 시점에 얹는다 — info의 30분 재전송과 안 부딪히고, 재시작하면 기지 대기
 - 통화 시작은 `on_scene`이고 caseId가 같을 때만 voice로 중계한다(아니면 `call_start_refused`)
 - dashboard ↔ hub 메시지
-  - 받음: `{"type":"dispatch"|"scene_end","apid","caseId","timestamp"}`
-  - 보냄: `ambulance_phase`(상태 바뀔 때, 경로 포함) · `ambulance_position`(움직이는 동안 1초마다) — 모두
+  - 받음: `{"type":"dispatch"|"scene_end"|"sim_pause"|"sim_resume","apid","caseId","timestamp"}`
+    (`sim_pause`·`sim_resume`은 apid로 구급차를 가리고 caseId는 로그용)
+  - 보냄: `ambulance_phase`(상태 바뀔 때·정지/재개 때, 경로 포함) · `ambulance_position`(움직이는 동안 1초마다) — 모두
     `simulated: true`. 그 구급차 탭 전부 + 이송 중·병원 도착일 때만 확정 병원 탭. `identity_info.simDispatch`
-- 의사결정 로그: `sim_dispatch_enabled`, `ambulance_dispatched`/`dispatch_refused`, `ambulance_phase`, `case_closed`
+- 의사결정 로그: `sim_dispatch_enabled`, `ambulance_dispatched`/`dispatch_refused`, `ambulance_phase`, `case_closed`,
+  `sim_paused`/`sim_resumed`/`sim_control_refused`
+- 구급차 대시보드는 hub가 보낸 시뮬레이션 상태의 `caseId`를 그 구급차의 현재 사건으로 쓴다(2026-10-03) — 탭에 기억한
+  caseId만 쓰던 때는 브라우저를 껐다 켜면 [현장 종료]·통화 시작이 엉뚱한 caseId로 나가 hub가 거부했다
 - 검증: `python ambulance_sim.py`(상태 머신·보간), `python test_dispatch_sim.py`(앱 레이어 전체 흐름)
 
 ## 폴더 구조
@@ -881,7 +931,7 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
   이동시간 반감기(`TRAVEL_HALF_LIFE_MIN`)는 `scoring.py`/`geo.py`에 상수로 박아뒀다 — 실제 운영 데이터 없이 정한 값이라 테스트하며
   조정 필요
 - 구급차 GPS는 실시간이 아니라 `AmbulanceInfo`에 고정 저장된 값이다. 시연에서는 출동
-  시뮬레이션(`--sim-dispatch`)이 가짜 위치를 얹는다. 진짜 실시간 GPS(브라우저 geolocation 등)
+  시뮬레이션(`start-all.sh` 기본값)이 가짜 위치를 얹는다. 진짜 실시간 GPS(브라우저 geolocation 등)
   수신 경로는 아직 없다
 - **WebSocket에 인증이 없다.** 주소를 아는 누구나 접속해 승인 액션(`final_approval` 포함)과 출동
   명령을 보낼 수 있다. 시연 범위에선 허용하되, 공개 운영 전에는 Cloudflare Access 같은 로그인을

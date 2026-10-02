@@ -15,7 +15,6 @@ import type {
   CallSignalType,
   DashboardIdentify,
   DashboardIdentityInfo,
-  DashboardRole,
   DashboardState,
   DispatchCommand,
   DispatchTarget,
@@ -24,7 +23,12 @@ import type {
   HospitalStatus,
   HubMatchResult,
   InboundMessage,
+  CallTranscriptLine,
+  MapOverview,
+  MonitorCase,
+  MonitorEvent,
   SceneCandidates,
+  SocketRole,
 } from "@/types/dashboard";
 
 // hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
@@ -53,7 +57,14 @@ const INITIAL_STATE: DashboardState = {
   receivedAt: null,
   identity: { name: null, known: null },
   selfInfo: null,
+  mapOverview: null,
+  monitorCases: {},
+  monitorEvents: [],
+  callTranscripts: {},
 };
+
+// 관제 지도 "병원 응답" 기록에 남길 최대 개수
+const MONITOR_EVENT_LIMIT = 30;
 
 // feature/hub가 dashboard와 직접 통신하는 유일한 브랜치다 (CLAUDE.md). voice/info는
 // hub를 거쳐서만 도착하므로, dashboard가 실제로 받는 건 hub의 통합 매칭 결과 메시지
@@ -70,7 +81,7 @@ const INITIAL_STATE: DashboardState = {
 // 즉시 신원 확인(identity_info, hub README "출력 스키마 6"), (2) 관련된 진행
 // 중인 사건 따라잡기(평소 브로드캐스트와 같은 HubMatchResult). onmessage가
 // `type` 필드로 둘을 구분해 각자 다른 상태로 저장한다.
-export function useDashboardSocket(identity: { role: DashboardRole; id: string } | null) {
+export function useDashboardSocket(identity: { role: SocketRole; id: string } | null) {
   const [state, setState] = useState<DashboardState>(INITIAL_STATE);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("mock");
   const socketRef = useRef<WebSocket | null>(null);
@@ -85,12 +96,76 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
 
   const applyCaseClosed = useCallback((caseId: string) => {
     setState((prev) => {
-      if (!(caseId in prev.matchResults) && !(caseId in prev.sceneCandidates)) return prev;
+      if (!(caseId in prev.matchResults) && !(caseId in prev.sceneCandidates) && !(caseId in prev.monitorCases)) {
+        return prev;
+      }
       const matchResults = { ...prev.matchResults };
       const sceneCandidates = { ...prev.sceneCandidates };
+      const monitorCases = { ...prev.monitorCases };
+      const callTranscripts = { ...prev.callTranscripts };
       delete matchResults[caseId];
       delete sceneCandidates[caseId];
-      return { ...prev, matchResults, sceneCandidates };
+      delete monitorCases[caseId];
+      delete callTranscripts[caseId];
+      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts };
+    });
+  }, []);
+
+  // 재연결 직후 hub가 알려주는 진행 중 사건 목록에 없는 사건은 화면에서 지운다(hub 재시작 등으로 끝난 사건).
+  const applyCaseSync = useCallback((caseIds: string[]) => {
+    const keep = new Set(caseIds);
+    const pick = <T,>(record: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(record).filter(([caseId]) => keep.has(caseId)));
+    setState((prev) => ({
+      ...prev,
+      matchResults: pick(prev.matchResults),
+      sceneCandidates: pick(prev.sceneCandidates),
+      monitorCases: pick(prev.monitorCases),
+      callTranscripts: pick(prev.callTranscripts),
+    }));
+  }, []);
+
+  const applyCallTranscript = useCallback((line: CallTranscriptLine) => {
+    if (!line.caseId) return;
+    const caseId = line.caseId;
+    setState((prev) => ({
+      ...prev,
+      callTranscripts: { ...prev.callTranscripts, [caseId]: [...(prev.callTranscripts[caseId] ?? []), line] },
+    }));
+  }, []);
+
+  const applyMapOverview = useCallback((overview: MapOverview) => {
+    setState((prev) => ({ ...prev, mapOverview: overview }));
+  }, []);
+
+  // 사건 요약이 오면, 직전 요약과 비교해 병원 상태가 바뀐 것(승인·거절·이송 확정)을 "병원 응답" 기록으로 쌓는다.
+  // 처음 보는 사건(연결 직후 따라잡기 포함)은 기록하지 않는다 — 이미 지난 응답을 방금 일어난 일처럼 보이게 하지 않게.
+  const applyMonitorCase = useCallback((monitorCase: MonitorCase) => {
+    setState((prev) => {
+      const before = prev.monitorCases[monitorCase.caseId];
+      const events: MonitorEvent[] = [];
+      if (before) {
+        const prevStatus = new Map(before.hospitals.map((h) => [h.hospitalId, h.status]));
+        const at = new Date().toISOString();
+        for (const hospital of monitorCase.hospitals) {
+          const was = prevStatus.get(hospital.hospitalId);
+          if (was !== undefined && was !== hospital.status && hospital.status !== "pending") {
+            events.push({
+              at,
+              caseId: monitorCase.caseId,
+              ambulanceName: monitorCase.ambulanceName ?? monitorCase.apid ?? "구급차",
+              hospitalId: hospital.hospitalId,
+              hospitalName: hospital.name,
+              status: hospital.status,
+            });
+          }
+        }
+      }
+      return {
+        ...prev,
+        monitorCases: { ...prev.monitorCases, [monitorCase.caseId]: monitorCase },
+        monitorEvents: events.length ? [...events, ...prev.monitorEvents].slice(0, MONITOR_EVENT_LIMIT) : prev.monitorEvents,
+      };
     });
   }, []);
 
@@ -216,6 +291,18 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
             case "case_closed":
               applyCaseClosed(parsed.caseId);
               break;
+            case "map_overview":
+              applyMapOverview(parsed);
+              break;
+            case "case_overview":
+              applyMonitorCase(parsed);
+              break;
+            case "call_transcript":
+              applyCallTranscript(parsed);
+              break;
+            case "case_sync":
+              applyCaseSync(parsed.caseIds);
+              break;
             case "match_result":
             case undefined:
               applyMatchResult(parsed);
@@ -237,7 +324,7 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, applyCallTranscript, applyCaseSync, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
@@ -344,7 +431,7 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
     return false;
   }, []);
 
-  // [이동] · [현장 종료] (출동 시뮬레이션). 끊겨 있으면 보내지 않고 false.
+  // [이동] · [현장 종료] · [정지] · [상황 재개] (출동 시뮬레이션). 끊겨 있으면 보내지 않고 false.
   const sendSimCommand = useCallback(
     (type: DispatchCommand["type"], apid: string, caseId: string, target?: DispatchTarget | null): boolean => {
     const socket = socketRef.current;

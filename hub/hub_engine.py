@@ -35,7 +35,7 @@ from schema import (
     SpecialtyMatch,
     VoiceCallSummaryMessage,
 )
-from scoring import calibrate_min_per_km, expertise_bonus_min, final_score, rank_key
+from scoring import calibrate_min_per_km, expertise_bonus_min, final_score, load_penalty_min, rank_key
 from specialty_matcher import SpecialtyMatcher
 
 if TYPE_CHECKING:
@@ -465,6 +465,17 @@ class HubEngine:
         with self._lock:
             return self._hospitals.get(hospital_id)
 
+    def list_hospitals(self) -> list[HospitalInfo]:
+        """관제 지도(2026-10-03)에 병원 마커를 찍기 위한 전체 목록."""
+        with self._lock:
+            return list(self._hospitals.values())
+
+    def list_case_results(self) -> list[HubMatchResult]:
+        """진행 중 사건 전부(관제 지도 따라잡기, 2026-10-03). get_cases_for_hospital()과 같이 환자 수용이
+        끝난 사건은 뺀다."""
+        with self._lock:
+            return [result for cid, result in self._case_results.items() if cid not in self._case_arrival]
+
     def confirm_hospital_info(self, hospital_id: str, ts: datetime) -> bool:
         """병원 대시보드의 "현재 정보 확인" 신호를 기록한다(2026-09-29).
         모르는 병원이면 False — 잘못된 hpid의 확인이 조용히 쌓이지 않게."""
@@ -549,6 +560,16 @@ class HubEngine:
             results = [self._case_results.get(cid) for cid in case_ids]
             return [result for result in results if result is not None]
 
+    def get_case_ids_for_apid(self, apid: str) -> list[str]:
+        """이 구급차의 진행 중 사건 id — 매칭 결과가 아직 없는(출동·통화 중) 사건도 포함, 수용이 끝난 사건은 뺀다."""
+        with self._lock:
+            return [cid for cid, a in self._case_apid.items() if a == apid and cid not in self._case_arrival]
+
+    def list_case_ids(self) -> list[str]:
+        """엔진이 들고 있는 사건 전부(확정·미확정·결과 전 사건 포함)."""
+        with self._lock:
+            return list(set(self._case_results) | set(self._case_apid))
+
     def get_unconfirmed_case_ids(self) -> list[str]:
         """확정 전 사건(재시작 뒤 정리용)."""
         with self._lock:
@@ -605,13 +626,15 @@ class HubEngine:
         for key in [k for k in self._case_overlay if k[0] == case_id]:
             del self._case_overlay[key]
 
-    def close_case(self, case_id: str) -> bool:
+    def close_case(self, case_id: str, include_confirmed: bool = False) -> bool:
         """확정 없이 끝난 사건(방치 정리·현장 종료)을 캐시·따라잡기·주기 재계산에서 뺀다
         (2026-10-01). 예전엔 확정된 사건만 60분 뒤 지워서, 취소·중단된 사건이 병원 대시보드
-        따라잡기 목록에 영원히 떴다. 이송 확정된 사건은 여기서 지우지 않는다(병상 차감이 걸려
-        있어 기존 60분 정리를 따른다). 지웠으면 True."""
+        따라잡기 목록에 영원히 떴다. 이송 확정된 사건은 기본적으로 지우지 않는다(기존 60분 정리를
+        따른다). include_confirmed=True면 확정 사건도 지운다(출동 시뮬레이션 재시작, 2026-10-03) —
+        병상 차감(_bed_overlay)은 병원 단위로 따로 남아 TTL대로 풀리므로 사건을 지워도 그대로다.
+        지웠으면 True."""
         with self._lock:
-            if case_id in self._case_confirmed_at:
+            if case_id in self._case_confirmed_at and not include_confirmed:
                 return False
             existed = case_id in self._case_results or case_id in self._case_apid
             self._drop_case_locked(case_id)
@@ -638,6 +661,12 @@ class HubEngine:
         with self._lock:
             overlay = self._prune_and_count_overlay(info.hospitalId, _utcnow())
             return max(0, info.availableBedCount - overlay)
+
+    def in_flight_count(self, hospital_id: str) -> int:
+        """이 병원으로 확정돼 아직 TTL 안에 있는 이송 건수(병원 단위 — 사건 무관).
+        부하 페널티(scoring.load_penalty_min)와 관제 지도 표시가 쓴다(2026-10-03)."""
+        with self._lock:
+            return self._prune_and_count_overlay(hospital_id, _utcnow())
 
     # ── 승인 액션 ─────────────────────────────────────────────────────────────
 
@@ -881,20 +910,47 @@ class HubEngine:
     def build_zone_candidates(self, ambulance_gps: GpsPoint, max_zone: int = 1) -> list[dict]:
         """1단계: voice 정보가 도착하기 전, GPS+병원 정보만으로 존 기반 후보 리스트를
         만들어 보관해둔다. 진료과 매칭 없이 거리만으로 정렬한 중간 상태를 반환한다.
+
+        2026-10-03: 후보마다 병상 신뢰도(bedReliability, AI)를 얹고 "첫 연락 추천"
+        (firstCallRecommended) 한 곳을 고른다 — 빈 병상이 실제로 확인됐고(미상·확인된
+        만실·1일 넘은 묵은 값 제외) 도착 시점 유효 확률(rArrive)이 가장 높은 병원,
+        동률이면 가까운 쪽. 신뢰도를 finalScore에 안 쓴다는 원칙은 그대로다 — 첫 통화
+        상대 제안은 틀려도 통화 뒤 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라,
+        검증 전의 확률을 써도 되는 유일한 자리다. 거리순 정렬 자체는 바꾸지 않는다.
         """
+        now = _utcnow()
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
         candidates.sort(key=lambda pair: pair[1])
-        return [
-            {
-                "hospitalId": info.hospitalId,
-                "name": info.name,
-                "distanceKm": round(distance, 2),
-                "gps": info.gps.model_dump(),
-                "availableBedCount": self.effective_bed_count(info),
-                "bedCountUnknown": _is_bed_count_unknown(info),
-            }
-            for info, distance in candidates
-        ]
+        rows: list[dict] = []
+        best_index: int | None = None
+        best_r_arrive = 0.0
+        for info, distance in candidates:
+            beds = self.effective_bed_count(info)
+            unknown = _is_bed_count_unknown(info)
+            # horizon은 매칭 때와 달리 카카오 ETA가 아직 없어 거리/평균속도 추정이다
+            # (evaluate가 horizon_sec 없으면 직접 추정).
+            rel = bed_reliability.evaluate(
+                info.bedReliability, distance, now=now,
+                confirmed_at=self.get_info_confirmation(info.hospitalId),
+            )
+            rows.append(
+                {
+                    "hospitalId": info.hospitalId,
+                    "name": info.name,
+                    "distanceKm": round(distance, 2),
+                    "gps": info.gps.model_dump(),
+                    "availableBedCount": beds,
+                    "bedCountUnknown": unknown,
+                    "bedReliability": rel.model_dump() if rel is not None else None,
+                    "firstCallRecommended": False,
+                }
+            )
+            if rel is not None and beds >= 1 and not unknown and not _is_bed_data_stale(info, now):
+                if rel.rArrive > best_r_arrive:  # 동률이면 먼저 담긴(더 가까운) 쪽 유지
+                    best_r_arrive, best_index = rel.rArrive, len(rows) - 1
+        if best_index is not None:
+            rows[best_index]["firstCallRecommended"] = True
+        return rows
 
     # ── 매칭 ──────────────────────────────────────────────────────────────────
 
@@ -952,6 +1008,10 @@ class HubEngine:
                 beds = self.effective_bed_count(info)
                 unknown = _is_bed_count_unknown(info)
                 stale = _is_bed_data_stale(info, now)
+                # 이송 중 부하 페널티(2026-10-03): 이 병원으로 확정돼 아직 TTL 안에 있는
+                # 건수(병원 단위 — 다른 사건 포함)만큼 이동시간에 분을 더한다. 평시엔 0.
+                in_flight = self._prune_and_count_overlay(info.hospitalId, now)
+                load_min, load_reason = load_penalty_min(in_flight, beds, unknown)
                 # 병원의 "현재 정보 확인" 이력 — 현재 claim에 유효한지는
                 # evaluate()가 bornAt과 대조해 판단한다.
                 confirmed = self._info_confirmations.get(info.hospitalId)
@@ -991,10 +1051,13 @@ class HubEngine:
                         ),
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
-                        finalScore=round(final_score(similarity, travel_min, bonus_min), 6),
+                        finalScore=round(final_score(similarity, travel_min, bonus_min, load_min), 6),
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),
                         bonusReasons=bonus_reasons,
+                        inFlightCount=in_flight,
+                        loadPenaltyMin=load_min,
+                        loadReason=load_reason,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
                         demoteReasons=_demote_reasons(info, best_group, status, beds, unknown, stale),

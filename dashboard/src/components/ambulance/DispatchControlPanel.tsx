@@ -12,10 +12,12 @@ import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { searchPlaces } from "@/lib/geocode";
 import type { AmbulancePhase, AmbulanceSimState, DispatchTarget, GeocodeResult } from "@/types/dashboard";
 
-// 구급차 출동 시뮬레이션 조작부(2026-10-01, hub가 --sim-dispatch로 켜졌을 때만 보인다).
+// 구급차 출동 시뮬레이션 조작부(2026-10-01, hub가 출동 시뮬레이션을 켰을 때만 보인다 — start-all.sh 기본값).
 // 위치는 시연용 가짜 위치다 — 실제 GPS로 오인하지 않게 배지를 항상 붙인다.
 // 출동 위치: 아무것도 고르지 않으면 기지 근처 무작위, 주소 검색·지도 클릭으로 고르면 그곳.
 // 고른 주소 글자는 이 탭에만 남고 hub로는 좌표만 간다(집 주소일 수 있음).
+// [정지](2026-10-03): 출동 중·현장·이송 중에 시연 상황을 그 자리에 멈춘다. 정지 중엔 [이동]이 [상황 재개]로
+// 바뀌어 멈춘 자리에서 이어 간다.
 const PHASE_LABEL: Record<AmbulancePhase, string> = {
   idle: "기지 대기",
   dispatching: "현장으로 출동 중",
@@ -73,6 +75,8 @@ export function DispatchControlPanel({
   onTargetChange,
   onDispatch,
   onSceneEnd,
+  onPause,
+  onResume,
 }: {
   apid: string;
   sim: AmbulanceSimState | null;
@@ -82,9 +86,13 @@ export function DispatchControlPanel({
   onTargetChange: (target: DispatchTarget | null) => void;
   onDispatch: () => void;
   onSceneEnd: () => void;
+  onPause: () => void;
+  onResume: () => void;
 }) {
   const phase: AmbulancePhase = sim?.phase ?? "idle";
+  const paused = sim?.paused === true;
   const canDispatch = phase === "idle" || phase === "returning";
+  const canPause = !paused && (phase === "dispatching" || phase === "on_scene" || phase === "transporting");
   const canEndScene = (phase === "on_scene" || phase === "rerouting") && !confirmed && !callActive;
   const etaMin = sim?.etaSec != null && sim.etaSec > 0 ? Math.max(1, Math.ceil(sim.etaSec / 60)) : null;
 
@@ -127,12 +135,15 @@ export function DispatchControlPanel({
           <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
             <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink" })}>{PHASE_LABEL[phase]}</span>
             <span className={simBadgeStyle}>시뮬레이션 위치</span>
+            {paused && <span className={simBadgeStyle}>정지됨</span>}
             {sim?.speedup != null && sim.speedup > 1 && (
               <span className={simBadgeStyle}>{Math.round(sim.speedup)}배속</span>
             )}
           </div>
           <span className={css({ fontSize: "xs", color: "ink3" })}>
-            {etaMin != null
+            {paused
+              ? "시연을 멈췄습니다 — [상황 재개]를 누르면 멈춘 자리에서 이어 갑니다"
+              : etaMin != null
               ? `도착까지 약 ${etaMin}분 (실제 도로 기준)`
               : phase === "at_hospital"
                 ? "병원이 수용 결과를 고를 때까지 병원 앞에서 기다립니다"
@@ -151,9 +162,20 @@ export function DispatchControlPanel({
               현장 종료
             </button>
           )}
-          <button type="button" className={primaryButtonStyle} onClick={onDispatch} disabled={!canDispatch}>
-            이동
-          </button>
+          {canPause && (
+            <button type="button" className={secondaryButtonStyle} onClick={onPause}>
+              정지
+            </button>
+          )}
+          {paused ? (
+            <button type="button" className={primaryButtonStyle} onClick={onResume}>
+              상황 재개
+            </button>
+          ) : (
+            <button type="button" className={primaryButtonStyle} onClick={onDispatch} disabled={!canDispatch}>
+              이동
+            </button>
+          )}
         </div>
       </div>
 

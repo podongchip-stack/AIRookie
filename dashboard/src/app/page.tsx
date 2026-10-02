@@ -3,11 +3,11 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { css } from "styled-system/css";
-import { inputStyle, primaryButtonStyle } from "@/components/ui/button-styles";
+import { inputStyle, primaryButtonStyle, secondaryButtonStyle } from "@/components/ui/button-styles";
 
-// 코드 형식: "H-<병원ID>" 또는 "A-<차량ID>" (대소문자 무관, 대시 생략 가능)
-// 예: H-C → 병원 대시보드(병원 ID "C"), A-1 → 구급차 대시보드(차량 ID "1")
+// 코드 형식: "A-<차량ID>" (대소문자 무관, 대시 생략 가능). 예: A-A0000001 → 구급차 대시보드.
 // 실제 인증 서버가 붙기 전까지는 이 코드로 역할/ID만 판단해 해당 대시보드로 라우팅한다.
+// 병원(H-)은 2026-10-03부터 여기서 받지 않는다 — 관제 지도(/map)에서 환자 요청이 온 병원을 눌러 연다.
 const CODE_PATTERN = /^([HA])-?(.+)$/i;
 
 // hub의 GET /identity로 hpid/apid가 실제로 존재하는지 라우팅 전에 미리 확인한다
@@ -40,11 +40,15 @@ export default function Home() {
     event.preventDefault();
     const match = code.trim().match(CODE_PATTERN);
     if (!match) {
-      setError("코드 형식이 올바르지 않습니다. 예: H-C(병원), A-1(구급차)");
+      setError("코드 형식이 올바르지 않습니다. 예: A-A0000001(구급차)");
       return;
     }
     const [, roleChar, id] = match;
-    const role = roleChar.toUpperCase() === "H" ? "hospital" : "ambulance";
+    if (roleChar.toUpperCase() === "H") {
+      setError("병원 대시보드는 관제 지도에서 환자 요청이 온 병원을 눌러 엽니다. 아래 [관제 지도 열기]를 이용하세요.");
+      return;
+    }
+    const role = "ambulance";
 
     setChecking(true);
     const exists = await checkCodeExists(role, id);
@@ -86,16 +90,25 @@ export default function Home() {
             setCode(event.target.value);
             setError(null);
           }}
-          placeholder="코드 입력 (예: H-C, A-1)"
+          placeholder="구급차 코드 입력 (예: A-A0000001)"
           className={inputStyle}
         />
         {error && (
           <p className={css({ color: "coral", fontSize: "xs" })}>{error}</p>
         )}
         <button type="submit" className={primaryButtonStyle} disabled={checking}>
-          {checking ? "확인 중..." : "입장"}
+          {checking ? "확인 중..." : "구급차 대시보드 입장"}
         </button>
       </form>
+
+      <div className={css({ display: "flex", flexDirection: "column", gap: "2", width: "280px", textAlign: "center" })}>
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/map")}>
+          관제 지도 열기
+        </button>
+        <p className={css({ fontSize: "xs", color: "gray.500" })}>
+          병원·구급차 위치를 실시간으로 보고, 환자 요청이 온 병원을 눌러 병원 대시보드를 엽니다.
+        </p>
+      </div>
     </main>
   );
 }
