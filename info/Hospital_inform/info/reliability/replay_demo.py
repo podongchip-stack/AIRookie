@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+from collections import Counter
 import json
 import random
 import tempfile
@@ -127,6 +128,29 @@ def generate(n: int | None = None, seed: int = 7, snapshot_dir: Path = _DEFAULT_
     return len(records)
 
 
+_EXAMPLE_KEYS = ("name", "requestAt", "arrivalSnapshotAt", "bedsAtRequest", "bedsAtArrival", "travelMin", "bedRArriveAtRequest")
+
+
+def _change_stats(records: list[dict]) -> dict:
+    """출발 때 본 숫자 vs 도착 때 실제 숫자 — 검증 화면 맨 위 그림의 재료."""
+    deltas = [r["bedsAtArrival"] - r["bedsAtRequest"] for r in records]
+    big = [r for r, d in zip(records, deltas) if abs(d) >= THETA]
+    stable = [r for r, d in zip(records, deltas) if abs(d) < THETA]
+    mean = lambda rows: round(sum(r["bedRArriveAtRequest"] for r in rows) / len(rows), 3) if rows else None
+    worst = sorted((r for r, d in zip(records, deltas) if d < 0), key=lambda r: r["bedsAtArrival"] - r["bedsAtRequest"])
+    # 한 건은 한 칸에만: 만실 → 크게 바뀜 → 조금 바뀜 → 그대로
+    kinds = Counter(
+        "becameFull" if r["bedsAtArrival"] <= 0 else "changedBig" if abs(d) >= THETA else "changedSmall" if d else "same"
+        for r, d in zip(records, deltas)
+    )
+    return {
+        **{k: kinds.get(k, 0) for k in ("same", "changedSmall", "changedBig", "becameFull")},
+        "meanTravelMin": round(sum(r["travelMin"] for r in records) / len(records), 1) if records else None,
+        "rArriveMeanBig": mean(big), "rArriveMeanStable": mean(stable),
+        "examples": [{k: r[k] for k in _EXAMPLE_KEYS} for r in worst[:6]],
+    }
+
+
 def _biggest_swing(records: list[dict]) -> dict | None:
     """병상 숫자가 짧은 시간에 가장 크게 바뀐 실제 사례 — "왜 신뢰도가 필요한가"의 예시."""
     if not records:
@@ -160,6 +184,7 @@ def summarize(path: Path = OUTPUT_PATH) -> dict:
         "calibrationError": round(ece, 3) if ece is not None else None,
         "bins": bins,
         "biggestSwing": _biggest_swing(records),
+        "change": _change_stats(records),
         "theta": THETA,
         "generatedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat() if path.is_file() else None,
     }
@@ -178,6 +203,9 @@ def _selftest() -> None:
     top = s["bins"][-1]
     assert top["count"] == 2 and top["observed"] == 0.5, top
     assert s["biggestSwing"]["bedsAtArrival"] == 0
+    c = s["change"]
+    assert (c["same"], c["changedSmall"], c["changedBig"], c["becameFull"]) == (1, 1, 0, 1), c
+    assert c["examples"][0]["bedsAtArrival"] == 0, "가장 크게 줄어든 사례가 먼저"
     print("replay_demo 자체 검사 통과")
 
 

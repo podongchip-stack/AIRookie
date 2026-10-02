@@ -78,7 +78,8 @@ _replay_lock = threading.Lock()
 
 @rejection_bp.get("/verification/summary")
 def verification_summary():
-    """시연용 검증 화면 집계: 실제 E-Gen 재생 채점(reliability.replay_demo) + 거절 로그 사유 집계."""
+    """시연용 검증 화면 집계: 실제 E-Gen 재생 채점(reliability.replay_demo) + E-Gen↔심평원 대조(crosscheck)
+    + 거절 로그 사유 집계."""
     body: dict = {"demo": True}
     try:
         from reliability import replay_demo
@@ -91,6 +92,13 @@ def verification_summary():
     except Exception as exc:  # 신뢰도 엔진이 없는 환경 — 거절 로그 집계만 보낸다
         body["replay"] = None
         body["replayError"] = f"{type(exc).__name__}: {exc}"
+    try:
+        from . import crosscheck
+
+        body["crosscheck"] = crosscheck.summarize()
+    except Exception as exc:  # 스냅샷·심평원 캐시가 없는 장비 — 이 블록만 빠진다
+        body["crosscheck"] = None
+        body["crosscheckError"] = f"{type(exc).__name__}: {exc}"
     records = R.load_all()
     counts = Counter(r.get("reasonCode") or "UNSPECIFIED" for r in records)
     body["rejections"] = {
