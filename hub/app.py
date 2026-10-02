@@ -285,14 +285,65 @@ def get_verification():
     """시연용 신뢰도 검증 화면(2026-10-02). 집계는 info 거절 로그 수신구(5003)가 만들고 hub는 그대로 중계한다
     — dashboard는 hub와만 통신한다. 수신구가 안 떠 있으면 503."""
     url = HUB_REJECTION_URL.rsplit("/hub/rejection", 1)[0] + "/verification/summary"
+    hpid = (request.args.get("hpid") or "").strip()
     try:
-        upstream = requests.get(url, timeout=30)  # 1시간마다 재생성(수 초)이 끼면 느릴 수 있다
+        upstream = requests.get(url, params={"hpid": hpid} if hpid else None, timeout=30)  # 1시간마다 재생성(수 초)
         upstream.raise_for_status()
-        response, status = jsonify(upstream.json()), 200
+        body = upstream.json()
+        if hpid:
+            self_info = _build_self_info(hpid)
+            body["hospitalHub"] = {
+                "selfInfo": self_info.model_dump() if self_info else None,
+                "activity": _hospital_activity(hpid),
+            }
+        response, status = jsonify(body), 200
     except (requests.RequestException, ValueError) as e:
         response, status = jsonify({"error": f"검증 집계를 가져오지 못했습니다(거절 로그 수신구 5003): {e}"}), 503
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response, status
+
+
+#: 병원 활동 기록에 셀 의사결정 로그 항목 — 승인·거절·이송 확정·도착 결과·정보 확인
+_ACTIVITY_LABEL = {
+    "hospital_approve": "수용 승인", "hospital_reject": "수용 불가", "final_approval": "이송 확정(구급대)",
+    "arrival_accepted": "환자 수용 완료", "arrival_refused": "도착 후 수용 불가", "hospital_info_confirmed": "정보 확인",
+}
+
+
+def _hospital_activity(hospital_id: str) -> dict:
+    """의사결정 로그에서 이 병원 관련 기록만 센다(검증 화면 '우리 병원'). 통화 원문은 로그에 지문만 있다."""
+    requested: set[str] = set()
+    counts: dict[str, int] = {}
+    recent: list[dict] = []
+    try:
+        lines = decision_log.LOG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        event, payload = entry.get("eventType"), entry.get("payload") or {}
+        if event == "hub_match_result":
+            if any(h.get("hospitalId") == hospital_id for h in payload.get("hospitals") or []):
+                requested.add(payload.get("caseId"))
+            continue
+        action = payload.get("action") if isinstance(payload.get("action"), dict) else None
+        if event in ("approval_action_applied", "arrival_accepted") and action and action.get("hospital_id") == hospital_id:
+            kind = action.get("action")
+        elif event in ("arrival_refused", "hospital_info_confirmed") and payload.get("hospitalId") == hospital_id:
+            kind = event
+        else:
+            continue
+        if kind in _ACTIVITY_LABEL:
+            counts[kind] = counts.get(kind, 0) + 1
+            recent.append({"timestamp": entry.get("timestamp"), "kind": kind, "label": _ACTIVITY_LABEL[kind]})
+    return {
+        "requestedCases": len(requested),
+        "counts": [{"kind": k, "label": _ACTIVITY_LABEL[k], "count": n} for k, n in counts.items()],
+        "recent": recent[-8:],
+    }
 
 
 @app.get("/geocode")

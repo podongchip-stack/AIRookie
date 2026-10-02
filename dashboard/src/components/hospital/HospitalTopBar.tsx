@@ -94,7 +94,7 @@ export function HospitalTopBar({
       </div>
 
       <div className={css({ display: "flex", alignItems: "center", gap: "4.5" })}>
-        <VerificationButton />
+        <VerificationButton hpid={hospitalId} />
         <Viewer3DButton />
         <span
           className={css({

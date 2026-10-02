@@ -21,6 +21,7 @@ POST한다. `hospital_id` 하나만 있으면 기록되고(이유 없으면 `UNS
     POST /hub/rejection          한 건 또는 배열
     GET  /hub/rejection/summary  축별 집계 (사람이 읽는 텍스트)
     GET  /verification/summary   시연용 신뢰도 검증 화면 집계(JSON) — hub가 대시보드로 중계한다
+                                 (?hpid=를 주면 그 병원 기록 전부를 hospital로 덧붙인다)
 """
 
 from __future__ import annotations
@@ -99,6 +100,15 @@ def verification_summary():
     except Exception as exc:  # 스냅샷·심평원 캐시가 없는 장비 — 이 블록만 빠진다
         body["crosscheck"] = None
         body["crosscheckError"] = f"{type(exc).__name__}: {exc}"
+    hpid = (request.args.get("hpid") or "").strip()
+    if hpid:  # 병원 대시보드에서 열었을 때 — 그 병원 기록 전부(hospital_view)
+        try:
+            from . import hospital_view
+
+            body["hospital"] = hospital_view.summarize(hpid)
+        except Exception as exc:
+            body["hospital"] = None
+            body["hospitalError"] = f"{type(exc).__name__}: {exc}"
     records = R.load_all()
     counts = Counter(r.get("reasonCode") or "UNSPECIFIED" for r in records)
     body["rejections"] = {

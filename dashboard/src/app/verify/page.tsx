@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { css } from "styled-system/css";
+import { type HospitalHub, type HospitalView, HospitalVerifySection } from "@/components/verify/HospitalVerifySection";
 
 // 시연용 신뢰도 검증 화면(2026-10-02). 대시보드 상단바 [신뢰도 검증] 모달과 시연장 큰 화면(직접 /verify)이 같이 쓴다.
 // 한눈에 보여줄 것: "API(E-Gen)가 알려준 값"과 "실제"가 다르다 — 실제의 근거는 둘뿐이다.
@@ -49,7 +50,13 @@ type Crosscheck = {
   severeUnknown: number;
   specialty: { field: string; notShown: number; hospitals: { name: string; egen: string }[] }[];
 };
-type Verification = { replay: Replay | null; replayError?: string; crosscheck?: Crosscheck | null };
+type Verification = {
+  replay: Replay | null;
+  replayError?: string;
+  crosscheck?: Crosscheck | null;
+  hospital?: HospitalView | null;
+  hospitalHub?: HospitalHub | null;
+};
 
 const COLORS = { same: "#CBD5E1", changedSmall: "#F0C36D", changedBig: "#D93F35", becameFull: "#7A1F1A" } as const;
 const KIND_LABEL: Record<keyof typeof COLORS, string> = {
@@ -121,7 +128,9 @@ async function fetchVerification(): Promise<{ data?: Verification; error?: strin
   const httpUrl = process.env.NEXT_PUBLIC_HUB_HTTP_URL;
   if (!httpUrl) return { error: "hub 주소가 없어 불러올 수 없습니다(목데이터 모드)" };
   try {
-    const response = await fetch(`${httpUrl}/verification`);
+    // 병원 대시보드에서 열면 ?hpid=가 붙는다 — 그 병원 기록을 같이 받는다
+    const hpid = new URLSearchParams(window.location.search).get("hpid");
+    const response = await fetch(`${httpUrl}/verification${hpid ? `?hpid=${encodeURIComponent(hpid)}` : ""}`);
     const body = await response.json();
     if (!response.ok) return { error: body.error ?? `HTTP ${response.status}` };
     return { data: body as Verification };
@@ -189,6 +198,15 @@ export default function VerifyPage() {
         {error && <p className={css({ fontSize: "sm", color: "coral" })}>{error}</p>}
         {data && !replay && (
           <p className={css({ fontSize: "sm", color: "coral" })}>재생 채점 결과를 만들지 못했습니다: {data.replayError ?? "알 수 없음"}</p>
+        )}
+
+        {data?.hospital && (
+          <>
+            <HospitalVerifySection view={data.hospital} hub={data.hospitalHub} />
+            <h2 className={css({ fontSize: "lg", fontWeight: "bold", color: "ink", marginTop: "4", paddingTop: "4", borderTopWidth: "1px", borderColor: "lineStrong" })}>
+              전국 전체
+            </h2>
+          </>
         )}
 
         {replay && change && changedShare != null && (
