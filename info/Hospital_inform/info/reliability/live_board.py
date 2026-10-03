@@ -105,10 +105,15 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
             for lo, hi in CALIBRATION_BINS
         ]
         warned_breaks = missed_breaks = value_changes = 0   # 경고(<50%) 깨짐 / 고신뢰(>=80%) 깨짐 / 전체 값 변화
+        # 폴링별 채점 집계 — 화면의 라이브 그래프("신뢰 등급별 유지율") 재료.
+        # hi = 엔진이 "믿어도 됨"(조건부 확률 >= 0.8)이라 한 값, warn = "위험"(< 0.5) 경고한 값.
+        timeseries: list[dict] = []
         prev_ts: datetime | None = None
 
         for ts, items in polls:
             gap_min = (ts - prev_ts).total_seconds() / 60.0 if prev_ts else None
+            poll_stat = {"ts": ts.isoformat(timespec="seconds"), "n": 0, "held": 0,
+                         "hiN": 0, "hiHeld": 0, "warnN": 0, "warnHeld": 0, "breaks": 0}
             # 1) 직전 예측을 이 폴링의 실제 값으로 채점 (수집 공백 구간은 건너뜀)
             if gap_min is not None and gap_min <= GAP_RESET_MIN:
                 for hpid, claim in claim_params.items():
@@ -127,6 +132,15 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
                             b["survived"] += not broke
                             b["total"] += 1
                             break
+                    poll_stat["n"] += 1
+                    poll_stat["held"] += not broke
+                    poll_stat["breaks"] += broke
+                    if p_step >= 0.8:
+                        poll_stat["hiN"] += 1
+                        poll_stat["hiHeld"] += not broke
+                    elif p_step < 0.5:
+                        poll_stat["warnN"] += 1
+                        poll_stat["warnHeld"] += not broke
                     if value != claim["value"]:
                         value_changes += 1
                     if broke:
@@ -159,6 +173,8 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
                     "born": pred.born, "predT": pred.pred_t_sec, "sigma": pred.sigma,
                     "value": value if value is not None else 0,
                 }
+            if poll_stat["n"]:
+                timeseries.append(poll_stat)
             prev_ts = ts
 
         # 현재 보드 — 마지막 폴링 기준의 진행형 상태 (화면이 초 단위 감쇠를 직접 그린다)
@@ -186,6 +202,8 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
     feed.sort(key=lambda r: r["ts"], reverse=True)
     big_breaks = len(feed)
     return {
+        "schemaVersion": 2,  # timeseries 추가(2026-10-03) — 캐시 재생성 판별용
+        "timeseries": timeseries,
         "source": "live_replay",
         "demo": False,  # 표본·가상 요청이 아니라 창 안의 실측 전수 채점
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -217,7 +235,9 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
 def cached(window_hours: int = WINDOW_HOURS_DEFAULT, refresh_sec: int = CACHE_REFRESH_SEC) -> dict:
     """캐시가 신선하면 그대로, 아니면 다시 만든다(생성 수십 초 — ingest가 락으로 감싼다)."""
     if CACHE_PATH.is_file() and time.time() - CACHE_PATH.stat().st_mtime < refresh_sec:
-        return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        body = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        if body.get("schemaVersion") == 2:  # 구버전 캐시는 무시하고 다시 만든다
+            return body
     body = build(window_hours)
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
