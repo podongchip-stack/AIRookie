@@ -1,10 +1,11 @@
 """대량사고 시뮬레이션 실행기 — 세 팔 × 시드 반복, 결과 JSON + 자가완결 HTML 리포트.
 
-    python run.py                          # 기본: 환자 120, 구급차 30, 시드 20개
+    python run.py                          # 기본 장면: itaewon (환자 120, 구급차 30, 시드 20)
+    python run.py --scene ilsan            # 2019 일산 여성병원 화재 조건 + 실측 분포 참조선
     python run.py --patients 150 --seeds 30
     python run.py --sweep                  # 상수 민감도(전화 시간·환자 수) 표만 출력
 
-출력: out/results.json, out/mci_report.html (브라우저로 열면 됨 — 외부 의존 없음)
+출력: out/results_<장면>.json, out/mci_report_<장면>.html (브라우저로 열면 됨 — 외부 의존 없음)
 """
 from __future__ import annotations
 
@@ -14,14 +15,16 @@ import statistics
 from dataclasses import replace
 from pathlib import Path
 
-from data_load import SCENE_LAT, SCENE_LNG, build_world
+from data_load import SCENES, build_world
 from engine import ARMS, SimParams, percentile, simulate, summarize
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
 
-def run_all(params: SimParams, snapshot_date: str, target_hhmm: str, radius_km: float, seeds: int) -> dict:
-    snapshot_ts, hospitals = build_world(snapshot_date, target_hhmm, radius_km)
+def run_all(params: SimParams, scene: dict, snapshot_date: str, target_hhmm: str,
+            radius_km: float, seeds: int) -> dict:
+    snapshot_ts, hospitals = build_world(snapshot_date, target_hhmm, radius_km,
+                                         scene_lat=scene["lat"], scene_lng=scene["lng"])
     arms: dict[str, dict] = {}
     for arm in ARMS:
         runs = [summarize(simulate(arm, hospitals, params, seed)) for seed in range(seeds)]
@@ -66,9 +69,13 @@ def run_all(params: SimParams, snapshot_date: str, target_hhmm: str, radius_km: 
             {"amb": tr.amb, "t0": tr.t0, "t1": tr.t1, "from": tr.from_hpid, "to": tr.to_hpid, "kind": tr.kind}
             for tr in run0.trips
         ]
+    reference = None
+    if scene.get("reference") and Path(scene["reference"]).exists():
+        reference = json.loads(Path(scene["reference"]).read_text(encoding="utf-8"))
     return {
+        "reference": reference,
         "scenario": {
-            "scene": {"lat": SCENE_LAT, "lng": SCENE_LNG, "label": "이태원역 (2022-10-29 참사 현장)"},
+            "scene": {"lat": scene["lat"], "lng": scene["lng"], "label": scene["label"]},
             "snapshotTs": snapshot_ts,
             "radiusKm": radius_km,
             "nHospitals": len(hospitals),
@@ -92,7 +99,8 @@ def run_all(params: SimParams, snapshot_date: str, target_hhmm: str, radius_km: 
     }
 
 
-def sweep(base: SimParams, snapshot_date: str, target_hhmm: str, radius_km: float, seeds: int) -> None:
+def sweep(base: SimParams, scene: dict, snapshot_date: str, target_hhmm: str,
+          radius_km: float, seeds: int) -> None:
     """상수 민감도 — 결론(순서)이 가정에 얼마나 민감한지 표로 보여준다."""
     print(f"{'변주':<28}{'nearest 중앙':>13}{'sequential 중앙':>16}{'goldenlink 중앙':>16}{'쏠림(nearest)':>14}")
     variants: list[tuple[str, SimParams]] = [("기본", base)]
@@ -102,7 +110,8 @@ def sweep(base: SimParams, snapshot_date: str, target_hhmm: str, radius_km: floa
         variants.append((f"환자 {n}명", replace(base, n_patients=n)))
     for m in (15, 50):
         variants.append((f"구급차 {m}대", replace(base, n_ambulances=m)))
-    snapshot_ts, hospitals = build_world(snapshot_date, target_hhmm, radius_km)
+    snapshot_ts, hospitals = build_world(snapshot_date, target_hhmm, radius_km,
+                                         scene_lat=scene["lat"], scene_lng=scene["lng"])
     for label, params in variants:
         rows = {}
         for arm in ARMS:
@@ -117,26 +126,36 @@ def sweep(base: SimParams, snapshot_date: str, target_hhmm: str, radius_km: floa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--patients", type=int, default=120)
+    parser.add_argument("--scene", choices=sorted(SCENES), default="itaewon",
+                        help="장면 — 좌표·스냅샷 시각·사상자 구성 기본값이 장면을 따른다")
+    parser.add_argument("--patients", type=int, default=None)
     parser.add_argument("--ambulances", type=int, default=30)
     parser.add_argument("--seeds", type=int, default=20)
-    parser.add_argument("--snapshot-date", default="2026-10-02")
-    parser.add_argument("--time", default="22:15", help="스냅샷 목표 시각 HH:MM (참사 발생 시각)")
-    parser.add_argument("--radius", type=float, default=10.0)
+    parser.add_argument("--snapshot-date", default=None)
+    parser.add_argument("--time", default=None, help="스냅샷 목표 시각 HH:MM (기본: 장면의 사건 발생 시각)")
+    parser.add_argument("--radius", type=float, default=None)
     parser.add_argument("--sweep", action="store_true", help="상수 민감도 표만 출력")
     args = parser.parse_args()
 
-    params = SimParams(n_patients=args.patients, n_ambulances=args.ambulances)
+    scene = SCENES[args.scene]
+    patients = args.patients if args.patients is not None else scene["patients"]
+    snapshot_date = args.snapshot_date or scene["snapshot_date"]
+    target_hhmm = args.time or scene["time"]
+    radius = args.radius if args.radius is not None else scene["radius_km"]
+    params = SimParams(n_patients=patients, n_ambulances=args.ambulances,
+                       severity_mix=scene["severity_mix"])
     if args.sweep:
-        sweep(params, args.snapshot_date, args.time, args.radius, seeds=max(args.seeds // 2, 5))
+        sweep(params, scene, snapshot_date, target_hhmm, radius, seeds=max(args.seeds // 2, 5))
         return
 
-    results = run_all(params, args.snapshot_date, args.time, args.radius, args.seeds)
+    results = run_all(params, scene, snapshot_date, target_hhmm, radius, args.seeds)
     OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
+    (OUT_DIR / f"results_{args.scene}.json").write_text(
+        json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
 
+    print(f"[{scene['label']}]")
     print(f"스냅샷 {results['scenario']['snapshotTs']} — 병원 {results['scenario']['nHospitals']}곳, "
-          f"가용 {results['scenario']['totalBeds']}병상, 환자 {args.patients}명, 시드 {args.seeds}개")
+          f"가용 {results['scenario']['totalBeds']}병상, 환자 {patients}명, 시드 {args.seeds}개")
     print(f"{'arm':<12}{'이송 중앙값':>12}{'p90':>8}{'쏠림 최대':>10}{'재이송':>8}{'거절 전화':>10}{'종료':>8}")
     for arm in ARMS:
         a = results["arms"][arm]
@@ -144,13 +163,10 @@ def main() -> None:
               f"{a['maxLoadRatio']['mean']:>9.1f}x{a['transfersMean']:>8.1f}{a['rejectedCallsMean']:>10.1f}"
               f"{a['finishedAtMin']['mean']:>7.1f}분")
 
-    try:
-        from html_report import render
-        html_path = OUT_DIR / "mci_report.html"
-        html_path.write_text(render(results), encoding="utf-8")
-        print(f"\n리포트: {html_path}")
-    except ImportError:
-        print("\nhtml_report 모듈이 아직 없어 results.json만 저장함")
+    from html_report import render
+    html_path = OUT_DIR / f"mci_report_{args.scene}.html"
+    html_path.write_text(render(results), encoding="utf-8")
+    print(f"\n리포트: {html_path}")
 
 
 if __name__ == "__main__":

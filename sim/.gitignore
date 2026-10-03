@@ -4,3 +4,7 @@ __pycache__/
 !out/
 !out/*
 out/_*
+# 루트의 전역 data/ 무시도 이 폴더만 해제 — 전국 좌표 캐시(fetch_coords.py)와
+# 일산 실측 분포(학회지 Table 3)는 입력 데이터라 커밋해야 다른 장비에서 재현된다.
+!data/
+!data/*
