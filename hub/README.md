@@ -680,7 +680,7 @@ GET /identity?role=hospital&id=S0000001
 
 ### 출력 스키마 7: feature/hub → 관제 지도 (role=monitor, 2026-10-03 신설)
 
-병원 대시보드를 주소로 직접 열지 않고, dashboard의 관제 지도(`/map`)에서 환자 요청이 온 병원을 눌러 연다.
+dashboard의 관제 지도(`/map`, 보기 전용 — 병원 대시보드와는 분리돼 있어 병원 대시보드는 첫 페이지에서 접근 코드로 연다).
 관제 지도는 `identify`에 `role: "monitor"`(id 아무 값, 보통 `"map"`)로 붙고 아래를 받는다. **통화 전문·활력징후 등
 환자 상세는 보내지 않는다** — 그건 요청을 받은 병원 대시보드(role=hospital)만 받는다.
 
@@ -694,9 +694,6 @@ GET /identity?role=hospital&id=S0000001
 | `case_sync` | 연결(재연결) 직후 따라잡기 끝(모든 역할 공통, 2026-10-03) | `caseIds` — 지금 진행 중인 사건. 탭은 이 목록에 없는 사건을 지운다(hub 재시작 등으로 그 사이 끝난 사건). 구급차 탭은 매칭 결과 전(출동·통화 중) 사건도 포함 |
 
 - `GET /identity`는 여전히 `hospital`/`ambulance`만 받는다(관제 지도는 사전 확인이 필요 없다)
-- ⚠ 무응답 로그의 `reachedAtBroadcast`·`hospitalDashboardConnected`는 "그 병원 대시보드 소켓이 연결돼 있었나"
-  기준이다. 이제 병원 대시보드는 관제 지도에서 눌러야 열리므로, 시연 중엔 요청을 받고도 아무도 그 병원을 안
-  열면 "미도달"로 분류된다(따라잡기로 열면 도달로 기록) — 실 운영(병원마다 상시 대시보드)과 해석이 다르다
 - 검증: `python test_monitor_map.py`(실제 로그를 건드리지 않게 임시 경로로 돌린다)
 
 ## 결과 저장 및 전송 방식 (`delivery.py`)

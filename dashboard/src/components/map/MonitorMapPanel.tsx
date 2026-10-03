@@ -14,9 +14,10 @@ import {
 } from "@/lib/monitor";
 import type { AmbulanceSimState, MapOverview, MonitorCase } from "@/types/dashboard";
 
-// 관제 지도(2026-10-03). 서울 지도에 병원(남색 원)·구급차(주황 사각형)를 이름과 함께 찍고, 구급차는 hub가
-// 보내는 출동 시뮬레이션 위치로 1초마다 옮긴다. 환자 요청이 온 병원은 마커 위에 빨간 표시를 달고, 그 병원만
-// 눌러서 병원 대시보드를 연다. 사건마다 지금 요청 중인 존(거절 비율로 넓혀진 범위 포함)을 점선 원으로 그린다.
+// 관제 지도(2026-10-03). 서울 지도에 병원(남색 원 — 이름·접근 코드)·구급차(주황 사각형)를 찍고, 구급차는 hub가
+// 보내는 출동 시뮬레이션 위치로 1초마다 옮긴다. 환자 요청이 온 병원은 마커 위에 상태 표시를 단다. 사건마다 지금
+// 요청 중인 존(거절 비율로 넓혀진 범위 포함)을 점선 원으로 그린다. 병원 대시보드는 열지 않는다 — 첫 페이지에서
+// 접근 코드로 연다(2026-10-03 회의로 분리).
 //
 // 카카오맵 객체는 React 상태가 아니라 ref에 둔다(마커 수백 개를 매 렌더 다시 만들지 않게). 효과마다 바뀐 부분만
 // 지도에 반영한다.
@@ -34,45 +35,31 @@ type AmbulanceLayer = { marker: kakao.maps.Marker; label: kakao.maps.CustomOverl
 
 // 요청 표시는 짧게(상태만) — 요청 병원이 존 확장으로 20곳 가까이 되면 긴 표시는 서로 겹쳐 지도를 가렸다.
 // 어느 구급대의 요청인지는 마우스를 올리면(title) 보인다. 색은 상태별(노랑·연두·빨강·초록).
-function badgeElement(requests: HospitalRequest[], onClick: () => void): HTMLElement {
+function badgeElement(requests: HospitalRequest[]): HTMLElement {
   const status = topStatus(requests);
   const only = requests.length === 1 ? requests[0] : null;
   // 병상이 없어 불가(E-Gen)면 "병상 없음"으로 — 병원이 직접 거절한 것과 구분한다(2026-10-03)
   const label = only && only.status === "rejected" && only.note?.startsWith("병상 없음") ? "병상 없음" : STATUS_SHORT[status];
   const text = requests.length > 1 ? `${STATUS_ICON[status]} ${requests.length}건` : `${STATUS_ICON[status]} ${label}`;
-  const el = document.createElement("button");
-  el.type = "button";
-  el.title =
-    requests.map((r) => `${r.ambulanceName} · ${STATUS_SHORT[r.status]}${r.note ? `(${r.note})` : ""} · 존 ${r.zone}`).join("\n") +
-    "\n눌러서 병원 대시보드 열기";
+  const el = document.createElement("div");
+  el.title = requests
+    .map((r) => `${r.ambulanceName} · ${STATUS_SHORT[r.status]}${r.note ? `(${r.note})` : ""} · 존 ${r.zone}`)
+    .join("\n");
   el.style.cssText =
-    `transform:translateY(-14px);cursor:pointer;white-space:nowrap;font-size:11px;font-weight:700;` +
+    `transform:translateY(-14px);cursor:default;white-space:nowrap;font-size:11px;font-weight:700;` +
     `color:${statusInk(status)};background:${requestColor(requests)};border:2px solid #FFFFFF;border-radius:999px;` +
     `padding:1px 7px;box-shadow:0 1px 4px rgba(22,34,46,.35);`;
   el.textContent = text;
-  el.onclick = (event) => {
-    event.stopPropagation();
-    onClick();
-  };
   return el;
 }
 
-// 병원 이름표 — 누르면 그 병원 대시보드를 연다(2026-10-03). 모양은 createLabelOverlay와 같다.
-function hospitalLabelElement(name: string, onClick: () => void): HTMLElement {
-  const el = document.createElement("button");
-  el.type = "button";
-  el.title = "눌러서 병원 대시보드 열기";
-  el.textContent = name;
-  el.style.cssText =
-    "transform:translateY(14px);font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;" +
-    "background:#FFFFFF;border:1px solid #E2E8EF;padding:1px 6px;border-radius:6px;color:#16222E;";
-  el.onmouseenter = () => (el.style.borderColor = "#1E5FA8");
-  el.onmouseleave = () => (el.style.borderColor = "#E2E8EF");
-  el.onclick = (event) => {
-    event.stopPropagation();
-    onClick();
-  };
-  return el;
+// 병원 이름표 — 이름과 병원 대시보드 접근 코드(H-<hpid>)를 같이 보여준다(2026-10-03). 모양은 createLabelOverlay와 같다.
+function hospitalLabel(name: string, hospitalId: string): string {
+  return (
+    `<div style="transform:translateY(14px);font-size:11px;font-weight:600;white-space:nowrap;` +
+    `background:#FFFFFF;border:1px solid #E2E8EF;padding:1px 6px;border-radius:6px;color:#16222E;">` +
+    `${escapeHtml(name)} <span style="color:#1E5FA8;font-weight:700;">H-${escapeHtml(hospitalId)}</span></div>`
+  );
 }
 
 function zoneLabel(text: string): string {
@@ -87,13 +74,11 @@ export function MonitorMapPanel({
   cases,
   ambulanceSim,
   requests,
-  onOpenHospital,
 }: {
   overview: MapOverview | null;
   cases: Record<string, MonitorCase>;
   ambulanceSim: Record<string, AmbulanceSimState>;
   requests: Map<string, HospitalRequest[]>;
-  onOpenHospital: (hospitalId: string) => void;
 }) {
   const { ready, error } = useKakaoMapScript();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -108,11 +93,9 @@ export function MonitorMapPanel({
   const requestsRef = useRef(requests);
   // 축소 상태에서 눌러서 이름을 띄운 병원
   const pickedRef = useRef<string | null>(null);
-  const onOpenRef = useRef(onOpenHospital);
   useEffect(() => {
     requestsRef.current = requests;
-    onOpenRef.current = onOpenHospital;
-  }, [requests, onOpenHospital]);
+  }, [requests]);
 
   // 병원 이름은 확대했을 때만(환자 요청이 온 병원·눌러서 띄운 병원은 항상) 보인다.
   function isLabelShown(id: string): boolean {
@@ -171,21 +154,16 @@ export function MonitorMapPanel({
         image: createColoredMarkerImage(MAP_COLORS.hospital, 18),
         zIndex: 1,
       });
-      // 2026-10-03: 환자 요청이 없어도 모든 병원의 대시보드를 열 수 있다. 이름이 이미 보이면(확대 상태·요청 온 병원·
-      // 한 번 눌러 띄운 병원) 마커를 누르면 바로 열고, 축소 상태라 이름이 안 보이면 첫 클릭은 이름만 띄운다.
+      // 관제 지도는 병원 대시보드를 열지 않는다(2026-10-03 회의로 분리 — 병원 대시보드는 첫 페이지에서 접근 코드로).
+      // 축소 상태라 이름이 안 보이면 마커를 눌러 이름·접근 코드를 띄우고, 다시 누르면 숨긴다.
       kakao.maps.event.addListener(marker, "click", () => {
-        if (isLabelShown(hospital.hospitalId)) {
-          onOpenRef.current(hospital.hospitalId);
-          return;
-        }
-        pickedRef.current = hospital.hospitalId;
+        pickedRef.current = pickedRef.current === hospital.hospitalId ? null : hospital.hospitalId;
         applyLabelVisibility();
       });
       const label = new kakao.maps.CustomOverlay({
         position: pos,
-        content: hospitalLabelElement(hospital.name, () => onOpenRef.current(hospital.hospitalId)),
+        content: hospitalLabel(hospital.name, hospital.hospitalId),
         yAnchor: 0,
-        clickable: true,
       });
       layers.set(hospital.hospitalId, { marker, label });
     }
@@ -213,11 +191,10 @@ export function MonitorMapPanel({
       if (!hospital) return;
       const badge = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(hospital.gps.lat, hospital.gps.lng),
-        content: badgeElement(list, () => onOpenRef.current(id)),
+        content: badgeElement(list),
         yAnchor: 1,
         // 아직 답해야 할(판단 대기) 병원 표시가 거절 병원 표시 위에 오게
         zIndex: 40 + (topStatus(list) === "rejected" ? 0 : 5),
-        clickable: true,
       });
       badge.setMap(map);
       badgesRef.current.set(id, badge);

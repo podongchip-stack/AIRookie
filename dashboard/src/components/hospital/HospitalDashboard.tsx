@@ -10,9 +10,9 @@ import { MapPanel } from "@/components/hospital/MapPanel";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 
-// 병원 대시보드는 병원 1곳 전용 화면이라 자신의 병원 ID(hpid)가 고정된다.
-// 2026-10-03부터는 주소(/hospital?id=)로 직접 열지 않고, 관제 지도(/map)에서 환자 요청이 온 병원을 눌러
-// 지도 위에 띄운다(onClose = 지도로 돌아가기). 이 화면은 자기 hub 소켓을 따로 연다(role=hospital).
+// 병원 대시보드는 병원 1곳 전용 화면이라 자신의 병원 ID(hpid)가 고정된다. 첫 페이지에서 병원 접근 코드(H-<hpid>)로
+// 들어온 /hospital?id= 페이지가 이 컴포넌트를 그린다(2026-10-03 회의로 관제 지도와 분리). onClose를 주면 상단바에
+// [닫기] 버튼이 생긴다(다른 화면 위에 띄울 때용, 지금은 쓰지 않음). 이 화면은 자기 hub 소켓을 연다(role=hospital).
 export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string; onClose?: () => void }) {
   const MY_HOSPITAL_ID: string | null = hospitalId || null;
   const { state, connectionMode, sendAction, sendInfoConfirm } = useDashboardSocket(
@@ -57,7 +57,7 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
         })}
       >
         <p className={css({ color: "coral", fontSize: "sm" })}>
-          병원 ID가 없습니다. 관제 지도에서 환자 요청이 온 병원을 눌러 열어주세요.
+          병원 ID가 없습니다. 첫 페이지에서 H-&lt;병원ID&gt; 형식의 접근 코드로 다시 입장해주세요.
         </p>
       </div>
     );

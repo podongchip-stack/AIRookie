@@ -335,9 +335,10 @@ cat <<BANNER
 ==============================================================
   골든링크 실행 중 ($MODE 모드)
 ==============================================================
-  🗺️ 관제 지도       $DASH_URL/map   (환자 요청이 온 병원을 눌러 병원 대시보드를 연다)
+  🗺️ 관제 지도       $DASH_URL/map   (보기 전용 — 병원 이름 옆 H-<hpid>가 병원 접근 코드)
+  🏥 병원 대시보드    $DASH_URL/hospital?id=<병원 hpid>
   🚑 구급차 대시보드  $DASH_URL/ambulance?id=<구급차 apid>
-  🔑 코드 입력 화면   $DASH_URL/   (구급차 A-<apid> · 병원은 관제 지도에서)
+  🔑 코드 입력 화면   $DASH_URL/   (병원 H-<hpid>, 구급차 A-<apid>)
 BANNER
 if [ "$RUN_LIDAR" = 1 ]; then
   echo "  🧊 3D 뷰어         $VIEWER_URL"

@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import { css, cx } from "styled-system/css";
-import { HospitalDashboard } from "@/components/hospital/HospitalDashboard";
 import { MonitorMapPanel } from "@/components/map/MonitorMapPanel";
 import { distanceLabel } from "@/lib/distance";
 import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
@@ -19,12 +18,11 @@ import {
   MAP_COLORS, PHASE_SHORT, SEVERITY_SHORT, STATUS_ICON, STATUS_SHORT, hospitalRequests, statusColor,
 } from "@/lib/monitor";
 
-// 관제 지도(2026-10-03). 병원 대시보드는 주소로 직접 열지 않고, 여기서 환자 요청이 온 병원을 눌러 지도 위에
-// 띄운다([닫기]로 돌아온다). 지도는 hub에 role=monitor로 붙어 전체 병원·구급차 위치와 사건 요약만 받는다 —
-// 통화 전문 등 환자 상세는 병원 대시보드(role=hospital)를 열어야 보인다.
+// 관제 지도(2026-10-03). hub에 role=monitor로 붙어 전체 병원·구급차 위치와 사건 요약만 받는다 — 통화 전문 등
+// 환자 상세는 받지 않는다. 병원 대시보드와는 분리돼 있다(2026-10-03 회의): 여기선 병원 이름과 접근 코드(H-<hpid>)만
+// 보여주고, 병원 대시보드는 첫 페이지에서 그 코드로 연다.
 export default function MonitorMapPage() {
   const { state, connectionMode } = useDashboardSocket({ role: "monitor", id: "map" });
-  const [openHospitalId, setOpenHospitalId] = useState<string | null>(null);
   const requests = useMemo(() => hospitalRequests(state.monitorCases), [state.monitorCases]);
   const cases = Object.values(state.monitorCases);
   const ambulances = state.mapOverview?.ambulances ?? [];
@@ -65,7 +63,7 @@ export default function MonitorMapPage() {
         </div>
         <div className={css({ display: "flex", alignItems: "center", gap: "3.5", flexWrap: "wrap", fontSize: "xs", color: "ink" })}>
           <LegendDot color={MAP_COLORS.hospital} label="병원" round />
-          <LegendDot color={MAP_COLORS.request} label="🚨 판단 대기 (눌러서 대시보드 열기)" round />
+          <LegendDot color={MAP_COLORS.request} label="🚨 판단 대기" round />
           <LegendDot color={MAP_COLORS.approved} label="✓ 수용 승인" round />
           <LegendDot color={MAP_COLORS.rejected} label="✕ 수용 불가" round />
           <LegendDot color={MAP_COLORS.confirmed} label="🚑 이송 확정" round />
@@ -124,18 +122,17 @@ export default function MonitorMapPage() {
                     </span>
                     <ul className={css({ display: "flex", flexDirection: "column", gap: "1" })}>
                       {monitorCase.hospitals.map((hospital) => {
-                        const openable = !confirmedId || confirmedId === hospital.hospitalId;
+                        const done = confirmedId != null && confirmedId !== hospital.hospitalId;
                         return (
                           <li key={hospital.hospitalId}>
-                            <button
-                              type="button"
-                              disabled={!openable}
-                              onClick={() => setOpenHospitalId(hospital.hospitalId)}
+                            <div
                               className={hospitalRowStyle}
-                              title={openable ? "병원 대시보드 열기" : "다른 병원으로 이송이 확정된 사건입니다"}
+                              style={done ? { opacity: 0.5 } : undefined}
+                              title={done ? "다른 병원으로 이송이 확정된 사건입니다" : undefined}
                             >
                               <span className={css({ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" })}>
-                                {hospital.name}
+                                {hospital.name}{" "}
+                                <span className={css({ color: "navy", fontWeight: "semibold" })}>H-{hospital.hospitalId}</span>
                               </span>
                               <span className={css({ flexShrink: "0", color: "ink3" })}>
                                 {distanceLabel(hospital)} · 존 {hospital.zone} ·{" "}
@@ -144,7 +141,7 @@ export default function MonitorMapPage() {
                                   {hospital.status === "rejected" && reasonNote(hospital) ? ` · ${reasonNote(hospital)}` : ""}
                                 </b>
                               </span>
-                            </button>
+                            </div>
                           </li>
                         );
                       })}
@@ -198,8 +195,8 @@ export default function MonitorMapPage() {
           </SideSection>
 
           <p className={css({ fontSize: "2xs", color: "ink3" })}>
-            병원 이름이 보이는 상태에서 마커나 이름을 누르면 병원 대시보드가 열립니다. 지도를 축소해 이름이 안
-            보이면 마커를 한 번 눌러 이름을 띄운 뒤 다시 누르세요. 위치·존은 규칙 기반이며, 구급차 위치는 시연용
+            병원 이름 옆 H-로 시작하는 값이 병원 대시보드 접근 코드입니다(첫 페이지에서 입력). 지도를 축소해 이름이
+            안 보이면 마커를 눌러 이름과 코드를 띄울 수 있습니다. 위치·존은 규칙 기반이며, 구급차 위치는 시연용
             시뮬레이션입니다.
           </p>
         </aside>
@@ -209,24 +206,8 @@ export default function MonitorMapPage() {
           cases={state.monitorCases}
           ambulanceSim={state.ambulanceSim}
           requests={requests}
-          onOpenHospital={setOpenHospitalId}
         />
       </main>
-
-      {openHospitalId && (
-        // 신뢰도 검증 모달(FrameModalButton, zIndex 1000)이 이 위에 떠야 해서 그보다 낮게 둔다.
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="병원 대시보드"
-          className={cx(
-            css({ position: "fixed", inset: "0", zIndex: 900, backgroundColor: "bg", overflowY: "auto" }),
-            thinScrollbarStyle,
-          )}
-        >
-          <HospitalDashboard hospitalId={openHospitalId} onClose={() => setOpenHospitalId(null)} />
-        </div>
-      )}
     </div>
   );
 }
@@ -253,9 +234,6 @@ const hospitalRowStyle = css({
   paddingX: "2",
   paddingY: "1",
   borderRadius: "field",
-  cursor: "pointer",
-  _hover: { backgroundColor: "surfaceSub" },
-  _disabled: { cursor: "not-allowed", opacity: 0.5 },
 });
 
 function SideSection({ title, children }: { title: string; children: React.ReactNode }) {
