@@ -331,6 +331,22 @@ def get_verification():
     return response, status
 
 
+@app.get("/verification/live")
+def get_verification_live():
+    """라이브 채점 보드(2026-10-03). info 수신구(5003)의 reliability.live_board가 실제 서빙
+    엔진으로 창 전체를 재생·채점한 결과를 그대로 중계한다 — dashboard는 hub와만 통신.
+    첫 생성이 수십 초라 타임아웃을 넉넉히 둔다(이후는 20분 캐시)."""
+    url = HUB_REJECTION_URL.rsplit("/hub/rejection", 1)[0] + "/verification/live"
+    try:
+        upstream = requests.get(url, timeout=90)
+        upstream.raise_for_status()
+        response, status = jsonify(upstream.json()), 200
+    except (requests.RequestException, ValueError) as e:
+        response, status = jsonify({"error": f"라이브 보드를 가져오지 못했습니다(거절 로그 수신구 5003): {e}"}), 503
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
+
+
 #: 병원 활동 기록에 셀 의사결정 로그 항목 — 승인·거절·이송 확정·도착 결과·정보 확인
 _ACTIVITY_LABEL = {
     "hospital_approve": "수용 승인", "hospital_reject": "수용 불가", "final_approval": "이송 확정(구급대)",
