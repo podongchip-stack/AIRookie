@@ -386,9 +386,12 @@ export function LiveBoardSection() {
       {points.length >= 3 && <LiveChart points={points} cutoffMs={cutoffMs} lastPollMs={lastMs} />}
 
       <p className={smallStyle}>
+        {allPct}%가 높아 보여도 <b>20분당</b> 유지율입니다 — 나머지 {100 - (allPct ?? 0)}%는 전국 기준{" "}
+        <b>하루 약 {Math.round(h.bigBreaks / (data.windowHours / 24)).toLocaleString()}건의 &quot;{data.theta}석 이상 거짓&quot;</b>이고,
+        값이 조금이라도 바뀌는 건 관측당 절반이 넘습니다. 문제는 그 거짓이 어디서 날지 E-Gen 스스로는 모른다는 것 — 엔진이 그걸 분리합니다 ·
         문장의 숫자는 48시간 집계, 선 끝 숫자는 가장 최근 폴링 기준 · 경고선은 폴링당 표본이 적어 6시간 이동평균 ·
         신뢰도 구간별 실제 유지율 {data.calibration.bins.map((bin) => (bin.actualPct == null ? "—" : Math.round(bin.actualPct))).join(" → ")}%로
-        단조(순서가 맞는 확률) · 크게 어긋난 {h.bigBreaks.toLocaleString()}건 중 {h.warnedBreaks.toLocaleString()}건은 깨지기 전에 이미 경고 상태였습니다
+        단조 · 크게 어긋난 {h.bigBreaks.toLocaleString()}건 중 {h.warnedBreaks.toLocaleString()}건은 깨지기 전에 이미 경고 상태였습니다
       </p>
 
       <div className={css({ display: "grid", gridTemplateColumns: { base: "1fr", lg: "5fr 7fr" }, gap: "5", borderTopWidth: "1px", borderColor: "line", paddingTop: "4" })}>
