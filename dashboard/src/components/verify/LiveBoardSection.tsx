@@ -12,7 +12,7 @@ import type { BedReliabilityMatch } from "@/types/dashboard";
 // 그 주장을 ① 라이브 유지율 그래프(20분마다 점 추가)가 지고, ② 못 믿을 값 보드와
 // ③ 채점 기록이 받친다. 숫자 타일 나열 대신 문장 + 그래프로 말한다.
 
-type BoardRow = {
+export type BoardRow = {
   hpid: string;
   name: string;
   value: number;
@@ -22,7 +22,7 @@ type BoardRow = {
   authorityAtBuild: number;
   ttlSec: number;
 };
-type FeedItem = {
+export type FeedItem = {
   ts: string;
   hpid: string;
   name: string;
@@ -33,7 +33,7 @@ type FeedItem = {
   pValid: number;
   becameFull: boolean;
 };
-type PollStat = {
+export type PollStat = {
   ts: string;
   n: number;
   held: number;
@@ -44,13 +44,13 @@ type PollStat = {
   breaks: number;
   surge?: number; // 0 정상 · 1 주의(평시 2배) · 2 급증(3배)
 };
-type Regime = {
+export type Regime = {
   medianBreaks: number;
   current: { level: number; breaks: number; ratio: number; ts: string };
   surgePolls: number;
 };
 type CalBin = { range: string; total: number; predictedPct: number | null; actualPct: number | null };
-type RegionStat = {
+export type RegionStat = {
   label: string;
   hospitals: number;
   n: number;
@@ -61,7 +61,7 @@ type RegionStat = {
   warnPct: number | null;
   breaks: number;
 };
-type LiveBoard = {
+export type LiveBoard = {
   schemaVersion?: number;
   generatedAt: string;
   windowHours: number;
@@ -84,7 +84,7 @@ const WARN_ROLL = 18; // 경고선은 폴링당 표본이 4건 안팎이라 6시
 // 시리즈 색 — dataviz 검증을 통과한 카테고리 슬롯(이 파일 안에서만 쓰는 역할 고정 색).
 // 용어는 화면 전체에서 통일한다: 신고값(E-Gen 원본) · 유지율(다음 실측까지 맞은 비율) ·
 // 어긋남(3석 이상 틀어짐). "거짓/깨짐/묵음" 같은 변주를 섞지 않는다.
-const SERIES = {
+export const SERIES = {
   hi: { color: "#2a78d6", label: "엔진이 고른 값" },      // "믿어도 됨"(조건부 확률 80%↑)
   all: { color: "#8a8884", label: "모든 신고값" },         // 선별 없이 전부 믿었을 때
   warn: { color: "#eb6834", label: "경고한 값" },          // "위험"(50% 미만)
@@ -109,10 +109,10 @@ const kstDayTime = (iso: string) =>
   new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", weekday: "short", hour: "2-digit", minute: "2-digit" });
 
 // hvec 음수는 과밀(만실 + 초과 n명, 2026-10-01 합의) — 날것(-17석)으로 보여주지 않는다.
-const bedLabel = (v: number) => (v > 0 ? `${v}석` : v === 0 ? "만실" : `과밀 ${-v}명`);
+export const bedLabel = (v: number) => (v > 0 ? `${v}석` : v === 0 ? "만실" : `과밀 ${-v}명`);
 
 // 신고 나이 — "2,875분"처럼 읽기 힘든 분 단위를 쓰지 않는다.
-const ageLabel = (minutes: number) => {
+export const ageLabel = (minutes: number) => {
   if (minutes < 60) return `${Math.max(Math.round(minutes), 1)}분 전 신고`;
   if (minutes < 48 * 60) return `${Math.round(minutes / 60)}시간 전 신고`;
   return `${Math.round(minutes / 1440)}일 전 신고`;
@@ -125,7 +125,7 @@ function pColor(p: number): string {
 }
 
 // liveBedReliability(매칭 카드와 같은 감쇠 수식)를 보드 행에 그대로 적용한다.
-function liveP(row: BoardRow, nowMs: number): number {
+export function liveP(row: BoardRow, nowMs: number): number {
   const match: BedReliabilityMatch = {
     authority: row.authorityAtBuild, rArrive: row.authorityAtBuild, horizonSec: 0,
     ttlSec: row.ttlSec, modelTag: "live", source: "ai",
@@ -138,9 +138,9 @@ function liveP(row: BoardRow, nowMs: number): number {
 // 20분 폴링마다 점이 하나씩 붙는 선 3개: 엔진 선별(파랑) / 전체 평균(회색 점선) / 경고(주황).
 // 경고선은 소표본이라 6시간 이동평균(범례에 명시). 리플레이 중에는 cutoff까지만 그린다.
 
-type ChartPoint = { tMs: number; hi: number | null; all: number | null; warn: number | null; raw: PollStat };
+export type ChartPoint = { tMs: number; hi: number | null; all: number | null; warn: number | null; raw: PollStat };
 
-function buildPoints(timeseries: PollStat[]): ChartPoint[] {
+export function buildPoints(timeseries: PollStat[]): ChartPoint[] {
   return timeseries.map((poll, index) => {
     let warnHeld = 0;
     let warnN = 0;
@@ -158,7 +158,7 @@ function buildPoints(timeseries: PollStat[]): ChartPoint[] {
   });
 }
 
-function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint[]; cutoffMs: number | null; lastPollMs: number }) {
+export function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint[]; cutoffMs: number | null; lastPollMs: number }) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 1000;
   const H = 240;
