@@ -123,6 +123,25 @@ def verification_summary():
     return jsonify(body)
 
 
+#: 라이브 보드 생성은 수십 초(실제 엔진 재생) — 동시 요청이 이중 생성하지 않게 락으로 감싼다
+_live_lock = threading.Lock()
+
+
+@rejection_bp.get("/verification/live")
+def verification_live():
+    """라이브 채점 보드(2026-10-03, reliability.live_board): 창 안의 모든 병원 × 폴링을
+    실제 서빙 엔진으로 재생·채점한 결과 + 지금 각 병원 값의 유효 확률(진행형).
+    /verification/summary(가상 요청 표본·1시간 배치)와 달리 전수·20분 신선도다.
+    hub가 GET /verification/live로 그대로 중계한다 — dashboard는 hub와만 통신."""
+    try:
+        from reliability import live_board
+
+        with _live_lock:
+            return jsonify(live_board.cached())
+    except Exception as exc:  # 신뢰도 엔진·스냅샷이 없는 장비 — 화면이 라이브 섹션만 숨긴다
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 503
+
+
 def create_app():
     """따로 띄울 때 쓰는 최소 앱."""
     from flask import Flask

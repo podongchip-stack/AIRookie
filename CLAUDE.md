@@ -395,6 +395,17 @@ Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-
   채택했다 — 배후진료 역량(Capacity)의 신뢰도 확장. 중환자실(hvicc)은 이벤트
   부족으로 정직 기각(축적 후 재시도, `model/train_results_hvicc.json`).
   `HospitalInfo.bedReliabilityByType`(키=E-Gen 필드명)로 hub에 전달
+- **라이브 채점 보드(2026-10-03, `reliability/live_board.py`)** — "엔진이 얼마나 좋나"를
+  라이브로 보여주는 트랙. 창(기본 48시간) 안의 **모든 병원 × 모든 폴링**을 실제 서빙
+  엔진(BedReliabilityEngine을 빈 상태로 만들어 폴링 순서대로 observe → predict)으로
+  재생·채점한다 — 시뮬 수식 복제가 아니라 실물 엔진이라 "화면 숫자가 실제 엔진
+  출력이냐"에 "네"로 답한다. 채점은 /verify와 같은 θ=3석, 캘리브레이션 쌍은 폴링 단위
+  조건부 확률(누적 확률을 쓰면 같은 claim이 중복 집계됨). 산출: 현재 보드(병원별 유효
+  확률·감쇠 파라미터, 못 믿을 순 정렬)·판명 피드(값 변화 순간 + 그때 모델이 말했던
+  확률)·구간별 예측 vs 실제·headline(큰 어긋남 중 사전 경고/고신뢰 실패 수). 수신구
+  `GET /verification/live`(20분 캐시, 생성 수십 초 — 락), hub가 그대로 중계. 첫 실측
+  (48h): 값 변화 29,898건, 3석↑ 어긋남 3,551건, 그중 695건은 깨지기 전 확률 50% 미만
+  경고 상태. 자체 검사 `python -m reliability.live_board`(API 호출 0회)
 - **중증질환 신고 신선도는 모델이 아니라 규칙이다(2026-09-28, `severe.py`).**
   infosurv를 중증질환 28항목으로 확장하려던 타당성 실측(`python -m
   reliability.probe_severe`, 47일)에서 값 변화의 90%가 Y↔정보미제공 왕복이고
