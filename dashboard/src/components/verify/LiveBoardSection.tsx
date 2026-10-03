@@ -42,6 +42,12 @@ type PollStat = {
   warnN: number;
   warnHeld: number;
   breaks: number;
+  surge?: number; // 0 정상 · 1 주의(평시 2배) · 2 급증(3배)
+};
+type Regime = {
+  medianBreaks: number;
+  current: { level: number; breaks: number; ratio: number; ts: string };
+  surgePolls: number;
 };
 type CalBin = { range: string; total: number; predictedPct: number | null; actualPct: number | null };
 type RegionStat = {
@@ -66,6 +72,7 @@ type LiveBoard = {
   feed: FeedItem[];
   timeseries?: PollStat[];
   regions?: RegionStat[];
+  regime?: Regime | null;
   calibration: { bins: CalBin[] };
   headline: { valueChanges: number; bigBreaks: number; warnedBreaks: number; missedBreaks: number };
 };
@@ -203,6 +210,20 @@ function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint[]; cut
           setHover(best);
         }}
       >
+        {/* 급증 구간 띠 — 전국 변동이 평시 3배를 넘은 폴링(공통충격). 선들이 같이
+            출렁이는 구간이 "모델의 실수"가 아니라 "세상이 동시에 움직인 순간"임을 표시한다. */}
+        {visible.map((p, i) =>
+          (p.raw.surge ?? 0) >= 2 ? (
+            <rect
+              key={`s${p.tMs}`}
+              x={x(i > 0 ? (p.tMs + visible[i - 1].tMs) / 2 : p.tMs)}
+              y={T}
+              width={Math.max(x(i < visible.length - 1 ? (p.tMs + visible[i + 1].tMs) / 2 : p.tMs) - x(i > 0 ? (p.tMs + visible[i - 1].tMs) / 2 : p.tMs), 3)}
+              height={H - T - B}
+              fill="rgba(208,59,59,0.08)"
+            />
+          ) : null,
+        )}
         {[40, 60, 80, 100].map((v) => (
           <g key={v}>
             <line x1={L} y1={y(v)} x2={W - R} y2={y(v)} stroke="var(--colors-line)" strokeWidth="1" />
@@ -443,10 +464,39 @@ export function LiveBoardSection() {
           <span className={css({ width: "7px", height: "7px", borderRadius: "full", backgroundColor: "mint" })} />
           라이브 · 20분마다 실측 채점
         </span>
+        {data.regime && (
+          <span
+            className={css({ fontSize: "xs", fontWeight: "semibold", paddingX: "2", paddingY: "0.5", borderRadius: "chip" })}
+            style={
+              data.regime.current.level >= 2
+                ? { color: "#b32f2f", backgroundColor: "rgba(208,59,59,0.12)" }
+                : data.regime.current.level === 1
+                  ? { color: "#8a6d1a", backgroundColor: "rgba(237,161,0,0.14)" }
+                  : { color: "var(--colors-ink2, #52514e)", backgroundColor: "rgba(128,128,128,0.10)" }
+            }
+            title={`최근 폴링 어긋남 ${data.regime.current.breaks}건 — 평시 중앙값(${data.regime.medianBreaks}건)의 ${data.regime.current.ratio}배`}
+          >
+            전국 변동 {data.regime.current.level >= 2 ? "급증" : data.regime.current.level === 1 ? "주의" : "정상"} · 평시의 {data.regime.current.ratio}배
+          </span>
+        )}
         <span className={css({ fontSize: "xs", color: "ink3", marginLeft: "auto" })}>
           마지막 폴링 {kstTime(data.lastPollTs)} · 폴링 {data.polls}회 · 실제 서빙 엔진 재생(시뮬 아님)
         </span>
       </div>
+
+      {data.regime && data.regime.current.level >= 1 && (
+        <p
+          className={css({ fontSize: "sm", fontWeight: "semibold", paddingX: "3", paddingY: "2", borderRadius: "field", lineHeight: "1.6" })}
+          style={
+            data.regime.current.level >= 2
+              ? { color: "#b32f2f", backgroundColor: "rgba(208,59,59,0.10)" }
+              : { color: "#8a6d1a", backgroundColor: "rgba(237,161,0,0.12)" }
+          }
+        >
+          전국 변동 {data.regime.current.level >= 2 ? "급증" : "주의"} — 최근 폴링에서 어긋남 {data.regime.current.breaks}건
+          (평시의 {data.regime.current.ratio}배). 전국이 동시에 움직이는 시간대라, 지금은 어느 신고값이든 재확인을 권장합니다.
+        </p>
+      )}
 
       <div className={css({ fontSize: "md", color: "ink2", lineHeight: "1.8", maxWidth: "72ch" })}>
         <p>지난 48시간, 모든 신고값을 그대로 믿었다면 {dot(SERIES.all.color)}<b className={css({ color: "ink" })}>{allPct}%</b>가 다음 실측까지 맞았습니다.</p>
@@ -465,7 +515,8 @@ export function LiveBoardSection() {
         </p>
         <p className={smallStyle}>
           유지율 = 다음 실측에서 {data.theta}석 이상 어긋나지 않은 비율 · 문장은 48시간 집계, 선 끝은 최근 폴링 기준 ·
-          경고선은 표본이 적어 6시간 이동평균 · 엔진이 말한 신뢰도 구간대로 실제 유지율도{" "}
+          경고선은 표본이 적어 6시간 이동평균 · <span style={{ backgroundColor: "rgba(208,59,59,0.10)", paddingInline: "3px" }}>붉은 띠</span> = 전국
+          변동이 평시 3배를 넘은 공통충격 구간(개별 예측 대상이 아니라 감지 대상) · 엔진이 말한 신뢰도 구간대로 실제 유지율도{" "}
           {data.calibration.bins.map((bin) => (bin.actualPct == null ? "—" : Math.round(bin.actualPct))).join(" → ")}% 순서를 지킵니다
         </p>
       </div>
