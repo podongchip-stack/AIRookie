@@ -85,10 +85,23 @@ def verification_summary():
     try:
         from reliability import replay_demo
 
-        with _replay_lock:
-            path = replay_demo.OUTPUT_PATH
-            if not path.is_file() or time.time() - path.stat().st_mtime > REPLAY_REFRESH_SEC:
-                replay_demo.generate()
+        path = replay_demo.OUTPUT_PATH
+        if not path.is_file():
+            # 첫 생성만 동기 — 이때는 보여줄 과거 산출물 자체가 없다
+            with _replay_lock:
+                if not path.is_file():
+                    replay_demo.generate()
+        elif time.time() - path.stat().st_mtime > REPLAY_REFRESH_SEC and _replay_lock.acquire(blocking=False):
+            # 낡은 캐시는 뒤에서 다시 만들고, 이번 요청은 지금 있는 파일로 바로 답한다.
+            # 예전엔 여기서 생성이 끝날 때까지 블로킹해 hub의 30초 타임아웃을 넘겼다
+            # ("검증 집계를 가져오지 못했습니다 … Read timed out" — 1시간마다 재발).
+            def _regen_in_background() -> None:
+                try:
+                    replay_demo.generate()
+                finally:
+                    _replay_lock.release()
+
+            threading.Thread(target=_regen_in_background, daemon=True).start()
         body["replay"] = replay_demo.summarize()
     except Exception as exc:  # 신뢰도 엔진이 없는 환경 — 거절 로그 집계만 보낸다
         body["replay"] = None
