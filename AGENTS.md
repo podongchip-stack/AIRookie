@@ -1,7 +1,7 @@
 # AGENTS.md
 
 이 파일은 Codex가 이 저장소에서 작업할 때 참고하는 공통 컨텍스트입니다.
-모든 브랜치(main, develop, feature/voice, feature/info, feature/hub, feature/dashboard)에서 동일하게 적용됩니다.
+모든 브랜치(main, develop, feature/voice, feature/info, feature/hub, feature/dashboard, feature/sim)에서 동일하게 적용됩니다.
 
 ---
 
@@ -32,8 +32,8 @@
 음성 수집 → 전처리 (FFmpeg 노이즈 제거)
     ↓
 현장 정보 구조화 AI
-    - Whisper / Qwen3-ASR (STT)
-    - sLLM (Llama3 Korean 8B) 정보 추출
+    - Qwen3-ASR-0.6B + LoRA (STT, 통화 중 발화 단위 인식)
+    - KLUE RoBERTa-large 다중과제 모델(MF_BERT) 정보 추출 (v2 스키마 17필드)
     ↓
 구급대원 확인 및 수정 (Override) → 환자 프로필 생성
     ↓
@@ -57,10 +57,11 @@
 |---|---|
 | `main` | 배포 기준 브랜치 |
 | `develop` | 통합 개발 브랜치 |
-| `feature/voice` | 음성 수집, STT, 오인식 교정(`corrections.json`), SBAR 정보 구조화 |
+| `feature/voice` | 음성 수집, STT(통화 중 발화 단위 인식), 정보 구조화 |
 | `feature/info` | 병원 정보(Hospital Info) DB 관리 및 구조화 (병원 매칭/존 로직은 feature/hub로 이관 확정, 바이탈 수집은 더 이상 사용하지 않음. 승인 액션 수신 주체는 feature/hub로 확정) |
 | `feature/hub` | voice의 환자 정보와 info의 병원 정보를 결합한 규칙 기반 매칭 엔진, 존(Zone) 로직, dashboard와의 WebSocket 통신(승인 액션 수신, 통화 시작/종료 신호를 voice로 중계) |
 | `feature/dashboard` | 구급차·병원 대시보드 프론트엔드 |
+| `feature/sim` | 대량사고(MCI) 분산 이송 시뮬레이션 — 발표·IR 검증 재료 (2026-10-03 신설, 아래 참고사항) |
 
 브랜치 전략: `feature/* → develop → main`
 
@@ -72,12 +73,12 @@
 
 | 구분 | 처리 방식 | 비고 |
 |---|---|---|
-| 음성 → 텍스트 변환 | AI (Whisper / Qwen3-ASR) | 화자 분리 포함 |
-| STT 오인식 교정 | 규칙 기반 (`corrections.json` 정확 일치 치환) | AI 미사용. 예전의 "실시간 음성 필터링"(`filtering.py`, KM-BERT 분류)은 threshold 미검증으로 2026-08-12 제거하고 이 방식으로 대체 |
-| 통화 내용 구조화 | AI (sLLM SBAR 프롬프트) | 잡담·인사말은 SBAR 프롬프트가 스스로 걸러낸다(별도 필터 단계 없음) |
+| 음성 → 텍스트 변환 | AI (Qwen3-ASR-0.6B + LoRA 파인튜닝) | 통화 중 말이 끊길 때마다 발화 단위로 인식. 화자 분리는 아직 없음 |
+| 통화 내용 구조화 | AI (KLUE RoBERTa-large 다중과제 분류·태깅, MF_BERT) + 규칙 해석 | 생성형 LLM 아님 — KTAS·주 호소·기전·증상·처치·손상·의식·나이·성별·복용약 등 v2 17필드를 모델이 고르고, 활력징후·나이·발생 시점의 숫자는 모델이 찾은 구간을 규칙으로 읽는다. 발화 필터링·오인식 교정 단계는 없음 |
 | 병원 리스트 정렬 | 규칙 기반 (GPS 거리 · 존 그룹) | AI 미사용 |
 | 진료과 매칭 (예상 병명 ↔ 병원 진료과) | AI 보조 (경량 임베딩 유사도, sentence-transformers) | 생성형 LLM 아님, 결정적·설명 가능(유사도 점수 노출), On-Premise |
 | 병원 적합도 매칭 (거리·병상·존 스코어링) | 규칙 기반 (E-Gen 3개 오퍼레이션 대조) | AI 미사용, 설명 가능한 구조 유지 |
+| 병상 정보 신뢰도 예측 (병상 숫자가 아직 유효할 확률) | AI (XGBoost AFT 생존모델, infosurv 벤더링) | 생성형 아님, On-Premise, 캘리브레이트된 확률. **순위(finalScore)에는 관여하지 않는 설명용** — AIROOKIE-EGEN.md 참고 |
 | 의사결정 기록 · 보고서 생성 | AI (On-Premise sLLM) | Fact Checking Engine으로 원본 로그와 대조 검증 |
 
 이 구분을 코드나 UI에 반영할 때는 각 기능이 "AI 처리"인지 "규칙 기반"인지 명시적으로 구분되게 만든다 (예: 로그, 주석, API 응답 필드에 `source: "ai" | "rule"` 등).
@@ -91,8 +92,8 @@ voice·info·hub·dashboard 간 데이터는 아래 흐름으로 오간다. **da
 feature/hub를 거친다. feature/hub는 GPS와 feature/info의 병원 정보로 먼저 존 기반 병원
 후보 리스트를 만들어 두고, feature/voice의 의료 정보(부상 상태·예상 병명·중증도)가
 도착하면 이를 반영해 리스트를 재처리한 뒤, 의료 정보·예상 병명·병원 정보·병원 리스트를
-합쳐 dashboard로 전달한다. 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련
-스키마를 제거했다. dashboard에서 발생하는 승인 행위
+합쳐 dashboard로 전달한다. ~~환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련
+스키마를 제거했다.~~ → **회의로 다시 쓰기로 했다(2026-09-29 voice v2).** 활력징후는 voice(MF_BERT)가 통화에서 뽑아 보내고 hub가 dashboard에 표시한다. info가 바이탈을 수집하지는 않는다(병원 정보만 다룬다). dashboard에서 발생하는 승인 행위
 (hospital_approve/hospital_reject/final_approval)의 수신 주체는 **feature/hub로 확정**됐다
 (아래 2번 포맷 참고). dashboard↔hub 구간은 REST가 아니라 **WebSocket**이다 — dashboard가
 `new WebSocket()`(socket.io 아님)으로 접속해 승인 액션과 통화 시작/종료 신호(3번 포맷)를
@@ -130,16 +131,29 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
     "duration_sec": 42.3
   },
   "summary": {
-    "patient": "50대 남성",
-    "mechanism": "교통사고 · 흉부 충격",
-    "symptoms": ["의식 저하", "호흡 곤란"],
-    "treatment": ["산소 공급", "지혈 완료"],
-    "severity_tag": "high"
+    "call_type": null,
+    "ktas_level": 2,
+    "ktas_evidence": null,
+    "chief_complaint": { "major": "I 심혈관계", "minor": "흉통(심장성)" },
+    "suspected_diagnosis": [{ "text": "경색 의심" }],
+    "vitals": [{ "sequence": 1, "sbp": 150, "dbp": 90, "hr": 110, "rr": null, "bt": null, "spo2": 96, "glucose": null, "evidence": ["혈압 150에 90 맥박 110 산소포화도 96이고요"] }],
+    "consciousness": [{ "sequence": 1, "avpu": "A" }],
+    "symptoms": [{ "standard_name": "흉통", "status": "확인" }],
+    "onset": { "text": "30분 전부터", "minutes_ago": 30 },
+    "incidents": [{ "type": "질병", "detail": null, "primary": true }],
+    "disease_category": "심장질환",
+    "injuries": [],
+    "treatments": [{ "category": "ECG", "status": "시행", "detail": null }],
+    "age": { "years": 62, "months": null, "band": null, "evidence": ["62세 남성이"] },
+    "sex": "남성",
+    "medications": { "status": "미언급", "items": [] },
+    "notes": null,
+    "meta": { "not_predicted": ["call_type", "ktas_evidence", "notes"] }
   },
   "source": "ai",
   "model_used": {
-    "stt": "faster-whisper-large-v3",
-    "llm": "qwen3:14b"
+    "stt": "qwen3-asr-0.6b-119ko-tiny",
+    "llm": "mf-bert-klue-roberta-large"
   }
 }
 ```
@@ -147,18 +161,21 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `caseId` | string | 여러 구급차가 동시에 사건을 진행할 수 있어, hub가 이 요약을 어느 사건과 짝지을지 구분하는 값. voice가 hub의 통화 시작 신호(3번 포맷)에서 받은 caseId를 그대로 돌려준다 |
-| `transcript.raw_text` | string | STT 원본 전문. 교정 전 전체 발화, 삭제하지 않고 보존 |
-| `transcript.filtered_text` | string | 오인식 교정(`corrections.json` 정확 일치 치환)을 거친 텍스트. 요약의 실제 입력값. (필드명은 하위호환을 위해 `filtered_text`를 유지 — "실시간 음성 필터링" 단계는 제거됨) |
+| `transcript.raw_text` | string | STT 인식 결과 전문(발화마다 줄바꿈). 전체 발화를 삭제하지 않고 보존 |
+| `transcript.filtered_text` | string | 요약의 실제 입력값. 필터링·교정 단계가 없어져 현재는 `raw_text`와 같다 (hub·dashboard와의 계약 필드라 유지) |
 | `transcript.language` | string | 언어 코드 |
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 |
 | `transcript.duration_sec` | number | 통화 길이(초) |
-| `summary.patient` | string | 환자 인적사항 요약 (개인정보 제외) |
-| `summary.mechanism` | string | 사고 기전 |
-| `summary.symptoms` | string[] | 증상 목록 |
-| `summary.treatment` | string[] | 처치 목록 |
-| `summary.severity_tag` | `"high"` \| `"medium"` \| `"low"` | 중증도 단계, 이 세 값만 허용 |
+| `summary` | object | MF_BERT 출력 그대로(v2 스키마) — 17개 필드(`call_type` `ktas_level` `ktas_evidence` `chief_complaint` `suspected_diagnosis` `vitals` `consciousness` `symptoms` `onset` `incidents` `disease_category` `injuries` `treatments` `age` `sex` `medications` `notes`)와 `meta`. 각 필드의 뜻은 voice README·`C:\Dev\HMM\data_v3\필드_설명.md`. 값이 없는 필드도 `null`·빈 목록으로 빠지지 않고 나간다 |
+| `summary.ktas_level` | 1~5 | Pre-KTAS 중증도. 1이 가장 위급. 항상 값이 있다 |
+| `summary.call_type` `ktas_evidence` `notes` | null | 모델이 예측하지 않는 항목이라 항상 null |
 | `source` | `"ai"` | AI 처리 결과임을 나타내는 고정값 |
-| `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명 |
+| `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명. `llm`은 계약상 필드명을 유지할 뿐, 현재 값은 생성형이 아닌 MF_BERT 분류 모델이다 |
+
+> **2026-09-29 `summary`가 v1 6필드(`patient`·`mechanism`·`symptoms`·`treatment`·`severity_tag`·`required_department`)에서
+> HMM v2 17필드로 바뀌었다.** hub·dashboard는 아직 v1을 기대하므로 hub 담당자가 v2를 읽도록 고쳐야 한다.
+> v2에는 `required_department`(진료과)와 `mechanism`(기전 문장)에 해당하는 필드가 없다 — hub가 예상 병명 매칭에 쓸
+> 값은 `chief_complaint`·`incidents`·`suspected_diagnosis` 중에서 hub 담당자가 정한다.
 
 이 JSON은 feature/hub로 전달되며, feature/hub는 `summary`(부상 상태·예상 병명·중증도)는
 매칭 스코어링에 쓰고, `transcript.raw_text`/`transcript.filtered_text`(통화 원문 전체·
@@ -224,12 +241,19 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 ## feature/voice 담당자 참고사항
 
 - 입력 데이터는 음성 중심이다: 구급대원 브리핑, 환자·보호자 진술. 영상은 다루지 않는다
-- STT 모델: Whisper 또는 Qwen3-ASR (스트리밍 지원)
-- **"실시간 음성 필터링"(`filtering.py`, 의료 관련 여부 분류) 단계는 파이프라인에서 뺐다.** threshold가 검증 안 된 상태라 false negative(중요 문장 오제외) 리스크가 있었고, SBAR 구조화 LLM 프롬프트가 이미 잡담·인사말을 스스로 걸러낼 정도로 구체적이라 얻는 이득이 불확실했다(실측 후 결정, `voice/README.md` 참고). 대신 STT 자체의 오인식을 줄이려고 `initial_prompt`로 "이 통화가 어떤 종류의 대화인지"(장르·구조)를 서술해 넘긴다 — 구체 시나리오 어휘를 넣으면 그 샘플에만 맞는 오버피팅이 되므로 일부러 뺐다. `filtering.py`·`live_transcribe.py` 파일 자체는 데드 코드로 삭제됐다(2026-08-12) — 그 대신 `corrections.json`/`text_postprocess.py` 기반 **오인식 교정**(STT와 LLM 사이에서 사전과 정확히 일치하는 구간만 치환, `raw_text`는 교정 전 원문 그대로 보존)이 새로 들어갔다
+- **STT는 Qwen3-ASR-0.6B + LoRA, 구조화는 MF_BERT(KLUE RoBERTa-large 다중과제 모델)다 (2026-10-01 HMM v2에서 교체, 2026-09-29 ASR 교체, 그 전 2026-09-24에 faster-whisper·Ollama 경로를 삭제).** 두 모델은 팀이 따로 파인튜닝한 것으로, 코드는 `voice/asr.py`·`voice/MF_BERT/`에 복사해 넣었다. 가중치는 저장소에 없고 첫 실행 때 HF 캐시로 자동으로 받는다(`voice/weights.py`) — ASR 어댑터는 `Playedwell03/qwen3-asr-0.6b-119ko-tiny`(베이스 `Qwen/Qwen3-ASR-0.6B-hf`), MF_BERT는 Hugging Face Hub 공개 저장소 `podongchip/MF_BERT`(`best.pt` + `tokenizer/`). 이전 HMM 가중치 저장소 `podongchip/goldenlink-voice-models`는 더 이상 쓰지 않는다. `ASR_ADAPTER_DIR`·`MF_BERT_DIR` 환경변수를 주면 Hub 대신 그 로컬 폴더를 쓴다
+  - ASR은 AI Hub 119 신고 음성 20시간으로 LoRA 학습(깨끗한 음성 CER 0.187, 1.7B 어댑터와 동등하지만 소음 환경은 1.7B가 낫다). 학습 데이터가 짧은 발화라 통화를 통째로 넣지 않고 발화 단위로 인식한다. 새 어댑터의 실제 음성 인식 품질은 아직 측정하지 않았다
+  - MF_BERT는 합성 통화 대본 8,990건으로 학습해 v2 17필드를 낸다. 5-fold 교차검증 평균 score 0.6912 ± 0.0041이고, 배포한 체크포인트는 fold00(0.6934)이다(전체 데이터 재학습본이 아님. fold 최고는 fold04 0.6977). 학습 데이터가 달라 HMM v2의 0.7312와 직접 비교할 수 없다. 손상·처치·증상의 희귀 라벨 성능이 낮다. 생성형이 아니라 출력 형식이 깨질 일이 없다
+  - HMM v2와 출력층·`labels.py`·`decode.py`·`parse.py`가 같아 `summary` 형식은 그대로다. 달라진 건 입력 처리다 — HMM v2는 포지션 임베딩을 2048칸으로 늘려 통화를 한 번에 넣었고, MF_BERT는 512토큰 조각(128토큰 겹침)으로 나눠 인코딩한 뒤 이어 붙인다(`voice/MF_BERT/chunking.py`)
+  - `voice/MF_BERT/`의 `decode.py`가 점수를 v2 스키마로 풀고 `parse.py`가 활력징후·나이·발생 시점 숫자를 읽는다. 복사본이 원본(`BERT_Multiclass Classification/BERT/mf_bert/infer.py`)과 같은 결과를 내는지 fold00 검증 데이터 15건(긴 통화 5건 포함)으로 확인했다. 예전 v1의 규칙 조립기·진료과 대응표(`required_department`)는 v1 라벨 기준이라 삭제했다
+  - Qwen3-ASR이 transformers 5.13 이상을 요구해 voice 환경(`AIRookieProject`)을 torch 2.11(cu128)·transformers 5.17로 올렸다. conda `ml` 환경은 transformers 4.57.6이라 ASR이 안 돌아 voice에는 쓸 수 없다
+- **통화 중 발화 단위 인식**(`voice/live_transcriber.py`): 통화 중 0.5초마다 마이크 버퍼를 보고, 말이 끊기면(음량 기반 무음 감지) 그 발화만 잘라 바로 인식해 둔다. 종료 신호 뒤에는 마지막 발화 인식과 구조화만 남아 hub 도착까지 수 초다(108초 통화 실측 3.7초, 끝나고 한 번에 인식하면 약 61초). 무음 판정은 소리 크기만 보므로 현장 소음에 따라 `VOICE_SILENCE_RMS`·`VOICE_UTTERANCE_HOLD_SEC`로 조절한다
 - 원본 로그 보존 원칙(완전 삭제 금지, 사후 검증·audit trail용)은 유지된다 — `transcript.raw_text`/`turns`에 전체 발화가 그대로 남는다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
-- hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 통화 시작 시 로컬 마이크 녹음을 시작하고, 종료 시 기존 배치 파이프라인(STT→SBAR)을 그대로 실행한다
+- hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 두 모델은 서버가 뜰 때 한 번만 올려둔다. 통화 시작 시 로컬 마이크 녹음과 발화 단위 인식을 시작하고, 종료 시 남은 발화 인식 → 구조화 → hub 전송을 실행한다
+- **실행은 `./voice/start-voice.sh <apid>`(2026-10-03)** — macOS·Linux·Windows(Git Bash) 공통으로 conda 환경 파이썬·구급차별 포트(역삼 A0000001=6001, 성산 6002, 회현 6003)·hub 주소(`HUB_BASE_URL` 하나로 요약 전송 주소까지)를 맞춘다. Windows 콘솔(cp949) 출력 문제는 진입점의 `console.use_utf8_console()`이 막는다. GPU가 없으면 CPU로 돈다(느림, 미검증). Windows에서는 Hub 다운로드의 심볼릭 링크 경쟁 오류(WinError 1314)를 피하려고 `HF_HUB_DISABLE_SYMLINKS=1`도 켠다
+- ⚠ **MF_BERT 가중치는 `v1-2026-09-30` 태그로 고정(2026-10-03, `voice/weights.py`의 `MF_BERT_REVISION`)** — 모델 저장소에 10-02 구조가 바뀐 새 가중치(보기별 어텐션·2층 헤드 등)가 올라왔는데 이 저장소의 `voice/MF_BERT/` 코드는 아직 09-30 구조라, 최신을 받으면 state_dict 불일치로 서버가 뜨지 않았다. 새 구조 코드를 들여올 때 이 값을 함께 바꾼다
 - **여러 구급차 동시 처리를 지원한다.** 이 프로세스 자체는 구급차 1대 전용(마이크가 그 장비 하나뿐)이지만, `VOICE_APID` 환경변수로 자신을 식별해 서버 시작 시 자기 IP를 자동 탐지한 뒤 hub의 `POST /voice/register`로 자가등록한다(구급차 노트북마다 네트워크가 달라 IP를 고정 저장하지 않고 매번 탐지). `POST /call/start`로 받은 `caseId`를 세션에 기억해뒀다가, 통화 종료 후 hub로 보내는 `CallSummaryMessage`에 그대로 실어 돌려준다 — hub는 이 caseId로 사건을 구분한다
 
 ## feature/info 담당자 참고사항
@@ -240,7 +264,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 > (hospital_approve/hospital_reject/final_approval)의 수신 주체도
 > **`feature/hub`로 확정**되었습니다.
 
-- 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어, 바이탈 수집·전송 관련 서술은 모두 제거했다
+- 환자 바이탈 정보는 info가 수집하지 않는다. (환자 활력징후는 2026-09-29 회의로 voice v2가 통화에서 뽑아 hub → dashboard로 표시하기로 했다 — info와 무관)
 - 병원 매칭·존(Zone) 로직은 더 이상 이 브랜치가 담당하지 않는다 (`feature/hub` 담당자 참고사항 참고)
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷)은 feature/hub가 수신하므로 이 브랜치는 별도 구현이 필요 없다
@@ -337,6 +361,59 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   가공 전 원본을 저장하는 이유는 매핑 해석이 바뀌어도 과거 데이터를 다시 해석할 수 있어야
   해서다(가공본만 남기면 매핑을 고칠 때마다 지난 데이터가 죽는다)
 
+### 병상 정보 신뢰도 서빙 (`reliability/`, 2026-09-24 신설)
+
+모델링 프로젝트(`C:\Dev\Modeling\Source-Action-Based Dynamic Reliability and
+Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-Gen 병상
+정보 신뢰도 모델(infosurv)의 서빙 트랙. 배경·모델 상세는 저장소 루트
+`AIROOKIE-EGEN.md` 참고.
+
+- **벤더링 방식이다.** infosurv의 생존함수(`serve.py`)와 학습 모델 JSON
+  (`aft_egen_theta3_ext0923.json`), 병원별 리듬 테이블(`route_med_gap.json`)을
+  `info/Hospital_inform/info/reliability/`에 복사해 커밋했다 — pip 로컬 경로
+  의존이면 팀원 장비에서 안 돌기 때문. 원본이 재학습되면 모델 JSON을 다시
+  복사하고 `python -m reliability.build_route_med_gap`으로 테이블을 재생성한다
+  (엔진이 모델의 feature_names를 대조해 피처 정의가 어긋나면 그 자리에서 실패시킨다)
+- **실시간 피처 빌더는 infosurv에 없어서 여기서 새로 구현했다**(`features.py`) —
+  학습 파이프라인(egen_pipeline.py)의 claim-version 규칙(값 변화 = 새 버전,
+  공백 1시간 초과 = 세그먼트 리셋, 첫 버전 리듬 피처 NaN, 시각 피처 **UTC**)을
+  관측 스트림 방식으로 재현. 검증은 `python -m reliability.selftest`(API 호출 0회)
+- **관측 소스가 둘이다**: 같은 장비의 스냅샷 JSONL(20분 주기, 증분 읽기)이
+  1순위, 이번 사이클 rows가 2순위. 스냅샷이 없어도 죽지 않는다(30분 해상도로
+  낮아질 뿐) — hospital_score와 같은 fail-soft 원칙으로, `reliability/` 폴더를
+  통째로 지워도 `send_to_hub.py`는 `bedReliability` 없이 원본 그대로 보낸다
+- **hub로는 `HospitalInfo.bedReliability`**(predictedSurvivalSec·bornAt·
+  sigma·authorityAtSend·ttlSec·modelTag, source: "ai")로 나간다. authority는 정보
+  나이에 따라 계속 떨어지는 값이라 info의 전송 시점 값은 스냅샷일 뿐이고,
+  hub가 매칭 시점마다 재계산한다(아래 hub 참고사항)
+- **잔차 재보정 + 다필드 확장 (2026-09-28).** ① % 노출의 전제로 hvec raw
+  확률의 과신을 홀드아웃 실측으로 교정하는 재보정 상수(μR,σR)를 적합해
+  적용했다(`calibrate.py`, τ30분 ECE 0.272→0.114 — 확장 필드들은 raw가 이미
+  정직해 관문이 저장 거부). ② 학습을 저장소 안으로 자급화(`train_field.py`,
+  infosurv fit·evaluate 벤더링 + 관문: 리듬 단독 baseline 대비 시드 3종 전승)
+  해 **수술실(hvoc C 0.867)·입원실(hvgc 0.856)·소아(hv28 0.784)** 모델을
+  채택했다 — 배후진료 역량(Capacity)의 신뢰도 확장. 중환자실(hvicc)은 이벤트
+  부족으로 정직 기각(축적 후 재시도, `model/train_results_hvicc.json`).
+  `HospitalInfo.bedReliabilityByType`(키=E-Gen 필드명)로 hub에 전달
+- **중증질환 신고 신선도는 모델이 아니라 규칙이다(2026-09-28, `severe.py`).**
+  infosurv를 중증질환 28항목으로 확장하려던 타당성 실측(`python -m
+  reliability.probe_severe`, 47일)에서 값 변화의 90%가 Y↔정보미제공 왕복이고
+  만료 수명의 60.1%가 정확히 9.0시간 = **시스템 자동 만료 규칙**임이 드러나
+  AFT 학습은 보류했다(진짜 내용 변화 Y↔불가능은 2,658건뿐 — 축적 후 재평가).
+  대신 E-Gen 응답에 신고 시각 필드가 없다는 점을 파고들어, 스냅샷 추적으로만
+  알 수 있는 "이 신고가 언제부터 이 값이었는지"를
+  `HospitalInfo.severeDeclarations`(source: "rule", 미제공 그룹은 키 없음)로
+  내보낸다 — hub가 신고 나이·9h 규칙 잔여로 환산(`severeFreshness`)
+
+### 진료과 확장 · 등급 · 병원 목록 동기화 (2026-10-01)
+
+- **진료과를 심평원 전문의 수로 채운다.** `egen/mapper.build_specialties()`가 E-Gen 역량 4개 과에 `data/hira/specialists.json`의 전문과목별 전문의 수를 합친다(응급 수용 과만 — `ACUTE_HIRA_DEPARTMENTS`, 영상의학과·마취통증의학과·진단검사의학과·치과·한방 등 제외). `doctorCount`에 실제 인원, 분과(순환기내과)는 대분류(내과) 인원을 빌린다. 캐시가 없거나 조인 안 된 병원은 기존 4개 과 그대로(fail-soft). 실측: 415곳 중 403곳 반영. 예전엔 438곳 중 186곳(42%)이 진료과 0개였다
+- `HospitalInfo.emergencyLevel`: E-Gen 목록의 `dutyEmclsName`(권역/지역응급의료센터 등). hub가 중증 환자 가산에 쓴다
+- `send_to_hub.py`가 한 주기 병원을 다 보낸 뒤 `POST /info/hospitals/roster`로 전체 hpid 목록을 보낸다 — hub가 피드에서 빠진 병원을 지운다
+- **스냅샷 수집은 이제 `start-all.sh`가 info와 함께 20분 주기로 띄운다**(`--no-snapshot`으로 끔). Windows 작업 스케줄러(`snapshot_nationwide.bat`)로만 돌아서 이 맥에선 8월 13일 이후 멈춰 있었다
+- **응급실 `hvec`의 `-1`은 미상이 아니라 과밀 1명(만실 0)으로 읽는다(2026-10-01).** 다른 병상 필드의 -1은 그대로 미입력. 전국 스냅샷에서 hvec -1의 앞뒤 값 77%가 -3~1(0 → -1 → -2처럼 이어짐)이라 미입력일 수 없다. 예전엔 서울아산처럼 꽉 찬 응급실이 "미상"으로 떠서 만실 표시·승인 차단이 안 걸렸다. 신뢰도 모델은 이미 이렇게 읽고 있었다(`egen/mapper.py`의 `MINUS_ONE_IS_VALUE_FIELDS`, `hospital_score/scoring.py`도 같게). 폐기 판정·리포트 재현 스크립트는 기록된 수치를 바꾸지 않도록 그대로 둠. 검사 `python -m egen.test_hvec_minus_one`
+- ⚠️ `info/requirements.txt`의 `xgboost==3.4.1`·`numpy==2.5.1`·`scipy==1.18.0`은 Python 3.12 이상용이라 파일 머리의 "3.11" 환경엔 안 깔린다. 3.11 환경은 호환 버전(xgboost 3.2 등)을 깔면 되고, 모델 로드·selftest 통과를 확인했다(2026-10-01). 이게 빠지면 `[reliability] 엔진 초기화 실패` 한 줄만 남기고 `bedReliability` 없이 조용히 보내진다
+
 ### 거절 로그 — dashboard·hub·info 연동 (2026-08-12 인터페이스, 2026-09-10 배선 완료)
 
 info 수신구(`POST /hub/rejection`) → **완성.** dashboard 사유 선택 UI → **완성**
@@ -361,6 +438,12 @@ info 수신구(`POST /hub/rejection`) → **완성.** dashboard 사유 선택 UI
   셀 수 있어, 신고 정확도를 운영 데이터로 직접 측정할 수 있다
 - **무응답(`NO_RESPONSE`)도 반드시 남길 것.** 거절 로그는 우리가 후보로 올린 병원에서만
   생기므로, 그것마저 없으면 낮은 점수가 낮은 점수를 재생산하는 되먹임이 생긴다
+- **데모 도구 (2026-09-29)**: 거절 로그는 실서비스가 돌아야 쌓이는 데이터라 시범운영
+  전에는 통계 근거가 될 수 없다 — 대신 배선의 시연용으로 `python -m
+  hospital_score.demo_rejections`(고정 시나리오 10건, 전부 `demo: true` 마커)와
+  확장 집계 `python -m hospital_score.rejection_report`(4축 + 결정 시점 스냅샷 기반
+  "정보 무효 관측 후보" + 무응답 3분해)가 있다. 실 로그가 쌓이기 시작하면
+  `--exclude-demo`로 완전 분리된다
 
 ### ~~hub로 흐르는 병원이 7곳뿐인 문제~~ → 2026-08-13 해결됨
 
@@ -420,6 +503,43 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **finalScore(거리·진료과 가중합) 계산식 자체는 안 건드렸다** — `reliability`는 여전히 "왜 이 순위인지" 설명 근거다. 다만 **2026-08-14부로 정렬 순서에는 예외가 하나 생겼다**: 관련 질환군이 `declared_no`(병원이 명시적으로 "수용 불가"라고 신고)면 finalScore와 무관하게 순위 맨 뒤로 밀린다(`scoring.rank()`의 `demote` 키, `hub_engine.py`의 `_should_demote()`). 가중합으로 점수에 섞지 않은 이유는 실험(민감도 분석)으로 확인됐다 — 모든 경우에 역전을 막으려면 신뢰도 가중치가 70%대까지 필요해서 거리·진료과 반영이 무의미해지므로, hospital_score/README.md의 "제거하지 말고 아래로 내릴 것" 지침을 순서 조정으로만 구현했다. 거절 로그가 쌓여 실측 기반 가중치를 낼 수 있게 되면 가중합으로 승격하는 걸 재검토한다
   - hub의 `hub/schema.py`가 `extra="forbid"`로 막혀 있다는 서술이 hospital_score/README.md에 있었는데, 실제로는 아니다(pydantic BaseModel 기본값은 `extra="ignore"`) — `assessment` 필드가 없어도 파싱은 안 깨졌을 것이나, hub가 그 값을 실제로 읽어 쓰려면 어차피 스키마에 명시적으로 선언해야 해서 이번에 추가했다
 - ~~**`feature/info-v2`가 develop에 머지됐다(2026-08-13).** ... `send_to_hub.py` 상시 파이프라인은 여전히 이 폴더를 import하지 않는다~~ → **같은 날 상시 파이프라인 연결까지 완료.** `feature/info-v2`를 `feature/info`에도 머지해 한 브랜치로 합쳤고, `send_to_hub.py`가 병원마다 `hospital_score.scoring`을 호출해 `assessment`를 붙여 보낸다. info-v2가 제안했던 TTL 오버레이도 hub 쪽에 구현 완료 — 위 "hub로 흐르는 병원이 7곳뿐인 문제" 절 참고
+- **거절 로그가 결정 시점 스냅샷과 무응답까지 담는다(2026-09-28 보강, 09-29 정밀화).** hub→info 거절 중계 페이로드에 그 순간 화면에 보였던 값들(`availableBedCountAtRequest`·`bedCountUnknownAtRequest`·`bedDataStaleAtRequest`·`travelMinAtRequest`·`finalScoreAtRequest`)과 병상 신뢰도 확률(`bedAuthorityAtRequest`·`bedRArriveAtRequest`)을 동봉한다 — BEDS_FULL 거절과 대조하면 정보 무효의 독립 관측(infosurv G2 라벨)이 되고, 확률의 운영 검증 재료가 된다(소급 생성 불가라 지금부터 담는 게 핵심). 무응답(`NO_RESPONSE`)은 사건이 결말에 이르는 두 시점 — `final_approval` 확정, 또는 확정 없이 `HUB_UNRESOLVED_TIMEOUT_MIN`(기본 120분) 유휴 시 sweep(로그만, 사건은 안 지움) — 에 일괄 기록한다(`app.py`의 `_log_no_responses()`/`_sweep_unresolved_cases()`, 검증 `test_rejection_forward.py`)
+  - **⚠ 무응답의 소비 지침 — 거절과 다른 축이다.** 거절은 "수용 능력"에 대한 정보지만 무응답은 "채널"에 대한 정보라, **수용성 판정(G2 라벨·assessment 검증)에는 쓰지 않고** 분리 집계한다: `reachedAtBroadcast`(사건 진행 중 그 병원 대시보드에 요청이 실제 도달했던 이력 — `_case_reach`가 브로드캐스트·따라잡기 시점마다 누적) false = **미도달 → 보급 지표**(병원 탓 아님), true인데 무응답 = **무시 → 응답성 지표**(반복되면 거절보다 심각 — 소비처는 순위 강등이 아니라 "전화 확인 우선 대상" 플래그, 제거 금지 원칙 유지). `caseFinalized` false(미결 종료)는 요청 유효성이 모호(데모·중단 포함)하므로 분석에서 따로 거른다
+- **병원 정보 확인 루프(2026-09-29 신설)** — 공급자 쪽 피드백. 병원 대시보드에 "귀원 정보 현황"(`hospital_self_info` — 자기 병상 신뢰도·신고 신선도, identify/30분 upsert/확인 직후 전송)을 보여주고, "현재 정보가 맞습니다"(`info_confirm`) 버튼을 받는다. 확인이 오면 그 병원 병상 신뢰도를 **조건부 생존 S(a)/S(u)**로 되올린다(infosurv `confirmed_at` 메커니즘의 첫 실신호원 — 값이 그대로여도 "방금 사람이 확인한 값"임을 시스템이 알게 되는 유일한 경로). 새 claim이 태어나면 자동 무효, 의사결정 로그에 유효 확인 관측으로 기록(향후 G1+ 라벨 재료), 구급차 칩에 ✓ 표시. hub README "병원 정보 확인 루프" 참고
+- **중증질환 신고 신선도를 수신·환산한다(2026-09-28).** info의 `severeDeclarations`(질환군별 현재 신고값·관측 기준 탄생시각, 규칙 기반)를 받아, 매칭된 질환군에 대해 신고 나이와 9시간 만료 규칙 잔여를 `HospitalMatch.severeFreshness`(source: "rule")로 dashboard에 전달한다(`hub_engine.py`의 `_severe_freshness_for()`, 상수 `SEVERE_EXPIRY_RULE_SEC` — 실측 근거는 info의 `probe_severe`). `reliability`(같은 신고를 심평원 대조로 "믿을 만한가" 판정)와 상보적 — 이쪽은 "언제 적 것인가". 순위 불변, Optional 하위호환, 검증은 `run_match.py`의 `test_severe_freshness()`
+- **병상 정보 신뢰도 예측(infosurv 모델)을 수신·전달한다(2026-09-24).** feature/info의 `reliability/` 모듈이 `HospitalInfo.bedReliability`(Optional — 이 필드 없이 오는 구 데이터도 그대로 통과)로 보내면, hub가 매칭 시점마다 `hub/bed_reliability.py`의 `evaluate()`로 **authority**(지금 이 병상 숫자를 믿어도 될 확률)와 **rArrive**(도착 시점 — 2026-09-28부터 순위에 쓰는 이동 시간 `travelMin`과 같은 horizon 뒤 — 에도 유효할 확률)를 재계산해 `HospitalMatch.bedReliability`로 dashboard에 전달한다. **finalScore·순위에는 관여하지 않는 설명용이다** — `reliability`(hospital_score)와 같은 원칙이되, 이쪽은 서수 티어가 아니라 캘리브레이트된 확률이라 거절 로그로 효과가 실측되면 rArrive의 랭킹 가중치 승격을 재검토한다(AIROOKIE-EGEN.md §5-1). 생존함수는 info 쪽 벤더링 사본(scipy)과 동일 수식을 hub에서 표준 라이브러리로 재구현했고(브랜치 폴더 원칙상 info/를 import 못 함 + scipy 의존 회피), 수치 등가성은 info의 `python -m reliability.selftest`가 검증한다. 검증 시나리오는 `run_match.py`의 `test_bed_reliability()`
+- **hub 내부 정비(2026-09-28, 다른 브랜치 변경 없음)** — 자세한 것은 hub/README.md "순위 규칙"·"서버 운영 동작"
+  - **순위**: `finalScore = 0.6×진료과 + 0.4×이동시간 점수`. 이동시간은 카카오 ETA 우선, 없으면 직선거리 × 같은 사건 ETA로 보정한 분/km. 점수는 `0.5^(분/15)`라 20km 밖에서도 0이 되지 않는다(예전 `1-km/20`은 20km 밖을 전부 0으로 봤다). 정렬은 일반 → `declared_no`·`beds_full`(**확인된** 만실만, 미상·1일 넘은 값 제외) → `rejected` 순이고, 병원이 이 사건에 승인·확정했으면 내리지 않는다. 승인 액션 뒤 캐시도 재정렬한다. `nightDutyAvailable`은 info가 `bool(capabilities)`로 채우는 프록시라 순위에 쓰지 않는다
+  - **출력 필드 추가**(모두 기본값 있음, dashboard 수정 불필요): `HubMatchResult.type="match_result"`·`ambulanceGpsFallback`, `HospitalMatch.finalScore`·`travelMin`·`travelBasis`·`demoteReasons`·`bedDataStale`
+  - **운영**: `/voice/summary`는 202로 바로 답하고 매칭은 작업 스레드에서(voice는 본문을 안 씀). 진행 중 사건을 `HUB_REFRESH_INTERVAL_SEC`(기본 60초)마다 재계산해 바뀐 것만 재전송. 상태(병원·구급차·승인·병상 오버레이·사건·voice 주소)를 `data/state/hub_state.json`에 저장·복구 — **통화 원문은 저장하지 않는다**. 엔진·소켓·로그 쓰기에 락. `debug` 기본 끔(`HUB_DEBUG=1`)
+  - **의사결정 로그 해시 체인**: 기록마다 `prevHash`(앞 기록 hash). 예전엔 줄마다 자기 내용만 해시해 수정 후 재해시·삭제·순서 변경을 못 잡았다. 체인 이전 기록은 기존 방식으로 검증
+  - 실서버 결과 사본 경로를 `data/test/output/`에서 `data/live/output/`으로 분리
+  - **승인 흐름**: 병원 승인·거절은 `hospital`, 이송 승인은 `paramedic`만 받고, 이송 승인은 병원이 `approved`한 병원에만 허용한다(어긋나면 `approval_action_refused` 로그만 남김). 이송 병원을 재선택하면 이전 확정 병원을 `approved`로 되돌리고 병상 차감을 회수한다(`approval_released`). dashboard는 이미 이 규칙대로 버튼을 열어 수정 불필요
+- **hub 정비 2차(2026-10-01, dashboard·info·start-all 함께 변경)** — 자세한 것은 hub/README.md "순위 규칙"·"서버 운영 동작"·"출동 시뮬레이션"
+  - **순위는 hub 한 곳에서만 정한다.** 정렬은 이 사건의 확정 병원 → 병원 승인 병원 → 나머지(finalScore) → `declared_no`·`beds_full` → `rejected`. dashboard의 자체 정렬(병상 → 상태 → 진료과 점수 → 직선거리)을 없앴다 — 그동안 이 자체 정렬이 9월 28일 순위 규칙(카카오 ETA 이동시간 등)을 화면에서 전부 덮어쓰고 있었다
+  - **진료과**: voice `required_department`가 병원 진료과에 있으면 정확 일치 1.0(`specialtyMatch.basis="exact"`), 없으면 임베딩(후보에서 안 뺌). **전문성·등급 가산은 점수가 아니라 이동시간에서 분을 뺀다** — 전문의 수 최대 3분 + 중증(high)일 때 권역센터 5분/지역센터 2분. 가산을 다 받아도 8분(`MAX_BONUS_MIN`) 넘게 먼 병원은 못 이긴다는 불변식을 테스트로 고정. `travelBonusMin`·`bonusReasons`·`emergencyLevel`로 설명 노출
+  - **역할별 전송**: 매칭 결과는 그 구급차 탭과 후보에 오른 적 있는 병원 탭에만. **방치 사건 닫기**: 무응답 sweep(120분) 뒤 사건을 캐시에서 지우고 `case_closed` 전송. **현장 후보**: 통화 시작 때 거리순 후보(`scene_candidates`, 규칙)를 구급차 탭에만. **병원 목록 동기화**: `POST /info/hospitals/roster`로 피드에서 빠진 병원 제거(진행 중 사건 후보 보류, 목록 급감 시 안 뺌). **질환군 어휘**: info가 보낸 `assessment.groups`에서 만든다(hub 목록은 폴백). 확정된 사건은 60초 재계산에서 재정렬하지 않는다
+  - **출동 위치 지정·자동 배속(2026-10-01)**: 구급차 화면에서 주소 검색(hub `GET /geocode`, 카카오 장소·주소 검색 대리 호출) 또는 지도 클릭으로 출동 위치를 고른다(안 고르면 무작위). 구급차 이동(출동·이송·복귀)은 모든 구간이 거리와 무관하게 **5초 고정**(2026-10-03, `HUB_SIM_TRIP_SEC`) — 먼 곳일수록 배속이 올라간다(예전엔 출동·이송 90초·복귀 30초 상한). 주소 글자는 hub로 안 보내고 로그엔 뭉갠 좌표만. 도메인 라우팅에 `/geocode` 추가
+  - **출동 시뮬레이션**(`start-all.sh` 기본값 — 2026-10-03부터, 실제 구급차 GPS 수신 경로가 없어서. 끄려면 `--no-sim-dispatch`. 시연용 가짜 위치): [이동] → 현장(기지 5~12분 거리) → 통화·승인 → 확정 병원 → 15초 → 기지 복귀. `ambulance_sim.py`, 메시지 `dispatch`·`scene_end`(받음) / `ambulance_phase`·`ambulance_position`(보냄, `simulated: true`). 위치는 레지스트리 GPS를 덮지 않고 조회 시점에 얹는다
+  - **start-all이 hub 백그라운드 루프를 안 띄우던 버그 수정** — `app.app.run()`만 불러서 60초 재계산·상태 저장·sweep이 실서버에서 한 번도 돌지 않았다. 이제 `app.start_background()`를 먼저 부른다
+  - WebSocket 인증은 여전히 없다(시연 범위 허용, hub/README.md 한계에 명시)
+  - **확인된 만실 병원은 병원 승인 불가(2026-10-01)**: 응급실 병상 0이 확인된(미상·1일 넘은 값 제외) 병원의 `hospital_approve`는 hub가 거부한다(`_is_confirmed_full`). 병원 화면은 버튼 대신 "응급실 병상 없음" 안내. 이미 승인한 병원은 나중에 0이 돼도 그대로. 이 병원들은 응답할 수 없었으므로 사건이 끝날 때 무응답으로 기록하지 않는다
+  - **존 확장 거절 비율(2026-10-01)**: 분모를 "응답한 병원"에서 "현재 존 안 후보 병원 전체"로, 기준을 50% → **40%**로. 예전엔 첫 응답이 거절이면 1/1=100%라 후보 10곳 중 한 곳의 거절로 바로 넓어졌다(`geo.REJECT_RATIO_THRESHOLD`, `HubEngine.reject_ratio`)
+- **질환군 매칭을 임베딩에서 키워드 규칙으로(2026-10-02)**: 예상 병명 → 15개 중증질환군(신뢰도 칩·`declared_no` 내림·신고 신선도에 쓰임)을 고를 때 기준선 없이 임베딩 최근접을 골라, 다리 골절·심근경색·뇌출혈·"미상"이 전부 담낭담관질환으로 붙었다(유사도 0.47~0.93이라 기준선으로도 못 거름). 상관없는 신고로 병원이 뒤로 밀릴 수 있는 오류였다. `hub/disease_group.py`가 E-Gen 항목명 키워드로만 고르고, 해당 없으면 None(칩·내림 없음). 진료과 매칭은 그대로 임베딩. 검사 `python disease_group.py`
+- **시연용 신뢰도 검증 화면(2026-10-02)** — 병원·구급차 상단바 [신뢰도 검증] 모달(3D 뷰어와 같은 `FrameModalButton`) 또는 `/verify` 직접. 가상 이송 요청(시각·병원·이동 5~25분은 무작위)의 결과를 **실제 E-Gen 다음 스냅샷**으로 채점한다 — 도착 때 병상 수가 3석(모델 θ) 이상 안 바뀌었으면 "맞음". info `reliability/replay_demo.py`가 스냅샷 1장당 10건을 만들고(`data/verification/replay_demo.jsonl`, 전부 `demo: true`·`source: "replay"`), 거절 로그 수신구(5003)의 `GET /verification/summary`가 1시간마다 다시 채점해 확률 구간별 예측 vs 실제·거절 사유를 낸다. hub `GET /verification`이 그대로 중계(dashboard는 hub와만 통신, 도메인 라우팅 추가). **실제 운영 검증이 아니다** — "병원이 실제로 받았는가"는 다루지 않고 화면에 늘 "시연용 예시"를 붙인다. 첫 결과(10/1~2, 590건): 구간 순서는 맞고(예측 35→52→71→89% / 실제 83→90→96→98%) 모델이 실제보다 보수적
+  - **"우리 병원" 칸(2026-10-02)**: 병원 대시보드에서 열면 `/verify?hpid=` → 맨 위에 그 병원 기록. 무작위 표본이 아니라 그 병원 스냅샷 **전수**(최근 7일)로 "빈 병상이 보였던 모든 시각에 출발했다면 15분 뒤 실제 값은"을 센다(`hospital_score/hospital_view.py`), 빈 병상 수 그래프(수집이 1시간 넘게 끊긴 곳은 선을 끊음)·만실/과밀 시간 비율·E-Gen 15개 질환군 신고·심평원 전문병원 지정과 전문의 수·거절 로그. hub가 `hospitalHub`로 지금 API 값·신뢰도(`_build_self_info`)와 의사결정 로그의 그 병원 활동(`_hospital_activity`)을 덧붙인다. ⚠ 의사결정 로그에는 예전에 테스트를 실로그에 돌린 기록이 섞여 있다(예: A1100017 수용 불가 59건) — 해시 체인이라 지울 수 없음. 첫 수치(서울아산): 출발 53번 중 16번 3석 이상 바뀜·만실, 기록 시간의 51%가 만실·과밀
+  - **화면 개편(2026-10-02)**: 맨 위를 "API가 알려준 값 vs 실제"로 — ① 출발 때 병상 수가 도착 때 달라진 비율(100칸 그림, 그대로/1~2석/3석 이상/만실)과 가장 크게 줄어든 실제 사례 ② 심평원 전문병원 지정인데 E-Gen에 "가능" 신고가 없는 병원(`hospital_score/crosscheck.py`, 수신구 응답의 `crosscheck`)·중증질환 신고 "정보 없음" 비율 ③ 크게 바뀐 곳 vs 그대로인 곳에 AI가 준 확률. 확률 구간별 채점은 접어 둠. 첫 수치(1,100건): 54%가 달라짐, 3석 이상 7%, 만실 6건 / 전문병원 9/15곳 미신고 / AI 확률 64% vs 77%
+- **재시작 뒤 지난 사건이 대시보드에 남던 문제(2026-10-03)**: ① 출동 시뮬레이션 모드에서 hub가 재시작하면 구급차가 전부 기지로 돌아가므로, 복구된 사건을 이송 확정 사건까지 전부 닫는다(`_settle_restored_cases`, 병상 차감은 병원 단위로 TTL대로 남는다) ② 탭은 hub가 꺼졌다 켜져도 자동 재연결하며 화면 상태를 들고 있어서, identify 응답 끝에 `case_sync`(지금 진행 중인 사건 id 목록 — 구급차는 결과 전 사건 포함)를 보내고 대시보드가 목록에 없는 사건을 지운다
+- **통화 중 실시간 자막(2026-10-03)**: voice가 발화 하나를 인식할 때마다 `POST /voice/utterance`로 보내면 hub가 그 구급차 탭에만 `call_transcript`로 넘긴다(병원·관제 지도 X, 저장·로그 X). 대시보드 통화 시연 패널이 이걸 우선 보여주고, 없을 때만 브라우저 Web Speech 자막을 예비로 쓴다 — 예전엔 브라우저 자막뿐이라 voice는 잘 인식하는데 화면엔 안 떴다. voice 쪽 주소는 `HUB_VOICE_UTTERANCE_URL`(기본 HUB_BASE_URL/voice/utterance)
+- **관제 지도 역할(role=monitor, 2026-10-03)**: 병원 대시보드를 직접 열지 않고 dashboard 관제 지도에서 환자 요청이 온 병원을 눌러 연다. hub는 monitor 소켓에 `map_overview`(전체 병원·구급차 목록 — 연결 때·병원 목록 한 주기 끝·구급차 정보 갱신 때), `case_overview`(사건 요약 — 매칭 결과가 나갈 때마다, 통화 전문·활력징후 없음, 병원별 status·zone 포함), 구급차 시뮬레이션 위치(전 구급차)를 보낸다. 거절 비율 존 확장은 기존 로직 그대로이고, 넓혀진 존의 병원이 `case_overview.hospitals`에 들어와 지도에 표시된다. ⚠ 무응답 로그의 "도달" 판정은 병원 대시보드 소켓 연결 기준이라, 시연에서 아무도 그 병원을 열지 않으면 미도달로 분류된다. hub/README.md "출력 스키마 7", 검증 `test_monitor_map.py`
+- **voice v2 스키마 수신(2026-10-01, voice MF_BERT 머지와 함께)**: voice가 summary를 v2(MF_BERT 17필드 — `ktas_level`·`chief_complaint`·`incidents`·`injuries`·`vitals` …)로 바꿔 예전 hub 스키마로는 전부 400이 났다. `hub/voice_v2.py`가 v2를 예전 필드로 옮긴다(규칙 기반) — KTAS 1~2→high·3→medium·4~5→low, 예상 병명 = 주 사고/질병 분류 + 주 호소 + 의심 진단 + 손상, 환자 = 나이+성별, 증상 = "확인"된 것, 처치 = 시행한 것. **필요 진료과는 예전 voice의 대응표(`department_mapping.json`)를 그대로 옮겨** `disease_category`·`incidents[].type`·`injuries[].region`으로 도출한다(외상이면 부위 우선, 여러 부위는 다발성→외과). ⚠ 표는 **팀 확인 전 초안**(뇌혈관: 신경과/신경외과, 소화기: 외과/내과 기본값 미확정). 예전 6필드 형식도 그대로 받는다. KTAS·활력징후·의식(AVPU)·발생 시점·주 호소는 `patientInfo`로 dashboard에 간다(순위에는 안 씀)
+- **도착 결과 · 신뢰도 정답 데이터(2026-10-01)** — hub/README.md "도착 결과와 신뢰도 정답 데이터"
+  - 병원이 확정 사건에 `arrival_accepted`/`arrival_refused`(사유)를 기록한다. 구급차는 결과가 나올 때까지 병원 앞에서 기다린다(시뮬레이션). **도착 후 수용 불가**는 확정 해제·병상 회수 → 그 자리에서 재선택 대기, 승인 병원이 없으면 같은 환자 정보로 존 확장해 재요청(재통화 없음). 거절 로그에 `stage: "arrival"`과 당시 병상 수·신뢰도 확률 스냅샷 — 신뢰도 모델의 독립 관측(G2) 재료
+  - 재선택 해제는 `cause: "paramedic_reselect"`로 구분(실패 아님). **무응답은 사건이 끝날 때만 기록**(예전엔 첫 이송 승인 때 기록해 나중에 승인한 병원까지 무응답으로 남았다)
+  - **거절 로그 수신구(포트 5003)를 `start-all.sh`가 기본으로 띄운다** — 예전엔 따로 켜야 해서 실제로는 버려지고 있었다
+  - 테스트용 경로 분리: `HUB_DECISION_LOG_PATH`·`HOSPITAL_REJECTION_LOG_DIR`(+기존 `HUB_STATE_PATH`) — 실서버 E2E가 진짜 로그(해시 체인·정답 데이터)를 더럽히지 않게
+- **현장 후보에 첫 연락 추천(2026-10-03)**: `scene_candidates`의 후보마다 `bedReliability`(AI, 매칭 결과와 같은 `BedReliabilityMatch` 형태·거리 기반 horizon)를 얹고, 빈 병상이 확인된 곳(미상·확인된 만실·1일 넘은 값 제외) 중 rArrive 최고 한 곳에 `firstCallRecommended: true`를 표시한다(`hub_engine.build_zone_candidates`). 신뢰도를 finalScore·순위에 안 쓴다는 원칙은 그대로 — 첫 통화 상대 제안은 틀려도 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라 여기만 확률을 직접 쓴다. 추천은 의사결정 로그 `first_call_recommended`로 남아 적중률(추천 병원이 실제 수용했는가)을 나중에 셀 수 있다. 검증은 `test_app_background.py`
+- **이송 중 부하 페널티(2026-10-03)**: 같은 병원으로 확정돼 이송 중(TTL 오버레이)인 건수만큼 이동시간에 분을 더한다 — `10분 × 이송 중/(이송 중+실질 가용)`(`scoring.load_penalty_min`). 예전엔 차감 병상이 표시·만실 판정에만 쓰여 병상 20개 병원에 19명을 확정해도 20번째에 1순위로 떴다(만실 절벽 강등뿐). 평시(이송 중 0건)는 페널티 0이라 동작 불변이고, 대량사고처럼 확정이 쌓일 때만 만실 전에 연속 분산한다. `HospitalMatch.inFlightCount·loadPenaltyMin·loadReason`, 관제 지도 `map_overview` 병원에도 `inFlightCount`(확정·도착 결과마다 재전송). 검증 `run_match.py test_load_penalty()`. 대량사고 시뮬레이션(`sim/`, feature/sim)의 goldenlink 팔과 로직 일치
 
 ## feature/dashboard 담당자 참고사항
 
@@ -479,14 +599,74 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
     자체의 전체 화면 차단은 제거했다 — 직접 URL로 들어온 경우엔 상단바
     이름이 ID 폴백으로 남는 정도로만 티가 난다(랜딩 페이지 우회는 이번
     범위에서 막지 않기로 함).
+- **병원 자기 정보 현황 + 정보 확인 버튼 (2026-09-29)**: 병원 대시보드 상단에 `HospitalSelfInfoPanel`이 hub의 `hospital_self_info`(자기 병상 신뢰도 — 실시간 감쇠, 수술실·입원실, 중증 신고 요약)를 표시하고, "현재 정보가 맞습니다" 버튼이 `info_confirm`을 보낸다. 확인 즉시 자기 화면과 구급차 화면(✓) 양쪽에 반영된다. mock 모드·구버전 hub면 패널 자체가 숨는다(Optional 패턴)
 - **info-v2 신뢰도 판정("왜 이 순위인지") 설명 표시 (2026-08-13)**: hub가
   `hospitals[].reliability`(질환군·score·confidence·basis)를 보내주면
   구급차 대시보드 병원 후보 카드에 칩+근거 문장으로 노출한다
   (`HospitalCandidateListPanel.tsx`). 이 값은 순위 정렬에는 안 쓰이는 순수
-  설명용 정보라 — 실제 순위는 여전히 `specialtyMatch`(진료과 임베딩)와
-  `distanceKm`로만 정해진다. `reliability` 필드 자체가 없는 병원(구
+  설명용 정보다. ~~실제 순위는 여전히 `specialtyMatch`와 `distanceKm`로만 정해진다~~ →
+  2026-10-01부터 순위는 hub가 보낸 `hospitals[]` 순서 그대로다(아래 항목). `reliability` 필드 자체가 없는 병원(구
   feature/info 데이터 등)은 칩이 안 뜨는 것으로 자연히 처리된다(Optional
   필드라 별도 분기 불필요).
+- **hub 순서 그대로 · 출동 시뮬레이션 화면 (2026-10-01)**
+  - 후보 목록은 **hub가 보낸 순서를 그대로** 쓴다(자체 정렬 제거). 이송 승인을 누르면 즉시 "확정"이 아니라 "확정 요청 중"으로 두고, hub가 `confirmed`로 돌려줄 때만 확정 표시(mock 모드는 예전대로)
+  - hub 메시지는 `type`으로 구분하고 모르는 `type`은 버린다(type 없는 메시지 = 구 hub의 매칭 결과). 새로 받는 것: `case_closed`(사건 카드 지움), `scene_candidates`(매칭 전 거리순 후보 — 구급차 화면), `ambulance_phase`·`ambulance_position`(출동 시뮬레이션)
+  - **현장 후보의 첫 연락 추천(2026-10-03)**: `scene_candidates` 후보에 hub가 `bedReliability`(AI, 매칭 결과와 같은 형태)와 `firstCallRecommended`(빈 병상 확인 + 도착 시점 유효 확률 최고 한 곳)를 실어 보내면, 구급차 화면 현장 후보 카드에 "첫 연락 추천" 배지(mint 테두리)와 "AI · 도착 시 유효 N%" 칩(실시간 감쇠, 매칭 카드와 동일)을 그린다(`HospitalCandidateListPanel.tsx`). 목록 순서(거리순)는 바꾸지 않는다 — 첫 통화 상대 제안일 뿐이고, 둘 다 Optional이라 구버전 hub·신뢰도 없는 병원이면 자연히 안 그려진다
+  - 후보 카드: "필요 진료과 일치"/적합도, 전문의 수, 권역·지역센터 칩, 순위 가산 이유(툴팁)
+  - 병원 수용 요청 카드: 이송 확정 사건에 **도착 결과 버튼**([환자 수용 완료] / [도착 후 수용 불가(사유)]). 시뮬레이션이면 구급차 도착 전엔 막힘. 구급차 출동 조작부에 "병원 도착 — 수용 결과 대기"·"재선택 대기" 상태 추가
+  - 통화 요약(구급차)·수용 요청 카드(병원)에 voice v2의 KTAS·활력징후(최근 측정)·의식·발생 시점·환자(나이·성별)를 표시(`panels/PatientVitals.tsx`, AI 처리). 예전 voice 데이터면 아무것도 안 그린다
+  - `identity_info.simDispatch`가 true면 구급차 화면에 출동 조작부([이동]·[현장 종료]·[정지]/[상황 재개], "시뮬레이션 위치" 배지). [정지](2026-10-03)는 출동 중·현장·이송 중 시연을 그 자리에 멈추고 [상황 재개]로 이어 간다(hub `sim_pause`/`sim_resume`). 구급차의 현재 사건은 hub가 보낸 시뮬레이션 상태의 caseId가 기준이다 — 탭 세션 값만 쓰던 때는 브라우저를 껐다 켜면 [현장 종료]가 엉뚱한 caseId로 나가 먹통이 됐다. caseId는 [이동] 때 만들고 통화 시작은 현장 도착 뒤에만 열린다. 지도는 상태가 바뀔 때만 경로·기지·환자 발생 위치를 다시 그리고 1초 위치엔 마커만 옮긴다. 병원 지도도 우리 병원으로 이송 중인 구급차를 보여준다
+- **관제 지도 · 병원 대시보드 접근 방식 변경 (2026-10-03)**
+  - 첫 페이지는 구급차 코드(A-)만 받는다. 병원 코드(H-)는 막고 [관제 지도 열기](`/map`)로 안내한다. `/hospital?id=` 주소로 직접 들어오면 `/map`으로 보낸다(`app/hospital/page.tsx`는 redirect만 한다)
+  - **관제 지도**(`app/map/page.tsx`, `components/map/MonitorMapPanel.tsx`): hub에 `role: "monitor"`로 붙어 서울 지도에 병원(남색 원)·구급차(주황 사각형 + 십자)를 이름과 함께 찍는다. 구급차는 출동 시뮬레이션 위치로 1초마다 움직이고 이동 경로·사고 현장도 그린다. 병원 이름은 확대(카카오 레벨 7 이하)했을 때만 다 보이고, 환자 요청이 온 병원·구급차 이름은 항상 보인다
+  - 환자 요청이 온 병원은 마커가 커지고 위에 상태 표시가 붙는다 — 🚨 판단 대기(노랑)·✓ 수용 승인(연두)·✕ 수용 불가(빨강)·🚑 이송 확정(초록), 왼쪽에 "병원 응답" 기록. 축소 상태에선 병원 마커를 누르면 이름이 뜬다. **그 병원만** 눌러서(마커·표시·왼쪽 목록) 병원 대시보드를 지도 위에 띄운다(`components/hospital/HospitalDashboard.tsx` — 예전 병원 페이지 내용을 그대로 옮긴 것, 자기 소켓을 role=hospital로 따로 연다). [닫기 · 지도로 돌아가기]로 돌아오고, 상단바의 신뢰도 검증 모달·3D 뷰어는 그대로다. 요청 판정은 병원 대시보드 카드 목록과 같은 규칙(다른 병원으로 이송 확정된 사건은 뺀다, `lib/monitor.ts`)
+  - 사건마다 지금 요청 중인 존 범위를 구급차 위치 중심 점선 원(보라색)으로 그린다. 거절 비율로 존이 넓혀지면 원이 커지고 바깥 존 병원이 요청 표시를 받는다(라벨에 "거절로 확장")
+  - 관제 지도는 통화 전문 등 환자 상세를 받지 않는다(hub `case_overview` 요약만). 환자 상세는 병원 대시보드를 열어야 보인다
+  - 인증은 여전히 없다 — 관제 지도 주소만 알면 누구나 요청 온 병원의 대시보드를 열 수 있다(시연 범위)
+- **미구현 대기(2026-10-03)**: hub가 보내는 이송 중 부하 필드의 화면 표시 — 후보 카드의 `loadPenaltyMin`·`loadReason`(순위 가산 툴팁과 같은 패턴) + 관제 지도 마커의 `MapHospital.inFlightCount`("이송 중 N건"). 둘 다 Optional이라 안 그려도 안 깨지지만, 대량사고 시연에서 분산이 "왜" 일어나는지 보이려면 필요하다
+
+---
+
+## feature/sim 담당자 참고사항 (2026-10-03 신설)
+
+발표·IR의 "대량사고 대응"을 계획이 아니라 수치로 검증된 결과로 바꾸기 위한
+**대량사고(MCI) 분산 이송 시뮬레이션** 브랜치다. 상세는 `sim/README.md`가 최신.
+
+- **운영 규칙: 다른 폴더의 기존 파일을 수정하지 않는다 — `sim/` 아래 새 파일만.**
+  결선 후 통째로 지워도 다른 브랜치에 영향이 없게 하기 위함. info 쪽은 데이터 파일
+  읽기와 E-Gen 클라이언트의 읽기 전용 import(`fetch_coords.py`)만 한다
+- **무엇을 비교하나**: 같은 장소·요일·시각대의 실제 E-Gen 스냅샷에서 사상자 N명을
+  세 방식으로 이송 — `nearest`(최근접 집중, 이태원 당시) / `sequential`(순차 전화,
+  평시 뺑뺑이) / `goldenlink`(동시 전달 + 배정 공유). 차이는 정보 전달 방식뿐.
+  **반사실("있었다면 살렸다")이 아니라 메커니즘 데모**로 프레이밍한다 — 병원
+  위치·병상만 실측이고 사건 재현이 아님을 화면·발표에 항상 명시
+- **장면 2개**(`run.py --scene`): **ilsan이 메인** — 2019-12-14 일산 여성병원 화재와
+  같은 요일(토)·시각대(10:07), 사상자 138명·중증도 분포가 대한응급의학회지
+  32(1):36-47(2021) 실측이고, 논문 Table 3의 실제 병원별 분산(수동 — DMAT·상황실이
+  모바일로 병상 정보 공유)이 리포트에 참조선으로 그려진다("2019년의 성공적 수동
+  분산을 골든링크가 자동화한다"는 서사가 반사실 없이 성립). itaewon은 배경 서사용.
+  ⚠ 실측 A병원 83명 집중은 쏠림 실패가 아니라 경증 전제의 의도된 허브 전략(NICU
+  한계 5명, 31명 진찰 후 귀가) — 발표에서도 캡션 그대로 말할 것
+- **첫 결과**(시드 20 평균, 수용까지 중앙값): ilsan 19.6/22.0/**14.7**분,
+  itaewon 23.0/28.5/**14.8**분 (nearest/sequential/goldenlink). 민감도
+  변주(`--sweep`: 전화 시간·환자 수·구급차 수) 전부에서 순서 유지. 베이스라인에도
+  구급차별 "직접 겪은 만실 기억"을 넣어 보수적으로 비교했다
+- **hub와의 로직 일치**: goldenlink 팔의 배정(가용 병원 중 최단 이동 + 배정 공유)은
+  hub의 이송 중 부하 페널티(2026-10-03)가 들어가면서 실제 코드와 같은 메커니즘이
+  됐다 — "시뮬과 실코드가 같은 로직이냐"는 질문에 "네"로 답한다
+- **데이터**: 가용 병상은 `info/.../data/snapshots_nationwide/*.jsonl`(이 수집
+  장비에만 있음 — 다른 장비에선 재실행 불가, 대신 산출물이 커밋돼 있어 열람은 가능),
+  전국 좌표 캐시 `sim/data/egen_coords.json`(E-Gen 목록 1회, 529곳, 커밋됨),
+  일산 실측 분산 `sim/data/ilsan_actual_2019.json`(출처·주의 문구 포함)
+- **산출물**(`sim/out/`, 커밋함): 자가완결 리포트 `mci_report_<장면>.html`(CDF·병원별
+  쏠림·구급차 점 재생, `#t=30&arm=nearest` 해시로 장면 점프) + 발표용 1920×1080
+  슬라이드 PNG(`make_slides.py --scene`, 순수 SVG). 차트 색은 dataviz 검증 통과
+- **실행**: `conda activate rookie_info` 후 `cd sim && python run.py --scene ilsan`
+  (Windows는 `PYTHONUTF8=1` 필요). 시간 상수(전화 2.5분 등)의 근거·보수성 원칙은
+  sim/README.md "상수의 근거" 절 — 세 팔 공통 상수는 비교 결과의 원인이 될 수 없다
+- **v2 자리**: 신고가 처음부터 틀렸을 확률(`SimParams.info_error_rate`, 현재 0)에
+  infosurv 생존확률을 거절 확률로 주입하는 확장 — 환경(세계)에만 적용하고 정책에는
+  넣지 않는다(양팔 공정성)
 
 ---
 
@@ -502,4 +682,4 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
 
 - 각 기능을 구현하기 전에 위 "핵심 AI 활용 원칙" 표를 참고해 AI 처리 영역인지 규칙 기반 영역인지 먼저 확인한다
 - 모델/API 호출부와 비즈니스 로직(존 확장, 승인 처리 등)은 분리해서 구현한다 — 나중에 모델을 교체해도 로직에 영향 없게
-- 팀원 전원이 Codex를 사용하므로, 함수/변수명과 커밋 메시지는 한글 설명을 포함해도 무방하나 코드 자체는 일관된 컨벤션을 유지한다
+- 팀원 전원이 Claude Code를 사용하므로, 함수/변수명과 커밋 메시지는 한글 설명을 포함해도 무방하나 코드 자체는 일관된 컨벤션을 유지한다
