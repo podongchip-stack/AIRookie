@@ -48,6 +48,20 @@ GAP_RESET_MIN = 60.0              # 관측 공백이 이보다 크면 채점을 
 FEED_LIMIT = 4000
 CALIBRATION_BINS = ((0.0, 0.5), (0.5, 0.8), (0.8, 0.95), (0.95, 1.01))
 
+#: hpid 접두(시도) → 표시명. 전국 평균이 지역 이질성을 가리는 "평균의 오류"를 화면에서
+#: 깨기 위한 지역별 분해용 (연구 §6-2 "권역마다 예측 난이도가 다르다"와 같은 축).
+#: 교차 확인: A26 장흥우리병원=전남, A22 강릉아산병원=강원, A21 일산백병원=경기.
+REGION_LABELS = {
+    "A11": "서울", "A12": "부산", "A13": "대구", "A14": "인천", "A15": "광주",
+    "A16": "대전", "A17": "울산", "A18": "세종", "A21": "경기", "A22": "강원",
+    "A23": "충북", "A24": "충남", "A25": "전북", "A26": "전남", "A27": "경북",
+    "A28": "경남", "A29": "제주",
+}
+
+
+def _region_of(hpid: str) -> str:
+    return REGION_LABELS.get(hpid[:3], "기타")
+
 _BASE = Path(__file__).resolve().parents[1]
 SNAPSHOT_DIR = _BASE / "data" / "snapshots_nationwide"
 CACHE_PATH = _BASE / "data" / "verification" / "live_board.json"
@@ -108,6 +122,8 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
         # 폴링별 채점 집계 — 화면의 라이브 그래프("신뢰 등급별 유지율") 재료.
         # hi = 엔진이 "믿어도 됨"(조건부 확률 >= 0.8)이라 한 값, warn = "위험"(< 0.5) 경고한 값.
         timeseries: list[dict] = []
+        # 지역(시도)별 창 전체 집계 — 전국 평균이 가리는 지역 격차를 보이기 위함.
+        region_stats: dict[str, dict] = {}
         prev_ts: datetime | None = None
 
         for ts, items in polls:
@@ -141,6 +157,20 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
                     elif p_step < 0.5:
                         poll_stat["warnN"] += 1
                         poll_stat["warnHeld"] += not broke
+                    region = region_stats.setdefault(_region_of(hpid), {
+                        "n": 0, "held": 0, "hiN": 0, "hiHeld": 0,
+                        "warnN": 0, "warnHeld": 0, "breaks": 0, "hospitals": set(),
+                    })
+                    region["n"] += 1
+                    region["held"] += not broke
+                    region["breaks"] += broke
+                    region["hospitals"].add(hpid)
+                    if p_step >= 0.8:
+                        region["hiN"] += 1
+                        region["hiHeld"] += not broke
+                    elif p_step < 0.5:
+                        region["warnN"] += 1
+                        region["warnHeld"] += not broke
                     if value != claim["value"]:
                         value_changes += 1
                     if broke:
@@ -201,9 +231,26 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
 
     feed.sort(key=lambda r: r["ts"], reverse=True)
     big_breaks = len(feed)
+    regions = [
+        {
+            "label": label,
+            "hospitals": len(stat["hospitals"]),
+            "n": stat["n"],
+            "allPct": round(stat["held"] / stat["n"] * 100, 1) if stat["n"] else None,
+            "hiN": stat["hiN"],
+            "hiPct": round(stat["hiHeld"] / stat["hiN"] * 100, 1) if stat["hiN"] >= 50 else None,
+            "warnN": stat["warnN"],
+            "warnPct": round(stat["warnHeld"] / stat["warnN"] * 100, 1) if stat["warnN"] >= 15 else None,
+            "breaks": stat["breaks"],
+        }
+        for label, stat in region_stats.items()
+        if stat["n"] >= 200  # 창 전체 표본이 너무 작은 지역(세종 등)은 %가 의미 없다
+    ]
+    regions.sort(key=lambda r: r["allPct"] if r["allPct"] is not None else 100.0)
     return {
-        "schemaVersion": 2,  # timeseries 추가(2026-10-03) — 캐시 재생성 판별용
+        "schemaVersion": 3,  # timeseries(v2)·regions(v3) 추가 — 캐시 재생성 판별용
         "timeseries": timeseries,
+        "regions": regions,
         "source": "live_replay",
         "demo": False,  # 표본·가상 요청이 아니라 창 안의 실측 전수 채점
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -236,7 +283,7 @@ def cached(window_hours: int = WINDOW_HOURS_DEFAULT, refresh_sec: int = CACHE_RE
     """캐시가 신선하면 그대로, 아니면 다시 만든다(생성 수십 초 — ingest가 락으로 감싼다)."""
     if CACHE_PATH.is_file() and time.time() - CACHE_PATH.stat().st_mtime < refresh_sec:
         body = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
-        if body.get("schemaVersion") == 2:  # 구버전 캐시는 무시하고 다시 만든다
+        if body.get("schemaVersion") == 3:  # 구버전 캐시는 무시하고 다시 만든다
             return body
     body = build(window_hours)
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
