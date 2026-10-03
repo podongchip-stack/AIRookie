@@ -75,10 +75,12 @@ const REPLAY_SEC = 90;
 const WARN_ROLL = 18; // 경고선은 폴링당 표본이 4건 안팎이라 6시간(18폴링) 이동평균으로 그린다
 
 // 시리즈 색 — dataviz 검증을 통과한 카테고리 슬롯(이 파일 안에서만 쓰는 역할 고정 색).
+// 용어는 화면 전체에서 통일한다: 신고값(E-Gen 원본) · 유지율(다음 실측까지 맞은 비율) ·
+// 어긋남(3석 이상 틀어짐). "거짓/깨짐/묵음" 같은 변주를 섞지 않는다.
 const SERIES = {
   hi: { color: "#2a78d6", label: "엔진이 고른 값" },      // "믿어도 됨"(조건부 확률 80%↑)
-  all: { color: "#8a8884", label: "전체 평균" },           // 선별 없이 전부 믿었을 때
-  warn: { color: "#eb6834", label: "엔진이 경고한 값" },   // "위험"(50% 미만)
+  all: { color: "#8a8884", label: "모든 신고값" },         // 선별 없이 전부 믿었을 때
+  warn: { color: "#eb6834", label: "경고한 값" },          // "위험"(50% 미만)
 } as const;
 
 const cardStyle = css({
@@ -101,6 +103,13 @@ const kstDayTime = (iso: string) =>
 
 // hvec 음수는 과밀(만실 + 초과 n명, 2026-10-01 합의) — 날것(-17석)으로 보여주지 않는다.
 const bedLabel = (v: number) => (v > 0 ? `${v}석` : v === 0 ? "만실" : `과밀 ${-v}명`);
+
+// 신고 나이 — "2,875분"처럼 읽기 힘든 분 단위를 쓰지 않는다.
+const ageLabel = (minutes: number) => {
+  if (minutes < 60) return `${Math.max(Math.round(minutes), 1)}분 전 신고`;
+  if (minutes < 48 * 60) return `${Math.round(minutes / 60)}시간 전 신고`;
+  return `${Math.round(minutes / 1440)}일 전 신고`;
+};
 
 function pColor(p: number): string {
   if (p >= 0.8) return "#1baf7a";
@@ -273,7 +282,7 @@ function RegionGaps({ regions, windowHours }: { regions: RegionStat[]; windowHou
   return (
     <div className={css({ display: "flex", flexDirection: "column", gap: "2", borderTopWidth: "1px", borderColor: "line", paddingTop: "4" })}>
       <h3 className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
-        지역별로 갈라 보면 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>전국 평균이 가리는 격차 — 원값 품질이 나쁜 지역일수록 엔진의 이득이 큽니다</span>
+        지역별 격차 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>신고값 품질은 지역마다 다르지만, 엔진이 고른 값은 어디서나 96% 이상입니다</span>
       </h3>
       <div className={css({ display: "grid", gridTemplateColumns: { base: "1fr", md: "1fr 1fr" }, columnGap: "8", rowGap: "1" })}>
         {rows.map((region) => {
@@ -294,17 +303,18 @@ function RegionGaps({ regions, windowHours }: { regions: RegionStat[]; windowHou
               <span className={css({ flexShrink: "0", color: "ink2", fontVariantNumeric: "tabular-nums", width: "92px", textAlign: "right" })}>
                 {all.toFixed(1)} → <b className={css({ color: "ink" })}>{hi.toFixed(1)}%</b>
               </span>
-              <span className={css({ flexShrink: "0", color: "ink3", fontVariantNumeric: "tabular-nums", width: "72px", textAlign: "right" })}>
-                거짓 {Math.round(region.breaks / days).toLocaleString()}/일
+              <span className={css({ flexShrink: "0", color: "ink3", fontVariantNumeric: "tabular-nums", width: "84px", textAlign: "right" })}>
+                어긋남 {Math.round(region.breaks / days).toLocaleString()}/일
               </span>
             </div>
           );
         })}
       </div>
       <p className={smallStyle}>
-        <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginRight: "1" })} style={{ backgroundColor: SERIES.all.color }} /> E-Gen 원값(선별 없음)
+        <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginRight: "1" })} style={{ backgroundColor: SERIES.all.color }} /> 모든 신고값
         <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginLeft: "3", marginRight: "1" })} style={{ backgroundColor: SERIES.hi.color }} /> 엔진이 고른 값 ·
-        20분당 유지율(48시간 집계), 표본 적은 지역 제외 · 서울·경기가 원값 하위권인 건 수도권 응급실의 회전 속도 때문입니다
+        띠의 길이가 엔진이 그 지역에서 끌어올린 폭입니다 · 표본이 적은 지역은 제외 ·
+        서울·경기가 하위권인 것은 수도권 응급실의 회전 속도 때문입니다
       </p>
     </div>
   );
@@ -324,7 +334,7 @@ function FeedRow({ item }: { item: FeedItem }) {
       <span className={css({ fontVariantNumeric: "tabular-nums", flexShrink: "0", color: "ink2" })}>
         {bedLabel(item.claimValue)} → {bedLabel(item.newValue)}
       </span>
-      <span className={css({ fontSize: "xs", color: "ink3", flexShrink: "0", fontVariantNumeric: "tabular-nums" })}>{Math.round(item.ageMin)}분 묵음</span>
+      <span className={css({ fontSize: "xs", color: "ink3", flexShrink: "0", fontVariantNumeric: "tabular-nums" })}>{ageLabel(item.ageMin)}</span>
       <span
         className={css({ fontSize: "xs", fontWeight: "semibold", paddingX: "1.5", paddingY: "0.5", borderRadius: "chip", flexShrink: "0", fontVariantNumeric: "tabular-nums" })}
         style={{
@@ -332,7 +342,7 @@ function FeedRow({ item }: { item: FeedItem }) {
           backgroundColor: warned ? "rgba(27,175,122,0.14)" : missed ? "rgba(208,59,59,0.12)" : "rgba(128,128,128,0.10)",
         }}
       >
-        직전 신뢰도 {Math.round(item.pValid * 100)}%{warned ? " · 미리 경고했음" : missed ? " · 못 맞힘" : ""}
+        직전 신뢰도 {Math.round(item.pValid * 100)}%{warned ? " · 사전 경고" : missed ? " · 경고 실패" : ""}
       </span>
     </div>
   );
@@ -427,7 +437,7 @@ export function LiveBoardSection() {
     <section className={cardStyle}>
       <div className={css({ display: "flex", alignItems: "baseline", gap: "3", flexWrap: "wrap" })}>
         <h2 className={css({ fontSize: "lg", fontWeight: "bold", color: "ink", letterSpacing: "-0.01em" })}>
-          같은 48시간, 믿는 방법만 바꿨을 때
+          E-Gen 신고값, 엔진을 거치면 얼마나 더 믿을 수 있나
         </h2>
         <span className={css({ display: "inline-flex", alignItems: "center", gap: "1.5", fontSize: "xs", fontWeight: "semibold", color: "mint", backgroundColor: "mintSoft", paddingX: "2", paddingY: "0.5", borderRadius: "chip" })}>
           <span className={css({ width: "7px", height: "7px", borderRadius: "full", backgroundColor: "mint" })} />
@@ -438,24 +448,27 @@ export function LiveBoardSection() {
         </span>
       </div>
 
-      <p className={css({ fontSize: "md", color: "ink2", lineHeight: "1.7", maxWidth: "72ch" })}>
-        E-Gen 병상 숫자를 <b className={css({ color: "ink" })}>선별 없이 그냥 믿으면</b> 다음 실측에서 {dot(SERIES.all.color)}
-        <b className={css({ color: "ink" })}>{allPct}%</b>만 유효했습니다. 같은 숫자들을{" "}
-        <b className={css({ color: "ink" })}>엔진이 &quot;믿어도 됨&quot;이라 고른 것만 믿으면</b> {dot(SERIES.hi.color)}
-        <b className={css({ color: "ink" })}>{hiPct}%</b>, 반대로 <b className={css({ color: "ink" })}>엔진이 &quot;위험&quot; 경고한 값</b>은 {dot(SERIES.warn.color)}
-        <b className={css({ color: "ink" })}>{warnPct}%</b>만 살아남았습니다 — 경고가 진짜 지뢰를 가리킨다는 뜻입니다.
-      </p>
+      <div className={css({ fontSize: "md", color: "ink2", lineHeight: "1.8", maxWidth: "72ch" })}>
+        <p>지난 48시간, 모든 신고값을 그대로 믿었다면 {dot(SERIES.all.color)}<b className={css({ color: "ink" })}>{allPct}%</b>가 다음 실측까지 맞았습니다.</p>
+        <p>엔진이 <b className={css({ color: "ink" })}>&quot;믿어도 됨&quot;</b>으로 고른 값만 믿었다면 {dot(SERIES.hi.color)}<b className={css({ color: "ink" })}>{hiPct}%</b>.</p>
+        <p>엔진이 <b className={css({ color: "ink" })}>&quot;위험&quot;</b>으로 경고한 값은 {dot(SERIES.warn.color)}<b className={css({ color: "ink" })}>{warnPct}%</b>만 맞았습니다 — 경고는 장식이 아닙니다.</p>
+      </div>
 
       {points.length >= 3 && <LiveChart points={points} cutoffMs={cutoffMs} lastPollMs={lastMs} />}
 
-      <p className={smallStyle}>
-        {allPct}%가 높아 보여도 <b>20분당</b> 유지율입니다 — 나머지 {100 - (allPct ?? 0)}%는 전국 기준{" "}
-        <b>하루 약 {Math.round(h.bigBreaks / (data.windowHours / 24)).toLocaleString()}건의 &quot;{data.theta}석 이상 거짓&quot;</b>이고,
-        값이 조금이라도 바뀌는 건 관측당 절반이 넘습니다. 문제는 그 거짓이 어디서 날지 E-Gen 스스로는 모른다는 것 — 엔진이 그걸 분리합니다 ·
-        문장의 숫자는 48시간 집계, 선 끝 숫자는 가장 최근 폴링 기준 · 경고선은 폴링당 표본이 적어 6시간 이동평균 ·
-        신뢰도 구간별 실제 유지율 {data.calibration.bins.map((bin) => (bin.actualPct == null ? "—" : Math.round(bin.actualPct))).join(" → ")}%로
-        단조 · 크게 어긋난 {h.bigBreaks.toLocaleString()}건 중 {h.warnedBreaks.toLocaleString()}건은 깨지기 전에 이미 경고 상태였습니다
-      </p>
+      <div className={css({ display: "flex", flexDirection: "column", gap: "0.5" })}>
+        <p className={smallStyle}>
+          {allPct}%는 <b>20분 기준</b>입니다. 남은 {100 - (allPct ?? 0)}%가 전국에서{" "}
+          <b>하루 약 {Math.round(h.bigBreaks / (data.windowHours / 24)).toLocaleString()}건의 큰 어긋남</b>({data.theta}석 이상)이 되고,
+          그게 어디서 생길지는 E-Gen만으로 알 수 없습니다. 실제로 어긋난 {h.bigBreaks.toLocaleString()}건 중{" "}
+          {h.warnedBreaks.toLocaleString()}건은 어긋나기 전에 이미 엔진의 경고 상태였습니다.
+        </p>
+        <p className={smallStyle}>
+          유지율 = 다음 실측에서 {data.theta}석 이상 어긋나지 않은 비율 · 문장은 48시간 집계, 선 끝은 최근 폴링 기준 ·
+          경고선은 표본이 적어 6시간 이동평균 · 엔진이 말한 신뢰도 구간대로 실제 유지율도{" "}
+          {data.calibration.bins.map((bin) => (bin.actualPct == null ? "—" : Math.round(bin.actualPct))).join(" → ")}% 순서를 지킵니다
+        </p>
+      </div>
 
       {data.regions && <RegionGaps regions={data.regions} windowHours={data.windowHours} />}
 
@@ -463,7 +476,7 @@ export function LiveBoardSection() {
         {/* 지금 가장 못 믿을 값 — 초 단위 감쇠 */}
         <div className={css({ display: "flex", flexDirection: "column", gap: "1", minWidth: "0" })}>
           <h3 className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
-            지금 가장 못 믿을 값 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>확률이 초 단위로 떨어지는 실시간 값</span>
+            지금 가장 의심스러운 신고값 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>신뢰도는 시간이 갈수록 내려갑니다</span>
           </h3>
           {data.board.slice(0, 10).map((row) => {
             const p = liveP(row, nowMs);
@@ -474,7 +487,7 @@ export function LiveBoardSection() {
                   {row.name}
                 </span>
                 <span className={css({ color: "ink2", flexShrink: "0", fontVariantNumeric: "tabular-nums" })}>{bedLabel(row.value)}</span>
-                <span className={css({ fontSize: "xs", color: "ink3", flexShrink: "0", fontVariantNumeric: "tabular-nums" })}>{Math.round(ageMin).toLocaleString()}분 전 값</span>
+                <span className={css({ fontSize: "xs", color: "ink3", flexShrink: "0", fontVariantNumeric: "tabular-nums" })}>{ageLabel(ageMin)}</span>
                 <span className={css({ fontWeight: "bold", flexShrink: "0", fontVariantNumeric: "tabular-nums", minWidth: "44px", textAlign: "right" })} style={{ color: pColor(p) }}>
                   {Math.round(p * 100)}%
                 </span>
@@ -487,25 +500,25 @@ export function LiveBoardSection() {
         <div className={css({ display: "flex", flexDirection: "column", gap: "2", minWidth: "0" })}>
           <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
             <h3 className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
-              {replaying ? "리플레이 — 지난 24시간을 90초로" : "채점 기록 — E-Gen 값이 거짓으로 판명된 순간들"}
+              {replaying ? "다시 보기 — 지난 24시간을 90초로" : "채점 기록 — 신고값이 어긋난 순간들"}
             </h3>
             <button
               type="button"
               onClick={replaying ? stopReplay : startReplay}
               className={css({ fontSize: "xs", fontWeight: "semibold", color: "ink2", backgroundColor: "surface", borderWidth: "1px", borderColor: "line", paddingX: "2.5", paddingY: "1", borderRadius: "chip", cursor: "pointer", _hover: { borderColor: "ink3", color: "ink" } })}
             >
-              {replaying ? "리플레이 종료" : "지난 24시간 90초 재생"}
+              {replaying ? "다시 보기 종료" : "지난 24시간 다시 보기"}
             </button>
             {replaying && cutoffMs != null && (
               <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink", fontVariantNumeric: "tabular-nums" })}>
-                {kstTime(cutoffMs)} — 어긋남 {replayShown.length}건, 미리 경고한 것 {replayWarned}건
+                {kstTime(cutoffMs)} — 어긋남 {replayShown.length}건 · 사전 경고 {replayWarned}건
               </span>
             )}
           </div>
           {!replaying && (
             <p className={smallStyle}>
-              20분마다 새 실측이 도착해 기존 값을 채점합니다. 한 줄 = 신고값이 {data.theta}석 이상 어긋난 순간이고,
-              오른쪽 %는 깨지기 <b>직전</b>까지 엔진이 그 값에 매겨둔 신뢰도 — 50% 미만이면 엔진이 미리 경고하고 있었다는 뜻입니다.
+              새 실측이 도착할 때마다 직전 신고값을 채점합니다. 한 줄이 {data.theta}석 이상 어긋난 순간 하나이고,
+              오른쪽은 어긋나기 <b>직전</b>까지 엔진이 매긴 신뢰도입니다 — 50% 미만이었다면 엔진이 먼저 알고 있었던 것입니다.
             </p>
           )}
           {replaying && (
@@ -525,8 +538,8 @@ export function LiveBoardSection() {
       </div>
 
       <p className={smallStyle}>
-        채점 대상은 &quot;신고값이 유효한가&quot;({data.theta}석 기준)이지 실제 수용 여부가 아닙니다 · 리플레이는 실데이터 고속 재생(연출 아님) ·
-        확률은 AI(XGBoost AFT 생존모델) 산출, 채점 규칙은 규칙 기반
+        채점 대상은 신고값의 유효성({data.theta}석 기준)이며, 실제 수용 여부와는 다른 축입니다 ·
+        다시 보기는 실데이터 재생입니다(연출 아님) · 신뢰도는 AI(XGBoost AFT 생존모델) 산출이고, 채점 규칙은 규칙 기반입니다
       </p>
     </section>
   );
