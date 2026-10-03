@@ -4,6 +4,7 @@ import { useState } from "react";
 import { css, cx } from "styled-system/css";
 import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
 import { HospitalSelfInfoPanel } from "@/components/hospital/HospitalSelfInfoPanel";
+import { CallStatusBanner } from "@/components/hospital/CallStatusBanner";
 import { Legend } from "@/components/hospital/Legend";
 import { CaseMatchPanel } from "@/components/hospital/CaseMatchPanel";
 import { MapPanel } from "@/components/hospital/MapPanel";
@@ -87,6 +88,12 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
         onClose={onClose}
       />
       <Legend />
+
+      {/* 구급대가 이 병원을 골라 건 통화(📞, 2026-10-03) */}
+      <CallStatusBanner
+        statuses={Object.values(state.callStatus).filter((s) => s.hospitalId === MY_HOSPITAL_ID)}
+        arrivedCaseIds={new Set(Object.keys(state.matchResults))}
+      />
 
       {/* 귀원 정보 현황 + "현재 정보가 맞습니다" 확인 버튼 (2026-09-29).
           hub가 이 병원 정보를 알 때만 온다 — mock 모드·구버전 hub면 숨긴다. */}

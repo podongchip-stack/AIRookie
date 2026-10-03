@@ -26,6 +26,7 @@ export default function MonitorMapPage() {
   const requests = useMemo(() => hospitalRequests(state.monitorCases), [state.monitorCases]);
   const cases = Object.values(state.monitorCases);
   const ambulances = state.mapOverview?.ambulances ?? [];
+  const calls = Object.values(state.callStatus).filter((c) => c.state === "calling");
 
   return (
     <div
@@ -188,6 +189,15 @@ export default function MonitorMapPage() {
                   <span className={css({ fontWeight: "semibold" })}>{ambulance.name}</span>
                   <span className={css({ color: "ink3" })}>
                     {sim ? `${PHASE_SHORT[sim.phase]}${sim.paused ? " · 정지" : ""}` : "위치 고정"}
+                    {(() => {
+                      const call = calls.find((c) => c.apid === ambulance.apid);
+                      return call ? (
+                        <span className={css({ color: "mint", fontWeight: "semibold" })}>
+                          {" "}
+                          · 📞 {call.hospitalName ?? "병원"} 통화 중
+                        </span>
+                      ) : null;
+                    })()}
                   </span>
                 </div>
               );
@@ -206,6 +216,7 @@ export default function MonitorMapPage() {
           cases={state.monitorCases}
           ambulanceSim={state.ambulanceSim}
           requests={requests}
+          calls={calls}
         />
       </main>
     </div>

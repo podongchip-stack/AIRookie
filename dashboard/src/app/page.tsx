@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { css } from "styled-system/css";
 import { inputStyle, primaryButtonStyle, secondaryButtonStyle } from "@/components/ui/button-styles";
 
-// 코드 형식: "H-<병원ID>" 또는 "A-<차량ID>" (대소문자 무관, 대시 생략 가능).
-// 예: H-A1100009 → 병원 대시보드, A-A0000001 → 구급차 대시보드. 병원 접근 코드는 관제 지도의 병원 이름 옆에 보인다.
+// 코드 형식: "H-<병원ID>", "A-<차량ID>", "P-<차량ID>" (대소문자 무관, 대시 생략 가능).
+// 예: H-A1100009 → 병원 대시보드, A-A0000001 → 구급차 대시보드, P-A0000001 → 그 구급차 대원 휴대폰 전화 앱(2026-10-03).
+// 병원 접근 코드는 관제 지도의 병원 이름 옆에 보인다.
 // 실제 인증 서버가 붙기 전까지는 이 코드로 역할/ID만 판단해 해당 대시보드로 라우팅한다.
-const CODE_PATTERN = /^([HA])-?(.+)$/i;
+const CODE_PATTERN = /^([HAP])-?(.+)$/i;
+const ROUTE_BY_PREFIX = { H: "hospital", A: "ambulance", P: "phone" } as const;
 
 // hub의 GET /identity로 hpid/apid가 실제로 존재하는지 라우팅 전에 미리 확인한다
 // (2026-08-11). 예전엔 /hospital, /ambulance 페이지로 넘어간 뒤에야 알 수 있어서
@@ -40,11 +42,12 @@ export default function Home() {
     event.preventDefault();
     const match = code.trim().match(CODE_PATTERN);
     if (!match) {
-      setError("코드 형식이 올바르지 않습니다. 예: H-A1100009(병원), A-A0000001(구급차)");
+      setError("코드 형식이 올바르지 않습니다. 예: H-A1100009(병원), A-A0000001(구급차), P-A0000001(전화 앱)");
       return;
     }
     const [, roleChar, id] = match;
-    const role = roleChar.toUpperCase() === "H" ? "hospital" : "ambulance";
+    const page = ROUTE_BY_PREFIX[roleChar.toUpperCase() as keyof typeof ROUTE_BY_PREFIX];
+    const role = page === "hospital" ? "hospital" : "ambulance"; // 전화 앱도 구급차 코드로 확인한다
 
     setChecking(true);
     const exists = await checkCodeExists(role, id);
@@ -53,7 +56,11 @@ export default function Home() {
       setError("존재하지 않는 코드입니다.");
       return;
     }
-    router.push(`/${role}?id=${encodeURIComponent(id)}`);
+    const href = `/${page}?id=${encodeURIComponent(id)}`;
+    // 전화 앱은 페이지를 새로 불러 연다 — 화면 안 이동(router.push)이면 이 페이지에서 생긴 확대(입력칸 자동 확대 등)가
+    // 그대로 남는데, 전화 앱은 확대를 막아 두어 되돌릴 수 없다. 새로 불러오면 배율이 1로 돌아간다.
+    if (page === "phone") window.location.assign(href);
+    else router.push(href);
   }
 
   return (
@@ -86,7 +93,7 @@ export default function Home() {
             setCode(event.target.value);
             setError(null);
           }}
-          placeholder="코드 입력 (예: H-A1100009, A-A0000001)"
+          placeholder="코드 입력 (예: H-A1100009, A-A0000001, P-A0000001)"
           className={inputStyle}
         />
         {error && (

@@ -11,8 +11,10 @@ import type {
   AmbulanceSimState,
   ApprovalAction,
   ApprovalActionType,
+  CallDevice,
   CallSignal,
   CallSignalType,
+  CallStatus,
   DashboardIdentify,
   DashboardIdentityInfo,
   DashboardState,
@@ -61,6 +63,7 @@ const INITIAL_STATE: DashboardState = {
   monitorCases: {},
   monitorEvents: [],
   callTranscripts: {},
+  callStatus: {},
 };
 
 // 관제 지도 "병원 응답" 기록에 남길 최대 개수
@@ -96,18 +99,25 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
 
   const applyCaseClosed = useCallback((caseId: string) => {
     setState((prev) => {
-      if (!(caseId in prev.matchResults) && !(caseId in prev.sceneCandidates) && !(caseId in prev.monitorCases)) {
+      if (
+        !(caseId in prev.matchResults) &&
+        !(caseId in prev.sceneCandidates) &&
+        !(caseId in prev.monitorCases) &&
+        !(caseId in prev.callStatus)
+      ) {
         return prev;
       }
       const matchResults = { ...prev.matchResults };
       const sceneCandidates = { ...prev.sceneCandidates };
       const monitorCases = { ...prev.monitorCases };
       const callTranscripts = { ...prev.callTranscripts };
+      const callStatus = { ...prev.callStatus };
       delete matchResults[caseId];
       delete sceneCandidates[caseId];
       delete monitorCases[caseId];
       delete callTranscripts[caseId];
-      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts };
+      delete callStatus[caseId];
+      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts, callStatus };
     });
   }, []);
 
@@ -122,6 +132,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       sceneCandidates: pick(prev.sceneCandidates),
       monitorCases: pick(prev.monitorCases),
       callTranscripts: pick(prev.callTranscripts),
+      callStatus: pick(prev.callStatus),
     }));
   }, []);
 
@@ -132,6 +143,10 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       ...prev,
       callTranscripts: { ...prev.callTranscripts, [caseId]: [...(prev.callTranscripts[caseId] ?? []), line] },
     }));
+  }, []);
+
+  const applyCallStatus = useCallback((status: CallStatus) => {
+    setState((prev) => ({ ...prev, callStatus: { ...prev.callStatus, [status.caseId]: status } }));
   }, []);
 
   const applyMapOverview = useCallback((overview: MapOverview) => {
@@ -176,7 +191,12 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
   const applyIdentityInfo = useCallback((info: DashboardIdentityInfo) => {
     setState((prev) => ({
       ...prev,
-      identity: { name: info.name, known: info.known, simDispatch: info.simDispatch ?? false },
+      identity: {
+        name: info.name,
+        known: info.known,
+        simDispatch: info.simDispatch ?? false,
+        dashboardCall: info.dashboardCall ?? true, // 필드가 없는 구버전 hub = 예전처럼 대시보드 통화
+      },
     }));
   }, []);
 
@@ -300,6 +320,9 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "call_transcript":
               applyCallTranscript(parsed);
               break;
+            case "call_status":
+              applyCallStatus(parsed);
+              break;
             case "case_sync":
               applyCaseSync(parsed.caseIds);
               break;
@@ -324,7 +347,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, applyCallTranscript, applyCaseSync, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, applyCallTranscript, applyCallStatus, applyCaseSync, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
@@ -365,13 +388,23 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
   // 호출한 쪽이 사용자에게 알려야 한다(예전엔 콘솔에만 남기고 조용히 버려서, 통화를
   // 마쳤는데 voice가 아무것도 못 받은 걸 알아채기 어려웠다). mock 모드는 hub가 원래
   // 없으니 true로 두고 화면 흐름을 그대로 진행시킨다.
-  const sendCallSignal = useCallback((signal: CallSignalType, apid: string, caseId: string): boolean => {
+  //
+  // extra(2026-10-03): 휴대폰 통화 화면이 고른 병원(hospitalId)과 기기(device). hub가 그 병원에 "통화 중"을 띄운다.
+  const sendCallSignal = useCallback(
+    (
+      signal: CallSignalType,
+      apid: string,
+      caseId: string,
+      extra?: { hospitalId?: string | null; device?: CallDevice },
+    ): boolean => {
     const payload: CallSignal = {
       type: "call_signal",
       signal,
       timestamp: new Date().toISOString(),
       apid,
       caseId,
+      ...(extra?.hospitalId ? { hospitalId: extra.hospitalId } : {}),
+      ...(extra?.device ? { device: extra.device } : {}),
     };
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -384,12 +417,14 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     }
     console.warn("[골든링크] hub 연결이 끊겨 통화 신호를 보내지 못했습니다:", payload);
     return false;
-  }, []);
+    },
+    [],
+  );
 
   // 마이크로 캡처한 오디오 조각을 실시간으로 hub에 전달한다(바이너리 프레임).
-  // WS 미연결(mock 모드)에서는 hub로 보낼 대상이 없으니 조용히 버린다 — 화면
-  // 시각화는 CallDemoPanel이 소켓과 무관하게 로컬에서 직접 처리한다.
-  const sendAudioChunk = useCallback((chunk: Blob) => {
+  // 2026-10-03부터 16kHz 모노 16비트 PCM(lib/pcm-capture.ts) — hub가 그 사건으로 중앙 voice에 넘겨 STT 입력이 된다.
+  // WS 미연결(mock 모드)에서는 hub로 보낼 대상이 없으니 조용히 버린다.
+  const sendAudioChunk = useCallback((chunk: Blob | ArrayBuffer) => {
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(chunk);

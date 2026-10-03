@@ -8,6 +8,7 @@ import { AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
 import { Legend } from "@/components/hospital/Legend";
 import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEditablePanel";
 import { CallDemoPanel } from "@/components/ambulance/CallDemoPanel";
+import { CallStatusPanel } from "@/components/ambulance/CallStatusPanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
@@ -101,6 +102,9 @@ function AmbulanceDashboardContent() {
   }, [pendingConfirm, connectionMode]);
 
   const [callActive, setCallActive] = useState(false);
+  // 이 사건의 통화 상태(hub 기준) — 휴대폰으로 건 통화를 태블릿도 안다
+  const myCallStatus = currentCaseId ? state.callStatus[currentCaseId] ?? null : null;
+  const phoneCalling = myCallStatus?.state === "calling" && myCallStatus.device === "phone" && !callActive;
   // 출동 위치(주소 검색·지도 클릭). 없으면 무작위. 출동하면 비운다.
   const [dispatchTarget, setDispatchTarget] = useState<DispatchTarget | null>(null);
   // [이동]·[현장 종료] 때 올려서 출동 조작부(검색어·결과)와 통화 시연(인식 텍스트)을 새로 그린다 — 지난 사건의
@@ -108,7 +112,13 @@ function AmbulanceDashboardContent() {
   const [resetSeq, setResetSeq] = useState(0);
   const canPickTarget = simOn && ["idle", "returning"].includes(mySim?.phase ?? "idle");
   const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === currentCaseId;
-  const startBlockedReason = simOn && !onSceneForMyCase ? "현장 도착 후 통화할 수 있습니다" : null;
+  const startBlockedReason = phoneCalling
+    ? `휴대폰으로 ${myCallStatus?.hospitalName ?? "병원"}과 통화 중입니다`
+    : myCallStatus?.state === "ended" && !callActive
+      ? "이 사건의 통화는 이미 끝났습니다"
+      : simOn && !onSceneForMyCase
+        ? "현장 도착 후 통화할 수 있습니다"
+        : null;
 
   function handleDispatch() {
     if (!apid) return;
@@ -143,7 +153,7 @@ function AmbulanceDashboardContent() {
     if (!apid) return;
     setCallActive(signal === "call_started");
     if (signal === "call_started" && simOn) {
-      if (currentCaseId && !sendCallSignal(signal, apid, currentCaseId)) alertNotSent();
+      if (currentCaseId && !sendCallSignal(signal, apid, currentCaseId, { device: "tablet" })) alertNotSent();
     } else if (signal === "call_started") {
       // mock 모드에선 고정 caseId를 써야 mock-data.ts의 mockHubMatchResult
       // (caseId: "case-mock-demo")와 실제로 매칭된다 — crypto.randomUUID()로
@@ -152,9 +162,9 @@ function AmbulanceDashboardContent() {
       const caseId = connectionMode === "mock" ? "case-mock-demo" : crypto.randomUUID();
       setMyCaseId(caseId);
       setPendingConfirm(null);
-      if (!sendCallSignal(signal, apid, caseId)) alertNotSent();
+      if (!sendCallSignal(signal, apid, caseId, { device: "tablet" })) alertNotSent();
     } else if (activeCaseId) {
-      if (!sendCallSignal(signal, apid, activeCaseId)) alertNotSent();
+      if (!sendCallSignal(signal, apid, activeCaseId, { device: "tablet" })) alertNotSent();
     }
   }
 
@@ -211,6 +221,22 @@ function AmbulanceDashboardContent() {
         ambulanceName={state.identity.name ?? myResult?.ambulanceName ?? null}
       />
       <Legend />
+      {phoneCalling && (
+        <p
+          className={css({
+            marginBottom: "4",
+            paddingX: "4",
+            paddingY: "2.5",
+            borderRadius: "panel",
+            backgroundColor: "mintSoft",
+            color: "ink",
+            fontSize: "sm",
+            fontWeight: "semibold",
+          })}
+        >
+          📞 휴대폰으로 {myCallStatus?.hospitalName ?? "병원"}과 통화 중 — 통화가 끝나면 환자 정보가 후보 병원에 동시에 전달됩니다
+        </p>
+      )}
 
       <main
         className={css({
@@ -243,7 +269,7 @@ function AmbulanceDashboardContent() {
               target={dispatchTarget}
               onTargetChange={setDispatchTarget}
               confirmed={confirmedHospitalId != null}
-              callActive={callActive}
+              callActive={callActive || myCallStatus?.state === "calling"}
               onDispatch={handleDispatch}
               onSceneEnd={handleSceneEnd}
               onPause={() => handleSimControl("sim_pause")}
@@ -254,6 +280,18 @@ function AmbulanceDashboardContent() {
             <CallSummaryEditablePanel data={myResult} />
           </div>
           <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
+            {/* 통화는 기본적으로 휴대폰 전화 앱으로만(2026-10-03). hub를 --dashboard-call로 띄웠을 때만 이 화면에도
+                [통화 시작]이 있고, 아니면 보기 전용 통화 현황(상태·실시간 자막)만 보인다. mock 모드는 버튼을 둔다. */}
+            {state.identity.dashboardCall !== true ? (
+              <CallStatusPanel
+                key={`status-${resetSeq}`}
+                apid={apid}
+                callStatus={myCallStatus}
+                voiceLines={currentCaseId ? state.callTranscripts[currentCaseId] ?? [] : []}
+                sentHospitalCount={myResult ? myResult.hospitals.length : null}
+                waitingHint={simOn && !onSceneForMyCase ? "현장 도착 후 대원 휴대폰의 전화 앱으로 병원에 전화합니다" : null}
+              />
+            ) : (
             <CallDemoPanel
               // 이송이 끝나 기지로 돌아가는 동안·대기 중엔 지난 통화 텍스트를 비운다(이송 완료 뒤 남지 않게).
               key={`call-${resetSeq}-${simOn && ["returning", "idle"].includes(mySim?.phase ?? "idle") ? "done" : "live"}`}
@@ -262,6 +300,7 @@ function AmbulanceDashboardContent() {
               startBlockedReason={startBlockedReason}
               voiceLines={currentCaseId ? state.callTranscripts[currentCaseId] ?? [] : []}
             />
+            )}
           </div>
         </div>
 

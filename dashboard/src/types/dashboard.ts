@@ -279,6 +279,27 @@ export interface CallSignal {
   apid: string;
   // 이번 통화의 사건 식별자. 구급차 대시보드가 통화 시작 시 새로 생성해 보낸다.
   caseId: string;
+  // 휴대폰 통화 화면에서 고른 첫 통화 병원(2026-10-03). hub가 그 병원 대시보드에 "통화 중"을 띄운다.
+  hospitalId?: string | null;
+  // 어느 기기에서 건 통화인지 — 휴대폰은 통화 전용 화면, 태블릿·PC는 전체 화면.
+  device?: CallDevice;
+}
+
+export type CallDevice = "phone" | "tablet";
+
+// hub → 그 구급차 탭·전화 건 병원 탭·관제 지도: 통화 상태(2026-10-03). 통화는 연출이라 실제 음성 연결은 없고,
+// 구급차 쪽 음성만 hub를 거쳐 중앙 voice로 간다. 병원 대시보드엔 "📞 ○○ 구급대 통화 중"으로 뜬다.
+export interface CallStatus {
+  type: "call_status";
+  caseId: string;
+  apid: string;
+  ambulanceName: string | null;
+  hospitalId: string | null;
+  hospitalName: string | null;
+  device: CallDevice | null;
+  state: "calling" | "ended";
+  startedAt: string;
+  endedAt: string | null;
 }
 
 export type DashboardRole = "ambulance" | "hospital";
@@ -311,6 +332,9 @@ export interface DashboardIdentityInfo {
   known: boolean;
   // hub 2026-10-01~: 출동 시뮬레이션이 켜져 있는지. 구급차 화면의 [이동]·[현장 종료] 버튼 표시 여부.
   simDispatch?: boolean;
+  // hub 2026-10-03~: 구급차 대시보드에서도 통화를 시작할 수 있는지(start-all.sh --dashboard-call). 기본 false —
+  // 통화는 휴대폰 전화 앱으로만 하고 대시보드엔 통화 현황만. 이 필드가 없는 구버전 hub면 예전처럼 버튼을 둔다.
+  dashboardCall?: boolean;
 }
 
 // 신원 확인 결과. known=null은 "아직 hub 응답을 못 받음(확인 중)" —
@@ -319,6 +343,7 @@ export interface IdentityState {
   name: string | null;
   known: boolean | null;
   simDispatch?: boolean;
+  dashboardCall?: boolean;
 }
 
 export interface DashboardState {
@@ -344,6 +369,8 @@ export interface DashboardState {
   monitorCases: Record<string, MonitorCase>;
   // caseId -> 통화 중 voice가 인식한 발화(2026-10-03, 구급차 탭만 받는다). 통화 시연 패널의 실시간 자막.
   callTranscripts: Record<string, CallTranscriptLine[]>;
+  // caseId -> 통화 상태(2026-10-03). 휴대폰으로 건 통화를 태블릿·병원·관제 화면이 알 수 있게.
+  callStatus: Record<string, CallStatus>;
   // 관제 지도의 "병원 응답" 기록(2026-10-03) — 사건 요약이 바뀔 때 병원 상태가 달라진 것을 쌓는다(최근 것이 앞).
   monitorEvents: MonitorEvent[];
 }
@@ -539,4 +566,5 @@ export type InboundMessage =
   | MapOverview
   | MonitorCase
   | CallTranscriptLine
+  | CallStatus
   | CaseSync;

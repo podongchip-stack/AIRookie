@@ -400,6 +400,10 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 브라우저 마이크 오디오도 같이 보내지만, 실제 STT 입력은 voice의 로컬 마이크로
 확정되어 hub는 그 바이너리 프레임을 받기만 하고 버린다).
 
+> **2026-10-03: 중앙 voice가 등록돼 있으면 위 설명 대신 아래 "중앙 voice와 휴대폰 통화"가 적용된다** — 브라우저
+> 음성이 실제 STT 입력이 되고, voice 한 대가 모든 구급차를 처리한다. 중앙 voice가 없거나 등록이 90초 넘게
+> 끊기면 위의 구급차별 방식으로 돌아간다.
+
 구급차마다 voice가 별도 장비에서 뜨기 때문에(apid별로 다름), hub는 이 apid로
 `POST /voice/register`(아래 "입력 스키마 8" 참고)로 등록된 주소를 찾아 그
 주소로 중계한다 — 아직 등록 전이면 조용히 건너뛴다. `call_started` 시점에
@@ -423,6 +427,32 @@ hospital_reject/final_approval)의 수신 주체는 이 브랜치로 확정한�
 | `timestamp` | string (ISO 8601) | 신호 발생 시각 |
 | `apid` | string | 어느 구급차(voice 인스턴스)인지. hub가 중계 대상 주소를 찾는 키 |
 | `caseId` | string | 이번 통화가 어느 사건인지. dashboard가 `call_started` 시점에 새로 생성해 보낸다 |
+| `hospitalId` | string? | 휴대폰 통화 화면에서 고른 첫 통화 병원(2026-10-03). 있으면 그 병원 탭에 `call_status`가 가고 `first_call_selected`가 기록된다 |
+| `device` | `"phone"` \| `"tablet"`? | 어느 화면에서 건 통화인지(2026-10-03). 표시용 |
+
+### 중앙 voice와 휴대폰 통화 (2026-10-03 신설)
+
+voice를 구급차마다 띄우지 않고 **한 대만** 띄운다(`./voice/start-voice.sh` 인자 없이 — voice README 참고).
+대시보드(대원 휴대폰 전화 앱 `/phone`, 구급차 대시보드 `/ambulance`의 통화 시연)가 마이크 음성을 **16kHz 모노 16비트 리틀엔디언 PCM** 바이너리
+프레임(약 0.1초씩)으로 같은 `/ws/dashboard` 소켓에 보내면, hub가 사건별로 모아 중앙 voice에 넘긴다.
+
+- **등록**: voice가 `POST /voice/register {"central": true, "ip", "port"}`로 30초마다 알린다. 90초
+  (`CENTRAL_VOICE_STALE_SEC`) 넘게 소식이 없으면 꺼진 것으로 보고 구급차별 방식으로 돌아간다. `central`이
+  없으면 예전처럼 `apid`가 필요하다(없으면 400)
+- **중계**: `call_started`를 보낸 소켓을 그 사건에 묶고(`_socket_call`), 그 소켓의 음성만 사건별 전송기
+  (`_AudioRelay`)가 0.25초마다 voice `POST /call/<caseId>/audio`로 넘긴다. 시작 신호를 안 보낸 소켓의 음성은
+  버린다. `call_ended`면 남은 음성을 다 보낸 **뒤에** `POST /call/end`를 보낸다(끝말이 잘리지 않게). 음성은
+  저장·로그하지 않는다. 소켓이 끊기면 묶음만 풀고, voice가 60초 무음이면 통화를 저절로 끝낸다
+- **통화 상태 `call_status`** (hub → 그 구급차 탭 전부·전화 건 병원 탭·관제 지도, 연결 직후 따라잡기 포함):
+  `{type, caseId, apid, ambulanceName, hospitalId, hospitalName, device, state: "calling"|"ended", startedAt, endedAt}`.
+  통화는 **연출**이라 병원과 실제 음성이 연결되지는 않는다 — 병원 대시보드엔 "📞 ○○ 통화 중"만 뜨고, 통화
+  내용은 STT·구조화 뒤 평소처럼 존 안 후보 병원 전체에 매칭 결과로 간다
+- **현장 후보 따라잡기**: 마지막 `scene_candidates`를 사건별로 들고 있다가(`_case_scene`) 구급차 탭이 새로 붙으면
+  다시 준다 — 현장 도착 뒤에 연 휴대폰도 전화할 병원 목록을 받는다
+- **의사결정 로그** `first_call_selected`: `{caseId, apid, hospitalId, recommendedHospitalId, followedRecommendation, device}`
+  — 첫 연락 추천(`first_call_recommended`)이 실제로 따라졌는지 셀 재료
+- **대시보드 통화 허용 `HUB_DASHBOARD_CALL`**(start-all `--dashboard-call`): 기본 꺼짐 — 통화는 휴대폰 전화 앱(`device: "phone"`)으로만 받고, `device: "tablet"`인 통화 시작은 거부한다(`call_start_refused`, reason `dashboard_call_off`, device 없는 예전 신호는 통과). `identity_info.dashboardCall`로 알려 구급차 대시보드가 [통화 시작] 패널 대신 보기 전용 통화 현황을 띄운다
+- 검증: `python test_central_voice.py`(가짜 voice 서버로 실제 HTTP 요청을 받아 본다, 임시 로그 경로)
 
 ### 입력 스키마 7: feature/info로부터 (구급차 정보)
 
@@ -466,6 +496,8 @@ voice가 뜰 때 자기 IP를 자동 탐지해 이 엔드포인트로 hub에 알
 |---|---|---|
 | `apid` | string | 이 voice 인스턴스가 담당하는 구급차 |
 | `ip` | string | 이 voice 인스턴스가 자동 탐지한 자기 IP. hub는 `AmbulanceInfo.voicePort`와 합쳐 `http://{ip}:{voicePort}` 주소로 저장한다 |
+
+중앙 voice(2026-10-03)는 `{"central": true, "ip": "...", "port": 6000}`으로 등록한다 — 위 "중앙 voice와 휴대폰 통화" 참고.
 
 이 apid의 `AmbulanceInfo`가 아직 hub에 등록되기 전이면(포트를 모르므로)
 `409`를 반환하고 등록을 보류한다 — feature/info가 구급차 정보를 먼저 보낸
@@ -945,9 +977,10 @@ delivery.py  (로컬 저장 + 자리만 준비된 통신, schema.py에만 의존
   feature/info가 그 구급차 정보를 아직 안 보냈으면) 409로 거부하고 재시도 큐 없이
   그냥 실패한다 — voice 쪽에서 재시도 로직을 두거나, info가 먼저 뜨는 걸 운영 순서로
   못박아야 한다
-- dashboard가 브라우저 마이크 오디오를 실시간으로 hub에 보내는 코드
-  (`sendAudioChunk`)는 이미 있지만, 실제 STT 입력은 voice의 로컬 마이크로
-  확정되어 hub는 그 오디오 프레임을 받기만 하고 버린다 — 필요해지면 재검토
+- ~~브라우저 마이크 오디오는 받기만 하고 버린다~~ → 2026-10-03 중앙 voice가 등록돼 있으면 STT 입력으로 넘긴다
+  ("중앙 voice와 휴대폰 통화"). 중앙 voice는 모델 하나를 통화들이 차례로 나눠 써서, 동시 통화가 많으면 인식이
+  밀린다(시연 규모 3대는 문제없음)
+- 휴대폰 통화는 연출이다 — 병원과 양방향 음성 연결은 없다
 - **거절 로그 수신구는 별도로 띄워야 한다.** hub는 `hospital_reject`마다
   `POST /hub/rejection`으로 사유를 중계하지만(2026-09-10 배선 완료), 받는 쪽
   (`hospital_score/ingest.py`, 포트 5003)은 info의 상시 프로세스와 별개라

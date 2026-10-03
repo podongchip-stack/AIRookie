@@ -245,8 +245,12 @@ class VoiceRegistration(BaseModel):
     중계할 때(CallSignal) 그 주소로 보낸다.
     """
 
-    apid: str
+    # 중앙 voice(2026-10-03)는 구급차 하나에 묶이지 않아 apid 없이 central=True·port로 등록한다. 30초마다 다시 등록해
+    # hub가 재시작해도 다시 붙는다. 구급차별(예전) 등록은 apid + ip.
+    apid: Optional[str] = None
     ip: str
+    central: bool = False
+    port: Optional[int] = None
 
 
 # ── feature/hub → feature/dashboard (출력) ──────────────────────────────────
@@ -511,6 +515,10 @@ class CallSignal(BaseModel):
     timestamp: str
     apid: str
     caseId: str
+    # 휴대폰 통화 화면(2026-10-03)에서 고른 "전화 거는" 병원과 기기. 통화는 연출이라 그 병원과 실제 음성을 주고받지는
+    # 않고, hub가 그 병원 대시보드에 "📞 통화 중"을 띄우고 첫 통화 병원을 기록한다(first_call_selected).
+    hospitalId: Optional[str] = None
+    device: Optional[Literal["phone", "tablet"]] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 소켓 연결 시 자기소개) ───────────
@@ -585,6 +593,9 @@ class DashboardIdentityInfo(BaseModel):
     known: bool
     # 출동 시뮬레이션이 켜져 있는지(2026-10-01). 구급차 화면이 [이동]·[현장 종료] 버튼을 띄울지 정한다.
     simDispatch: bool = False
+    # 구급차 대시보드에서도 통화를 시작할 수 있는지(2026-10-03, start-all.sh --dashboard-call). 기본은 꺼서
+    # 통화는 대원 휴대폰 전화 앱(/phone)으로만 하고, 구급차 대시보드엔 보기 전용 통화 현황만 띄운다.
+    dashboardCall: bool = False
 
 
 # ── feature/hub → 관제 지도(role=monitor, 2026-10-03) ────────────────────────

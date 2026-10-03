@@ -209,9 +209,15 @@ README.md의 "입출력 데이터 포맷"이 최신 버전이므로, 아래에�
 
 dashboard의 "통화 시작"/"통화 종료" 버튼 신호. 같은 WebSocket 연결로 오며, hub는
 오디오 자체는 다루지 않고 이 신호만 **그 구급차(apid)의** feature/voice
-인스턴스로 HTTP 중계한다. 실제 STT 입력은 voice의 로컬 마이크로 확정했다 —
+인스턴스로 HTTP 중계한다. ~~실제 STT 입력은 voice의 로컬 마이크로 확정했다 —
 dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioChunk`)는 화면
-시각화 용도로만 쓰고, hub는 그 프레임을 받기만 하고 버린다.
+시각화 용도로만 쓰고, hub는 그 프레임을 받기만 하고 버린다.~~
+
+> **2026-10-03 중앙 voice로 바뀌었다.** voice를 **한 대만** 띄우면(`./voice/start-voice.sh` 인자 없이) 그게
+> hub에 "중앙 voice"로 등록되고, 브라우저 마이크 음성(16kHz 모노 16비트 PCM, `lib/pcm-capture.ts`)이 **실제
+> STT 입력**이 된다 — hub가 통화 시작 신호를 보낸 소켓의 음성을 사건별로 모아 voice `POST /call/<caseId>/audio`로
+> 넘긴다. 휴대폰·태블릿 어디서든 통화할 수 있다. 중앙 voice가 없으면 아래 구급차별 방식(로컬 마이크)으로 돌아간다.
+> 자세한 건 hub README "중앙 voice와 휴대폰 통화"
 
 **여러 사건(구급차) 동시 처리를 지원한다.** voice는 구급차마다 별도 장비에서
 뜨고, hub는 apid로 그 voice의 주소를 구분한다 (voice가 뜰 때 자기 IP를
@@ -235,6 +241,8 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 | `timestamp` | string (ISO 8601) | 신호 발생 시각 |
 | `apid` | string | 어느 구급차인지 — hub가 중계할 voice 주소를 찾는 키 |
 | `caseId` | string | 이번 통화의 사건 식별자. dashboard가 통화 시작 시 새로 생성해 보낸다 |
+| `hospitalId` | string? | 휴대폰 통화 화면에서 고른 첫 통화 병원(2026-10-03). hub가 그 병원 탭에 "📞 통화 중"(`call_status`)을 띄운다 |
+| `device` | `"phone"` \| `"tablet"`? | 어느 화면에서 건 통화인지(2026-10-03) |
 
 ---
 
@@ -252,6 +260,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고. **dashboard로는 직접 전송하지 않고 feature/hub를 거쳐 전달된다**
 - 개인정보(이름, 주민등록번호, 주소)는 AI 처리 대상에서 제외
 - hub가 중계하는 통화 시작/종료 신호(3번 포맷)를 받는 로컬 서버(`voice/app.py`)가 있다. 두 모델은 서버가 뜰 때 한 번만 올려둔다. 통화 시작 시 로컬 마이크 녹음과 발화 단위 인식을 시작하고, 종료 시 남은 발화 인식 → 구조화 → hub 전송을 실행한다
+- **중앙 모드(`VOICE_MODE=central`, 2026-10-03)** — `./voice/start-voice.sh`를 인자 없이 띄우면 이 모드(포트 6000). 한 대가 모든 구급차를 처리한다: 사건마다 `StreamRecorder`(`voice/stream_recorder.py`, hub가 넘기는 브라우저 PCM을 쌓음)와 발화 인식기를 따로 두고, 모델은 잠금으로 순서대로 나눠 쓴다. hub에 `{"central": true, ip, port}`로 30초마다 등록, 60초 무음이면 통화 자동 종료. 구급차 번호를 주면(`./voice/start-voice.sh A0000001`) 예전처럼 그 장비 마이크 전용
 - **실행은 `./voice/start-voice.sh <apid>`(2026-10-03)** — macOS·Linux·Windows(Git Bash) 공통으로 conda 환경 파이썬·구급차별 포트(역삼 A0000001=6001, 성산 6002, 회현 6003)·hub 주소(`HUB_BASE_URL` 하나로 요약 전송 주소까지)를 맞춘다. Windows 콘솔(cp949) 출력 문제는 진입점의 `console.use_utf8_console()`이 막는다. GPU가 없으면 CPU로 돈다(느림, 미검증). Windows에서는 Hub 다운로드의 심볼릭 링크 경쟁 오류(WinError 1314)를 피하려고 `HF_HUB_DISABLE_SYMLINKS=1`도 켠다
 - ⚠ **MF_BERT 가중치는 2026-10-02 모델의 Hub 커밋 해시 `f1d3e1dbd41424e1bb32cf4aded891ed48b39df6`로 고정(2026-10-03, `voice/weights.py`의 `MF_BERT_REVISION` 기본값)** — `main`이나 태그 대신 해시를 쓰는 이유: Hub에 구조가 바뀐 가중치가 올라오면 `voice/MF_BERT/` 코드와 state_dict가 안 맞아 서버가 뜨지 않는다(2026-10-03 10-02 가중치로 실제로 겪음). 이전 09-30 모델은 `MF_BERT_REVISION=v1-2026-09-30`으로 받을 수 있고 지금 코드로도 읽힌다 — 체크포인트 학습 인자에 보기별 어텐션·헤드 층 수가 없으면 `args.get(...)` 기본값으로 예전 구조를 만든다(`voice/MF_BERT/__init__.py`). 새 가중치를 들여올 때는 `voice/MF_BERT/` 코드를 먼저 맞춘 뒤 해시를 바꾼다
 - **여러 구급차 동시 처리를 지원한다.** 이 프로세스 자체는 구급차 1대 전용(마이크가 그 장비 하나뿐)이지만, `VOICE_APID` 환경변수로 자신을 식별해 서버 시작 시 자기 IP를 자동 탐지한 뒤 hub의 `POST /voice/register`로 자가등록한다(구급차 노트북마다 네트워크가 달라 IP를 고정 저장하지 않고 매번 탐지). `POST /call/start`로 받은 `caseId`를 세션에 기억해뒀다가, 통화 종료 후 hub로 보내는 `CallSummaryMessage`에 그대로 실어 돌려준다 — hub는 이 caseId로 사건을 구분한다
@@ -566,7 +575,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
 - Override 구조를 UI로 드러낼 것: AI가 생성한 요약은 전송 전 구급대원이 확인·수정할 수 있어야 한다
 - 실시간 갱신: WebSocket 기반, 완료된 정보부터 순차적으로 갱신 (전체 처리 완료까지 기다리지 않음)
 - **feature/hub와만 직접 통신한다.** voice·info와는 직접 연결하지 않으며, voice의 의료 정보·예상 병명·통화 전문과 info의 병원 정보는 모두 feature/hub가 재가공한 통합 결과로만 받는다. 승인 액션(수신처는 feature/hub로 확정)과 통화 시작/종료 신호는 위 "데이터 포맷 및 흐름" 2·3번 참고
-- 통화 시작/종료 버튼은 WebSocket으로 hub에 신호를 보낸다. 브라우저 마이크로 캡처한 오디오(`sendAudioChunk`)도 같은 연결로 보낼 수 있지만, 실제 STT 입력은 feature/voice의 로컬 마이크로 확정되어 이 오디오는 화면 시각화(파형, 로컬 자막) 용도로만 쓰인다
+- 통화 시작/종료 버튼은 WebSocket으로 hub에 신호를 보낸다. 브라우저 마이크로 캡처한 오디오(`sendAudioChunk`, 2026-10-03부터 16kHz PCM)도 같은 연결로 보낸다 — 중앙 voice가 떠 있으면 이게 실제 STT 입력이고, 구급차별 voice(로컬 마이크) 방식이면 hub가 버린다
 - **"수용 불가" 버튼의 거절 사유 선택(`ApprovalActions.tsx`)**은 4축 어휘를 그대로 쓴다
   (`RejectionReason`, info `hospital_score/rejection.py`의 `REASON_AXIS`와 동일). 사유를
   강제하지 않는다 — "사유 없음"(`UNSPECIFIED`)을 맨 위에 둬 급할 때 바로 거절할 수 있게
@@ -617,6 +626,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
     자체의 전체 화면 차단은 제거했다 — 직접 URL로 들어온 경우엔 상단바
     이름이 ID 폴백으로 남는 정도로만 티가 난다(랜딩 페이지 우회는 이번
     범위에서 막지 않기로 함).
+- **휴대폰 전화 앱 (2026-10-03)**: 구급차 대시보드와 **주소를 나눴다** — 대원 휴대폰은 `/phone?id=<apid>`(첫 페이지에 `P-<apid>` 입력, 또는 구급차 대시보드 상단바의 "📞 전화 앱" 링크), 구급차 대시보드 `/ambulance`는 화면 폭과 무관하게 항상 전체 화면(처음엔 폭 640px로 갈랐으나 태블릿을 세로로 세우면 바뀌어 분리). 화면은 `app/phone/page.tsx` → `components/phone/PhoneCallView.tsx`, hub에는 같은 apid의 `role: "ambulance"`로 붙는다. **휴대폰은 전화만 한다** — 출동·현장 종료·이송 승인은 태블릿·PC. 현장 도착 뒤 거리순 병원 목록(첫 통화 추천이 맨 위) → 병원을 누르면 "연결 중" → 통화 중(시간·음성 레벨·실시간 자막·종료) → 종료("후보 병원 N곳에 전달"). 통화는 **연출**이다(병원과 실제 음성 연결 없음, 사건당 한 번). 마이크 음성은 hub를 거쳐 중앙 voice로 가 STT 입력이 된다. 고른 병원 대시보드엔 `CallStatusBanner`로 "📞 ○○ 통화 중 · mm:ss", 관제 지도엔 그 병원에 📞 표시, 태블릿엔 "휴대폰으로 ○○병원과 통화 중" 배너가 뜨고 태블릿의 통화 시작이 막힌다(hub `call_status`). 태블릿 통화 시연도 MediaRecorder(webm) 대신 같은 PCM 캡처를 쓴다. **대시보드 [통화 시작]은 기본으로 없다(2026-10-03)** — 통화는 휴대폰 전화 앱으로만 하고, 구급차 대시보드엔 보기 전용 `CallStatusPanel`(통화 상태·실시간 자막)이 뜬다. `./start-all.sh --dashboard-call`(hub `HUB_DASHBOARD_CALL=1` → `identity_info.dashboardCall`)로 띄우면 예전 통화 시연 패널([통화 시작]·파형)이 돌아온다. 꺼져 있을 때 대시보드의 통화 시작(`device: "tablet"`)은 hub도 거부한다(`call_start_refused`, reason `dashboard_call_off`). `--no-sim-dispatch`면 휴대폰 앱을 쓸 수 없어 start-all이 자동으로 켠다 브라우저 마이크는 https(도메인)·localhost에서만 열린다
 - **병원 자기 정보 현황 + 정보 확인 버튼 (2026-09-29)**: 병원 대시보드 상단에 `HospitalSelfInfoPanel`이 hub의 `hospital_self_info`(자기 병상 신뢰도 — 실시간 감쇠, 수술실·입원실, 중증 신고 요약)를 표시하고, "현재 정보가 맞습니다" 버튼이 `info_confirm`을 보낸다. 확인 즉시 자기 화면과 구급차 화면(✓) 양쪽에 반영된다. mock 모드·구버전 hub면 패널 자체가 숨는다(Optional 패턴)
 - **info-v2 신뢰도 판정("왜 이 순위인지") 설명 표시 (2026-08-13)**: hub가
   `hospitals[].reliability`(질환군·score·confidence·basis)를 보내주면

@@ -18,7 +18,7 @@ import type { AmbulancePhase, AmbulanceSimState, DispatchTarget, GeocodeResult }
 // 고른 주소 글자는 이 탭에만 남고 hub로는 좌표만 간다(집 주소일 수 있음).
 // [정지](2026-10-03): 출동 중·현장·이송 중에 시연 상황을 그 자리에 멈춘다. 정지 중엔 [이동]이 [상황 재개]로
 // 바뀌어 멈춘 자리에서 이어 간다.
-const PHASE_LABEL: Record<AmbulancePhase, string> = {
+export const PHASE_LABEL: Record<AmbulancePhase, string> = {
   idle: "기지 대기",
   dispatching: "현장으로 출동 중",
   on_scene: "현장 도착",
