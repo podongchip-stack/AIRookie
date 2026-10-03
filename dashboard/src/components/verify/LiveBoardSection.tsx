@@ -100,7 +100,7 @@ function FeedRow({ item }: { item: FeedItem }) {
           backgroundColor: warned ? "rgba(27,175,122,0.12)" : missed ? "rgba(208,59,59,0.12)" : "rgba(128,128,128,0.10)",
         }}
       >
-        AI {Math.round(item.pValid * 100)}%{warned ? " · 사전 경고 적중" : missed ? " · 고신뢰 실패" : ""}
+        직전 신뢰도 {Math.round(item.pValid * 100)}%{warned ? " · 미리 경고했음 ✓" : missed ? " · 못 맞힘 ✕" : ""}
       </span>
     </div>
   );
@@ -240,7 +240,7 @@ export function LiveBoardSection() {
         <div className={css({ display: "flex", flexDirection: "column", gap: "2", minWidth: "0" })}>
           <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
             <h3 className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
-              {replaying ? "리플레이 — 지난 24시간을 90초로" : "판명 피드 — 값이 깨진 순간, 모델이 뭐라고 했었나"}
+              {replaying ? "리플레이 — 지난 24시간을 90초로" : "채점 기록 — E-Gen 값이 거짓으로 판명된 순간들"}
             </h3>
             <button
               type="button"
@@ -255,6 +255,12 @@ export function LiveBoardSection() {
               </span>
             )}
           </div>
+          {!replaying && (
+            <p className={smallStyle}>
+              20분마다 새 실측이 도착해 기존 값을 채점합니다. 한 줄 = 신고값이 {data.theta}석 이상 어긋난 순간이고,
+              오른쪽 %는 깨지기 <b>직전</b>까지 엔진이 그 값에 매겨둔 신뢰도 — 50% 미만이면 엔진이 미리 경고하고 있었다는 뜻입니다.
+            </p>
+          )}
           {replaying && (
             <div className={css({ height: "4px", backgroundColor: "line", borderRadius: "full", overflow: "hidden" })}>
               <div className={css({ height: "100%", backgroundColor: "mint" })} style={{ width: `${Math.round((replayPos as number) * 100)}%` }} />
