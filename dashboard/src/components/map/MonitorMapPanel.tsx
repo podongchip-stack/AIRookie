@@ -57,6 +57,24 @@ function badgeElement(requests: HospitalRequest[], onClick: () => void): HTMLEle
   return el;
 }
 
+// 병원 이름표 — 누르면 그 병원 대시보드를 연다(2026-10-03). 모양은 createLabelOverlay와 같다.
+function hospitalLabelElement(name: string, onClick: () => void): HTMLElement {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.title = "눌러서 병원 대시보드 열기";
+  el.textContent = name;
+  el.style.cssText =
+    "transform:translateY(14px);font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;" +
+    "background:#FFFFFF;border:1px solid #E2E8EF;padding:1px 6px;border-radius:6px;color:#16222E;";
+  el.onmouseenter = () => (el.style.borderColor = "#1E5FA8");
+  el.onmouseleave = () => (el.style.borderColor = "#E2E8EF");
+  el.onclick = (event) => {
+    event.stopPropagation();
+    onClick();
+  };
+  return el;
+}
+
 function zoneLabel(text: string): string {
   return (
     `<div style="font-size:11px;font-weight:700;white-space:nowrap;color:${MAP_COLORS.zone};background:#FFFFFF;` +
@@ -96,13 +114,18 @@ export function MonitorMapPanel({
     onOpenRef.current = onOpenHospital;
   }, [requests, onOpenHospital]);
 
-  // 병원 이름은 확대했을 때만(환자 요청이 온 병원은 항상) 보인다.
+  // 병원 이름은 확대했을 때만(환자 요청이 온 병원·눌러서 띄운 병원은 항상) 보인다.
+  function isLabelShown(id: string): boolean {
+    const map = mapRef.current;
+    if (!map) return false;
+    return map.getLevel() <= LABEL_MAX_LEVEL || requestsRef.current.has(id) || pickedRef.current === id;
+  }
+
   function applyLabelVisibility() {
     const map = mapRef.current;
     if (!map) return;
-    const showAll = map.getLevel() <= LABEL_MAX_LEVEL;
     hospitalsRef.current.forEach((layer, id) => {
-      layer.label.setMap(showAll || requestsRef.current.has(id) || pickedRef.current === id ? map : null);
+      layer.label.setMap(isLabelShown(id) ? map : null);
     });
   }
 
@@ -148,16 +171,23 @@ export function MonitorMapPanel({
         image: createColoredMarkerImage(MAP_COLORS.hospital, 18),
         zIndex: 1,
       });
+      // 2026-10-03: 환자 요청이 없어도 모든 병원의 대시보드를 열 수 있다. 이름이 이미 보이면(확대 상태·요청 온 병원·
+      // 한 번 눌러 띄운 병원) 마커를 누르면 바로 열고, 축소 상태라 이름이 안 보이면 첫 클릭은 이름만 띄운다.
       kakao.maps.event.addListener(marker, "click", () => {
-        // 환자 요청이 온 병원은 대시보드를 열고, 나머지는 이름만 띄운다(다시 누르면 숨김).
-        if (requestsRef.current.has(hospital.hospitalId)) {
+        if (isLabelShown(hospital.hospitalId)) {
           onOpenRef.current(hospital.hospitalId);
           return;
         }
-        pickedRef.current = pickedRef.current === hospital.hospitalId ? null : hospital.hospitalId;
+        pickedRef.current = hospital.hospitalId;
         applyLabelVisibility();
       });
-      layers.set(hospital.hospitalId, { marker, label: createLabelOverlay(pos, hospital.name) });
+      const label = new kakao.maps.CustomOverlay({
+        position: pos,
+        content: hospitalLabelElement(hospital.name, () => onOpenRef.current(hospital.hospitalId)),
+        yAnchor: 0,
+        clickable: true,
+      });
+      layers.set(hospital.hospitalId, { marker, label });
     }
     applyLabelVisibility();
     // ensureMap·applyLabelVisibility는 ref만 읽는다.
