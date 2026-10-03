@@ -140,6 +140,63 @@ def main() -> None:
     assert case2 in amb_sync and "case-dispatch-only" in amb_sync, "구급차엔 결과 전 사건도 포함(자막·현장 후보 보존)"
     print(f"  [확인] 관제 지도·구급차 탭이 진행 중 사건 목록 수신 — 구급차 {sorted(amb_sync)}")
 
+    print("=== 응급실 병상 0이 확인된 병원 → 지도엔 '수용 불가'(병상 없음), E-Gen에 병상이 생기면 판단 대기로 ===")
+    full = near.model_copy(update={"hospitalId": "T_FULL", "name": "[테스트] 만실 병원",
+                                   "gps": GpsPoint(lat=37.5680, lng=126.9800),
+                                   "availableBedCount": 0, "bedsByType": {"ER_ADULT": 0}})
+    app.engine.update_hospital_info(full)
+    case3 = "case-full"
+    app.engine.register_case(case3, "A_MAP")
+    result3 = app.engine.process_voice_summary(
+        VoiceCallSummaryMessage(
+            caseId=case3, transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+            summary=VoiceSummary(patient="40대 남성", mechanism="복통", symptoms=[], treatment=[], severity_tag="medium"),
+            source="ai",
+        ),
+        GpsPoint(lat=37.5665, lng=126.9780),
+    )
+    full_match = next(h for h in result3.hospitals if h.hospitalId == "T_FULL")
+    assert full_match.status == "pending" and full_match.unavailableReason == "beds_full", full_match
+    monitor.sent.clear()
+    app._send_to_dashboard(result3.model_dump())
+    on_map = {h["hospitalId"]: h for h in _last(monitor, "case_overview")["hospitals"]}
+    assert on_map["T_FULL"]["status"] == "rejected" and on_map["T_FULL"]["unavailableReason"] == "beds_full"
+    assert app.engine.get_case_status(case3, "T_FULL") == "pending", "병원 거절로 세지 않는다(거절 로그·존 확장 X)"
+    app.engine.update_hospital_info(full.model_copy(update={"availableBedCount": 2, "bedsByType": {"ER_ADULT": 2}}))
+    refreshed = app.engine.refresh_case(case3, GpsPoint(lat=37.5665, lng=126.9780))
+    assert refreshed is not None, "병상이 생기면 재계산 결과가 달라져 다시 보낸다"
+    app._send_to_dashboard(refreshed.model_dump())
+    on_map = {h["hospitalId"]: h for h in _last(monitor, "case_overview")["hospitals"]}
+    assert on_map["T_FULL"]["status"] == "pending" and on_map["T_FULL"]["unavailableReason"] is None
+    print("  [확인] 병상 0 → 지도 수용 불가(병상 없음) · E-Gen 병상 2 → 판단 대기 복귀")
+
+    print("=== 병원이 고른 거절 사유가 화면으로 간다(사유 선택칸 표시) ===")
+    app._handle_dashboard_action({"caseId": case3, "action": "hospital_reject", "hospital_id": "T_FULL",
+                                  "actor": "hospital", "timestamp": "2026-10-03T00:04:00Z", "reason": "STAFF_BUSY"})
+    rejected = next(h for h in app.engine.get_case_result(case3).hospitals if h.hospitalId == "T_FULL")
+    assert rejected.status == "rejected" and rejected.rejectReason == "STAFF_BUSY"
+    assert _last(monitor, "case_overview")["hospitals"] and any(
+        h["hospitalId"] == "T_FULL" and h["rejectReason"] == "STAFF_BUSY" for h in _last(monitor, "case_overview")["hospitals"])
+    app._handle_dashboard_action({"caseId": case3, "action": "hospital_approve", "hospital_id": "T_FULL",
+                                  "actor": "hospital", "timestamp": "2026-10-03T00:05:00Z"})
+    again = next(h for h in app.engine.get_case_result(case3).hospitals if h.hospitalId == "T_FULL")
+    assert again.status == "approved" and again.rejectReason is None, "번복해 승인하면 사유는 지운다"
+    app._close_case(case3, "scene_ended")
+    print("  [확인] 거절 사유 STAFF_BUSY 전달, 승인으로 번복하면 사유 지움")
+
+    print("=== 구급차가 도착한 뒤에 병원 대시보드를 열어도 '도착' 상태를 받는다([환자 수용 완료] 버튼) ===")
+    unit = app.sim._units["A_MAP"]
+    unit.phase, unit.case_id, unit.hospital_id = "at_hospital", case2, near.hospitalId
+    late_hosp, other_hosp = _FakeSocket(), _FakeSocket()
+    app._dashboard_sockets.update({late_hosp, other_hosp})
+    app._handle_identify(late_hosp, DashboardIdentify(role="hospital", id=near.hospitalId))
+    app._handle_identify(other_hosp, DashboardIdentify(role="hospital", id="T_FAR"))
+    arrived = _last(late_hosp, "ambulance_phase")
+    assert arrived["phase"] == "at_hospital" and arrived["caseId"] == case2
+    assert "ambulance_phase" not in _types(other_hosp), "다른 병원 탭은 받지 않는다"
+    unit.phase, unit.case_id, unit.hospital_id = "idle", None, None
+    print("  [확인] 늦게 연 병원 탭이 구급차 도착 상태 수신, 무관한 병원 탭은 안 받음")
+
     print("=== 출동 시뮬레이션 재시작 → 이송 확정 사건까지 닫는다(구급차는 기지로 돌아가므로) ===")
     hospital_id = result2.hospitals[0].hospitalId
     app._handle_dashboard_action({"caseId": case2, "action": "hospital_approve", "hospital_id": hospital_id,

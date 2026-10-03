@@ -290,6 +290,13 @@ def _demote_reasons(
     return reasons
 
 
+def _unavailable_reason(status: HospitalStatus, demote_reasons: list[str]) -> str | None:
+    """병원이 아직 답하지 않았지만(판단 대기) 지금 수용할 수 없는 이유(2026-10-03). 응급실 병상 0이 확인되면
+    "beds_full" — 병원 승인도 막혀 있는 상태라(_is_confirmed_full) 화면에서 "판단 대기"로 두면 오해를 산다.
+    매칭·재계산 때마다 E-Gen 값으로 다시 정하므로 병상이 생기면 저절로 사라진다."""
+    return "beds_full" if status == "pending" and "beds_full" in demote_reasons else None
+
+
 def _sort_matches(matches: list[HospitalMatch]) -> list[HospitalMatch]:
     return sorted(
         matches,
@@ -375,6 +382,8 @@ class HubEngine:
         # (caseId, hospitalId) 조합을 키로 쓴다 — hospitalId만 쓰면 서로 다른
         # 사건이 같은 병원을 후보로 둘 때 승인 상태가 섞인다.
         self._approval_status: dict[tuple[str, str], HospitalStatus] = {}
+        # (caseId, hospitalId) -> 병원이 [불가] 때 고른 사유(2026-10-03). 화면의 사유 선택칸 표시용.
+        self._reject_reason: dict[tuple[str, str], str] = {}
         # 구급차 레지스트리(feature/info가 Supabase ambulances 테이블에서
         # 읽어 보내줌). GPS·voicePort 조회에 쓴다.
         self._ambulances: dict[str, AmbulanceInfo] = {}
@@ -623,6 +632,8 @@ class HubEngine:
         self._case_gps_fallback.pop(case_id, None)
         self._case_confirmed_at.pop(case_id, None)
         self._case_arrival.pop(case_id, None)
+        for key in [k for k in self._reject_reason if k[0] == case_id]:
+            del self._reject_reason[key]
         for key in [k for k in self._case_overlay if k[0] == case_id]:
             del self._case_overlay[key]
 
@@ -674,7 +685,7 @@ class HubEngine:
         self, case_id: str, match: HospitalMatch, status: HospitalStatus, now: datetime
     ) -> HospitalMatch:
         """캐시된 HospitalMatch 하나를 지금 상태(승인 상태·병상·만실 판정)로 다시 맞춘다."""
-        update: dict[str, Any] = {"status": status}
+        update: dict[str, Any] = {"status": status, "rejectReason": self._reject_reason_for(case_id, match.hospitalId, status)}
         info = self._hospitals.get(match.hospitalId)
         if info is not None:
             beds = self.effective_bed_count(info)
@@ -688,9 +699,13 @@ class HubEngine:
                     info, self._case_group.get(case_id), status, beds, unknown, stale
                 ),
             )
+            update["unavailableReason"] = _unavailable_reason(status, update["demoteReasons"])
         elif status == "rejected":
             update["demoteReasons"] = ["rejected"]
         return match.model_copy(update=update)
+
+    def _reject_reason_for(self, case_id: str, hospital_id: str, status: HospitalStatus) -> str | None:
+        return self._reject_reason.get((case_id, hospital_id)) if status == "rejected" else None
 
     def _patch_case_result_status(self, case_id: str, hospital_id: str, status: HospitalStatus) -> None:
         """캐시해둔 사건의 매칭 결과에서 해당 병원의 status·병상 정보·내림 이유를 최신 값으로
@@ -784,6 +799,10 @@ class HubEngine:
 
             new_status = _ACTION_TO_STATUS[action.action]
             self._approval_status[status_key] = new_status
+            if action.action == "hospital_reject":
+                self._reject_reason[status_key] = action.reason or "UNSPECIFIED"
+            else:
+                self._reject_reason.pop(status_key, None)
             if new_status == "confirmed":
                 # 이송 확정 시각을 기록해둔다 — _prune_old_cases()가 이 시각을 기준으로
                 # CASE_RETENTION_MIN이 지난 사건을 캐시에서 걷어낸다. 병상이 안 깎인
@@ -920,17 +939,34 @@ class HubEngine:
         """
         now = _utcnow()
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
-        candidates.sort(key=lambda pair: pair[1])
+        # 2026-10-03: 직선거리 대신 카카오 내비 기준(도로 거리·소요 시간)으로 정렬·표시한다. ETA를 못 받은
+        # 병원(키 없음·반경 10km 밖·조회 실패)만 직선거리 × 같은 사건의 분/km 보정으로 추정한다(매칭과 같은 규칙).
+        etas = (
+            self._router.etas(ambulance_gps, {info.hospitalId: info.gps for info, _ in candidates})
+            if self._router is not None and candidates
+            else {}
+        )
+        min_per_km = calibrate_min_per_km(
+            [(distance, etas[info.hospitalId][0] / 60.0) for info, distance in candidates if info.hospitalId in etas]
+        )
+
+        def travel_min_of(pair: tuple) -> float:
+            info, distance = pair
+            eta = etas.get(info.hospitalId)
+            return eta[0] / 60.0 if eta is not None else distance * min_per_km
+
+        candidates.sort(key=travel_min_of)
         rows: list[dict] = []
         best_index: int | None = None
         best_r_arrive = 0.0
         for info, distance in candidates:
             beds = self.effective_bed_count(info)
             unknown = _is_bed_count_unknown(info)
-            # horizon은 매칭 때와 달리 카카오 ETA가 아직 없어 거리/평균속도 추정이다
-            # (evaluate가 horizon_sec 없으면 직접 추정).
+            eta = etas.get(info.hospitalId)
+            travel_min = travel_min_of((info, distance))
+            # 도착 시점(horizon)은 정렬에 쓴 이동 시간과 같은 값(매칭과 같은 규칙)
             rel = bed_reliability.evaluate(
-                info.bedReliability, distance, now=now,
+                info.bedReliability, distance, now=now, horizon_sec=travel_min * 60.0,
                 confirmed_at=self.get_info_confirmation(info.hospitalId),
             )
             rows.append(
@@ -938,6 +974,11 @@ class HubEngine:
                     "hospitalId": info.hospitalId,
                     "name": info.name,
                     "distanceKm": round(distance, 2),
+                    # 내비 기준(2026-10-03). 못 받았으면 None — 화면은 직선거리를 "추정"으로 표시한다.
+                    "roadDistanceKm": round(eta[1] / 1000.0, 2) if eta is not None else None,
+                    "etaMin": _ceil_minutes(eta[0]) if eta is not None else None,
+                    "travelMin": round(travel_min, 1),
+                    "travelBasis": "eta" if eta is not None else "estimate",
                     "gps": info.gps.model_dump(),
                     "availableBedCount": beds,
                     "bedCountUnknown": unknown,
@@ -946,7 +987,7 @@ class HubEngine:
                 }
             )
             if rel is not None and beds >= 1 and not unknown and not _is_bed_data_stale(info, now):
-                if rel.rArrive > best_r_arrive:  # 동률이면 먼저 담긴(더 가까운) 쪽 유지
+                if rel.rArrive > best_r_arrive:  # 동률이면 먼저 담긴(더 빨리 닿는) 쪽 유지
                     best_r_arrive, best_index = rel.rArrive, len(rows) - 1
         if best_index is not None:
             rows[best_index]["firstCallRecommended"] = True
@@ -1051,6 +1092,7 @@ class HubEngine:
                         ),
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
+                        roadDistanceKm=round(eta[1] / 1000.0, 2) if eta is not None else None,
                         finalScore=round(final_score(similarity, travel_min, bonus_min, load_min), 6),
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),
@@ -1060,7 +1102,9 @@ class HubEngine:
                         loadReason=load_reason,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
-                        demoteReasons=_demote_reasons(info, best_group, status, beds, unknown, stale),
+                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale)),
+                        rejectReason=self._reject_reason_for(voice.caseId, info.hospitalId, status),
+                        unavailableReason=_unavailable_reason(status, demote),
                         bedDataStale=stale,
                     )
                 )

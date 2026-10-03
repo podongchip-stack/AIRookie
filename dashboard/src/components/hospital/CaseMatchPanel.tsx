@@ -1,4 +1,5 @@
 import { css } from "styled-system/css";
+import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { hospitalStatusBadge, severityBadge } from "styled-system/recipes";
 import { Panel } from "@/components/layout/Panel";
 import { PatientVitals } from "@/components/panels/PatientVitals";
@@ -98,8 +99,12 @@ export function CaseMatchPanel({
       {hospital ? (
         <div className={css({ marginTop: "auto" })}>
           <div className={css({ display: "flex", justifyContent: "flex-end", marginBottom: "2" })}>
-            <span className={hospitalStatusBadge({ status: hospital.status })}>
-              {STATUS_LABEL[hospital.status]}
+            <span className={hospitalStatusBadge({ status: hospital.unavailableReason ? "rejected" : hospital.status })}>
+              {hospital.unavailableReason
+                ? `수용 불가 · ${unavailableReasonLabel(hospital.unavailableReason)}`
+                : hospital.status === "rejected" && hospital.rejectReason
+                  ? `${STATUS_LABEL.rejected} · ${rejectionReasonLabel(hospital.rejectReason)}`
+                  : STATUS_LABEL[hospital.status]}
             </span>
           </div>
           {hospital.status === "confirmed" ? (
@@ -131,7 +136,13 @@ export function CaseMatchPanel({
               {/* 병원의 승인/불가는 최종 결정이 아니라 후보 등록일 뿐이라(CLAUDE.md),
                   한 번 눌렀다고 버튼을 잠그지 않는다 — 병상 상황이 바뀌면 다시 눌러
                   번복할 수 있어야 한다(2026-08-11 논의). */}
-              <ApprovalActions role="hospital" hospitalId={hospitalId} caseId={caseId} onAction={onAction} />
+              <ApprovalActions
+                role="hospital"
+                hospitalId={hospitalId}
+                caseId={caseId}
+                onAction={onAction}
+                currentReason={hospital.status === "rejected" ? hospital.rejectReason ?? null : null}
+              />
               <p className={css({ marginTop: "2", fontSize: "xs", color: "ink", textAlign: "center" })}>
                 이송 여부는 구급대원이 최종 결정합니다
               </p>

@@ -159,6 +159,14 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 - 중증(`severity_tag = "high"`)일 때만 응급의료기관 등급: 권역응급의료센터 5분, 지역응급의료센터 2분
 - 모르는 값은 0분(불리하게 두지 않음). 쓴 값과 이유는 `travelBonusMin`·`bonusReasons`로 나간다
 - 값은 수용 결과 데이터 없이 정한 보수적 초기값이다 — 거절 로그가 쌓이면 재보정한다
+- **경증 역가산** (2026-10-03, `MILD_CENTER_PENALTY_MIN`): 경증(`low`) 환자에게는 권역·지역
+  응급의료센터에 거꾸로 **+3분**을 더한다 — "경증은 센터를 아껴라". 경증이 최근접이라는 이유로
+  센터의 마지막 병상을 차지하면 뒤에 오는 중증이 최종치료 가능한 곳에 못 들어간다(재난의료의
+  "경증은 멀리" 원칙). 음수 가산으로 섞여 나가므로 스키마·dashboard 수정이 없고
+  (`travelBonusMin`이 음수, `bonusReasons`에 "경증 · 권역응급의료센터 +3분(센터 보존)"),
+  제외가 아니라 순위 조정이라 주변에 센터뿐이면 여전히 센터로 간다. 중증 가산·부하 페널티와
+  합쳐지면 별도 재난 계획자 없이 "중증은 센터로, 경증은 분산, 차면 다음으로"가 가격 신호만으로
+  성립한다. 검증 `run_match.py test_mild_center_penalty()`
 
 **이송 중 부하 페널티** (2026-10-03, `scoring.load_penalty_min()`): 가산의 대칭형으로, 같은 병원으로
 확정돼 이송 중인 건수(TTL 오버레이, 사건 무관 병원 단위)가 많을수록 **이동시간에 분을 더한다** —
@@ -816,7 +824,7 @@ HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화�
 구급차가 움직인다(`ambulance_sim.py`, 설계는 `documents/1001v1_0134_...`).
 
 ```
-idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─수용→15초→ returning ─도착→ idle
+idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─수용→바로→ returning ─도착→ idle
                                     └─[현장 종료]→ returning          │ 수용 불가
                                                                        └→ rerouting(그 자리 대기) ─이송 승인→ transporting
    (returning 중 [이동] = 재출동, rerouting에서 [현장 종료]도 가능)    at_hospital은 병원이 결과를 고를 때까지 기다린다

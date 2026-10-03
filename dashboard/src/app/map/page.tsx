@@ -5,6 +5,14 @@ import Link from "next/link";
 import { css, cx } from "styled-system/css";
 import { HospitalDashboard } from "@/components/hospital/HospitalDashboard";
 import { MonitorMapPanel } from "@/components/map/MonitorMapPanel";
+import { distanceLabel } from "@/lib/distance";
+import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
+import type { MonitorCaseHospital } from "@/types/dashboard";
+
+// 수용 불가의 종류 — E-Gen 병상 없음이면 그것, 병원이 직접 거절했으면 고른 사유(2026-10-03)
+function reasonNote(hospital: MonitorCaseHospital): string | null {
+  return unavailableReasonLabel(hospital.unavailableReason) ?? rejectionReasonLabel(hospital.rejectReason);
+}
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
@@ -130,9 +138,10 @@ export default function MonitorMapPage() {
                                 {hospital.name}
                               </span>
                               <span className={css({ flexShrink: "0", color: "ink3" })}>
-                                존 {hospital.zone} ·{" "}
+                                {distanceLabel(hospital)} · 존 {hospital.zone} ·{" "}
                                 <b style={{ color: statusColor(hospital.status) }}>
                                   {STATUS_ICON[hospital.status]} {STATUS_SHORT[hospital.status]}
+                                  {hospital.status === "rejected" && reasonNote(hospital) ? ` · ${reasonNote(hospital)}` : ""}
                                 </b>
                               </span>
                             </button>
@@ -189,8 +198,8 @@ export default function MonitorMapPage() {
           </SideSection>
 
           <p className={css({ fontSize: "2xs", color: "ink3" })}>
-            병원 대시보드는 환자 요청이 온 병원만 열 수 있습니다. 지도를 축소한 상태에선 병원 마커를 누르면 이름이
-            뜨고, 확대하면 모든 병원 이름이 보입니다. 위치·존은 규칙 기반이며, 구급차 위치는 시연용
+            병원 이름이 보이는 상태에서 마커나 이름을 누르면 병원 대시보드가 열립니다. 지도를 축소해 이름이 안
+            보이면 마커를 한 번 눌러 이름을 띄운 뒤 다시 누르세요. 위치·존은 규칙 기반이며, 구급차 위치는 시연용
             시뮬레이션입니다.
           </p>
         </aside>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { css } from "styled-system/css";
 import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
@@ -299,9 +300,12 @@ export function MapPanel({
           </div>
 
           <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>직선 거리</div>
-            <div className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}>
-              {hospital ? `${hospital.distanceKm}km` : "-"}
+            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>이동 거리</div>
+            <div
+              className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}
+              title={hospital ? distanceTitle(hospital) : undefined}
+            >
+              {hospital ? distanceLabel(hospital) : "-"}
             </div>
           </div>
 

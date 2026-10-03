@@ -14,11 +14,11 @@ from huggingface_hub import snapshot_download
 
 ASR_ADAPTER_REPO_ID = "Playedwell03/qwen3-asr-0.6b-119ko-tiny"
 MF_BERT_REPO_ID = "podongchip/MF_BERT"
-# 받을 MF_BERT 버전(태그·브랜치·커밋). 2026-10-02 Hub에 구조가 바뀐 새 가중치(보기별 어텐션·2층 헤드 등)가 올라왔는데
-# 이 저장소의 MF_BERT/ 코드는 아직 09-30 구조라, 최신을 받으면 state_dict가 안 맞아 서버가 아예 뜨지 않았다
-# (2026-10-03 실제로 겪음). 코드와 검증된 버전(v1, fold00)을 고정해 두고, 새 구조 코드를 들여오면 이 값(또는
-# MF_BERT_REVISION 환경변수)만 바꾼다. 모델 저장소가 이전 모델을 이 태그로 보존해 뒀다.
-MF_BERT_REVISION = os.environ.get("MF_BERT_REVISION", "v1-2026-09-30")
+# 받을 MF_BERT 버전(태그·브랜치·커밋). "main"을 받으면 Hub에 구조가 바뀐 가중치가 올라올 때 MF_BERT/ 코드와
+# state_dict가 안 맞아 서버가 아예 뜨지 않는다(2026-10-03 10-02 가중치로 실제로 겪음). 그래서 MF_BERT/ 코드와 대조를
+# 마친 커밋 해시로 고정한다 — 2026-10-02 모델(보기별 어텐션·2층 헤드). 새 가중치를 들여올 때는 MF_BERT/ 코드를 맞춘 뒤
+# 이 값(또는 MF_BERT_REVISION 환경변수)을 바꾼다. 이전 모델은 "v1-2026-09-30" 태그로 받는다(이 코드로도 읽힌다).
+MF_BERT_REVISION = os.environ.get("MF_BERT_REVISION", "f1d3e1dbd41424e1bb32cf4aded891ed48b39df6")
 
 
 def resolve_asr_adapter_dir() -> Path:
