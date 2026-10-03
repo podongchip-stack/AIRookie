@@ -44,6 +44,17 @@ type PollStat = {
   breaks: number;
 };
 type CalBin = { range: string; total: number; predictedPct: number | null; actualPct: number | null };
+type RegionStat = {
+  label: string;
+  hospitals: number;
+  n: number;
+  allPct: number | null;
+  hiN: number;
+  hiPct: number | null;
+  warnN: number;
+  warnPct: number | null;
+  breaks: number;
+};
 type LiveBoard = {
   schemaVersion?: number;
   generatedAt: string;
@@ -54,6 +65,7 @@ type LiveBoard = {
   board: BoardRow[];
   feed: FeedItem[];
   timeseries?: PollStat[];
+  regions?: RegionStat[];
   calibration: { bins: CalBin[] };
   headline: { valueChanges: number; bigBreaks: number; warnedBreaks: number; missedBreaks: number };
 };
@@ -247,6 +259,57 @@ function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint[]; cut
   );
 }
 
+// ── 지역별 격차 — "평균의 오류" 분해 ─────────────────────────────────────────
+// 시도마다 회색 점(E-Gen 원값 유지율)과 파란 점(엔진 선별 유지율)을 한 트랙에 찍는다.
+// 두 점을 잇는 띠의 길이 = 엔진이 그 지역에서 끌어올린 폭. 원값이 나쁜 지역(수도권 등)
+// 일수록 띠가 길다 — 전국 평균 하나로는 보이지 않는 사실.
+
+function RegionGaps({ regions, windowHours }: { regions: RegionStat[]; windowHours: number }) {
+  const rows = regions.filter((r) => r.label !== "기타" && r.allPct != null && r.hiPct != null);
+  if (rows.length < 4) return null;
+  const minPct = Math.floor(Math.min(...rows.map((r) => r.allPct as number))) - 1;
+  const pos = (v: number) => `${((v - minPct) / (100 - minPct)) * 100}%`;
+  const days = Math.max(windowHours / 24, 1);
+  return (
+    <div className={css({ display: "flex", flexDirection: "column", gap: "2", borderTopWidth: "1px", borderColor: "line", paddingTop: "4" })}>
+      <h3 className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
+        지역별로 갈라 보면 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>전국 평균이 가리는 격차 — 원값 품질이 나쁜 지역일수록 엔진의 이득이 큽니다</span>
+      </h3>
+      <div className={css({ display: "grid", gridTemplateColumns: { base: "1fr", md: "1fr 1fr" }, columnGap: "8", rowGap: "1" })}>
+        {rows.map((region) => {
+          const all = region.allPct as number;
+          const hi = region.hiPct as number;
+          return (
+            <div key={region.label} className={css({ display: "flex", alignItems: "center", gap: "2", fontSize: "xs" })}>
+              <span className={css({ width: "34px", flexShrink: "0", fontWeight: "semibold", color: "ink" })}>{region.label}</span>
+              <div className={css({ position: "relative", flex: "1", height: "16px", minWidth: "0" })}>
+                <div className={css({ position: "absolute", top: "50%", left: "0", right: "0", height: "1px", backgroundColor: "line" })} />
+                <div
+                  className={css({ position: "absolute", top: "50%", height: "4px", transform: "translateY(-50%)", borderRadius: "full" })}
+                  style={{ left: pos(all), width: `calc(${pos(hi)} - ${pos(all)})`, backgroundColor: "rgba(42,120,214,0.25)" }}
+                />
+                <span className={css({ position: "absolute", top: "50%", width: "7px", height: "7px", borderRadius: "full", transform: "translate(-50%, -50%)" })} style={{ left: pos(all), backgroundColor: SERIES.all.color }} />
+                <span className={css({ position: "absolute", top: "50%", width: "7px", height: "7px", borderRadius: "full", transform: "translate(-50%, -50%)" })} style={{ left: pos(hi), backgroundColor: SERIES.hi.color }} />
+              </div>
+              <span className={css({ flexShrink: "0", color: "ink2", fontVariantNumeric: "tabular-nums", width: "92px", textAlign: "right" })}>
+                {all.toFixed(1)} → <b className={css({ color: "ink" })}>{hi.toFixed(1)}%</b>
+              </span>
+              <span className={css({ flexShrink: "0", color: "ink3", fontVariantNumeric: "tabular-nums", width: "72px", textAlign: "right" })}>
+                거짓 {Math.round(region.breaks / days).toLocaleString()}/일
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className={smallStyle}>
+        <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginRight: "1" })} style={{ backgroundColor: SERIES.all.color }} /> E-Gen 원값(선별 없음)
+        <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginLeft: "3", marginRight: "1" })} style={{ backgroundColor: SERIES.hi.color }} /> 엔진이 고른 값 ·
+        20분당 유지율(48시간 집계), 표본 적은 지역 제외 · 서울·경기가 원값 하위권인 건 수도권 응급실의 회전 속도 때문입니다
+      </p>
+    </div>
+  );
+}
+
 // ── 본체 ────────────────────────────────────────────────────────────────────
 
 function FeedRow({ item }: { item: FeedItem }) {
@@ -393,6 +456,8 @@ export function LiveBoardSection() {
         신뢰도 구간별 실제 유지율 {data.calibration.bins.map((bin) => (bin.actualPct == null ? "—" : Math.round(bin.actualPct))).join(" → ")}%로
         단조 · 크게 어긋난 {h.bigBreaks.toLocaleString()}건 중 {h.warnedBreaks.toLocaleString()}건은 깨지기 전에 이미 경고 상태였습니다
       </p>
+
+      {data.regions && <RegionGaps regions={data.regions} windowHours={data.windowHours} />}
 
       <div className={css({ display: "grid", gridTemplateColumns: { base: "1fr", lg: "5fr 7fr" }, gap: "5", borderTopWidth: "1px", borderColor: "line", paddingTop: "4" })}>
         {/* 지금 가장 못 믿을 값 — 초 단위 감쇠 */}
