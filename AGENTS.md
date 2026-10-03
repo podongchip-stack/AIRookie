@@ -1,5 +1,10 @@
 # AGENTS.md
 
+> ⚠️ **`demo` 브랜치의 작업은 `develop`(과 `main`)에 병합 금지 (2026-10-03 팀 규칙).**
+> `demo`는 시연 영상·자동 시연 전용 브랜치다(시나리오 진행기·녹화 도구·시연 전용 입구 등). `develop`의 변경을
+> `demo`로 가져가는 것(develop → demo)만 하고, 반대 방향(demo → develop, demo → main) 병합·체리픽은 하지 않는다.
+> GitHub 설정으로 막아 두지 않았으니 직접 지켜야 한다.
+
 이 파일은 Codex가 이 저장소에서 작업할 때 참고하는 공통 컨텍스트입니다.
 모든 브랜치(main, develop, feature/voice, feature/info, feature/hub, feature/dashboard)에서 동일하게 적용됩니다.
 
