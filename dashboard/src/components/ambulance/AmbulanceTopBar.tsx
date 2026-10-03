@@ -91,6 +91,16 @@ export function AmbulanceTopBar({
       </div>
 
       <div className={css({ display: "flex", alignItems: "center", gap: "4.5" })}>
+        {/* 대원 휴대폰 전화 앱(2026-10-03) — 휴대폰에선 첫 페이지에 P-<구급차ID>를 입력해도 된다 */}
+        <a
+          href={`/phone?id=${encodeURIComponent(ambulanceId)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`휴대폰에서는 첫 페이지에 P-${ambulanceId} 입력`}
+          className={css({ fontSize: "xs", fontWeight: "semibold", color: "navy", _hover: { textDecoration: "underline" } })}
+        >
+          📞 전화 앱 (P-{ambulanceId})
+        </a>
         <VerificationButton />
         <span
           className={css({

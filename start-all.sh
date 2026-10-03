@@ -22,10 +22,14 @@
 #   ./start-all.sh --no-snapshot      E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델의 관측 기록)만 생략
 #   ./start-all.sh --no-sim-dispatch  구급차 출동 시뮬레이션(가짜 GPS) 끄기 — 기본은 켬: 실제 구급차 GPS 수신
 #                                     경로가 아직 없어 구급차 화면의 [이동] 버튼으로 위치를 만든다
+#   ./start-all.sh --dashboard-call   구급차 대시보드에도 [통화 시작] 버튼(마이크 파형) — 기본은 끔: 통화는 대원 휴대폰
+#                                     전화 앱(첫 페이지 P-<구급차ID>)으로만 하고, 대시보드엔 통화 현황·자막만 보인다.
+#                                     --no-sim-dispatch면 휴대폰 앱을 쓸 수 없어 자동으로 켠다
 #   ./start-all.sh --lidar            lidar3d(3D 뷰어·아이폰 앱 업로드 서버)도 함께 — 병원 대시보드에 3D 버튼이 생긴다
 #                                     (기본은 끔: 3D는 당분간 시연에서 뺀다. 끄면 버튼도 자동으로 숨겨진다)
 #
-# voice는 구급차 노트북마다 따로 뜨므로 여기서 띄우지 않는다(voice/app.py, HUB_BASE_URL로 이 hub를 가리킴).
+# voice는 여기서 띄우지 않는다 — 따로 ./voice/start-voice.sh(인자 없이 = 중앙 voice 1대, 휴대폰·대시보드 브라우저 음성을
+# hub 경유로 받음. 구급차 번호를 주면 그 장비 마이크 전용). HUB_BASE_URL로 이 hub를 가리킨다.
 # Ctrl-C 한 번으로 띄운 것 전부를 함께 끈다. 로그는 $LOG_DIR 아래에 서버별로 남는다.
 #
 # macOS·Linux·Windows(Git Bash) 어디서든 같은 명령으로 돈다 — OS를 보고 conda 환경의 파이썬 위치
@@ -104,7 +108,7 @@ DASH_PORT="${DASH_PORT:-3000}"
 LIDAR_PORT="${LIDAR_PORT:-8000}"
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
-MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0; SIM_DISPATCH=1
+MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0; SIM_DISPATCH=1; DASHBOARD_CALL=0
 for a in "$@"; do
   case "$a" in
     --local)      MODE=local ;;
@@ -113,6 +117,7 @@ for a in "$@"; do
     --no-snapshot) RUN_SNAPSHOT=0 ;;
     --sim-dispatch) SIM_DISPATCH=1 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
     --no-sim-dispatch) SIM_DISPATCH=0 ;;
+    --dashboard-call) DASHBOARD_CALL=1 ;;
     --lidar)      RUN_LIDAR=1 ;;
     --no-lidar)   RUN_LIDAR=0 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
     --setup-dns)
@@ -120,7 +125,7 @@ for a in "$@"; do
       echo "터널 '$TUNNEL_NAME'에 $APP_HOST 를 연결합니다 (Cloudflare DNS에 CNAME 생성)..."
       cf tunnel route dns "$TUNNEL_NAME" "$APP_HOST"
       exit $? ;;
-    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) echo "❌ 알 수 없는 옵션: $a (도움말: --help)"; exit 1 ;;
   esac
 done
@@ -230,7 +235,13 @@ need "$HUB_PY" hub HUB_PY
 echo "hub 시작 (포트 $HUB_PORT, 임베딩 모델 로드에 시간이 걸릴 수 있음)..."
 # start_background(): 60초 재계산·상태 저장/복구·방치 사건 정리(와 출동 시뮬레이션) 루프. 예전엔
 # app.app.run()만 불러서 이 루프들이 start-all로 띄운 실서버에서는 한 번도 돌지 않았다(2026-10-01 수정).
-(cd hub && HUB_SIM_DISPATCH="$SIM_DISPATCH" exec "$HUB_PY" -u -c \
+# 휴대폰 전화 앱은 출동 시뮬레이션의 사건으로만 통화한다 — 시뮬레이션을 끄면 통화할 곳이 없어지므로 대시보드 통화를 켠다.
+if [ "$SIM_DISPATCH" = 0 ] && [ "$DASHBOARD_CALL" = 0 ]; then
+  DASHBOARD_CALL=1
+  echo "  출동 시뮬레이션이 꺼져 휴대폰 전화 앱을 쓸 수 없어, 구급차 대시보드의 [통화 시작]을 켭니다"
+fi
+if [ "$DASHBOARD_CALL" = 1 ]; then echo "  통화: 구급차 대시보드 [통화 시작] + 휴대폰 전화 앱"; else echo "  통화: 휴대폰 전화 앱(P-<구급차ID>)으로만 — 대시보드 버튼은 --dashboard-call"; fi
+(cd hub && HUB_SIM_DISPATCH="$SIM_DISPATCH" HUB_DASHBOARD_CALL="$DASHBOARD_CALL" exec "$HUB_PY" -u -c \
     "import app; app.start_background(); app.app.run(host='0.0.0.0', port=$HUB_PORT, debug=False)") \
   > "$LOG_DIR/hub.log" 2>&1 &
 HUB_PID=$!; PIDS+=("$HUB_PID")

@@ -5,6 +5,7 @@ import { css, cx } from "styled-system/css";
 import { Tag } from "@/components/hospital/Tag";
 import { dangerButtonStyle, primaryButtonStyle } from "@/components/ui/button-styles";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
+import { startPcmCapture, type PcmCapture } from "@/lib/pcm-capture";
 import type { CallSignalType, CallTranscriptLine } from "@/types/dashboard";
 
 const BAR_COUNT = 24;
@@ -47,8 +48,8 @@ function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
 // 보여준다(voiceLines, 2026-10-03). voice 문장이 아직 없을 때만 브라우저 내장 Web Speech API(SpeechRecognition)
 // 즉석 인식을 예비로 보여준다 — 이건 hub로 보내는 값과 무관한 시연용이고 Chrome 계열에서만 동작한다.
 // 예전엔 브라우저 인식만 있어서, voice는 잘 인식하는데 화면엔 아무것도 안 뜨는 일이 있었다.
-// hub README에는 아직 이 오디오 스트리밍 스키마가 없다 — "hub가 직접 오디오를
-// 받는다"는 이 흐름은 voice/hub 팀과 별도로 확정이 필요한 가안이다.
+// 오디오는 16kHz 16비트 PCM으로 보낸다(2026-10-03, lib/pcm-capture.ts) — 중앙 voice가 떠 있으면 hub가 이 음성을
+// 그 사건의 STT 입력으로 넘긴다(hub README "중앙 voice"). 구급차별 voice(로컬 마이크) 방식이면 hub가 버린다.
 // 통화 시작부터 몇 초인지 — voice가 주는 발화 시작 시각(초)을 분:초로
 function formatSec(sec: number): string {
   const total = Math.max(0, Math.floor(sec));
@@ -62,7 +63,7 @@ export function CallDemoPanel({
   voiceLines = [],
 }: {
   onCallSignal: (signal: CallSignalType) => void;
-  onAudioChunk: (chunk: Blob) => void;
+  onAudioChunk: (chunk: ArrayBuffer) => void;
   // 값이 있으면 통화 시작을 막고 이유를 보여준다(출동 시뮬레이션: 현장 도착 전, 2026-10-01).
   startBlockedReason?: string | null;
   // 이번 통화에서 voice가 인식한 발화(시간순)
@@ -79,9 +80,8 @@ export function CallDemoPanel({
   const [recognitionUnavailable, setRecognitionUnavailable] = useState(false);
 
   const streamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const captureRef = useRef<PcmCapture | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const rafRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const recognitionActiveRef = useRef(false);
@@ -102,14 +102,10 @@ export function CallDemoPanel({
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      recorderRef.current.stop();
-    }
-    recorderRef.current = null;
+    captureRef.current?.stop();
+    captureRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    audioContextRef.current?.close().catch(() => {});
-    audioContextRef.current = null;
     analyserRef.current = null;
     recognitionActiveRef.current = false;
     recognitionRef.current?.stop();
@@ -187,23 +183,16 @@ export function CallDemoPanel({
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
       streamRef.current = stream;
 
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 128;
-      source.connect(analyser);
-      audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
-
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) onAudioChunkRef.current(event.data);
-      };
-      recorder.start(250);
-      recorderRef.current = recorder;
+      // 시작 신호를 먼저 보낸다 — hub는 시작 신호를 받은 소켓의 음성만 그 사건으로 넘긴다
+      onCallSignal("call_started");
+      const capture = await startPcmCapture(stream, (frame) => onAudioChunkRef.current(frame));
+      captureRef.current = capture;
+      analyserRef.current = capture.analyser;
 
       setTranscript("");
       setInterimText("");
@@ -211,9 +200,10 @@ export function CallDemoPanel({
       startSpeechRecognition();
 
       setActive(true);
-      onCallSignal("call_started");
       rafRef.current = requestAnimationFrame(drawLevels);
     } catch {
+      if (streamRef.current) onCallSignal("call_ended"); // 시작 신호는 갔는데 캡처가 실패한 경우
+      stopAll();
       setError("마이크 권한이 거부되었거나 사용할 수 없습니다.");
     }
   }

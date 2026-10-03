@@ -167,9 +167,18 @@ VOICE_APID=A0000001 VOICE_PORT=6000 python app.py
 예전엔 둘을 따로 줘야 해서, hub 주소만 바꾸면 환자 정보가 voice 자신(127.0.0.1)으로 가서 사라졌다.
 
 ```bash
-./voice/start-voice.sh A0000001                                  # hub가 같은 장비
+./voice/start-voice.sh                                           # 중앙 voice 1대(권장, 2026-10-03) — 포트 6000
+./voice/start-voice.sh A0000001                                  # 구급차 1대 전용(이 장비 마이크), hub가 같은 장비
 HUB_BASE_URL=http://192.168.0.3:5001 ./voice/start-voice.sh A0000001   # hub가 다른 장비
 ```
+
+**중앙 모드(`VOICE_MODE=central`, 2026-10-03)** — 인자 없이 띄우면 이 모드다. voice를 구급차마다 띄우지 않고 한 대만
+띄운다. 구급차 대시보드(휴대폰·태블릿 브라우저)가 마이크 음성을 16kHz 모노 16비트 PCM으로 hub에 보내면, hub가
+사건(caseId)별로 `POST /call/<caseId>/audio`로 넘긴다. 사건마다 녹음기(`stream_recorder.py`의 `StreamRecorder` —
+`MicRecorder`와 같은 모양)와 발화 인식기를 따로 두고, 모델은 하나를 여러 통화가 순서대로 나눠 쓴다(호출마다 잠금).
+녹음 원본은 `<시각>_<apid>_<caseId 앞 8자>.wav`로 남는다. hub에는 `{"central": true, "ip", "port"}`로 등록하고
+`VOICE_HEARTBEAT_SEC`(30초)마다 다시 알린다(hub가 재시작해도 다시 붙게). 음성이 `VOICE_IDLE_END_SEC`(60초) 동안
+안 오면 그 통화를 저절로 끝낸다(휴대폰 화면이 꺼진 경우 등). 브라우저 마이크는 https(도메인)나 localhost에서만 열린다.
 
 Windows 콘솔 기본 인코딩(cp949)은 이모지 등을 못 써서 로그 한 줄에 서버가 죽을 수 있었다. 실행 진입점(`app.py`·
 `call_capture.py`·`transcribe.py`·`mic_recorder.py`)이 시작할 때 `console.py`의 `use_utf8_console()`로 출력을
@@ -177,6 +186,9 @@ UTF-8로 바꾸므로 `PYTHONUTF8=1` 없이도 된다(파일 읽기·쓰기는 �
 
 | 환경변수 | 기본값 | 설명 |
 | --- | --- | --- |
+| `VOICE_MODE` | `local` | `local`: 이 장비 마이크로 구급차 1대 전용 / `central`: 브라우저 음성을 hub 경유로 받아 모든 구급차 처리. `start-voice.sh`는 인자가 없으면 `central` |
+| `VOICE_IDLE_END_SEC` | `60` | 중앙 모드 — 음성이 이만큼 안 오면 그 통화를 저절로 끝낸다 |
+| `VOICE_HEARTBEAT_SEC` | `30` | 중앙 모드 — hub에 다시 등록하는 주기 |
 | `VOICE_APID` | (없음) | 이 voice 인스턴스가 담당하는 구급차 식별자. hub의 구급차 레지스트리(apid)와 일치해야 하며, 없으면 hub 자가등록 자체를 건너뛴다(단독 테스트용) |
 | `VOICE_PORT` | `6000` | 이 인스턴스가 바인딩할 포트. 포트 배정표(hub=5001, info=5002 고정, voice=구급차마다 6000대)의 voice 몫 — 구급차 레지스트리의 `AmbulanceInfo.voicePort`와 맞춰야 한다 |
 | `HUB_BASE_URL` | `http://127.0.0.1:5001` | hub 주소. 자가등록 요청 및 자기 IP 자동 탐지에 쓰인다 |

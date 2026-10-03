@@ -12,7 +12,7 @@ import {
 import {
   MAP_COLORS, PHASE_SHORT, STATUS_ICON, STATUS_SHORT, requestColor, statusInk, topStatus, type HospitalRequest,
 } from "@/lib/monitor";
-import type { AmbulanceSimState, MapOverview, MonitorCase } from "@/types/dashboard";
+import type { AmbulanceSimState, CallStatus, MapOverview, MonitorCase } from "@/types/dashboard";
 
 // 관제 지도(2026-10-03). 서울 지도에 병원(남색 원 — 이름·접근 코드)·구급차(주황 사각형)를 찍고, 구급차는 hub가
 // 보내는 출동 시뮬레이션 위치로 1초마다 옮긴다. 환자 요청이 온 병원은 마커 위에 상태 표시를 단다. 사건마다 지금
@@ -53,6 +53,17 @@ function badgeElement(requests: HospitalRequest[]): HTMLElement {
   return el;
 }
 
+// 구급대가 휴대폰으로 이 병원에 건 통화(2026-10-03, 연출) — 요청 표시보다 한 칸 위에 띄운다.
+function callBadgeElement(calls: CallStatus[]): HTMLElement {
+  const el = document.createElement("div");
+  el.textContent = calls.length > 1 ? `📞 통화 ${calls.length}건` : `📞 ${calls[0].ambulanceName ?? calls[0].apid} 통화 중`;
+  el.style.cssText =
+    `transform:translateY(-36px);white-space:nowrap;font-size:11px;font-weight:700;color:#FFFFFF;` +
+    `background:#0E9F6E;border:2px solid #FFFFFF;border-radius:999px;padding:1px 7px;` +
+    `box-shadow:0 1px 4px rgba(22,34,46,.35);`;
+  return el;
+}
+
 // 병원 이름표 — 이름과 병원 대시보드 접근 코드(H-<hpid>)를 같이 보여준다(2026-10-03). 모양은 createLabelOverlay와 같다.
 function hospitalLabel(name: string, hospitalId: string): string {
   return (
@@ -74,17 +85,21 @@ export function MonitorMapPanel({
   cases,
   ambulanceSim,
   requests,
+  calls = [],
 }: {
   overview: MapOverview | null;
   cases: Record<string, MonitorCase>;
   ambulanceSim: Record<string, AmbulanceSimState>;
   requests: Map<string, HospitalRequest[]>;
+  // 지금 진행 중인 통화(state "calling")
+  calls?: CallStatus[];
 }) {
   const { ready, error } = useKakaoMapScript();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<kakao.maps.Map | null>(null);
   const hospitalsRef = useRef(new Map<string, HospitalLayer>());
   const badgesRef = useRef(new Map<string, kakao.maps.CustomOverlay>());
+  const callBadgesRef = useRef(new Map<string, kakao.maps.CustomOverlay>());
   const ambulancesRef = useRef(new Map<string, AmbulanceLayer>());
   const pathsRef = useRef(new Map<string, { line: kakao.maps.Polyline; key: string }>());
   const incidentsRef = useRef(new Map<string, { overlay: kakao.maps.CustomOverlay; key: string }>());
@@ -203,6 +218,35 @@ export function MonitorMapPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, overview?.hospitals, requests]);
 
+  // ── 통화 중 표시 (📞, 통화 상태가 바뀔 때) ──
+  const callKey = calls.map((c) => `${c.caseId}:${c.hospitalId}`).sort().join("|");
+  useEffect(() => {
+    const map = ensureMap();
+    if (!map || !overview) return;
+    const { kakao } = window;
+    callBadgesRef.current.forEach((badge) => badge.setMap(null));
+    callBadgesRef.current.clear();
+    const byHospital = new Map<string, CallStatus[]>();
+    for (const call of calls) {
+      if (!call.hospitalId) continue;
+      byHospital.set(call.hospitalId, [...(byHospital.get(call.hospitalId) ?? []), call]);
+    }
+    byHospital.forEach((list, id) => {
+      const hospital = overview.hospitals.find((h) => h.hospitalId === id);
+      if (!hospital) return;
+      const badge = new kakao.maps.CustomOverlay({
+        position: new kakao.maps.LatLng(hospital.gps.lat, hospital.gps.lng),
+        content: callBadgeElement(list),
+        yAnchor: 1,
+        zIndex: 60,
+      });
+      badge.setMap(map);
+      callBadgesRef.current.set(id, badge);
+    });
+    // calls는 callKey로 대신 본다(매 렌더 새 배열)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, overview?.hospitals, callKey]);
+
   // ── 구급차 마커·이름·이동 경로·사고 현장 (1초마다 위치가 온다) ──
   useEffect(() => {
     const map = ensureMap();
@@ -215,7 +259,8 @@ export function MonitorMapPanel({
       const gps = sim?.gps ?? ambulance.gps;
       const pos = new kakao.maps.LatLng(gps.lat, gps.lng);
       const phase = sim ? `${PHASE_SHORT[sim.phase]}${sim.paused ? " · 정지" : ""}` : null;
-      const text = phase ? `${ambulance.name} · ${phase}` : ambulance.name;
+      const calling = calls.some((c) => c.apid === ambulance.apid);
+      const text = `${phase ? `${ambulance.name} · ${phase}` : ambulance.name}${calling ? " · 📞" : ""}`;
       let layer = ambulancesRef.current.get(ambulance.apid);
       if (!layer) {
         const marker = new kakao.maps.Marker({

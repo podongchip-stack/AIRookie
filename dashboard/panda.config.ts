@@ -33,6 +33,11 @@ const keyframes = defineKeyframes({
     "0%, 100%": { transform: "translateX(0)" },
     "50%": { transform: "translateX(7px)" },
   },
+  // 휴대폰 전화 앱(2026-10-03): 연결 중·대기 화면 아이콘 둘레로 퍼지는 고리
+  ring: {
+    "0%": { transform: "scale(1)", opacity: 0.55 },
+    "100%": { transform: "scale(1.7)", opacity: 0 },
+  },
 });
 
 // 배지류는 variant 값이 런타임 prop으로 들어오므로, 동적 토큰 문자열 대신

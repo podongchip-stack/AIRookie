@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# 구급차 voice(마이크) 서버 실행 — macOS·Linux·Windows(Git Bash) 공통 (2026-10-03).
+# voice 서버 실행 — macOS·Linux·Windows(Git Bash) 공통 (2026-10-03).
 #
 # 사용법:
-#   ./voice/start-voice.sh A0000001                 역삼 구급대 (포트는 아래 표에서 자동)
+#   ./voice/start-voice.sh                          중앙 voice 1대(권장) — 모든 구급차가 대시보드(휴대폰·태블릿)
+#                                                   브라우저 마이크로 통화하고, 음성은 hub를 거쳐 여기로 온다(포트 6000)
+#   ./voice/start-voice.sh A0000001                 구급차 1대 전용(예전 방식) — 이 장비 마이크로 역삼 구급대 통화를 받는다
+#                                                   (포트는 아래 표에서 자동)
 #   ./voice/start-voice.sh A0000004 6004            표에 없는 구급차는 포트를 직접 준다
 #   HUB_BASE_URL=http://192.168.0.3:5001 ./voice/start-voice.sh A0000001
 #                                                   hub가 다른 장비일 때(환자 정보 전송 주소도 같이 맞춘다)
@@ -18,9 +21,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 APID="${1:-${VOICE_APID:-}}"
-if [ -z "$APID" ] || [ "$APID" = "-h" ] || [ "$APID" = "--help" ]; then
-  sed -n '2,18p' "$0"; exit 1
+if [ "$APID" = "-h" ] || [ "$APID" = "--help" ]; then
+  sed -n '2,20p' "$0"; exit 0
 fi
+# 구급차 번호가 없으면 중앙 모드 — voice 한 대가 hub를 거쳐 오는 모든 구급차의 브라우저 음성을 처리한다
+if [ -z "$APID" ]; then MODE=central; else MODE=local; fi
 
 # 구급차 레지스트리(hub가 info에서 받는 AmbulanceInfo.voicePort)와 맞춘 포트. 레지스트리가 바뀌면 여기도 고치거나
 # 두 번째 인자로 준다 — 포트가 다르면 hub가 통화 시작·종료 신호를 엉뚱한 곳으로 보내 마이크가 안 켜진다.
@@ -32,8 +37,12 @@ default_port(){
     *) echo "" ;;
   esac
 }
-PORT="${2:-${VOICE_PORT:-$(default_port "$APID")}}"
-[ -n "$PORT" ] || { echo "❌ $APID 의 voice 포트를 모릅니다. 두 번째 인자로 주세요: ./voice/start-voice.sh $APID <포트>"; exit 1; }
+if [ "$MODE" = central ]; then
+  PORT="${VOICE_PORT:-6000}"
+else
+  PORT="${2:-${VOICE_PORT:-$(default_port "$APID")}}"
+  [ -n "$PORT" ] || { echo "❌ $APID 의 voice 포트를 모릅니다. 두 번째 인자로 주세요: ./voice/start-voice.sh $APID <포트>"; exit 1; }
+fi
 
 case "$(uname -s)" in
   Darwin)               OS=mac ;;
@@ -85,12 +94,17 @@ if [ -z "${VOICE_PY:-}" ] || [ ! -x "$VOICE_PY" ]; then
   exit 1
 fi
 
-export VOICE_APID="$APID" VOICE_PORT="$PORT" VOICE_DEVICE="${VOICE_DEVICE:-auto}"
+export VOICE_MODE="$MODE" VOICE_PORT="$PORT" VOICE_DEVICE="${VOICE_DEVICE:-auto}"
+if [ "$MODE" = local ]; then export VOICE_APID="$APID"; else unset VOICE_APID; fi
 export HUB_BASE_URL="${HUB_BASE_URL:-http://127.0.0.1:5001}"
 # hub 주소만 바꾸고 이걸 안 바꾸면 환자 정보가 voice 자기 자신(127.0.0.1)으로 가서 사라진다 — 같이 맞춘다.
 export HUB_VOICE_SUMMARY_URL="${HUB_VOICE_SUMMARY_URL:-${HUB_BASE_URL%/}/voice/summary}"
 
-echo "voice 서버 시작 — 구급차 $VOICE_APID · 포트 $VOICE_PORT · 장치 $VOICE_DEVICE · hub $HUB_BASE_URL"
+if [ "$MODE" = central ]; then
+  echo "voice 서버 시작 — 중앙 모드(모든 구급차) · 포트 $VOICE_PORT · 장치 $VOICE_DEVICE · hub $HUB_BASE_URL"
+else
+  echo "voice 서버 시작 — 구급차 $VOICE_APID 전용(이 장비 마이크) · 포트 $VOICE_PORT · 장치 $VOICE_DEVICE · hub $HUB_BASE_URL"
+fi
 echo "  파이썬: $VOICE_PY"
-echo "  처음 실행이면 모델(약 3GB)을 내려받습니다. '[통신] hub 자가등록 완료'가 뜨면 준비된 것입니다. 끄려면 Ctrl-C."
+echo "  처음 실행이면 모델(약 3GB)을 내려받습니다. '[통신] hub ... 등록 완료'가 뜨면 준비된 것입니다. 끄려면 Ctrl-C."
 cd "$ROOT" && exec "$VOICE_PY" -u app.py

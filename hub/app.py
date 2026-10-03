@@ -73,6 +73,9 @@ engine = HubEngine(router=router)
 #: 구급차 출동 시뮬레이션(시연용 가짜 위치, 2026-10-01). HUB_SIM_DISPATCH=1일 때만 켠다.
 SIM_DISPATCH = os.environ.get("HUB_SIM_DISPATCH") == "1"
 sim: DispatchSim | None = DispatchSim(router) if SIM_DISPATCH else None
+#: 구급차 대시보드에서 통화 시작 허용(2026-10-03, start-all.sh --dashboard-call → HUB_DASHBOARD_CALL=1). 기본은
+#: 꺼서 통화는 휴대폰 전화 앱(device="phone")으로만 받는다 — 대시보드(device="tablet")의 통화 시작은 거부한다.
+DASHBOARD_CALL = os.environ.get("HUB_DASHBOARD_CALL") == "1"
 SIM_TICK_SEC = 1.0
 
 # dashboard는 순수 WebSocket 클라이언트(new WebSocket(), socket.io 아님)라
@@ -213,6 +216,19 @@ def receive_voice_registration():
         registration = VoiceRegistration.model_validate(request.get_json(force=True))
     except ValidationError as exc:
         return jsonify({"error": "invalid VoiceRegistration", "detail": exc.errors()}), 400
+
+    if registration.central:
+        # 중앙 voice(2026-10-03) — 모든 구급차의 통화를 여기로 보낸다. 30초마다 다시 오므로 저장하지 않는다(재시작하면
+        # 다음 등록 때 다시 붙는다). 마지막 등록이 CENTRAL_VOICE_STALE_SEC보다 오래되면 꺼진 것으로 본다.
+        address = f"http://{registration.ip}:{registration.port or 6000}"
+        with _voice_addresses_lock:
+            first = _central_voice.get("url") != address
+            _central_voice.update(url=address, seenAt=time.monotonic())
+        if first:
+            print(f"  [통신] 중앙 voice 등록 — {address} (모든 구급차 통화를 여기로)")
+        return jsonify({"status": "ok", "central": True}), 200
+    if not registration.apid:
+        return jsonify({"error": "apid가 필요합니다(구급차별 voice) — 중앙 voice면 central=true"}), 400
 
     ambulance = engine.get_ambulance(registration.apid)
     if ambulance is None:
@@ -614,6 +630,7 @@ def _send_scene_candidates(case_id: str, apid: str) -> None:
     # 이어졌는지(적중률)를 나중에 승인 액션·거절 로그와 대조해 셀 수 있는 유일한 재료라서다.
     recommended = next((h for h in hospitals if h.get("firstCallRecommended")), None)
     if recommended is not None:
+        _case_recommended[case_id] = recommended["hospitalId"]
         decision_log.log_decision("first_call_recommended", {
             "caseId": case_id,
             "apid": apid,
@@ -623,18 +640,131 @@ def _send_scene_candidates(case_id: str, apid: str) -> None:
             "availableBedCount": recommended["availableBedCount"],
         })
     with _sockets_lock:
+        _case_scene[case_id] = payload
         targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and id_ == apid]
     for ws in targets:
         _send_to_socket(ws, payload, "현장 후보")
 
 
-def _relay_call_signal(signal: CallSignal) -> None:
+# ── 중앙 voice·통화 상태 (2026-10-03) ───────────────────────────────────────
+# 중앙 voice가 등록돼 있으면 모든 구급차 통화를 거기로 보낸다: 대시보드(휴대폰·태블릿)가 브라우저 마이크 음성을
+# 16kHz 16비트 PCM 바이너리 프레임으로 보내면, 그 소켓이 지금 통화 중인 사건의 전송기(_AudioRelay)가 모아서
+# 0.25초마다 voice로 넘긴다. 음성은 저장·로그하지 않고 전달만 한다. 중앙 voice가 없으면 예전처럼 구급차별 voice로
+# 신호만 중계하고 브라우저 음성은 버린다.
+
+#: 중앙 voice 주소와 마지막 등록 시각(monotonic). voice가 30초마다 다시 등록한다.
+_central_voice: dict = {}
+CENTRAL_VOICE_STALE_SEC = 90.0
+#: 대시보드 소켓 -> 그 소켓이 지금 음성을 보내는 사건(caseId)
+_socket_call: dict = {}
+#: caseId -> 음성 전송기
+_audio_relays: dict = {}
+#: caseId -> 통화 상태(call_status 메시지 본문). 사건이 닫히면 지운다.
+_case_call: dict[str, dict] = {}
+#: caseId -> 현장 후보의 첫 연락 추천 병원(first_call_selected 기록용)
+_case_recommended: dict[str, str] = {}
+#: caseId -> 마지막으로 보낸 현장 후보. 현장 도착 뒤에 연 휴대폰 탭도 병원 목록을 받게 따라잡기로 다시 준다.
+_case_scene: dict[str, dict] = {}
+AUDIO_RELAY_INTERVAL_SEC = 0.25
+
+
+def _central_voice_url() -> str | None:
+    with _voice_addresses_lock:
+        url, seen = _central_voice.get("url"), _central_voice.get("seenAt")
+    if url and seen is not None and time.monotonic() - seen <= CENTRAL_VOICE_STALE_SEC:
+        return url
+    return None
+
+
+class _AudioRelay:
+    """한 통화의 음성을 모아 순서대로 voice에 넘긴다. finish()하면 남은 음성을 다 보낸 뒤 /call/end를 보낸다
+    (종료 신호가 마지막 음성보다 먼저 가면 voice가 끝부분을 놓친다)."""
+
+    def __init__(self, case_id: str, base_url: str) -> None:
+        self.case_id = case_id
+        self.base_url = base_url
+        self._buffer = bytearray()
+        self._lock = threading.Lock()
+        self._finishing = threading.Event()
+        self._end_payload: dict | None = None
+        self.bytes_sent = 0
+        threading.Thread(target=self._run, name=f"audio-{case_id[:8]}", daemon=True).start()
+
+    def push(self, chunk: bytes) -> None:
+        with self._lock:
+            self._buffer.extend(chunk)
+
+    def finish(self, end_payload: dict) -> None:
+        self._end_payload = end_payload
+        self._finishing.set()
+
+    def _flush(self) -> None:
+        with self._lock:
+            data, self._buffer = bytes(self._buffer), bytearray()
+        if not data:
+            return
+        try:
+            requests.post(f"{self.base_url}/call/{self.case_id}/audio", data=data,
+                          headers={"Content-Type": "application/octet-stream"}, timeout=5)
+            self.bytes_sent += len(data)
+        except requests.RequestException as e:
+            print(f"  [통신] caseId={self.case_id} 음성 전달 실패: {e}")
+
+    def _run(self) -> None:
+        while not self._finishing.wait(AUDIO_RELAY_INTERVAL_SEC):
+            self._flush()
+        self._flush()
+        try:
+            requests.post(f"{self.base_url}/call/end", json=self._end_payload or {"caseId": self.case_id}, timeout=10)
+        except requests.RequestException as e:
+            print(f"  [통신] caseId={self.case_id} 중앙 voice 통화 종료 전달 실패: {e}")
+        with _sockets_lock:
+            if _audio_relays.get(self.case_id) is self:
+                del _audio_relays[self.case_id]
+        print(f"  [통신] caseId={self.case_id} 통화 음성 {self.bytes_sent / 32000:.1f}초 분량 전달 완료")
+
+
+def _handle_audio_frame(ws, chunk: bytes) -> None:
+    """대시보드가 보낸 음성 프레임 — 그 소켓이 중앙 voice로 통화 중이면 그 사건 전송기로, 아니면 버린다."""
+    with _sockets_lock:
+        case_id = _socket_call.get(ws)
+        relay = _audio_relays.get(case_id) if case_id else None
+    if relay is not None:
+        relay.push(chunk)
+
+
+def _call_status_targets_locked(status: dict) -> list:
+    """통화 상태를 받을 소켓: 그 구급차 탭 전부(휴대폰·태블릿) + 전화 건 병원 탭 + 관제 지도. _sockets_lock 안에서."""
+    targets = []
+    for ws, (role, id_) in _socket_identity.items():
+        if role == "monitor" or (role == "ambulance" and id_ == status["apid"]) or \
+                (role == "hospital" and status.get("hospitalId") and id_ == status["hospitalId"]):
+            targets.append(ws)
+    return targets
+
+
+def _send_call_status(status: dict) -> None:
+    with _sockets_lock:
+        _case_call[status["caseId"]] = status
+        targets = _call_status_targets_locked(status)
+    for ws in targets:
+        _send_to_socket(ws, status, "통화 상태")
+
+
+def _relay_call_signal(signal: CallSignal, ws=None) -> None:
     """dashboard의 통화 시작/종료 신호를 그 apid로 등록된 feature/voice
     인스턴스로 중계한다. call_started 시점에 (caseId -> apid)를 hub_engine에
     등록해둬야, 나중에 그 caseId로 도착하는 /voice/summary가 이 구급차의
     GPS를 찾을 수 있다. voice가 아직 자가등록 전이거나 안 떠 있어도
     dashboard 쪽 흐름은 끊기면 안 되므로 예외를 흡수한다."""
     if signal.signal == "call_started":
+        # 대시보드 통화가 꺼져 있으면 휴대폰 전화 앱으로만 받는다(2026-10-03). 화면엔 버튼이 없지만 열려 있던 구버전
+        # 탭이 보낼 수 있어 hub도 막는다. device가 없는 예전 신호는 그대로 받는다(하위 호환).
+        if signal.device == "tablet" and not DASHBOARD_CALL:
+            print(f"  [통화] {signal.apid} 대시보드 통화 시작 거부 — 휴대폰 전화 앱으로만(HUB_DASHBOARD_CALL=1로 켬)")
+            decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
+                                                             "reason": "dashboard_call_off"})
+            return
         # 출동 시뮬레이션 중엔 현장 도착 뒤, 그 출동의 사건으로만 통화를 시작한다(버튼만 막는 게
         # 아니라 hub도 규칙을 지킨다).
         if sim is not None and (sim.phase_of(signal.apid) != "on_scene" or sim.case_of(signal.apid) != signal.caseId):
@@ -644,6 +774,32 @@ def _relay_call_signal(signal: CallSignal) -> None:
             return
         engine.register_case(signal.caseId, signal.apid)
         _send_scene_candidates(signal.caseId, signal.apid)
+        ambulance = engine.get_ambulance(signal.apid)
+        hospital = engine.get_hospital(signal.hospitalId) if signal.hospitalId else None
+        _send_call_status({
+            "type": "call_status", "caseId": signal.caseId, "apid": signal.apid,
+            "ambulanceName": ambulance.name if ambulance else None,
+            "hospitalId": signal.hospitalId, "hospitalName": hospital.name if hospital else None,
+            "device": signal.device, "state": "calling", "startedAt": signal.timestamp, "endedAt": None,
+        })
+        if signal.hospitalId:
+            # 첫 연락 추천이 실제로 맞았나 — 추천과 구급대원이 고른 병원을 나란히 남긴다(적중률 재료).
+            recommended = _case_recommended.get(signal.caseId)
+            decision_log.log_decision("first_call_selected", {
+                "caseId": signal.caseId, "apid": signal.apid, "hospitalId": signal.hospitalId,
+                "recommendedHospitalId": recommended, "followedRecommendation": recommended == signal.hospitalId,
+                "device": signal.device,
+            })
+    else:
+        with _sockets_lock:
+            status = dict(_case_call.get(signal.caseId) or {})
+        if status:
+            _send_call_status({**status, "state": "ended", "endedAt": signal.timestamp})
+
+    central_url = _central_voice_url()
+    if central_url is not None:
+        _relay_to_central_voice(signal, ws, central_url)
+        return
 
     with _voice_addresses_lock:
         voice_base_url = _voice_addresses.get(signal.apid)
@@ -660,6 +816,42 @@ def _relay_call_signal(signal: CallSignal) -> None:
         )
     except requests.RequestException as e:
         print(f"  [통신] {signal.apid}의 feature/voice로 통화 신호 중계 실패 ({path}): {e}")
+
+
+def _relay_to_central_voice(signal: CallSignal, ws, base_url: str) -> None:
+    """중앙 voice로 통화 시작·종료를 보내고, 그 사이 이 소켓의 음성 프레임을 그 사건 전송기로 묶는다."""
+    if signal.signal == "call_started":
+        try:
+            response = requests.post(f"{base_url}/call/start", json={
+                "caseId": signal.caseId, "apid": signal.apid, "hospitalId": signal.hospitalId,
+                "timestamp": signal.timestamp,
+            }, timeout=10)
+            if response.status_code >= 400 and response.status_code != 409:
+                print(f"  [통신] 중앙 voice 통화 시작 거부({response.status_code}): {response.text[:200]}")
+                return
+        except requests.RequestException as e:
+            print(f"  [통신] 중앙 voice로 통화 시작 전달 실패: {e}")
+            return
+        with _sockets_lock:
+            if signal.caseId not in _audio_relays:
+                _audio_relays[signal.caseId] = _AudioRelay(signal.caseId, base_url)
+            if ws is not None:
+                _socket_call[ws] = signal.caseId
+        print(f"  [통신] {signal.apid} 통화 시작 → 중앙 voice (caseId={signal.caseId})")
+        return
+
+    with _sockets_lock:
+        relay = _audio_relays.get(signal.caseId)
+        for sock in [s for s, cid in _socket_call.items() if cid == signal.caseId]:
+            del _socket_call[sock]
+    end_payload = {"caseId": signal.caseId, "timestamp": signal.timestamp}
+    if relay is not None:
+        relay.finish(end_payload)  # 남은 음성을 다 보낸 뒤 /call/end
+        return
+    try:
+        requests.post(f"{base_url}/call/end", json=end_payload, timeout=10)
+    except requests.RequestException as e:
+        print(f"  [통신] 중앙 voice로 통화 종료 전달 실패: {e}")
 
 
 def _send_catchup(ws, identify: DashboardIdentify) -> list[str]:
@@ -720,7 +912,8 @@ def _send_identity_info(ws, identify: DashboardIdentify) -> None:
     들어온 경우의 이름 표시용으로만 주로 쓰인다."""
     name, known = _resolve_identity(identify.role, identify.id)
     info = DashboardIdentityInfo(
-        role=identify.role, id=identify.id, name=name, known=known, simDispatch=sim is not None
+        role=identify.role, id=identify.id, name=name, known=known, simDispatch=sim is not None,
+        dashboardCall=DASHBOARD_CALL,
     )
     print(f"  [통신] {identify.role} {identify.id} 신원 확인 응답 — known={known}, name={name}")
     _send_to_socket(ws, info.model_dump(), "identity_info")
@@ -888,6 +1081,9 @@ def _close_case(case_id: str, reason: str) -> bool:
         return False
     with _sockets_lock:
         _case_audience.pop(case_id, None)
+        _case_call.pop(case_id, None)
+        _case_recommended.pop(case_id, None)
+        _case_scene.pop(case_id, None)
     decision_log.log_decision("case_closed", {"caseId": case_id, "reason": reason})
     _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": reason})
     print(f"  [정리] caseId={case_id} 사건 종료({reason}) — 캐시에서 제거, 대시보드에 알림")
@@ -1098,6 +1294,17 @@ def _handle_identify(ws, identify: DashboardIdentify) -> None:
             state = sim.state(ambulance.apid)
             if state and state.get("hospitalId") == identify.id and state.get("phase") in ("transporting", "at_hospital"):
                 _send_to_socket(ws, _sim_message("ambulance_phase", state), "시뮬레이션 상태")
+    # 현장 후보 따라잡기(2026-10-03) — 현장 도착 뒤에 연 탭(휴대폰 통화 화면)도 전화할 병원 목록을 받게
+    if identify.role == "ambulance":
+        with _sockets_lock:
+            scenes = [_case_scene[c] for c in engine.get_case_ids_for_apid(identify.id) if c in _case_scene]
+        for scene in scenes:
+            _send_to_socket(ws, scene, "현장 후보")
+    # 진행 중인 통화 상태(📞)도 따라잡기 — 통화 중에 연 병원 탭·관제 지도·태블릿에도 뜨게(2026-10-03)
+    with _sockets_lock:
+        statuses = [st for st in _case_call.values() if ws in _call_status_targets_locked(st)]
+    for status in statuses:
+        _send_to_socket(ws, status, "통화 상태")
     # 병원이면 사건 유무와 무관하게 "귀원 정보 현황"도 바로 준다.
     if identify.role == "hospital":
         self_info = _build_self_info(identify.id)
@@ -1126,7 +1333,9 @@ def dashboard_socket(ws):
             if message is None:  # 연결 종료
                 break
             if isinstance(message, (bytes, bytearray)):
-                continue  # 오디오 청크 — 실제 STT는 voice 로컬 마이크를 쓰므로 무시
+                # 통화 음성(16kHz PCM) — 중앙 voice로 통화 중인 소켓이면 그 사건으로 넘기고, 아니면 버린다(2026-10-03)
+                _handle_audio_frame(ws, bytes(message))
+                continue
 
             try:
                 payload = json.loads(message)
@@ -1139,7 +1348,7 @@ def dashboard_socket(ws):
                 except ValidationError as exc:
                     print(f"  [통신] 잘못된 CallSignal 수신: {exc.errors()}")
                     continue
-                _relay_call_signal(signal)
+                _relay_call_signal(signal, ws)
             elif payload.get("type") == "identify":
                 try:
                     identify = DashboardIdentify.model_validate(payload)
@@ -1162,6 +1371,8 @@ def dashboard_socket(ws):
         with _sockets_lock:
             _dashboard_sockets.discard(ws)
             _socket_identity.pop(ws, None)
+            # 통화 중 끊긴 소켓 — 전송기는 그대로 두고(종료 신호나 voice의 무음 자동 종료로 끝난다) 묶음만 푼다
+            _socket_call.pop(ws, None)
 
 
 # ── 출동 시뮬레이션 (2026-10-01, HUB_SIM_DISPATCH=1) ─────────────────────────
@@ -1337,6 +1548,9 @@ def _maintenance_loop() -> None:
             for case_id in engine.prune_expired_cases():
                 with _sockets_lock:
                     _case_audience.pop(case_id, None)
+                    _case_call.pop(case_id, None)
+                    _case_recommended.pop(case_id, None)
+                    _case_scene.pop(case_id, None)
                 _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": "retention_expired"})
             if PERSIST_STATE and (engine.take_dirty() or _voice_addresses_dirty):
                 save_state()
