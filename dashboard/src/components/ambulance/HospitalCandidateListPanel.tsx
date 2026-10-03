@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { distanceLabel, distanceTitle } from "@/lib/distance";
+import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { css, cx } from "styled-system/css";
 import { hospitalStatusBadge } from "styled-system/recipes";
 import { Tag } from "@/components/hospital/Tag";
@@ -545,8 +546,16 @@ export function HospitalCandidateListPanel({
               </div>
 
               <div className={css({ display: "flex", alignItems: "center", gap: "2", flexShrink: "0" })}>
-                <span className={hospitalStatusBadge({ status: hospital.status })}>
-                  {requesting ? "확정 요청 중" : STATUS_LABEL[hospital.status]}
+                <span
+                  className={hospitalStatusBadge({ status: hospital.unavailableReason ? "rejected" : hospital.status })}
+                >
+                  {requesting
+                    ? "확정 요청 중"
+                    : hospital.unavailableReason
+                      ? `수용 불가 · ${unavailableReasonLabel(hospital.unavailableReason)}`
+                      : hospital.status === "rejected" && hospital.rejectReason
+                        ? `${STATUS_LABEL.rejected} · ${rejectionReasonLabel(hospital.rejectReason)}`
+                        : STATUS_LABEL[hospital.status]}
                 </span>
                 <button
                   type="button"

@@ -7,7 +7,7 @@
     idle ──[이동]──> dispatching ──도착──> on_scene ──이송 승인──> transporting ──도착──> at_hospital
      ▲                  ▲                    │ [현장 종료]       ▲                            │ 병원이 도착 결과를 고를 때까지 대기
      │                  │                    │                   └─ 이송 승인 ── rerouting ◀─┤ 수용 불가 (그 자리에서 재선택 대기)
-     └── 기지 도착 ── returning <────────────┴───────────────── 15초 ◀── 수용 ───────────────┘
+     └── 기지 도착 ── returning <────────────┴─────────────── 바로 ◀── 수용 ───────────────┘
                         │ [이동] (복귀 중 재출동)          rerouting에서 [현장 종료]도 가능 → returning
 
 - 환자 발생 위치: 기지에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오 다중 목적지
@@ -56,7 +56,9 @@ SPEEDUP = float(os.environ.get("HUB_SIM_SPEEDUP", "5"))
 TRIP_SEC = float(os.environ.get("HUB_SIM_TRIP_SEC", "5"))
 #: 정지할 수 있는 단계(2026-10-03) — 현장으로 출동 중 · 현장 도착 · 병원으로 이송 중
 PAUSABLE_PHASES = ("dispatching", "on_scene", "transporting")
-HOSPITAL_DWELL_SEC = float(os.environ.get("HUB_SIM_HOSPITAL_DWELL_SEC", "15"))
+#: [환자 수용 완료] 뒤 병원에 머무는 시간(초). 2026-10-03부터 0 — 수용을 누르면 다음 위치 갱신(1초 안)에 바로
+#: 기지로 출발한다(예전엔 15초 머물렀다). 시연에서 인계 장면을 보여주고 싶으면 이 값만 올린다.
+HOSPITAL_DWELL_SEC = float(os.environ.get("HUB_SIM_HOSPITAL_DWELL_SEC", "0"))
 POOL_DIR = Path(__file__).resolve().parent / "data" / "sim"
 
 
@@ -519,12 +521,9 @@ def _selftest() -> None:
         clock.t += 3600
         sim.tick()
         assert sim.on_arrival_result("A1", "c1", accepted=True)
-        clock.t += HOSPITAL_DWELL_SEC - 1
+        clock.t += HOSPITAL_DWELL_SEC
         sim.tick()
-        assert sim.phase_of("A1") == "at_hospital", "수용 뒤 15초는 병원에 머문다"
-        clock.t += 2
-        sim.tick()
-        assert sim.phase_of("A1") == "returning" and sim.case_of("A1") is None
+        assert sim.phase_of("A1") == "returning" and sim.case_of("A1") is None, "수용하면 바로 기지로 출발"
         assert sim.dispatch("A1", "c3")[0], "복귀 중 재출동 허용"
         assert sim.pause("A1")[0]
         clock.t += 3600

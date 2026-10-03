@@ -1,7 +1,7 @@
 """출동 시뮬레이션의 앱 레이어 검사(2026-10-01) — 실제 소켓·서버 없이 app 함수를 직접 부른다.
 
 [이동] → 현장 도착(후보 전송·통화 시작 허용) → 매칭 → 병원 승인 → 이송 승인(병원으로 이동, 병원 탭도
-위치를 받음) → 병원 도착 15초 → 기지 복귀(병원 탭은 안 받음) → 대기. 그리고 [현장 종료] 흐름.
+위치를 받음) → 병원 도착·수용 → 바로 기지 복귀(병원 탭은 안 받음) → 대기. 그리고 [현장 종료] 흐름.
 시계는 가짜로 돌리고 카카오는 부르지 않는다(직선 이동).
 
     python test_dispatch_sim.py
@@ -142,7 +142,7 @@ def main() -> None:
     assert not any(r["reasonCode"] == "NO_RESPONSE" for r in _REJECTIONS), "사건이 안 끝났으니 무응답 기록은 아직"
     print("  [확인] 결과 대기, 수용 불가 → 재선택 대기 · 거절 로그(stage=arrival, 결정 시점 스냅샷) · 존 확장 · 새 병원 탭 수신")
 
-    print("=== 새 병원 승인 → 이송 → 도착 수용 → 15초 → 기지 복귀(병원 탭은 안 받음) → 대기 ===")
+    print("=== 새 병원 승인 → 이송 → 도착 수용 → 바로 기지 복귀(병원 탭은 안 받음) → 대기 ===")
     app._handle_dashboard_action({"caseId": case_id, "action": "hospital_approve", "hospital_id": "T_FAR",
                                   "actor": "hospital", "timestamp": "2026-10-01T00:21:00Z"})
     app._handle_dashboard_action({"caseId": case_id, "action": "final_approval", "hospital_id": "T_FAR",
@@ -156,7 +156,7 @@ def main() -> None:
     assert any(m.get("type") == "case_closed" and m["caseId"] == case_id for m in amb.sent), "수용 완료 → 화면에서 사건 지움"
     assert not app.engine.get_cases_for_apid("A_SIM") and not app.engine.get_cases_for_hospital("T_FAR"), \
         "수용이 끝난 사건은 따라잡기에서 빠진다"
-    clock.t += HOSPITAL_DWELL_SEC + 1
+    clock.t += HOSPITAL_DWELL_SEC  # 2026-10-03부터 0 — 수용 뒤 다음 위치 갱신에 바로 출발
     hosp.sent.clear()
     app._sim_tick()
     assert app.sim.phase_of("A_SIM") == "returning" and _phases(amb)[-1] == "returning"
@@ -164,7 +164,7 @@ def main() -> None:
     clock.t += 3600
     app._sim_tick()
     assert app.sim.phase_of("A_SIM") == "idle" and app.engine.get_ambulance("A_SIM").gps == BASE
-    print("  [확인] 15초 대기 후 복귀, 기지 도착 시 대기")
+    print("  [확인] 수용 뒤 바로 복귀, 기지 도착 시 대기")
 
     print("=== [현장 종료] → 사건 닫고 바로 복귀 ===")
     case2 = "case-sim-end"

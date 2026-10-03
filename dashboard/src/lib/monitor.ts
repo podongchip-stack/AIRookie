@@ -1,3 +1,4 @@
+import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import type { AmbulancePhase, HospitalStatus, MonitorCase, Severity } from "@/types/dashboard";
 
 // 관제 지도(2026-10-03) 공용 계산. 지도 마커와 왼쪽 사건 목록이 같은 규칙을 쓰도록 한 곳에 둔다.
@@ -38,6 +39,8 @@ export interface HospitalRequest {
   caseId: string;
   ambulanceName: string;
   status: HospitalStatus;
+  // "병상 없음(E-Gen)" 또는 병원이 고른 거절 사유 — 수용 불가일 때 어떤 불가인지
+  note: string | null;
   severity: Severity | null;
   zone: number;
 }
@@ -56,6 +59,7 @@ export function hospitalRequests(cases: Record<string, MonitorCase>): Map<string
         caseId: monitorCase.caseId,
         ambulanceName: monitorCase.ambulanceName ?? monitorCase.apid ?? "구급차",
         status: hospital.status,
+        note: unavailableReasonLabel(hospital.unavailableReason) ?? rejectionReasonLabel(hospital.rejectReason),
         severity: monitorCase.severityTag,
         zone: hospital.zone,
       });

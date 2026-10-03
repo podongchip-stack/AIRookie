@@ -290,6 +290,13 @@ def _demote_reasons(
     return reasons
 
 
+def _unavailable_reason(status: HospitalStatus, demote_reasons: list[str]) -> str | None:
+    """병원이 아직 답하지 않았지만(판단 대기) 지금 수용할 수 없는 이유(2026-10-03). 응급실 병상 0이 확인되면
+    "beds_full" — 병원 승인도 막혀 있는 상태라(_is_confirmed_full) 화면에서 "판단 대기"로 두면 오해를 산다.
+    매칭·재계산 때마다 E-Gen 값으로 다시 정하므로 병상이 생기면 저절로 사라진다."""
+    return "beds_full" if status == "pending" and "beds_full" in demote_reasons else None
+
+
 def _sort_matches(matches: list[HospitalMatch]) -> list[HospitalMatch]:
     return sorted(
         matches,
@@ -375,6 +382,8 @@ class HubEngine:
         # (caseId, hospitalId) 조합을 키로 쓴다 — hospitalId만 쓰면 서로 다른
         # 사건이 같은 병원을 후보로 둘 때 승인 상태가 섞인다.
         self._approval_status: dict[tuple[str, str], HospitalStatus] = {}
+        # (caseId, hospitalId) -> 병원이 [불가] 때 고른 사유(2026-10-03). 화면의 사유 선택칸 표시용.
+        self._reject_reason: dict[tuple[str, str], str] = {}
         # 구급차 레지스트리(feature/info가 Supabase ambulances 테이블에서
         # 읽어 보내줌). GPS·voicePort 조회에 쓴다.
         self._ambulances: dict[str, AmbulanceInfo] = {}
@@ -623,6 +632,8 @@ class HubEngine:
         self._case_gps_fallback.pop(case_id, None)
         self._case_confirmed_at.pop(case_id, None)
         self._case_arrival.pop(case_id, None)
+        for key in [k for k in self._reject_reason if k[0] == case_id]:
+            del self._reject_reason[key]
         for key in [k for k in self._case_overlay if k[0] == case_id]:
             del self._case_overlay[key]
 
@@ -674,7 +685,7 @@ class HubEngine:
         self, case_id: str, match: HospitalMatch, status: HospitalStatus, now: datetime
     ) -> HospitalMatch:
         """캐시된 HospitalMatch 하나를 지금 상태(승인 상태·병상·만실 판정)로 다시 맞춘다."""
-        update: dict[str, Any] = {"status": status}
+        update: dict[str, Any] = {"status": status, "rejectReason": self._reject_reason_for(case_id, match.hospitalId, status)}
         info = self._hospitals.get(match.hospitalId)
         if info is not None:
             beds = self.effective_bed_count(info)
@@ -688,9 +699,13 @@ class HubEngine:
                     info, self._case_group.get(case_id), status, beds, unknown, stale
                 ),
             )
+            update["unavailableReason"] = _unavailable_reason(status, update["demoteReasons"])
         elif status == "rejected":
             update["demoteReasons"] = ["rejected"]
         return match.model_copy(update=update)
+
+    def _reject_reason_for(self, case_id: str, hospital_id: str, status: HospitalStatus) -> str | None:
+        return self._reject_reason.get((case_id, hospital_id)) if status == "rejected" else None
 
     def _patch_case_result_status(self, case_id: str, hospital_id: str, status: HospitalStatus) -> None:
         """캐시해둔 사건의 매칭 결과에서 해당 병원의 status·병상 정보·내림 이유를 최신 값으로
@@ -784,6 +799,10 @@ class HubEngine:
 
             new_status = _ACTION_TO_STATUS[action.action]
             self._approval_status[status_key] = new_status
+            if action.action == "hospital_reject":
+                self._reject_reason[status_key] = action.reason or "UNSPECIFIED"
+            else:
+                self._reject_reason.pop(status_key, None)
             if new_status == "confirmed":
                 # 이송 확정 시각을 기록해둔다 — _prune_old_cases()가 이 시각을 기준으로
                 # CASE_RETENTION_MIN이 지난 사건을 캐시에서 걷어낸다. 병상이 안 깎인
@@ -1083,7 +1102,9 @@ class HubEngine:
                         loadReason=load_reason,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
-                        demoteReasons=_demote_reasons(info, best_group, status, beds, unknown, stale),
+                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale)),
+                        rejectReason=self._reject_reason_for(voice.caseId, info.hospitalId, status),
+                        unavailableReason=_unavailable_reason(status, demote),
                         bedDataStale=stale,
                     )
                 )

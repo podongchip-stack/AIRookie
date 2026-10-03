@@ -516,8 +516,12 @@ def _monitor_case(payload: dict) -> dict:
         zoneBandKm=ZONE_BAND_KM,
         hospitals=[
             MonitorCaseHospital(
-                hospitalId=h["hospitalId"], name=h["name"], status=h.get("status", "pending"),
+                hospitalId=h["hospitalId"], name=h["name"],
+                # 병원이 안 눌렀어도 응급실 병상 0이 확인되면(E-Gen) 지도엔 "수용 불가"로 — 판단 대기로 두면 아직
+                # 답할 병원처럼 보였다(2026-10-03). E-Gen 갱신으로 병상이 생기면 재계산 때 판단 대기로 돌아온다.
+                status="rejected" if h.get("unavailableReason") and h.get("status") == "pending" else h.get("status", "pending"),
                 distanceKm=h["distanceKm"], roadDistanceKm=h.get("roadDistanceKm"), zone=zone_of(h["distanceKm"]),
+                rejectReason=h.get("rejectReason"), unavailableReason=h.get("unavailableReason"),
             )
             for h in payload.get("hospitals") or []
         ],

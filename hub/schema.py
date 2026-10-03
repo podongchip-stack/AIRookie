@@ -384,6 +384,12 @@ class HospitalMatch(BaseModel):
     # 순위 계산에 쓴 이동 시간(분)과 그 출처. etaMin은 표시용 올림값, 이건 계산용 원값이다.
     travelMin: Optional[float] = None
     travelBasis: Optional[TravelBasis] = None
+    # 병원이 [불가]를 누를 때 고른 사유(2026-10-03, status=rejected일 때만). 병원 화면의 사유 선택칸이 이 값을 보여준다.
+    rejectReason: Optional[str] = None
+    # 병원이 누르지 않았는데도 지금 수용할 수 없는 이유(2026-10-03, 규칙 기반). "beds_full" = 응급실 병상 0이
+    # 확인됨(E-Gen, 미상·1일 넘은 값 제외 — demoteReasons의 beds_full과 같은 기준). status는 pending 그대로라
+    # 병원의 거절로 세지 않고(거절 로그·존 확장 비율 X), E-Gen이 갱신돼 병상이 생기면 재계산 때 사라진다.
+    unavailableReason: Optional[str] = None
     # 카카오 내비 기준 도로 거리(km, 2026-10-03). 화면은 이걸 우선 보여주고, 없으면(ETA 못 받음) distanceKm를
     # "직선 추정"으로 표시한다. distanceKm(직선)는 존 판정·설명용으로 그대로 둔다.
     roadDistanceKm: Optional[float] = None
@@ -618,6 +624,10 @@ class MonitorCaseHospital(BaseModel):
     status: HospitalStatus
     distanceKm: float
     roadDistanceKm: Optional[float] = None  # 내비 기준(없으면 직선 distanceKm만)
+    # 병원이 고른 거절 사유 / 병원이 안 눌렀어도 지금 수용 불가인 이유("beds_full", E-Gen 기준 — 이때 status는
+    # rejected로 보낸다, 2026-10-03). 지도는 둘을 구분해 "수용 불가"와 "병상 없음"으로 보여준다.
+    rejectReason: Optional[str] = None
+    unavailableReason: Optional[str] = None
     # 이 병원이 든 존(1부터, 5km 간격). 존이 넓혀지면 바깥 존 병원들이 새로 들어온다.
     zone: int
 

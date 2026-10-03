@@ -153,6 +153,10 @@ export interface HospitalCandidate {
   // 직선거리(존 판정·설명용). 화면엔 roadDistanceKm(카카오 내비 도로 거리, 2026-10-03)를 우선 보여준다.
   distanceKm: number;
   roadDistanceKm?: number | null;
+  // 병원이 [불가] 때 고른 사유(status=rejected일 때) / 병원이 안 눌렀어도 지금 수용 불가인 이유
+  // ("beds_full" = 응급실 병상 0 확인, E-Gen 기준 — E-Gen이 갱신돼 병상이 생기면 사라진다). 2026-10-03.
+  rejectReason?: string | null;
+  unavailableReason?: string | null;
   specialtyMatch: SpecialtyMatch;
   availableBedCount: number;
   // availableBedCount가 0일 때 그게 "확인된 만실"인지 "미상"인지 구분한다. hub가
@@ -403,6 +407,9 @@ export interface MonitorCaseHospital {
   status: HospitalStatus;
   distanceKm: number;
   roadDistanceKm?: number | null;
+  // 병원이 고른 거절 사유 / 병원이 안 눌렀어도 지금 수용 불가인 이유("beds_full" — 이때 status는 rejected로 온다)
+  rejectReason?: string | null;
+  unavailableReason?: string | null;
   // 이 병원이 든 존(1부터, zoneBandKm 간격). 거절 비율로 존이 넓혀지면 바깥 존 병원이 새로 들어온다.
   zone: number;
 }
