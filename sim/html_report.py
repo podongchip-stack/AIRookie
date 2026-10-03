@@ -88,6 +88,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
   th:first-child, td:first-child { text-align: left; }
   th { color: var(--ink-3); font-weight: 600; }
   ul.assume { font-size: 11.5px; color: var(--ink-2); padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+  .refgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 760px) { .refgrid { grid-template-columns: 1fr; } }
+  .refcol h3 { font-size: 12.5px; color: var(--ink-1); margin-bottom: 8px; }
+  .refrow { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 11.5px; }
+  .refrow .lbl { width: 130px; text-align: right; color: var(--ink-2); flex-shrink: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .refrow .bar { height: 13px; border-radius: 3px; min-width: 2px; }
+  .refrow .val { color: var(--ink-1); font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -111,6 +119,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <h2>병원별 도착 환자 — 쏠림이 어디서 생기나 (시드 평균)</h2>
     <p class="sub">막대 = 도착 환자, 세로선 = 그 병원의 가용 병상. <span class="overload-note">빨간 구간 = 병상을 넘겨 도착(재이송·과밀의 원인)</span></p>
     <div id="bars"></div>
+  </section>
+
+  <section class="card" id="reference-card" style="display:none">
+    <h2>참조 — 2019년 실제 수동 분산 기록과 분포 모양 비교</h2>
+    <p class="sub" id="ref-sub"></p>
+    <div id="reference" class="refgrid"></div>
+    <p class="note" id="ref-caveat" style="margin-top:8px"></p>
   </section>
 
   <section class="card">
@@ -196,12 +211,14 @@ for (const arm of ARMS) {
   for (let v = 0; v <= xMax; v += 10)
     g += `<text x="${x(v)}" y="${H-10}" text-anchor="middle" font-size="11" fill="var(--ink-3)">${v}분</text>`;
   let paths = "", labels = "";
-  ARMS.forEach(arm => {
+  ARMS.forEach((arm, idx) => {
     const times = DATA.arms[arm].transportTimesSeed0;
     const pts = times.map((t, i) => `${x(t)},${y((i + 1) / times.length)}`);
     paths += `<polyline points="${x(0)},${y(0)} ${pts.join(" ")}" fill="none" stroke="var(${ARM_VAR[arm]})" stroke-width="2" stroke-linejoin="round"/>`;
     const last = times[times.length - 1];
-    labels += `<text x="${x(Math.min(last, xMax))+6}" y="${y(1)+4}" font-size="11.5" font-weight="600" fill="var(--ink-1)">${ARM_LABEL[arm]}</text>`;
+    // 선 끝 x가 비슷하면 라벨이 겹친다 — 팔 순서대로 세로로 한 줄씩 내려 그린다.
+    labels += `<text x="${x(Math.min(last, xMax))+6}" y="${y(1)+4+idx*14}" font-size="11.5" font-weight="600" fill="var(--ink-1)">` +
+      `<tspan fill="var(${ARM_VAR[arm]})">●</tspan> ${ARM_LABEL[arm]}</text>`;
   });
   const hover = `<rect id="cdf-hover" x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="transparent"/>` +
                 `<line id="cdf-cross" y1="${T}" y2="${H-B}" stroke="var(--axis)" stroke-width="1" visibility="hidden"/>`;
@@ -377,6 +394,32 @@ for (const arm of ARMS) {
   }
   scrub.value = Math.min(+(hash.get("t") || 0), +scrub.max);
   renderAt(+scrub.value);
+})();
+
+// ── 2019 실측 분산 참조 (reference가 있는 장면만 — 일산) ─────────────────────
+(function reference() {
+  const ref = DATA.reference;
+  if (!ref) return;
+  document.getElementById("reference-card").style.display = "";
+  document.getElementById("ref-sub").textContent =
+    `${ref.incident} 입원환자 ${ref.transported}명의 실제 분산(수동 — DMAT·상황실이 모바일로 병상 정보를 공유하며 선정) vs 이 시뮬레이션의 골든링크 분포. 분포의 "모양"만 비교한다 — 2019년과 지금의 병원·병상은 다른 세계다.`;
+  const rows = (items, color) => {
+    const max = Math.max(...items.map(i => i.patients));
+    return items.map(i =>
+      `<div class="refrow"><span class="lbl" title="${i.label}">${i.label}</span>` +
+      `<span class="bar" style="width:${Math.max(i.patients / max * 100, 1.5)}%;background:${color}"></span>` +
+      `<span class="val">${i.patients}</span></div>`).join("");
+  };
+  const actual = [...ref.hospitals].sort((a, b) => b.patients - a.patients);
+  const simRows = DATA.arms.goldenlink.hospitals
+    .filter(h => h.arrivals > 0)
+    .sort((a, b) => b.arrivals - a.arrivals)
+    .slice(0, actual.length)
+    .map(h => ({ label: h.name, patients: Math.round(h.arrivals) }));
+  document.getElementById("reference").innerHTML =
+    `<div class="refcol"><h3>실제 (2019, 학회지 Table 3 — 수동 분산)</h3>${rows(actual, "var(--ink-3)")}</div>` +
+    `<div class="refcol"><h3>시뮬레이션 — 골든링크 (시드 평균)</h3>${rows(simRows, `var(${ARM_VAR.goldenlink})`)}</div>`;
+  document.getElementById("ref-caveat").textContent = `${ref.caveat} 출처: ${ref.source}`;
 })();
 
 // ── 데이터 표 ────────────────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
 {
+ "reference": null,
  "scenario": {
   "scene": {
    "lat": 37.53465,
    "lng": 126.99418,
-   "label": "이태원역 (2022-10-29 참사 현장)"
+   "label": "이태원역 (2022-10-29 참사와 같은 장소·시각대)"
   },
   "snapshotTs": "2026-10-02T22:20:01.892706+09:00",
   "radiusKm": 10.0,
@@ -245,19 +246,19 @@
    "distanceKm": 9.1
   },
   {
-   "hpid": "A1100005",
-   "name": "이화여자대학교의과대학부속목동병원",
-   "lat": 37.53654282637804,
-   "lng": 126.8862159683056,
-   "capacity": 4,
-   "distanceKm": 9.52
-  },
-  {
    "hpid": "A1100024",
    "name": "명지성모병원",
    "lat": 37.4938507104387,
    "lng": 126.89925446922592,
    "capacity": 8,
+   "distanceKm": 9.52
+  },
+  {
+   "hpid": "A1100005",
+   "name": "이화여자대학교의과대학부속목동병원",
+   "lat": 37.53654282637804,
+   "lng": 126.8862159683056,
+   "capacity": 4,
    "distanceKm": 9.52
   },
   {
@@ -519,17 +520,17 @@
      "overload": 0
     },
     {
-     "hpid": "A1100005",
-     "name": "이화여자대학교의과대학부속목동병원",
-     "capacity": 4,
+     "hpid": "A1100024",
+     "name": "명지성모병원",
+     "capacity": 8,
      "arrivals": 0,
      "admitted": 0,
      "overload": 0
     },
     {
-     "hpid": "A1100024",
-     "name": "명지성모병원",
-     "capacity": 8,
+     "hpid": "A1100005",
+     "name": "이화여자대학교의과대학부속목동병원",
+     "capacity": 4,
      "arrivals": 0,
      "admitted": 0,
      "overload": 0
@@ -1951,11 +1952,11 @@
      "events": []
     },
     {
-     "hpid": "A1100005",
+     "hpid": "A1100024",
      "events": []
     },
     {
-     "hpid": "A1100024",
+     "hpid": "A1100005",
      "events": []
     },
     {
@@ -5003,17 +5004,17 @@
      "overload": 0
     },
     {
-     "hpid": "A1100005",
-     "name": "이화여자대학교의과대학부속목동병원",
-     "capacity": 4,
+     "hpid": "A1100024",
+     "name": "명지성모병원",
+     "capacity": 8,
      "arrivals": 0,
      "admitted": 0,
      "overload": 0
     },
     {
-     "hpid": "A1100024",
-     "name": "명지성모병원",
-     "capacity": 8,
+     "hpid": "A1100005",
+     "name": "이화여자대학교의과대학부속목동병원",
+     "capacity": 4,
      "arrivals": 0,
      "admitted": 0,
      "overload": 0
@@ -5884,11 +5885,11 @@
      "events": []
     },
     {
-     "hpid": "A1100005",
+     "hpid": "A1100024",
      "events": []
     },
     {
-     "hpid": "A1100024",
+     "hpid": "A1100005",
      "events": []
     },
     {
@@ -8056,17 +8057,17 @@
      "overload": 0
     },
     {
-     "hpid": "A1100005",
-     "name": "이화여자대학교의과대학부속목동병원",
-     "capacity": 4,
+     "hpid": "A1100024",
+     "name": "명지성모병원",
+     "capacity": 8,
      "arrivals": 0,
      "admitted": 0,
      "overload": 0
     },
     {
-     "hpid": "A1100024",
-     "name": "명지성모병원",
-     "capacity": 8,
+     "hpid": "A1100005",
+     "name": "이화여자대학교의과대학부속목동병원",
+     "capacity": 4,
      "arrivals": 0,
      "admitted": 0,
      "overload": 0
@@ -8937,11 +8938,11 @@
      "events": []
     },
     {
-     "hpid": "A1100005",
+     "hpid": "A1100024",
      "events": []
     },
     {
-     "hpid": "A1100024",
+     "hpid": "A1100005",
      "events": []
     },
     {

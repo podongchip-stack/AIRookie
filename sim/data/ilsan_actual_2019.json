@@ -1,0 +1,20 @@
+{
+  "source": "김민규·서주현·김용석·배소현, 여성병원 화재 사고에서의 재난 의료 대응에 관한 고찰, 대한응급의학회지 32(1):36-47, 2021 — Table 3",
+  "sourceUrl": "https://www.jksem.org/upload/pdf/jksem-32-1-36.pdf",
+  "incident": "2019-12-14 10:07 고양 일산동구 여성병원 화재 (토요일). 10:34 진압, 사망 0.",
+  "note": "여성병원 입원환자 143명 중 자진 귀가 5명을 제외한 138명의 실제 분산 이송 기록. 병원명은 논문의 익명화(A~H)를 그대로 따른다. 이송 병원 선정은 '모바일 상황실을 통해 실시간으로 공유한 인근 병원의 병상 정보'를 기반으로 DMAT·중앙응급의료센터가 수동으로 수행했다. 별도로 단순 연기 흡입 성인 85명이 인근 10개 병원으로 분산됐다(병원별 수치는 논문에 없음).",
+  "transported": 138,
+  "triage": { "immediate": 2, "delayed": 53, "minimal": 83 },
+  "hospitals": [
+    { "label": "A (권역응급의료센터)", "patients": 83 },
+    { "label": "B (지역응급의료센터)", "patients": 25 },
+    { "label": "D", "patients": 12 },
+    { "label": "C", "patients": 10 },
+    { "label": "E", "patients": 3 },
+    { "label": "F", "patients": 2 },
+    { "label": "G", "patients": 2 },
+    { "label": "H", "patients": 1 }
+  ],
+  "timeline": { "fire": "10:07", "dmatArrived": "10:35", "extinguished": "10:34", "newbornMassTransferStart": "12:16", "sceneEnd": "17:44" },
+  "caveat": "A 병원의 83명 집중은 쏠림 실패가 아니라 '신생아를 권역센터로 모아 2차 분류'하는 의도된 허브 전략이었다. 2019년의 병원·병상 상태와 2026년 스냅샷은 다른 세계이므로 병원별 1:1 대응 비교는 불가능하며, 분포의 모양(몇 개 병원에 어떻게 퍼졌나)만 참조선으로 쓴다."
+}

@@ -149,9 +149,13 @@ def _screenshot(html: Path, png: Path) -> bool:
 
 
 def main() -> None:
-    results_path = OUT / "results.json"
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scene", default="itaewon", help="run.py --scene과 같은 값")
+    args = parser.parse_args()
+    results_path = OUT / f"results_{args.scene}.json"
     if not results_path.exists():
-        raise SystemExit("out/results.json이 없다 — 먼저 python run.py 실행")
+        raise SystemExit(f"{results_path}가 없다 — 먼저 python run.py --scene {args.scene} 실행")
     data = json.loads(results_path.read_text(encoding="utf-8"))
     scenario = _scenario_line(data["scenario"])
 
@@ -174,8 +178,8 @@ def main() -> None:
     OUT.mkdir(exist_ok=True)
     made = []
     for stem, body, title in (
-        ("slide_summary", summary_body, "대량사고 분산 이송 요약"),
-        ("slide_hospitals", hospitals_body, "병원별 쏠림"),
+        (f"slide_{args.scene}_summary", summary_body, "대량사고 분산 이송 요약"),
+        (f"slide_{args.scene}_hospitals", hospitals_body, "병원별 쏠림"),
     ):
         html_path = OUT / f"{stem}.html"
         html_path.write_text(
