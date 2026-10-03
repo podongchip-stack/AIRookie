@@ -5,6 +5,7 @@ import { css } from "styled-system/css";
 import {
   type LiveBoard,
   SERIES,
+  HourlyBars,
   LiveChart,
   ageLabel,
   bedLabel,
@@ -18,7 +19,7 @@ import {
 // 밝은 홀 조명 — 어두운 바탕 위의 큰 숫자가 유일하게 멀리서 읽힌다.
 // 조작: ←/→ 슬라이드 이동, 스페이스 일시정지, 클릭 다음 장. 85초에 한 바퀴.
 
-const SLIDE_SEC = [9, 12, 16, 14, 24, 12]; // 슬라이드별 체류 시간(초)
+const SLIDE_SEC = [9, 12, 16, 12, 14, 24, 12]; // 슬라이드별 체류 시간(초)
 
 // panda 토큰(CSS 변수)을 이 페이지 범위에서만 다크로 덮는다 — LiveChart가 쓰는
 // var(--colors-*)가 그대로 다크 값을 받아, 차트 코드를 복제하지 않는다.
@@ -128,7 +129,7 @@ export default function StagePage() {
 
   // 슬라이드 5(리플레이): 슬라이드에 머무는 동안 지난 24시간을 20초에 재생하고 반복
   const replay = useMemo(() => {
-    if (!data || slide !== 4) return null;
+    if (!data || slide !== 5) return null;
     const lastMs = Date.parse(data.lastPollTs);
     const startMs = lastMs - 24 * 3600 * 1000;
     const loopSec = 20;
@@ -170,7 +171,7 @@ export default function StagePage() {
       <div className={css({ position: "absolute", top: "0", left: "0", right: "0", display: "flex", alignItems: "center", gap: "14px", paddingX: "clamp(32px, 7vw, 120px)", paddingY: "18px", fontSize: "clamp(12px, 1vw, 15px)", color: "#8a8984", zIndex: "10" })}>
         <span className={css({ display: "inline-flex", alignItems: "center", gap: "7px", color: "#1baf7a", fontWeight: "semibold" })}>
           <span className={css({ width: "8px", height: "8px", borderRadius: "full", backgroundColor: "#1baf7a", animation: "pulse 2.2s ease-out infinite" })} />
-          라이브 — 실제 E-Gen 기록, 20분마다 채점
+          라이브 — 실제 E-Gen 기록, 골든링크 모델을 20분마다 채점
         </span>
         <span>마지막 폴링 {kstTime(data.lastPollTs)}</span>
         {surging && <span className={css({ color: "#e66767", fontWeight: "semibold" })}>전국 변동 {data.regime!.current.level >= 2 ? "급증" : "주의"} · 평시의 {data.regime!.current.ratio}배</span>}
@@ -185,6 +186,7 @@ export default function StagePage() {
           그 숫자, 하루 <span className={css({ color: "#e66767" })}>{perDay.toLocaleString()}번</span> 크게 어긋납니다.
         </h1>
         <p className={eyebrowless}>지난 {data.windowHours}시간, 전국 병원 실측 {h.valueChanges.toLocaleString()}번의 값 변화로 직접 센 숫자입니다.</p>
+        <p className={eyebrowless}>그래서 골든링크의 모델은 <b className={css({ color: "#f4f4f0" })}>API의 숫자를 그대로 믿지 않습니다</b> — 값마다 의심하고, 20분마다 실측으로 검증받습니다.</p>
       </section>
 
       {/* 2 — 세 숫자 비교 */}
@@ -193,8 +195,8 @@ export default function StagePage() {
         <div className={css({ display: "flex", gap: "clamp(28px, 5vw, 90px)", flexWrap: "wrap", alignItems: "flex-end" })}>
           {[
             { label: "모든 신고값을 그대로 믿으면", pct: `${agg.allPct}%`, color: SERIES.all.color },
-            { label: "엔진이 “믿어도 됨”으로 고른 값만 믿으면", pct: `${agg.hiPct}%`, color: "#3987e5" },
-            { label: "엔진이 “위험”으로 경고한 값은", pct: `${agg.warnPct}%`, color: "#d95926" },
+            { label: "골든링크 모델이 “믿어도 됨”으로 고른 값만 믿으면", pct: `${agg.hiPct}%`, color: "#3987e5" },
+            { label: "모델이 “위험”으로 경고한 값은", pct: `${agg.warnPct}%`, color: "#d95926" },
           ].map((item, i) => (
             <div key={item.label} className={css({ display: "flex", flexDirection: "column", gap: "6px", transition: "opacity 0.5s ease-out", transitionDelay: `${i * 0.45}s` })}
               style={{ opacity: slide === 1 ? 1 : 0 }}>
@@ -211,7 +213,7 @@ export default function StagePage() {
       {/* 3 — 라이브 차트 */}
       <section {...slideProps(2)}>
         <h1 className={css({ fontSize: "clamp(26px, 2.8vw, 44px)", fontWeight: "bold", letterSpacing: "-0.02em" })}>
-          20분마다 점이 하나씩 — <span className={css({ color: "#3987e5" })}>엔진이 고른 값</span>은 늘 위에 있습니다
+          20분마다 점이 하나씩 — <span className={css({ color: "#3987e5" })}>모델이 고른 값</span>은 늘 위에 있습니다
         </h1>
         {points.length >= 3 && (
           <div className={css({ "& text": { fontSize: "13px" } })}>
@@ -224,7 +226,7 @@ export default function StagePage() {
       {/* 4 — 지역 격차 */}
       <section {...slideProps(3)}>
         <h1 className={css({ fontSize: "clamp(26px, 2.8vw, 44px)", fontWeight: "bold", letterSpacing: "-0.02em" })}>
-          신고값 품질은 지역 복불복 — 엔진을 거치면 <span className={css({ color: "#3987e5" })}>어디서나 96% 이상</span>
+          신고값 품질은 지역 복불복 — 모델을 거치면 <span className={css({ color: "#3987e5" })}>어디서나 96% 이상</span>
         </h1>
         <div className={css({ display: "flex", flexDirection: "column", gap: "clamp(8px, 1.4vh, 16px)", maxWidth: "1100px" })}>
           {regions.map((region, i) => (
@@ -247,8 +249,21 @@ export default function StagePage() {
         <p className={noteStyle}>회색 = 모든 신고값 · 파랑 = 엔진이 고른 값 · 띠 길이 = 엔진이 끌어올린 폭 — 원값이 나쁜 지역일수록 이득이 큽니다</p>
       </section>
 
-      {/* 5 — 24시간 자동 리플레이 */}
+      {/* 5 — 하루의 리듬 */}
       <section {...slideProps(4)}>
+        <h1 className={css({ fontSize: "clamp(26px, 2.8vw, 44px)", fontWeight: "bold", letterSpacing: "-0.02em" })}>
+          어긋남에는 <span className={css({ color: "#d95926" })}>하루의 리듬</span>이 있습니다
+        </h1>
+        {data.timeseries && data.timeseries.length >= 24 && (
+          <div className={css({ "& text": { fontSize: "15px" } })}>
+            <HourlyBars timeseries={data.timeseries} tall />
+          </div>
+        )}
+        <p className={noteStyle}>시간대별(KST) 폴링당 평균 어긋남 — 아침 병상 정리 러시가 가장 위험한 시간입니다. 모델이 아침 신고값의 신뢰도를 깎는 이유.</p>
+      </section>
+
+      {/* 6 — 24시간 자동 리플레이 */}
+      <section {...slideProps(5)}>
         <h1 className={css({ fontSize: "clamp(26px, 2.8vw, 44px)", fontWeight: "bold", letterSpacing: "-0.02em" })}>
           지난 24시간을 20초로 — {replay ? kstTime(replay.cutoff) : ""}
           {replay && (
@@ -269,11 +284,11 @@ export default function StagePage() {
             </div>
           ))}
         </div>
-        <p className={noteStyle}>실데이터 재생입니다(연출 아님) — 신고값이 3석 이상 어긋난 순간과, 어긋나기 직전 엔진이 매긴 신뢰도</p>
+        <p className={noteStyle}>실데이터 재생입니다(연출 아님) — 신고값이 3석 이상 어긋난 순간과, 어긋나기 직전 모델이 매긴 신뢰도</p>
       </section>
 
-      {/* 6 — 지금 가장 의심스러운 신고값 */}
-      <section {...slideProps(5)}>
+      {/* 7 — 지금 가장 의심스러운 신고값 */}
+      <section {...slideProps(6)}>
         <h1 className={css({ fontSize: "clamp(26px, 2.8vw, 44px)", fontWeight: "bold", letterSpacing: "-0.02em" })}>지금 이 순간, 가장 의심스러운 신고값</h1>
         <div className={css({ display: "flex", flexDirection: "column", gap: "clamp(10px, 1.6vh, 18px)" })}>
           {data.board.slice(0, 5).map((row) => {

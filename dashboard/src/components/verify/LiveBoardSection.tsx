@@ -85,7 +85,7 @@ const WARN_ROLL = 18; // 경고선은 폴링당 표본이 4건 안팎이라 6시
 // 용어는 화면 전체에서 통일한다: 신고값(E-Gen 원본) · 유지율(다음 실측까지 맞은 비율) ·
 // 어긋남(3석 이상 틀어짐). "거짓/깨짐/묵음" 같은 변주를 섞지 않는다.
 export const SERIES = {
-  hi: { color: "#2a78d6", label: "엔진이 고른 값" },      // "믿어도 됨"(조건부 확률 80%↑)
+  hi: { color: "#2a78d6", label: "모델이 고른 값" },      // "믿어도 됨"(조건부 확률 80%↑)
   all: { color: "#8a8884", label: "모든 신고값" },         // 선별 없이 전부 믿었을 때
   warn: { color: "#eb6834", label: "경고한 값" },          // "위험"(50% 미만)
 } as const;
@@ -289,6 +289,83 @@ export function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint
   );
 }
 
+// ── 하루의 리듬 — 시간대별 어긋남 막대 ────────────────────────────────────────
+// 어긋남은 하루 안에서 14배까지 출렁인다(새벽 3~6시 폴링당 3건대 vs 오전 9시 44건).
+// 모델이 아침 신고값을 조심하는 이유이자, 레짐 감지가 필요한 이유를 막대 하나로 보여준다.
+// 막대 색은 "모든 신고값" 시리즈의 회색(정체성 유지) — 최고 시간대만 직접 라벨, 현재
+// 시각은 테두리로 표시한다.
+
+export function HourlyBars({ timeseries, tall = false }: { timeseries: PollStat[]; tall?: boolean }) {
+  const byHour = Array.from({ length: 24 }, () => ({ sum: 0, cnt: 0 }));
+  for (const poll of timeseries) {
+    const hour = Number(
+      new Date(poll.ts).toLocaleString("en-GB", { timeZone: "Asia/Seoul", hour: "2-digit", hour12: false }),
+    );
+    byHour[hour].sum += poll.breaks;
+    byHour[hour].cnt += 1;
+  }
+  const values = byHour.map((b) => (b.cnt ? b.sum / b.cnt : 0));
+  const max = Math.max(...values, 1);
+  const peakHour = values.indexOf(max);
+  const minPositive = Math.min(...values.filter((v) => v > 0), max);
+  const nowHour = Number(new Date().toLocaleString("en-GB", { timeZone: "Asia/Seoul", hour: "2-digit", hour12: false }));
+
+  const W = 1000;
+  const H = tall ? 300 : 170;
+  const B = 26;
+  const T = tall ? 34 : 28;
+  const gap = 6;
+  const barW = (W - gap * 23) / 24;
+  const yOf = (v: number) => (H - T - B) * (v / max);
+
+  return (
+    <div className={css({ position: "relative" })}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={css({ width: "100%", height: "auto", display: "block" })}>
+        <line x1="0" y1={H - B} x2={W} y2={H - B} stroke="var(--colors-line)" strokeWidth="1" />
+        {values.map((v, hour) => {
+          const x = hour * (barW + gap);
+          const h = Math.max(yOf(v), v > 0 ? 2 : 0);
+          const isPeak = hour === peakHour;
+          const isNow = hour === nowHour;
+          return (
+            <g key={hour}>
+              <rect
+                x={x} y={H - B - h} width={barW} height={h} rx="3"
+                fill={isPeak ? "var(--colors-ink2)" : "#8a8884"}
+                opacity={isPeak ? 1 : 0.55}
+                stroke={isNow ? "var(--colors-ink)" : "none"}
+                strokeWidth={isNow ? 1.5 : 0}
+              />
+              <text x={x + barW / 2} y={H - 8} textAnchor="middle" fontSize={tall ? 13 : 11} fill="var(--colors-ink3)">
+                {hour % 3 === 0 ? hour : ""}
+              </text>
+              {isPeak && (
+                <text x={x + barW / 2} y={H - B - h - 8} textAnchor="middle" fontSize={tall ? 15 : 12} fontWeight="600" fill="var(--colors-ink)">
+                  {hour}시 {v.toFixed(0)}건
+                </text>
+              )}
+              {isNow && !isPeak && (
+                <text x={x + barW / 2} y={H - B - h - 8} textAnchor="middle" fontSize={tall ? 13 : 11} fill="var(--colors-ink2)">
+                  지금
+                </text>
+              )}
+              <rect x={x - gap / 2} y={0} width={barW + gap} height={H} fill="transparent">
+                <title>{`${hour}시 — 폴링당 평균 어긋남 ${v.toFixed(1)}건 (폴링 ${byHour[hour].cnt}회)`}</title>
+              </rect>
+            </g>
+          );
+        })}
+        {/* 스테이지(tall)에서는 슬라이드 자체 문구가 있어 내부 캡션을 숨긴다(피크 라벨과 겹침 방지) */}
+        {!tall && (
+          <text x={0} y={T - 14} fontSize={12} fill="var(--colors-ink3)">
+            폴링(20분)당 평균 어긋남 · 최저 시간대({minPositive.toFixed(1)}건)의 {(max / Math.max(minPositive, 0.1)).toFixed(0)}배까지 출렁입니다
+          </text>
+        )}
+      </svg>
+    </div>
+  );
+}
+
 // ── 지역별 격차 — "평균의 오류" 분해 ─────────────────────────────────────────
 // 시도마다 회색 점(E-Gen 원값 유지율)과 파란 점(엔진 선별 유지율)을 한 트랙에 찍는다.
 // 두 점을 잇는 띠의 길이 = 엔진이 그 지역에서 끌어올린 폭. 원값이 나쁜 지역(수도권 등)
@@ -303,7 +380,7 @@ function RegionGaps({ regions, windowHours }: { regions: RegionStat[]; windowHou
   return (
     <div className={css({ display: "flex", flexDirection: "column", gap: "2", borderTopWidth: "1px", borderColor: "line", paddingTop: "4" })}>
       <h3 className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
-        지역별 격차 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>신고값 품질은 지역마다 다르지만, 엔진이 고른 값은 어디서나 96% 이상입니다</span>
+        지역별 격차 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>신고값 품질은 지역마다 다르지만, 모델이 고른 값은 어디서나 96% 이상입니다</span>
       </h3>
       <div className={css({ display: "grid", gridTemplateColumns: { base: "1fr", md: "1fr 1fr" }, columnGap: "8", rowGap: "1" })}>
         {rows.map((region) => {
@@ -333,8 +410,8 @@ function RegionGaps({ regions, windowHours }: { regions: RegionStat[]; windowHou
       </div>
       <p className={smallStyle}>
         <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginRight: "1" })} style={{ backgroundColor: SERIES.all.color }} /> 모든 신고값
-        <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginLeft: "3", marginRight: "1" })} style={{ backgroundColor: SERIES.hi.color }} /> 엔진이 고른 값 ·
-        띠의 길이가 엔진이 그 지역에서 끌어올린 폭입니다 · 표본이 적은 지역은 제외 ·
+        <span className={css({ display: "inline-block", width: "7px", height: "7px", borderRadius: "full", marginLeft: "3", marginRight: "1" })} style={{ backgroundColor: SERIES.hi.color }} /> 모델이 고른 값 ·
+        띠의 길이가 모델이 그 지역에서 끌어올린 폭입니다 · 표본이 적은 지역은 제외 ·
         서울·경기가 하위권인 것은 수도권 응급실의 회전 속도 때문입니다
       </p>
     </div>
@@ -374,7 +451,11 @@ export function LiveBoardSection() {
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [replayPos, setReplayPos] = useState<number | null>(null);
+  // 자동 재생 모드(부스 방치용): /verify?autoplay=1 — 데이터가 뜨면 다시 보기를 스스로
+  // 시작하고, 끝나면 잠시 쉬었다 반복한다. 평소 사용(파라미터 없음)에는 영향이 없다.
+  const [autoplay, setAutoplay] = useState(false);
   const replayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoplayRestart = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     const httpUrl = process.env.NEXT_PUBLIC_HUB_HTTP_URL;
@@ -394,7 +475,10 @@ export function LiveBoardSection() {
   }, []);
 
   useEffect(() => {
-    const kick = setTimeout(() => void load(), 0); // effect 안 동기 setState lint 회피
+    const kick = setTimeout(() => {
+      setAutoplay(new URLSearchParams(window.location.search).get("autoplay") === "1");
+      void load();
+    }, 0); // effect 안 동기 setState lint 회피
     const refresh = setInterval(() => void load(), REFRESH_MS);
     const tick = setInterval(() => setNowMs(Date.now()), 1000);
     return () => {
@@ -402,17 +486,22 @@ export function LiveBoardSection() {
       clearInterval(refresh);
       clearInterval(tick);
       if (replayTimer.current) clearInterval(replayTimer.current);
+      if (autoplayRestart.current) clearTimeout(autoplayRestart.current);
     };
   }, [load]);
 
   const points = useMemo(() => (data?.timeseries ? buildPoints(data.timeseries) : []), [data]);
 
-  const stopReplay = () => {
+  const stopReplay = useCallback(() => {
     if (replayTimer.current) clearInterval(replayTimer.current);
     replayTimer.current = null;
+    if (autoplayRestart.current) clearTimeout(autoplayRestart.current);
+    autoplayRestart.current = null;
+    setAutoplay(false); // 손으로 끄면 자동 반복도 멈춘다
     setReplayPos(null);
-  };
-  const startReplay = () => {
+  }, []);
+  const startReplayRef = useRef<(loop?: boolean) => void>(() => {});
+  const startReplay = useCallback((loop = false) => {
     if (replayTimer.current) clearInterval(replayTimer.current);
     setReplayPos(0);
     const startedAt = Date.now();
@@ -422,11 +511,26 @@ export function LiveBoardSection() {
         setReplayPos(1);
         if (replayTimer.current) clearInterval(replayTimer.current);
         replayTimer.current = null;
+        if (loop) {
+          // 자동 재생 모드: 끝 장면을 6초 보여준 뒤 처음부터 반복 (자기참조는 ref로)
+          autoplayRestart.current = setTimeout(() => startReplayRef.current(true), 6000);
+        }
       } else {
         setReplayPos(pos);
       }
     }, 100);
-  };
+  }, []);
+  useEffect(() => {
+    startReplayRef.current = startReplay;
+  }, [startReplay]);
+
+  // 자동 재생: 데이터가 처음 뜨면 스스로 시작한다
+  useEffect(() => {
+    if (autoplay && data && replayTimer.current == null && replayPos == null) {
+      const t = setTimeout(() => startReplay(true), 800);
+      return () => clearTimeout(t);
+    }
+  }, [autoplay, data, replayPos, startReplay]);
 
   if (error) return <p className={smallStyle}>라이브 채점 보드: {error}</p>;
   if (!data) return <p className={smallStyle}>라이브 채점 보드 불러오는 중… (첫 생성은 수십 초)</p>;
@@ -458,7 +562,7 @@ export function LiveBoardSection() {
     <section className={cardStyle}>
       <div className={css({ display: "flex", alignItems: "baseline", gap: "3", flexWrap: "wrap" })}>
         <h2 className={css({ fontSize: "lg", fontWeight: "bold", color: "ink", letterSpacing: "-0.01em" })}>
-          E-Gen 신고값, 엔진을 거치면 얼마나 더 믿을 수 있나
+          국가 API의 숫자를, 골든링크 모델이 의심하고 검증합니다
         </h2>
         <span className={css({ display: "inline-flex", alignItems: "center", gap: "1.5", fontSize: "xs", fontWeight: "semibold", color: "mint", backgroundColor: "mintSoft", paddingX: "2", paddingY: "0.5", borderRadius: "chip" })}>
           <span className={css({ width: "7px", height: "7px", borderRadius: "full", backgroundColor: "mint" })} />
@@ -480,7 +584,7 @@ export function LiveBoardSection() {
           </span>
         )}
         <span className={css({ fontSize: "xs", color: "ink3", marginLeft: "auto" })}>
-          마지막 폴링 {kstTime(data.lastPollTs)} · 폴링 {data.polls}회 · 실제 서빙 엔진 재생(시뮬 아님)
+          마지막 폴링 {kstTime(data.lastPollTs)} · 폴링 {data.polls}회 · 실제 서빙 모델 재생(시뮬 아님)
         </span>
       </div>
 
@@ -498,10 +602,16 @@ export function LiveBoardSection() {
         </p>
       )}
 
+      <p className={css({ fontSize: "sm", color: "ink2", lineHeight: "1.7", maxWidth: "76ch" })}>
+        골든링크는 국가 API(E-Gen)의 병상 숫자를 그대로 쓰지 않습니다. 모델이 값 하나하나에
+        &quot;아직 유효할 확률&quot;을 매겨 <b className={css({ color: "ink" })}>의심</b>하고, 그 의심이 맞았는지
+        20분마다 도착하는 실측으로 <b className={css({ color: "ink" })}>검증</b>받습니다. 아래는 그 공개 채점표입니다.
+      </p>
+
       <div className={css({ fontSize: "md", color: "ink2", lineHeight: "1.8", maxWidth: "72ch" })}>
         <p>지난 48시간, 모든 신고값을 그대로 믿었다면 {dot(SERIES.all.color)}<b className={css({ color: "ink" })}>{allPct}%</b>가 다음 실측까지 맞았습니다.</p>
-        <p>엔진이 <b className={css({ color: "ink" })}>&quot;믿어도 됨&quot;</b>으로 고른 값만 믿었다면 {dot(SERIES.hi.color)}<b className={css({ color: "ink" })}>{hiPct}%</b>.</p>
-        <p>엔진이 <b className={css({ color: "ink" })}>&quot;위험&quot;</b>으로 경고한 값은 {dot(SERIES.warn.color)}<b className={css({ color: "ink" })}>{warnPct}%</b>만 맞았습니다 — 경고는 장식이 아닙니다.</p>
+        <p>골든링크 모델이 <b className={css({ color: "ink" })}>&quot;믿어도 됨&quot;</b>으로 고른 값만 믿었다면 {dot(SERIES.hi.color)}<b className={css({ color: "ink" })}>{hiPct}%</b>.</p>
+        <p>모델이 <b className={css({ color: "ink" })}>&quot;위험&quot;</b>으로 경고한 값은 {dot(SERIES.warn.color)}<b className={css({ color: "ink" })}>{warnPct}%</b>만 맞았습니다 — 경고는 장식이 아닙니다.</p>
       </div>
 
       {points.length >= 3 && <LiveChart points={points} cutoffMs={cutoffMs} lastPollMs={lastMs} />}
@@ -511,15 +621,24 @@ export function LiveBoardSection() {
           {allPct}%는 <b>20분 기준</b>입니다. 남은 {100 - (allPct ?? 0)}%가 전국에서{" "}
           <b>하루 약 {Math.round(h.bigBreaks / (data.windowHours / 24)).toLocaleString()}건의 큰 어긋남</b>({data.theta}석 이상)이 되고,
           그게 어디서 생길지는 E-Gen만으로 알 수 없습니다. 실제로 어긋난 {h.bigBreaks.toLocaleString()}건 중{" "}
-          {h.warnedBreaks.toLocaleString()}건은 어긋나기 전에 이미 엔진의 경고 상태였습니다.
+          {h.warnedBreaks.toLocaleString()}건은 어긋나기 전에 이미 모델의 경고 상태였습니다.
         </p>
         <p className={smallStyle}>
           유지율 = 다음 실측에서 {data.theta}석 이상 어긋나지 않은 비율 · 문장은 48시간 집계, 선 끝은 최근 폴링 기준 ·
           경고선은 표본이 적어 6시간 이동평균 · <span style={{ backgroundColor: "rgba(208,59,59,0.10)", paddingInline: "3px" }}>붉은 띠</span> = 전국
-          변동이 평시 3배를 넘은 공통충격 구간(개별 예측 대상이 아니라 감지 대상) · 엔진이 말한 신뢰도 구간대로 실제 유지율도{" "}
+          변동이 평시 3배를 넘은 공통충격 구간(개별 예측 대상이 아니라 감지 대상) · 모델이 말한 신뢰도 구간대로 실제 유지율도{" "}
           {data.calibration.bins.map((bin) => (bin.actualPct == null ? "—" : Math.round(bin.actualPct))).join(" → ")}% 순서를 지킵니다
         </p>
       </div>
+
+      {data.timeseries && data.timeseries.length >= 24 && (
+        <div className={css({ display: "flex", flexDirection: "column", gap: "2", borderTopWidth: "1px", borderColor: "line", paddingTop: "4" })}>
+          <h3 className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
+            하루의 리듬 — 언제 어긋나나 <span className={css({ fontSize: "xs", fontWeight: "normal", color: "ink3" })}>시간대별(KST) 어긋남 분포 · 모델이 아침 신고값을 조심하는 이유</span>
+          </h3>
+          <HourlyBars timeseries={data.timeseries} />
+        </div>
+      )}
 
       {data.regions && <RegionGaps regions={data.regions} windowHours={data.windowHours} />}
 
@@ -555,11 +674,16 @@ export function LiveBoardSection() {
             </h3>
             <button
               type="button"
-              onClick={replaying ? stopReplay : startReplay}
+              onClick={replaying ? stopReplay : () => startReplay(false)}
               className={css({ fontSize: "xs", fontWeight: "semibold", color: "ink2", backgroundColor: "surface", borderWidth: "1px", borderColor: "line", paddingX: "2.5", paddingY: "1", borderRadius: "chip", cursor: "pointer", _hover: { borderColor: "ink3", color: "ink" } })}
             >
               {replaying ? "다시 보기 종료" : "지난 24시간 다시 보기"}
             </button>
+            {autoplay && replaying && (
+              <span className={css({ fontSize: "xs", fontWeight: "semibold", color: "mint", backgroundColor: "mintSoft", paddingX: "2", paddingY: "0.5", borderRadius: "chip" })}>
+                자동 반복 중
+              </span>
+            )}
             {replaying && cutoffMs != null && (
               <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink", fontVariantNumeric: "tabular-nums" })}>
                 {kstTime(cutoffMs)} — 어긋남 {replayShown.length}건 · 사전 경고 {replayWarned}건
@@ -569,7 +693,7 @@ export function LiveBoardSection() {
           {!replaying && (
             <p className={smallStyle}>
               새 실측이 도착할 때마다 직전 신고값을 채점합니다. 한 줄이 {data.theta}석 이상 어긋난 순간 하나이고,
-              오른쪽은 어긋나기 <b>직전</b>까지 엔진이 매긴 신뢰도입니다 — 50% 미만이었다면 엔진이 먼저 알고 있었던 것입니다.
+              오른쪽은 어긋나기 <b>직전</b>까지 모델이 매긴 신뢰도입니다 — 50% 미만이었다면 모델이 먼저 의심하고 있었던 것입니다.
             </p>
           )}
           {replaying && (
@@ -590,7 +714,7 @@ export function LiveBoardSection() {
 
       <p className={smallStyle}>
         채점 대상은 신고값의 유효성({data.theta}석 기준)이며, 실제 수용 여부와는 다른 축입니다 ·
-        다시 보기는 실데이터 재생입니다(연출 아님) · 신뢰도는 AI(XGBoost AFT 생존모델) 산출이고, 채점 규칙은 규칙 기반입니다
+        다시 보기는 실데이터 재생입니다(연출 아님) · 신뢰도는 골든링크 모델(XGBoost AFT 생존분석, AI) 산출이고, 채점 규칙은 규칙 기반입니다
       </p>
     </section>
   );
