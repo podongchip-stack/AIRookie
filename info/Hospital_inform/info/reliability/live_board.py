@@ -231,6 +231,29 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
 
     feed.sort(key=lambda r: r["ts"], reverse=True)
     big_breaks = len(feed)
+
+    # ── 레짐 감지(2026-10-03) — 공통충격은 예측이 아니라 감지 대상이다 ──
+    # 아침 병상 정리 러시(토 09:40 실측: 한 폴링 128건, 평시 중앙값의 4배)처럼 전국이
+    # 동시에 움직이는 순간은 개별 claim 이력으로 피할 수 없다. 대신 "지금이 그 순간"임을
+    # 선언한다: 폴링 어긋남이 창 중앙값의 2배(주의)·3배(급증)를 넘으면 레짐으로 표시.
+    # ⚠ 확률 자체는 깎지 않는다 — 캘리브레이션 주장을 지키기 위해, 할인은 재보정과
+    # 함께 가야 할 다음 단계다. 여기서는 감지·표시까지만.
+    if timeseries:
+        sorted_breaks = sorted(poll["breaks"] for poll in timeseries)
+        median_breaks = max(sorted_breaks[len(sorted_breaks) // 2], 1)
+        for poll in timeseries:
+            ratio = poll["breaks"] / median_breaks
+            poll["surge"] = 2 if ratio >= 3.0 else 1 if ratio >= 2.0 else 0
+        last = timeseries[-1]
+        regime = {
+            "medianBreaks": median_breaks,
+            "current": {"level": last["surge"], "breaks": last["breaks"],
+                        "ratio": round(last["breaks"] / median_breaks, 1), "ts": last["ts"]},
+            "surgePolls": sum(1 for poll in timeseries if poll["surge"] >= 2),
+        }
+    else:
+        regime = None
+
     regions = [
         {
             "label": label,
@@ -248,9 +271,10 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
     ]
     regions.sort(key=lambda r: r["allPct"] if r["allPct"] is not None else 100.0)
     return {
-        "schemaVersion": 3,  # timeseries(v2)·regions(v3) 추가 — 캐시 재생성 판별용
+        "schemaVersion": 4,  # timeseries(v2)·regions(v3)·regime(v4) — 캐시 재생성 판별용
         "timeseries": timeseries,
         "regions": regions,
+        "regime": regime,
         "source": "live_replay",
         "demo": False,  # 표본·가상 요청이 아니라 창 안의 실측 전수 채점
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -283,7 +307,7 @@ def cached(window_hours: int = WINDOW_HOURS_DEFAULT, refresh_sec: int = CACHE_RE
     """캐시가 신선하면 그대로, 아니면 다시 만든다(생성 수십 초 — ingest가 락으로 감싼다)."""
     if CACHE_PATH.is_file() and time.time() - CACHE_PATH.stat().st_mtime < refresh_sec:
         body = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
-        if body.get("schemaVersion") == 3:  # 구버전 캐시는 무시하고 다시 만든다
+        if body.get("schemaVersion") == 4:  # 구버전 캐시는 무시하고 다시 만든다
             return body
     body = build(window_hours)
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
