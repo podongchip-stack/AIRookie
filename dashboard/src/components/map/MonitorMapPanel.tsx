@@ -36,11 +36,14 @@ type AmbulanceLayer = { marker: kakao.maps.Marker; label: kakao.maps.CustomOverl
 // 어느 구급대의 요청인지는 마우스를 올리면(title) 보인다. 색은 상태별(노랑·연두·빨강·초록).
 function badgeElement(requests: HospitalRequest[], onClick: () => void): HTMLElement {
   const status = topStatus(requests);
-  const text = requests.length > 1 ? `${STATUS_ICON[status]} ${requests.length}건` : `${STATUS_ICON[status]} ${STATUS_SHORT[status]}`;
+  const only = requests.length === 1 ? requests[0] : null;
+  // 병상이 없어 불가(E-Gen)면 "병상 없음"으로 — 병원이 직접 거절한 것과 구분한다(2026-10-03)
+  const label = only && only.status === "rejected" && only.note?.startsWith("병상 없음") ? "병상 없음" : STATUS_SHORT[status];
+  const text = requests.length > 1 ? `${STATUS_ICON[status]} ${requests.length}건` : `${STATUS_ICON[status]} ${label}`;
   const el = document.createElement("button");
   el.type = "button";
   el.title =
-    requests.map((r) => `${r.ambulanceName} · ${STATUS_SHORT[r.status]} · 존 ${r.zone}`).join("\n") +
+    requests.map((r) => `${r.ambulanceName} · ${STATUS_SHORT[r.status]}${r.note ? `(${r.note})` : ""} · 존 ${r.zone}`).join("\n") +
     "\n눌러서 병원 대시보드 열기";
   el.style.cssText =
     `transform:translateY(-14px);cursor:pointer;white-space:nowrap;font-size:11px;font-weight:700;` +

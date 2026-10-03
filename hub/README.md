@@ -816,7 +816,7 @@ HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화�
 구급차가 움직인다(`ambulance_sim.py`, 설계는 `documents/1001v1_0134_...`).
 
 ```
-idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─수용→15초→ returning ─도착→ idle
+idle ─[이동]→ dispatching ─도착→ on_scene ─이송 승인→ transporting ─도착→ at_hospital ─수용→바로→ returning ─도착→ idle
                                     └─[현장 종료]→ returning          │ 수용 불가
                                                                        └→ rerouting(그 자리 대기) ─이송 승인→ transporting
    (returning 중 [이동] = 재출동, rerouting에서 [현장 종료]도 가능)    at_hospital은 병원이 결과를 고를 때까지 기다린다
