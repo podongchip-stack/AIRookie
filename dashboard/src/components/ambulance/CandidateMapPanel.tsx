@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { css } from "styled-system/css";
 import { Panel } from "@/components/layout/Panel";
 import { Tag } from "@/components/hospital/Tag";
@@ -48,7 +49,7 @@ export function CandidateMapPanel({
   // 출동 시뮬레이션 상태(2026-10-01). 있으면 구급차 마커·경로는 이 값으로 따로 그린다 — 1초마다
   // 오는 위치에 병원 마커 전체를 다시 그리고 화면 범위를 다시 맞추지 않게.
   sim?: AmbulanceSimState | null;
-  // 매칭 전 현장 후보(거리순). 매칭 결과가 없을 때 병원 위치만 보여준다.
+  // 매칭 전 현장 후보(도착 시간순, 2026-10-03 내비 기준). 매칭 결과가 없을 때 병원 위치만 보여준다.
   scene?: SceneCandidates | null;
   // 출동 전에 고른 위치(주소 검색·지도 클릭) 미리 보기, 그리고 지도를 눌러 출동 위치를 고르는 콜백(2026-10-01).
   // onMapClick이 없으면(출동 중 등) 클릭해도 아무 일 없다.
@@ -418,9 +419,12 @@ export function CandidateMapPanel({
           )}
 
           <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "xs", color: "ink" })}>직선 거리</div>
-            <div className={css({ fontSize: "xl", fontWeight: "semibold", letterSpacing: "-0.02em", color: "ink" })}>
-              {confirmedHospital ? `${confirmedHospital.distanceKm}km` : "-"}
+            <div className={css({ fontSize: "xs", color: "ink" })}>이동 거리</div>
+            <div
+              className={css({ fontSize: "xl", fontWeight: "semibold", letterSpacing: "-0.02em", color: "ink" })}
+              title={confirmedHospital ? distanceTitle(confirmedHospital) : undefined}
+            >
+              {confirmedHospital ? distanceLabel(confirmedHospital) : "-"}
             </div>
           </div>
 

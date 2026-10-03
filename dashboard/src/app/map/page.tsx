@@ -5,6 +5,7 @@ import Link from "next/link";
 import { css, cx } from "styled-system/css";
 import { HospitalDashboard } from "@/components/hospital/HospitalDashboard";
 import { MonitorMapPanel } from "@/components/map/MonitorMapPanel";
+import { distanceLabel } from "@/lib/distance";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
@@ -130,7 +131,7 @@ export default function MonitorMapPage() {
                                 {hospital.name}
                               </span>
                               <span className={css({ flexShrink: "0", color: "ink3" })}>
-                                존 {hospital.zone} ·{" "}
+                                {distanceLabel(hospital)} · 존 {hospital.zone} ·{" "}
                                 <b style={{ color: statusColor(hospital.status) }}>
                                   {STATUS_ICON[hospital.status]} {STATUS_SHORT[hospital.status]}
                                 </b>

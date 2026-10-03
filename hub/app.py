@@ -517,7 +517,7 @@ def _monitor_case(payload: dict) -> dict:
         hospitals=[
             MonitorCaseHospital(
                 hospitalId=h["hospitalId"], name=h["name"], status=h.get("status", "pending"),
-                distanceKm=h["distanceKm"], zone=zone_of(h["distanceKm"]),
+                distanceKm=h["distanceKm"], roadDistanceKm=h.get("roadDistanceKm"), zone=zone_of(h["distanceKm"]),
             )
             for h in payload.get("hospitals") or []
         ],
@@ -1067,6 +1067,14 @@ def _handle_identify(ws, identify: DashboardIdentify) -> None:
         for apid in apids:
             state = sim.state(apid)
             if state is not None:
+                _send_to_socket(ws, _sim_message("ambulance_phase", state), "시뮬레이션 상태")
+    # 병원 탭: 이 병원으로 이송 중·도착한 구급차의 현재 상태(2026-10-03). 병원 대시보드는 이제 관제 지도에서
+    # 눌러 여는데, 구급차가 도착한 **뒤에** 열면 그 탭은 "도착(at_hospital)"을 받은 적이 없어 [환자 수용 완료]
+    # 버튼이 꺼진 채였다 — 상태가 바뀔 때만 보내던 걸 연결 시점에도 한 번 준다.
+    if sim is not None and identify.role == "hospital":
+        for ambulance in engine.list_ambulances():
+            state = sim.state(ambulance.apid)
+            if state and state.get("hospitalId") == identify.id and state.get("phase") in ("transporting", "at_hospital"):
                 _send_to_socket(ws, _sim_message("ambulance_phase", state), "시뮬레이션 상태")
     # 병원이면 사건 유무와 무관하게 "귀원 정보 현황"도 바로 준다.
     if identify.role == "hospital":

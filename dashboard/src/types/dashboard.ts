@@ -150,7 +150,9 @@ export interface HospitalCandidate {
   hospitalId: string;
   name: string;
   gps: { lat: number; lng: number };
+  // 직선거리(존 판정·설명용). 화면엔 roadDistanceKm(카카오 내비 도로 거리, 2026-10-03)를 우선 보여준다.
   distanceKm: number;
+  roadDistanceKm?: number | null;
   specialtyMatch: SpecialtyMatch;
   availableBedCount: number;
   // availableBedCount가 0일 때 그게 "확인된 만실"인지 "미상"인지 구분한다. hub가
@@ -400,6 +402,7 @@ export interface MonitorCaseHospital {
   name: string;
   status: HospitalStatus;
   distanceKm: number;
+  roadDistanceKm?: number | null;
   // 이 병원이 든 존(1부터, zoneBandKm 간격). 거절 비율로 존이 넓혀지면 바깥 존 병원이 새로 들어온다.
   zone: number;
 }
@@ -432,6 +435,9 @@ export interface SceneCandidate {
   hospitalId: string;
   name: string;
   distanceKm: number;
+  // 카카오 내비 기준(2026-10-03). 현장 후보는 도착 시간순으로 온다. 못 받은 병원은 null(직선 추정).
+  roadDistanceKm?: number | null;
+  etaMin?: number | null;
   gps: { lat: number; lng: number };
   availableBedCount: number;
   bedCountUnknown: boolean;

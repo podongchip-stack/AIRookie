@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { css, cx } from "styled-system/css";
 import { hospitalStatusBadge } from "styled-system/recipes";
 import { Tag } from "@/components/hospital/Tag";
@@ -232,7 +233,7 @@ function bedReliabilityChipStyle(rArrive: number): string {
 
 // 첫 연락 추천(2026-10-03) 배지 — hub가 현장 후보(scene_candidates) 중 "빈 병상이
 // 확인되고 도착 시점 유효 확률(AI, rArrive)이 가장 높은 한 곳"에 표시해 보낸다.
-// 첫 통화 상대 제안일 뿐 순위(거리순)는 바꾸지 않으므로, 줄 순서가 아니라 배지로만
+// 첫 통화 상대 제안일 뿐 순위(도착 시간순)는 바꾸지 않으므로, 줄 순서가 아니라 배지로만
 // 드러낸다. 좋은 신호라 mint — 테두리를 둘러 일반 칩과 구분한다.
 const firstCallBadgeStyle = css({
   display: "inline-flex",
@@ -298,7 +299,7 @@ export function HospitalCandidateListPanel({
   onApprove,
 }: {
   data: HubMatchResult | null;
-  // 매칭 결과가 오기 전 보여줄 현장 주변 후보(거리순, 규칙). 매칭 결과가 오면 쓰지 않는다.
+  // 매칭 결과가 오기 전 보여줄 현장 주변 후보(내비 도착 시간순, 규칙). 매칭 결과가 오면 쓰지 않는다.
   scene?: SceneCandidates | null;
   // hub가 confirmed로 돌려준 병원. 버튼을 누른 즉시가 아니라 hub 응답 기준이다(2026-10-01).
   confirmedHospitalId: string | null;
@@ -310,6 +311,9 @@ export function HospitalCandidateListPanel({
   // 보내주므로, 다음 브로드캐스트(60초 재계산)를 기다리지 않고 매초 확률을 다시
   // 계산해 그린다 — "정보가 낡아가는 것"이 화면에서 눈으로 보이게 하는 장치.
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // 이송이 확정되면 확정 병원만 보이고 나머지는 접는다(2026-10-03) — 병원으로 가는 동안 주변 병원이 계속 떠 있을
+  // 이유가 없다. 다만 "이동 중에도 새 병원이 승인하면 재선택"할 수 있어야 해서 펼칠 수 있게 남긴다.
+  const [showOthers, setShowOthers] = useState(false);
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -317,7 +321,7 @@ export function HospitalCandidateListPanel({
 
   if (!data && scene) {
     return (
-      <ListPanelShell subtitle={`Zone ${scene.zoneActive.join(", ")} · 환자 정보 전 거리순`}>
+      <ListPanelShell subtitle={`Zone ${scene.zoneActive.join(", ")} · 환자 정보 전 도착 시간순`}>
         <p className={css({ color: "ink3", fontSize: "xs", marginBottom: "2" })}>
           통화가 끝나면 진료과·이동시간 기준 순위와 병원 응답으로 바뀝니다.
         </p>
@@ -352,14 +356,18 @@ export function HospitalCandidateListPanel({
                     {h.firstCallRecommended && (
                       <span
                         className={firstCallBadgeStyle}
-                        title="빈 병상이 확인된 후보 중 도착 시점 유효 확률(AI)이 가장 높은 병원 — 첫 통화 상대 제안이며 목록 순서(거리순)는 그대로입니다."
+                        title="빈 병상이 확인된 후보 중 도착 시점 유효 확률(AI)이 가장 높은 병원 — 첫 통화 상대 제안이며 목록 순서(도착 시간순)는 그대로입니다."
                       >
                         첫 연락 추천
                       </span>
                     )}
                   </span>
-                  <span className={css({ color: "ink3", fontVariantNumeric: "tabular-nums", flexShrink: "0" })}>
-                    {h.distanceKm}km · 병상 {h.bedCountUnknown ? "미상" : h.availableBedCount}
+                  <span
+                    className={css({ color: "ink3", fontVariantNumeric: "tabular-nums", flexShrink: "0" })}
+                    title={distanceTitle(h)}
+                  >
+                    {distanceLabel(h)}
+                    {h.etaMin != null ? ` · ${h.etaMin}분` : ""} · 병상 {h.bedCountUnknown ? "미상" : h.availableBedCount}
                   </span>
                 </div>
                 {rel && h.bedReliability && (
@@ -389,14 +397,20 @@ export function HospitalCandidateListPanel({
     );
   }
 
-  const hospitals = data.hospitals.map((hospital) => ({
-    hospital,
-    confirmed: hospital.hospitalId === confirmedHospitalId,
-    requesting: hospital.hospitalId === pendingHospitalId && hospital.hospitalId !== confirmedHospitalId,
-  }));
+  const focusConfirmed = confirmedHospitalId != null && data.hospitals.some((h) => h.hospitalId === confirmedHospitalId);
+  const hiddenCount = focusConfirmed ? data.hospitals.length - 1 : 0;
+  const hospitals = data.hospitals
+    .filter((hospital) => !focusConfirmed || showOthers || hospital.hospitalId === confirmedHospitalId)
+    .map((hospital) => ({
+      hospital,
+      confirmed: hospital.hospitalId === confirmedHospitalId,
+      requesting: hospital.hospitalId === pendingHospitalId && hospital.hospitalId !== confirmedHospitalId,
+    }));
 
   return (
-    <ListPanelShell subtitle={`Zone ${data.zoneActive.join(", ")} 내 후보`}>
+    <ListPanelShell
+      subtitle={focusConfirmed ? "이송 확정 병원으로 이동 중" : `Zone ${data.zoneActive.join(", ")} 내 후보`}
+    >
       {/* 병원이 몇 곳이든(거리·우선순위로 이미 정렬돼 오므로) 패널 자체가 늘어나지
           않고 이 목록 안에서만 스크롤되게 한다 — ListPanelShell이 셀 높이를 정확히
           지키므로(minHeight:0 + overflow:hidden), 여기는 남는 공간을 그대로
@@ -437,8 +451,8 @@ export function HospitalCandidateListPanel({
                 <span className={css({ fontWeight: "semibold", fontSize: "sm", color: "ink" })}>
                   {hospital.name}
                 </span>
-                <span className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>
-                  {hospital.distanceKm}km
+                <span className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })} title={distanceTitle(hospital)}>
+                  {distanceLabel(hospital)}
                   {hospital.etaMin != null ? ` · ETA ${hospital.etaMin}분` : ""}
                 </span>
                 <div className={css({ display: "flex", gap: "1", flexWrap: "wrap" })}>
@@ -547,6 +561,27 @@ export function HospitalCandidateListPanel({
           );
         })}
       </ul>
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowOthers((v) => !v)}
+          className={css({
+            flexShrink: "0",
+            marginTop: "2",
+            fontSize: "xs",
+            color: "ink2",
+            paddingY: "1.5",
+            borderWidth: "1px",
+            borderStyle: "dashed",
+            borderColor: "line",
+            borderRadius: "field",
+            cursor: "pointer",
+            _hover: { color: "ink", backgroundColor: "surfaceSub" },
+          })}
+        >
+          {showOthers ? "다른 후보 접기" : `다른 후보 ${hiddenCount}곳 보기 (재선택할 때)`}
+        </button>
+      )}
     </ListPanelShell>
   );
 }

@@ -279,7 +279,12 @@ function AmbulanceDashboardContent() {
           })}
         >
           <CandidateMapPanel
-            data={myResult}
+            // 이송이 확정되면 지도엔 확정 병원만(2026-10-03) — 이동 중 주변 병원 마커는 접는다(목록은 펼칠 수 있다).
+            data={
+              myResult && confirmedHospitalId && myResult.hospitals.some((h) => h.hospitalId === confirmedHospitalId)
+                ? { ...myResult, hospitals: myResult.hospitals.filter((h) => h.hospitalId === confirmedHospitalId) }
+                : myResult
+            }
             confirmedHospitalId={confirmedHospitalId}
             sim={simOn ? mySim : null}
             scene={activeCaseId ? state.sceneCandidates[activeCaseId] ?? null : null}

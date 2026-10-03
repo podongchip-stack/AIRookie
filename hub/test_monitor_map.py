@@ -140,6 +140,19 @@ def main() -> None:
     assert case2 in amb_sync and "case-dispatch-only" in amb_sync, "구급차엔 결과 전 사건도 포함(자막·현장 후보 보존)"
     print(f"  [확인] 관제 지도·구급차 탭이 진행 중 사건 목록 수신 — 구급차 {sorted(amb_sync)}")
 
+    print("=== 구급차가 도착한 뒤에 병원 대시보드를 열어도 '도착' 상태를 받는다([환자 수용 완료] 버튼) ===")
+    unit = app.sim._units["A_MAP"]
+    unit.phase, unit.case_id, unit.hospital_id = "at_hospital", case2, near.hospitalId
+    late_hosp, other_hosp = _FakeSocket(), _FakeSocket()
+    app._dashboard_sockets.update({late_hosp, other_hosp})
+    app._handle_identify(late_hosp, DashboardIdentify(role="hospital", id=near.hospitalId))
+    app._handle_identify(other_hosp, DashboardIdentify(role="hospital", id="T_FAR"))
+    arrived = _last(late_hosp, "ambulance_phase")
+    assert arrived["phase"] == "at_hospital" and arrived["caseId"] == case2
+    assert "ambulance_phase" not in _types(other_hosp), "다른 병원 탭은 받지 않는다"
+    unit.phase, unit.case_id, unit.hospital_id = "idle", None, None
+    print("  [확인] 늦게 연 병원 탭이 구급차 도착 상태 수신, 무관한 병원 탭은 안 받음")
+
     print("=== 출동 시뮬레이션 재시작 → 이송 확정 사건까지 닫는다(구급차는 기지로 돌아가므로) ===")
     hospital_id = result2.hospitals[0].hospitalId
     app._handle_dashboard_action({"caseId": case2, "action": "hospital_approve", "hospital_id": hospital_id,

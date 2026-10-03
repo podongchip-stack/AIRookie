@@ -920,17 +920,34 @@ class HubEngine:
         """
         now = _utcnow()
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
-        candidates.sort(key=lambda pair: pair[1])
+        # 2026-10-03: 직선거리 대신 카카오 내비 기준(도로 거리·소요 시간)으로 정렬·표시한다. ETA를 못 받은
+        # 병원(키 없음·반경 10km 밖·조회 실패)만 직선거리 × 같은 사건의 분/km 보정으로 추정한다(매칭과 같은 규칙).
+        etas = (
+            self._router.etas(ambulance_gps, {info.hospitalId: info.gps for info, _ in candidates})
+            if self._router is not None and candidates
+            else {}
+        )
+        min_per_km = calibrate_min_per_km(
+            [(distance, etas[info.hospitalId][0] / 60.0) for info, distance in candidates if info.hospitalId in etas]
+        )
+
+        def travel_min_of(pair: tuple) -> float:
+            info, distance = pair
+            eta = etas.get(info.hospitalId)
+            return eta[0] / 60.0 if eta is not None else distance * min_per_km
+
+        candidates.sort(key=travel_min_of)
         rows: list[dict] = []
         best_index: int | None = None
         best_r_arrive = 0.0
         for info, distance in candidates:
             beds = self.effective_bed_count(info)
             unknown = _is_bed_count_unknown(info)
-            # horizon은 매칭 때와 달리 카카오 ETA가 아직 없어 거리/평균속도 추정이다
-            # (evaluate가 horizon_sec 없으면 직접 추정).
+            eta = etas.get(info.hospitalId)
+            travel_min = travel_min_of((info, distance))
+            # 도착 시점(horizon)은 정렬에 쓴 이동 시간과 같은 값(매칭과 같은 규칙)
             rel = bed_reliability.evaluate(
-                info.bedReliability, distance, now=now,
+                info.bedReliability, distance, now=now, horizon_sec=travel_min * 60.0,
                 confirmed_at=self.get_info_confirmation(info.hospitalId),
             )
             rows.append(
@@ -938,6 +955,11 @@ class HubEngine:
                     "hospitalId": info.hospitalId,
                     "name": info.name,
                     "distanceKm": round(distance, 2),
+                    # 내비 기준(2026-10-03). 못 받았으면 None — 화면은 직선거리를 "추정"으로 표시한다.
+                    "roadDistanceKm": round(eta[1] / 1000.0, 2) if eta is not None else None,
+                    "etaMin": _ceil_minutes(eta[0]) if eta is not None else None,
+                    "travelMin": round(travel_min, 1),
+                    "travelBasis": "eta" if eta is not None else "estimate",
                     "gps": info.gps.model_dump(),
                     "availableBedCount": beds,
                     "bedCountUnknown": unknown,
@@ -946,7 +968,7 @@ class HubEngine:
                 }
             )
             if rel is not None and beds >= 1 and not unknown and not _is_bed_data_stale(info, now):
-                if rel.rArrive > best_r_arrive:  # 동률이면 먼저 담긴(더 가까운) 쪽 유지
+                if rel.rArrive > best_r_arrive:  # 동률이면 먼저 담긴(더 빨리 닿는) 쪽 유지
                     best_r_arrive, best_index = rel.rArrive, len(rows) - 1
         if best_index is not None:
             rows[best_index]["firstCallRecommended"] = True
@@ -1051,6 +1073,7 @@ class HubEngine:
                         ),
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
+                        roadDistanceKm=round(eta[1] / 1000.0, 2) if eta is not None else None,
                         finalScore=round(final_score(similarity, travel_min, bonus_min, load_min), 6),
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),

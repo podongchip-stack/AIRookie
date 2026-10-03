@@ -384,6 +384,9 @@ class HospitalMatch(BaseModel):
     # 순위 계산에 쓴 이동 시간(분)과 그 출처. etaMin은 표시용 올림값, 이건 계산용 원값이다.
     travelMin: Optional[float] = None
     travelBasis: Optional[TravelBasis] = None
+    # 카카오 내비 기준 도로 거리(km, 2026-10-03). 화면은 이걸 우선 보여주고, 없으면(ETA 못 받음) distanceKm를
+    # "직선 추정"으로 표시한다. distanceKm(직선)는 존 판정·설명용으로 그대로 둔다.
+    roadDistanceKm: Optional[float] = None
     # 순위를 뒤로 내린 이유. 비어 있으면 finalScore 순서 그대로다.
     demoteReasons: list[DemoteReason] = Field(default_factory=list)
     # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
@@ -614,6 +617,7 @@ class MonitorCaseHospital(BaseModel):
     name: str
     status: HospitalStatus
     distanceKm: float
+    roadDistanceKm: Optional[float] = None  # 내비 기준(없으면 직선 distanceKm만)
     # 이 병원이 든 존(1부터, 5km 간격). 존이 넓혀지면 바깥 존 병원들이 새로 들어온다.
     zone: int
 
