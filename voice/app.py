@@ -347,5 +347,9 @@ if __name__ == "__main__":
         _model_lock = threading.Lock()
         _asr_model = _Serialized(_asr_model, _model_lock)
         _extractor = _Serialized(_extractor, _model_lock)
+    # [demo 브랜치 전용] 시연 대본 입구 — STT 없이 MF_BERT 구조화만(demo_text.py, develop 병합 금지)
+    import demo_text
+
+    demo_text.register(app, lambda: _extractor)
     # 디버그 리로더는 프로세스를 하나 더 띄워 두 모델(수 GB)을 한 번 더 올리므로 끈다
     app.run(host="0.0.0.0", port=VOICE_PORT, debug=True, threaded=True, use_reloader=False)

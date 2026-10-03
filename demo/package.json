@@ -1,0 +1,10 @@
+{
+  "name": "goldenlink-demo",
+  "private": true,
+  "description": "[demo 브랜치 전용] 시연 시나리오 진행기·녹화 — develop에 병합하지 않는다",
+  "type": "module",
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "playwright-core": "^1.56.0"
+  }
+}

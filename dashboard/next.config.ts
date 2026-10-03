@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   // 한다(2026-08-11, 카카오맵 도메인 검증기가 "localhost"를 무효 URL로 거부해서
   // 127.0.0.1을 쓰게 된 배경 — ISSUE_카카오맵연동.md 참고).
   allowedDevOrigins: ["127.0.0.1"],
+  // [demo 브랜치] 시연 영상에 Next 개발 모드 표시(왼쪽 아래 "N")가 찍히지 않게 끈다
+  devIndicators: false,
 };
 
 export default nextConfig;
