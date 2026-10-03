@@ -1,2 +1,4 @@
 out/
 node_modules/
+# 고정 스냅샷은 커밋한다(다른 장비에서도 같은 영상을 재현) — 루트 .gitignore의 data/ 예외
+!data/
