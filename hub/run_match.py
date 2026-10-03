@@ -268,6 +268,7 @@ def main() -> None:
     test_voice_v2_schema()
     test_full_hospital_cannot_approve()
     test_load_penalty()
+    test_mild_center_penalty()
 
 
 def _assessment_group(tier: str, score: float, confidence: str) -> AssessmentGroup:
@@ -1008,6 +1009,53 @@ def test_load_penalty() -> None:
     assert loaded.hospitals[0].hospitalId == "L002", "부하가 쌓인 병원은 만실이 되기 전에 뒤로 밀려야 한다"
     assert not l1.demoteReasons, "만실은 아니므로 절벽 강등(beds_full)과는 별개여야 한다"
     print("  [확인] 평시 불변(페널티 0), 확정 16건 → +8분 페널티로 만실 전 분산, 상한 10분 불변식")
+
+
+def test_mild_center_penalty() -> None:
+    """경증 역가산(2026-10-03): 경증(low) 환자는 권역·지역센터에 +3분 페널티 —
+    "경증은 센터를 아껴라". 중증 가산의 거울상이고, 제외가 아니라 순위 조정이라
+    주변에 센터뿐이면 여전히 센터로 간다. 중증(high) 동작은 기존 그대로여야 한다."""
+    print("\n=== 경증 역가산: 경증은 센터 뒤로(+3분), 센터뿐이면 그대로, 중증은 불변 ===")
+    from scoring import MILD_CENTER_PENALTY_MIN, expertise_bonus_min
+
+    assert expertise_bonus_min(None, "권역응급의료센터", "low") == (
+        -MILD_CENTER_PENALTY_MIN, [f"경증 · 권역응급의료센터 +{MILD_CENTER_PENALTY_MIN:g}분(센터 보존)"]
+    )
+    assert expertise_bonus_min(None, "권역응급의료센터", "medium") == (0.0, []), "중등증은 가산도 역가산도 없음"
+    assert expertise_bonus_min(None, None, "low") == (0.0, []), "일반 병원은 경증이어도 페널티 없음"
+
+    engine = _engine()
+    center = _hospital("M001", "[테스트] 더 가까운 권역센터", 35.1805, 128.1085, 5,
+                       beds_by_type={"ER_ADULT": 5}).model_copy(update={"emergencyLevel": "권역응급의료센터"})
+    general = _hospital("M002", "[테스트] 조금 더 먼 일반 병원", 35.1815, 128.1095, 5, beds_by_type={"ER_ADULT": 5})
+    engine.update_hospital_info(center)
+    engine.update_hospital_info(general)
+
+    def _voice_with(severity: str, case_id: str) -> VoiceCallSummaryMessage:
+        return VoiceCallSummaryMessage(
+            caseId=case_id, transcript=VoiceTranscript(raw_text="x", filtered_text="x"),
+            summary=VoiceSummary(patient="성인", mechanism="발목 골절",
+                                 symptoms=[], treatment=[], severity_tag=severity),
+            source="ai",
+        )
+
+    mild = engine.process_voice_summary(_voice_with("low", "case-mild"), _TEST_GPS, max_zone=1)
+    by_id = {h.hospitalId: h for h in mild.hospitals}
+    print(f"  경증 순위: {[h.hospitalId for h in mild.hospitals]} / 센터 가산 {by_id['M001'].travelBonusMin}분 "
+          f"{by_id['M001'].bonusReasons}")
+    assert mild.hospitals[0].hospitalId == "M002", "경증은 더 가까운 센터보다 일반 병원이 앞서야 한다(+3분 페널티)"
+    assert by_id["M001"].travelBonusMin < 0 and any("센터 보존" in r for r in by_id["M001"].bonusReasons)
+    assert not by_id["M001"].demoteReasons, "역가산은 순위 조정이지 강등이 아니다"
+
+    severe = engine.process_voice_summary(_voice_with("high", "case-severe"), _TEST_GPS, max_zone=1)
+    assert severe.hospitals[0].hospitalId == "M001", "중증은 기존대로 센터가 앞서야 한다(−5분 가산)"
+
+    engine.update_hospital_info(general.model_copy(update={"hospitalId": "GONE", "name": "제거용"}))
+    center_only = HubEngine(specialty_matcher=engine._matcher)
+    center_only.update_hospital_info(center)
+    only = center_only.process_voice_summary(_voice_with("low", "case-mild-only"), _TEST_GPS, max_zone=1)
+    assert [h.hospitalId for h in only.hospitals] == ["M001"], "센터뿐이면 경증도 센터로 — 제외가 아니다"
+    print("  [확인] 경증 +3분으로 일반 병원이 역전, 중증은 센터 우선 불변, 센터 단독이면 그대로 후보")
 
 
 if __name__ == "__main__":

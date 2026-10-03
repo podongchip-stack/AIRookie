@@ -41,21 +41,38 @@ LEVEL_BONUS_MIN = {           # 중증(high) 환자에게만: 권역·지역응�
 }
 MAX_BONUS_MIN = DEPTH_BONUS_MAX_MIN + max(LEVEL_BONUS_MIN.values())
 
+# 경증 역가산 (2026-10-03): 경증(low) 환자에게는 권역·지역응급의료센터의 이동시간에
+# 거꾸로 분을 **더한다** — "경증은 센터를 아껴라". 중증 가산의 거울상이다. 경증이
+# 최근접이라는 이유만으로 센터의 마지막 병상을 차지하면, 뒤에 오는 중증 환자가 최종치료
+# 가능한 곳에 못 들어간다(재난의료의 "경증은 멀리" 원칙의 시스템 구현). 제외가 아니라
+# 순위 조정이라, 주변에 센터뿐이면 여전히 센터로 간다(뺑뺑이 방지 원칙 유지).
+# 값은 팀 합의 초기값(2026-10-03, +3분) — 거절·도착 로그가 쌓이면 재보정한다.
+MILD_CENTER_PENALTY_MIN = 3.0
+
 
 def expertise_bonus_min(
     doctor_count: int | None, emergency_level: str | None, severity: str | None
 ) -> tuple[float, list[str]]:
-    """(이동시간에서 뺄 분, 설명 문구들). 전문의 수·등급을 모르면 0분이다(불리하게 두지 않음)."""
+    """(이동시간에서 뺄 분, 설명 문구들). 전문의 수·등급을 모르면 0분이다(불리하게 두지 않음).
+
+    경증 역가산은 음수 가산으로 섞여 나간다 — final_score()가 (이동분 − 가산분)으로
+    계산하므로 음수 가산 = 이동시간 증가이고, 기존 `travelBonusMin`·`bonusReasons`
+    필드로 그대로 노출돼 dashboard 수정이 필요 없다.
+    """
     bonus, reasons = 0.0, []
     if doctor_count:
         depth = min(1.0, math.log1p(doctor_count) / math.log1p(DEPTH_FULL_DOCTORS))
         minutes = round(DEPTH_BONUS_MAX_MIN * depth, 1)
         bonus += minutes
         reasons.append(f"전문의 {doctor_count}명 −{minutes}분")
+    is_center = (emergency_level or "") in LEVEL_BONUS_MIN
     level_minutes = LEVEL_BONUS_MIN.get(emergency_level or "") if severity == "high" else None
     if level_minutes:
         bonus += level_minutes
         reasons.append(f"중증 · {emergency_level} −{level_minutes:g}분")
+    elif severity == "low" and is_center:
+        bonus -= MILD_CENTER_PENALTY_MIN
+        reasons.append(f"경증 · {emergency_level} +{MILD_CENTER_PENALTY_MIN:g}분(센터 보존)")
     return bonus, reasons
 
 
