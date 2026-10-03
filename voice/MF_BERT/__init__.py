@@ -45,12 +45,16 @@ class MfBertExtractor:
         # 학습 인자가 문자열·숫자뿐이라 weights_only=True로 읽힌다 — 공개 저장소에서 받는 파일이라 pickle 실행을 막는다
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         args = state["args"]
-        # 인코더 가중치는 체크포인트에 다 들어 있어 사전학습 가중치는 받지 않고 구조(config)만 만든다
+        # 인코더 가중치는 체크포인트에 다 들어 있어 사전학습 가중치는 받지 않고 구조(config)만 만든다.
+        # 보기별 어텐션·헤드 층 수는 10-02 모델부터 args에 있다 — 없으면(09-30 모델) 예전 구조로 만든다
         model = CallExtractor(
             args["encoder"],
             dropout=args["dropout"],
             last_n_layers=args["last_n_layers"],
             layer_dropout=args["layer_dropout"],
+            label_attention=args.get("label_attention", False),
+            head_layers=args.get("head_layers", 1),
+            head_hidden_size=args.get("head_hidden_size"),
             pretrained=False,
         )
         model.load_state_dict(state["model"])
