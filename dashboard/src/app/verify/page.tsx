@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { css } from "styled-system/css";
 import { type HospitalHub, type HospitalView, HospitalVerifySection } from "@/components/verify/HospitalVerifySection";
+import { LiveBoardSection } from "@/components/verify/LiveBoardSection";
 
 // 시연용 신뢰도 검증 화면(2026-10-02). 대시보드 상단바 [신뢰도 검증] 모달과 시연장 큰 화면(직접 /verify)이 같이 쓴다.
 // 한눈에 보여줄 것: "API(E-Gen)가 알려준 값"과 "실제"가 다르다 — 실제의 근거는 둘뿐이다.
@@ -199,6 +200,10 @@ export default function VerifyPage() {
         {data && !replay && (
           <p className={css({ fontSize: "sm", color: "coral" })}>재생 채점 결과를 만들지 못했습니다: {data.replayError ?? "알 수 없음"}</p>
         )}
+
+        {/* 라이브 채점 보드(2026-10-03) — 아래의 가상 요청 표본("시연용 예시")과 달리 실측 전수 채점.
+            hub GET /verification/live. hub가 없거나 수신구(5003)가 꺼져 있으면 한 줄 안내만 남는다. */}
+        <LiveBoardSection />
 
         {data?.hospital && (
           <>
