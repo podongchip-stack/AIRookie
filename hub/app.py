@@ -315,7 +315,9 @@ def get_verification():
     url = HUB_REJECTION_URL.rsplit("/hub/rejection", 1)[0] + "/verification/summary"
     hpid = (request.args.get("hpid") or "").strip()
     try:
-        upstream = requests.get(url, params={"hpid": hpid} if hpid else None, timeout=30)  # 1시간마다 재생성(수 초)
+        # 집계 자체가 무거울 수 있어 여유를 둔다(90초). 수신구의 1시간 재생성은 2026-10-03부터
+        # 백그라운드라 평시엔 수 초지만, 첫 생성(파일 없음)은 여전히 동기다.
+        upstream = requests.get(url, params={"hpid": hpid} if hpid else None, timeout=90)
         upstream.raise_for_status()
         body = upstream.json()
         if hpid:
