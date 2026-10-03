@@ -42,7 +42,10 @@ THETA = 3
 WINDOW_HOURS_DEFAULT = 48
 CACHE_REFRESH_SEC = 1200          # 스냅샷 주기(20분)와 같게 — 새 폴링이 올 때쯤 다시 만든다
 GAP_RESET_MIN = 60.0              # 관측 공백이 이보다 크면 채점을 쉬어 간다(수집 중단 구간)
-FEED_LIMIT = 300                  # 판명 피드 최대 보관 수(최신순)
+# 판명 피드는 "큰 어긋남(θ=3석 이상)"만 담는다 — 모든 잔변화를 담으면 48시간에 3만 건이라
+# 피드가 최근 30분짜리가 되고, 화면 리플레이가 하루를 덮지 못한다. 잔변화는 headline의
+# valueChanges 집계에만 남는다. 4,000건이면 큰 어긋남 기준 하루 이상을 덮는다(실측 ~2,300/일).
+FEED_LIMIT = 4000
 CALIBRATION_BINS = ((0.0, 0.5), (0.5, 0.8), (0.8, 0.95), (0.95, 1.01))
 
 _BASE = Path(__file__).resolve().parents[1]
@@ -101,7 +104,7 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
             {"range": f"{int(lo*100)}~{int(min(hi,1.0)*100)}%", "predictedSum": 0.0, "survived": 0, "total": 0}
             for lo, hi in CALIBRATION_BINS
         ]
-        warned_breaks = missed_breaks = 0   # 경고(확률<50%) 상태에서 깨짐 / 고신뢰(>=80%)인데 깨짐
+        warned_breaks = missed_breaks = value_changes = 0   # 경고(<50%) 깨짐 / 고신뢰(>=80%) 깨짐 / 전체 값 변화
         prev_ts: datetime | None = None
 
         for ts, items in polls:
@@ -125,12 +128,13 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
                             b["total"] += 1
                             break
                     if value != claim["value"]:
+                        value_changes += 1
+                    if broke:
                         p_cum = survival(claim["predT"], age1, claim["sigma"])
-                        if broke:
-                            if p_cum < 0.5:
-                                warned_breaks += 1
-                            elif p_cum >= 0.8:
-                                missed_breaks += 1
+                        if p_cum < 0.5:
+                            warned_breaks += 1
+                        elif p_cum >= 0.8:
+                            missed_breaks += 1
                         feed.append({
                             "ts": ts.isoformat(timespec="seconds"),
                             "hpid": hpid, "name": names.get(hpid, hpid),
@@ -138,7 +142,7 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
                             "delta": value - claim["value"],
                             "ageMin": round(age1 / 60.0, 1),
                             "pValid": round(p_cum, 3),
-                            "bigBreak": broke,
+                            "becameFull": value <= 0,
                         })
             # 2) 이 폴링을 엔진에 관측시키고, 3) 새 예측 상태를 뜬다
             rows = list(items.values())
@@ -180,7 +184,7 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
         del b["predictedSum"]
 
     feed.sort(key=lambda r: r["ts"], reverse=True)
-    big_breaks = sum(1 for r in feed if r["bigBreak"])
+    big_breaks = len(feed)
     return {
         "source": "live_replay",
         "demo": False,  # 표본·가상 요청이 아니라 창 안의 실측 전수 채점
@@ -198,7 +202,7 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
             "note": "폴링 단위 조건부 확률 vs 실제 유지 비율 — 같은 claim의 중복 집계를 피한 정의",
         },
         "headline": {
-            "valueChanges": len(feed),
+            "valueChanges": value_changes,
             "bigBreaks": big_breaks,
             "warnedBreaks": warned_breaks,     # 깨지기 전에 확률이 이미 50% 밑이었던 수
             "missedBreaks": missed_breaks,     # 80% 이상 고신뢰였는데 깨진 수
