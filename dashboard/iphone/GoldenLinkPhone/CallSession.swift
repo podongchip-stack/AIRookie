@@ -3,14 +3,18 @@ import GoldenLinkCore
 
 /// 통화 한 건. voice/app.py + live_transcriber.py가 하던 일을 휴대폰 안에서 한다.
 ///
-///   마이크 -> (0.5초마다) 무음 감지로 발화 자르기 -> ASR 큐(녹음은 인식에 밀리지 않고 계속 쌓임)
-///          -> 발화마다 /voice/utterance(실시간 자막)
-///   종료 -> 남은 소리 인식 -> 줄바꿈으로 이어 MF_BERT -> /voice/summary (지금 voice와 같은 JSON)
+///   마이크 -> (0.5초마다) 무음 감지로 발화 자르기 -> ASR 큐(녹음은 인식에 밀리지 않고 계속 쌓임) -> 이 화면의 자막
+///   [전송] -> 남은 소리 인식 -> 줄바꿈으로 이어 MF_BERT -> 요약 전송(지금 voice와 같은 JSON)
+///   [취소] -> 녹음·인식을 멈추고 버린다(아무것도 보내지 않음)
+///
+/// 2026-10-05: [전송]을 눌러야만 기기 밖으로 나간다 — 통화 중 인식 결과는 이 화면 자막에만 쓰고 hub로 보내지 않는다
+/// (예전엔 발화마다 /voice/utterance로 보냈다). 요약은 hub WebSocket으로 보낸다(sendSummary) — 공개 도메인은
+/// /voice/*(HTTP)를 열지 않아 예전 HTTP 전송이 404였다.
 ///
 /// 서버 STT 모드(온디바이스 모델이 아직 없을 때)는 웹과 똑같이 PCM을 hub WebSocket으로 흘려보내기만 한다.
 @MainActor
 final class CallSession {
-    enum Stage: Equatable { case recording, finishing, structuring, sent, failed(String), noSpeech }
+    enum Stage: Equatable { case recording, finishing, structuring, sent, failed(String), noSpeech, cancelled }
 
     let caseId: String
     let apid: String
@@ -23,18 +27,21 @@ final class CallSession {
     private let mic = MicCapture()
     private let models: ModelStore?
     private let sendPCM: ((Data) -> Void)?
+    private let sendSummary: (JSONValue) async -> String?
     private let segmenter = UtteranceSegmenter(silenceRMS: Settings.silenceRMS, holdSec: Settings.holdSec)
     private let pending = PendingAudio()
     private var allAudio: [Float] = []  // 원본 보존(통화 wav) — 108초 통화 ≈ 7MB
     private var pollTask: Task<Void, Never>?
     private var asrChain: Task<Void, Never>?
 
-    /// models != nil 이면 온디바이스, sendPCM != nil 이면 서버 STT
-    init(caseId: String, apid: String, models: ModelStore?, sendPCM: ((Data) -> Void)?) {
+    /// models != nil 이면 온디바이스, sendPCM != nil 이면 서버 STT. sendSummary는 요약을 hub로 보내고 실패 사유를 돌려준다
+    init(caseId: String, apid: String, models: ModelStore?, sendPCM: ((Data) -> Void)?,
+         sendSummary: @escaping (JSONValue) async -> String?) {
         self.caseId = caseId
         self.apid = apid
         self.models = models
         self.sendPCM = sendPCM
+        self.sendSummary = sendSummary
     }
 
     func start() throws {
@@ -58,7 +65,17 @@ final class CallSession {
         }
     }
 
-    /// 종료 버튼. 마이크를 끄고 남은 처리를 뒤에서 마친다
+    /// [취소] — 마이크·인식을 멈추고 녹음을 버린다. 요약을 만들지도 보내지도 않는다(서버 STT면 hub에 cancelled로 알린다)
+    func cancel() {
+        mic.stop()
+        pollTask?.cancel()
+        asrChain?.cancel()
+        _ = pending.drain()
+        allAudio.removeAll()
+        stage = .cancelled
+    }
+
+    /// [전송] — 마이크를 끄고 남은 처리(인식·구조화)를 마쳐 요약을 보낸다
     func finish() async {
         mic.stop()
         pollTask?.cancel()
@@ -79,7 +96,7 @@ final class CallSession {
             let message = buildCallSummary(caseId: caseId, segments: lines, callStart: startedAt,
                                            durationSec: duration, summary: summary)
             Archive.save(caseId: caseId, audio: allAudio, transcript: text, summary: message)
-            if let error = await HubHTTP.postSummary(message) { stage = .failed(error) } else { stage = .sent }
+            if let error = await sendSummary(message) { stage = .failed(error) } else { stage = .sent }
         } catch {
             Archive.save(caseId: caseId, audio: allAudio, transcript: text, summary: nil)
             stage = .failed("구조화 실패: \(error.localizedDescription)")
@@ -97,14 +114,13 @@ final class CallSession {
     private func enqueue(_ u: Utterance) {
         guard let models else { return }
         let previous = asrChain
-        let apid = apid, caseId = caseId
         asrChain = Task { @MainActor [weak self] in
             await previous?.value
             for s in await models.transcribe(u.audio) {
+                guard let self, self.stage != .cancelled else { return }
                 let seg = RecognizedSegment(start: u.offsetSec + s.start, end: u.offsetSec + s.end, text: s.text)
-                self?.lines.append(seg)
-                self?.onChange?()
-                HubHTTP.postUtterance(UtteranceMessage(apid: apid, caseId: caseId, start: seg.start, end: seg.end, text: seg.text))
+                self.lines.append(seg)  // 이 화면 자막에만 — [전송] 전엔 기기 밖으로 보내지 않는다
+                self.onChange?()
             }
         }
     }

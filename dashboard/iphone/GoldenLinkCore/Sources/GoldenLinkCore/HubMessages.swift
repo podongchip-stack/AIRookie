@@ -21,9 +21,13 @@ public struct CallSignalMessage: Encodable {
     public let hospitalId: String?
     /// hub 스키마가 Literal["phone","tablet"] — 다른 값이면 신호 전체가 거부된다
     public let device = "phone"
+    /// 통화 취소(2026-10-05): call_ended와 함께 true면 hub·voice가 이 통화 음성을 처리·전달하지 않는다. nil이면 보내지 않는다
+    public let cancelled: Bool?
 
-    public init(signal: String, apid: String, caseId: String, hospitalId: String?, timestamp: String = isoNow()) {
-        self.signal = signal; self.apid = apid; self.caseId = caseId; self.hospitalId = hospitalId; self.timestamp = timestamp
+    public init(signal: String, apid: String, caseId: String, hospitalId: String?, cancelled: Bool? = nil,
+                timestamp: String = isoNow()) {
+        self.signal = signal; self.apid = apid; self.caseId = caseId; self.hospitalId = hospitalId
+        self.cancelled = cancelled; self.timestamp = timestamp
     }
 }
 
@@ -82,6 +86,8 @@ public struct AmbulanceSim: Decodable, Equatable {
     public let etaSec: Double?
     public let incident: GPS?
     public let paused: Bool?
+    /// 이송 중·도착한 병원(이송 확정 병원)
+    public let hospitalId: String?
 }
 
 public struct BedReliability: Decodable, Equatable {
@@ -127,6 +133,9 @@ public struct CallStatus: Decodable, Equatable {
     public let device: String?
     public let state: String  // "calling" | "ended"
     public let startedAt: String
+    /// 2026-10-05: 같은 사건의 추가 통화인지 · 취소된 통화인지(전달 안 됨)
+    public let followup: Bool?
+    public let cancelled: Bool?
 }
 
 public struct CallTranscriptLine: Decodable, Equatable {
@@ -136,11 +145,24 @@ public struct CallTranscriptLine: Decodable, Equatable {
     public let text: String
 }
 
-/// match_result(또는 type 없음) — 종료 화면의 "후보 병원 N곳에 전달"에 hospitals 수만 쓴다
+/// match_result(또는 type 없음) — 종료 화면의 "후보 병원 N곳에 전달"과, 이송 중 통화할 목적지(확정 병원)에 쓴다
 public struct MatchResult: Decodable {
     public let caseId: String
-    public let hospitals: [Ignored]
-    public struct Ignored: Decodable {}
+    public let hospitals: [Hospital]
+    public struct Hospital: Decodable, Equatable {
+        public let hospitalId: String
+        public let name: String
+        public let status: String  // pending | approved | rejected | confirmed
+        public init(hospitalId: String, name: String, status: String) {
+            self.hospitalId = hospitalId; self.name = name; self.status = status
+        }
+    }
+}
+
+/// 조작 거부(2026-10-05) — reason "paused"면 시연 일시정지 중
+public struct ActionRefused: Decodable {
+    public let caseId: String?
+    public let reason: String
 }
 
 public struct CaseClosed: Decodable { public let caseId: String }

@@ -2,10 +2,16 @@
 
 웹 전화 앱(`/phone`)과 같은 흐름(출동 → 현장 도착 → 병원 목록 → 병원 골라 통화 → 종료 → 후보 병원 전체 전달)을
 네이티브 앱으로 옮겼다. 음성 인식(Qwen3-ASR)과 구조화(MF_BERT)를 **아이폰 안에서** 돌리고, hub에는 지금 voice가
-보내는 것과 **같은 JSON**(`/voice/utterance`, `/voice/summary`)만 보낸다. 모델은 양자화·fp16 변환 없이 원본
+보내는 것과 **같은 통화 요약 JSON**만 보낸다. 모델은 양자화·fp16 변환 없이 원본
 정밀도(ASR bf16, MF_BERT fp32)로 쓴다. 대상: iPhone 15 Pro(iOS 18+), 개발 맥 + Xcode.
 
-hub·dashboard 코드는 바꾸지 않았다. 앱은 hub에 "구급차 탭(role=ambulance)"으로 붙고, voice 역할을 겸한다.
+**2026-10-05 통화 흐름 변경**: 통화는 **[취소]**와 **[전송]**으로 끝난다. 통화 중 인식 결과는 이 화면 자막에만 쓰고 기기 밖으로
+보내지 않으며, **[전송]을 눌러야** 남은 인식·구조화를 마쳐 요약을 보낸다([취소]는 아무것도 보내지 않음). 요약은 hub
+WebSocket(`type: "voice_summary"`)으로 보내서 **공개 도메인에서도 된다**(예전 `/voice/summary` HTTP는 터널이 막아 404였다).
+현장 첫 통화 뒤에도 환자 상태가 바뀌면 **추가 통화**(현장: 다른 병원 / 이송 중: 목적지 병원)를 할 수 있고, 새 요약은 hub가
+환자 정보에 덧붙인다. 시연 일시정지 중엔 통화를 시작·전송하지 않고 "현재 시연 일시정지 중입니다." 안내를 띄운다.
+
+앱은 hub에 "구급차 탭(role=ambulance)"으로 붙고, voice 역할을 겸한다(hub는 이 연결로 온 `voice_summary`를 `/voice/summary`와 같게 처리한다).
 
 ## 폴더
 
@@ -180,10 +186,10 @@ hub WebSocket으로 보내 중앙 voice가 처리한다. 이때는 `./voice/star
 
 | 증상 | 해결 |
 |---|---|
-| 앱 하단 "온디바이스 모델 없음" | `Models/`에 변환 결과가 없다. 2번 → Xcode에서 다시 빌드 |
+| 앱 하단이 "서버 음성 인식" | `Models/`에 변환 결과가 다 들어가지 않았다(MF_BERT 3개 + Qwen 폴더). 2번 → Xcode에서 다시 빌드 |
 | 서명 오류 "increased-memory-limit" | 무료 계정에서 막히면 `GoldenLinkPhone/GoldenLinkPhone.entitlements`에서 그 키를 지우고 빌드(메모리 부족으로 꺼질 수 있음 — 그땐 `ModelStore`에서 MF_BERT를 통화 종료 뒤에 올리도록 바꾼다) |
 | 연결 안 됨(빨간 점) | 같은 Wi-Fi인지, hub 주소에 `http://`·포트 5001, 맥 방화벽, 아이폰 설정 → 앱 → 로컬 네트워크 허용 |
-| 종료 후 "hub가 /voice/summary를 받지 않음(404)" | 공개 도메인 주소를 넣었다 → 로컬 모드 주소로 |
+| 전송 후 "전달되지 않았습니다" | hub와 연결이 끊겼거나(위쪽 연결 표시) 인식된 말이 없었다 → [확인 · 다시 걸기] |
 | 말을 해도 자막이 안 나옴 | 무음 기준이 높다 → ⚙︎에서 RMS를 낮춘다. 말하는 중에 자꾸 끊기면 "발화 끝"을 늘린다 |
 | 패키지 해석 실패 | `Vendor/speech-swift`가 없음 → `./setup.sh` |
 | MLX 컴파일 중 Metal 오류 | Xcode → Settings → Components에서 Metal Toolchain 설치 |

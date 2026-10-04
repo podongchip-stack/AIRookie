@@ -3,7 +3,7 @@ import Foundation
 /// 앱 설정(설정 화면에서 바꾼다). 기기에만 저장된다.
 enum Settings {
     /// hub 주소. 로컬 모드 `http://<맥 IP>:5001`, 공개 모드 `https://app.rookie-goldenlink.xyz`
-    /// ⚠ 공개 도메인은 /voice/* 를 막아 두어(인증 없음) 온디바이스 모드의 자막·요약 전송이 404가 난다 — README "네트워크" 참고
+    /// 공개 도메인도 된다 — 온디바이스 요약은 WebSocket(/ws/dashboard)으로 보낸다(2026-10-05, 예전 /voice/* HTTP는 터널이 막아 404)
     static var hubBase: String {
         get { UserDefaults.standard.string(forKey: "hubBase") ?? "http://192.168.0.10:5001" }
         set { UserDefaults.standard.set(newValue, forKey: "hubBase") }

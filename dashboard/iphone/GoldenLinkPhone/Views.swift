@@ -3,7 +3,7 @@ import SwiftUI
 
 // 화면 디자인(2026-10-05) — 웹 대시보드 디자인 시안들(구급차·병원 대시보드, 시연 콘솔, 관제 지도)과 같은 색·카드 언어를 쓴다:
 // 연회색 바탕 + 흰 카드(둥근 18) · 남색 글자 · 알약 칩 · 병상/AI 유효/전문의 세 칸 · AI(파랑)와 규칙(회색) 출처 구분.
-// 화면 순서는 PhoneCallView.tsx와 같다: 통화 중 > 종료 > 다른 기기 통화 중 > 이미 전달됨 > 대기/출동 > 병원 목록
+// 화면 순서: 통화 중 > 통화 끝(전송 처리) > 다른 기기 통화 중 > 현장(병원 목록 / 전달됨 · 추가 통화) > 이송 중(목적지 병원과 통화) > 대기·출동
 
 // MARK: - 디자인 색 (dashboard/src/components/ambulance/ambulance-design.ts와 같은 값)
 
@@ -114,6 +114,21 @@ struct ContentView: View {
         .padding(.top, 6)
         .background(AD.bg.ignoresSafeArea())
         .foregroundStyle(AD.ink)
+        .overlay(alignment: .top) {
+            // 일시정지 등 잠깐 뜨는 안내(2026-10-05)
+            if let notice = m.notice {
+                HStack(spacing: 8) {
+                    Image(systemName: "pause.circle.fill").foregroundStyle(Color(hex: 0xFFB86B))
+                    Text(notice).font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 12)
+                .background(AD.navy, in: Capsule())
+                .shadow(color: AD.navy.opacity(0.3), radius: 12, y: 6)
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: m.notice)
         .sheet(isPresented: $showSettings) { SettingsView { m.start() } }
         .alert("알림", isPresented: .constant(m.error != nil)) { Button("확인") { m.error = nil } } message: { Text(m.error ?? "") }
     }
@@ -160,7 +175,9 @@ struct ContentView: View {
             }
             .font(.system(size: 10.5))
             .foregroundStyle(AD.ink3)
-            Text(m.modelStatus).font(.system(size: 10.5)).foregroundStyle(AD.muted).lineLimit(1)
+            if !m.modelStatus.isEmpty {
+                Text(m.modelStatus).font(.system(size: 10.5)).foregroundStyle(AD.muted).lineLimit(1)
+            }
         }
         .padding(.bottom, 4)
     }
@@ -168,19 +185,22 @@ struct ContentView: View {
     @ViewBuilder private var content: some View {
         if let call = m.call, call.phase != .ended {
             InCallView(call: call)
-        } else if m.call?.phase == .ended || m.status?.state == "ended" {
+        } else if m.call?.phase == .ended {
             EndedView()
         } else if let s = m.status, s.state == "calling" {
             StatusPanel(icon: "phone.fill", tint: AD.green,
                         title: "\(s.device == "phone" ? "다른 휴대폰" : "구급차 대시보드")에서 통화 중",
-                        detail: "\(s.hospitalName ?? "병원")과 통화하고 있습니다. 통화는 사건마다 한 번만 합니다.")
-        } else if let c = m.caseId, m.status == nil, let n = m.sentCount[c] {
-            StatusPanel(icon: "checkmark.circle.fill", tint: AD.green, title: "후보 병원 \(n)곳에 전달됐습니다",
-                        detail: "이 사건은 통화 없이 환자 정보가 나갔습니다. 병원 응답 확인·이송 승인은 구급차 대시보드에서 하세요.")
-        } else if !m.onScene {
-            waiting
+                        detail: "\(s.hospitalName ?? "병원")과 통화하고 있습니다. 통화가 끝나면 다시 걸 수 있습니다.")
+        } else if m.onScene {
+            if m.sent && !m.wantsExtraCall {
+                SentView()
+            } else {
+                HospitalListView()
+            }
+        } else if m.inTransport {
+            TransportCallView()
         } else {
-            HospitalListView()
+            waiting
         }
     }
 
@@ -232,8 +252,14 @@ struct HospitalListView: View {
                         Spacer()
                         Pill(text: "규칙 기반", fg: AD.ink3, bg: AD.chip)
                     }
-                    Text("한 곳과 통화하면 그 내용이 후보 병원 전체에 동시에 전달됩니다.")
+                    Text(m.wantsExtraCall
+                         ? "추가 통화 — 바뀐 환자 상태를 말하면 기존 환자 정보에 덧붙여 후보 병원에 다시 전달됩니다."
+                         : "한 곳과 통화하면 그 내용이 후보 병원 전체에 동시에 전달됩니다.")
                         .font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                    if m.wantsExtraCall {
+                        Button("추가 통화 닫기") { m.wantsExtraCall = false }
+                            .font(.system(size: 12, weight: .bold)).tint(AD.ink3).padding(.top, 2)
+                    }
                 }
                 .padding(.horizontal, 4)
 
@@ -370,7 +396,7 @@ struct InCallView: View {
                     HStack(spacing: 6) {
                         Dot(color: connecting ? AD.orange : AD.red)
                             .symbolEffect(.pulse, isActive: true)
-                        Text(connecting ? "연결 중…" : "통화 중 · 음성 인식")
+                        Text(connecting ? "연결 중…" : call.followup ? "추가 통화 중" : "통화 중")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(connecting ? AD.orange : AD.red)
                     }
@@ -420,16 +446,34 @@ struct InCallView: View {
             }
             .frame(maxHeight: .infinity)
 
-            Button(role: .destructive) { m.hangUp() } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "phone.down.fill").font(.system(size: 20, weight: .bold))
-                    Text(connecting ? "취소" : "통화 종료 · 병원에 전달").font(.system(size: 16, weight: .bold))
+            // [취소]는 아무것도 보내지 않고, [전송]을 눌러야만 음성을 처리해 병원에 보낸다(2026-10-05)
+            HStack(spacing: 10) {
+                Button { m.cancelCall() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "xmark").font(.system(size: 17, weight: .bold))
+                        Text("취소").font(.system(size: 16, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .foregroundStyle(AD.red)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(AD.red, lineWidth: 2))
                 }
-                .frame(maxWidth: .infinity, minHeight: 56)
-                .foregroundStyle(.white)
-                .background(AD.red, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .buttonStyle(.plain)
+                Button { m.sendCall() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "paperplane.fill").font(.system(size: 17, weight: .bold))
+                        Text("전송").font(.system(size: 16, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .foregroundStyle(.white)
+                    .background(connecting ? AD.control : AD.blue, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(connecting)
+                .layoutPriority(1)
             }
-            .buttonStyle(.plain)
+            Text("취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다")
+                .font(.system(size: 10.5)).foregroundStyle(AD.muted).multilineTextAlignment(.center)
         }
     }
 }
@@ -462,9 +506,15 @@ struct EndedView: View {
 
     var body: some View {
         let _ = m.tick
-        let sent = m.caseId.flatMap { m.sentCount[$0] }
         let stage = m.session?.stage
-        let hospital = m.call?.hospitalName ?? m.status?.hospitalName ?? "병원"
+        let sent: Int? = m.delivered ? m.caseId.flatMap { m.sentCount[$0] } : nil
+        let hospital = m.call?.hospitalName ?? "병원"
+        let followup = m.call?.followup == true
+        // 서버 음성 인식(모델 없음)은 결과가 hub 매칭으로만 온다 — 90초 넘게 안 오면 말이 인식되지 않은 것으로 본다
+        let serverWaitOver = Settings.onDevice == false || m.session == nil || stage == .sent
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+        let timedOut = sent == nil && serverWaitOver && (m.call?.endedAt.map { ctx.date.timeIntervalSince($0) > 90 } ?? false)
+        let finished = sent != nil || timedOut || stage == .noSpeech || isFailed(stage)
         VStack(spacing: 12) {
             Spacer(minLength: 0)
             Card(border: sent != nil ? AD.green : AD.line, borderWidth: sent != nil ? 2 : 1) {
@@ -475,9 +525,10 @@ struct EndedView: View {
                             .foregroundStyle(sent != nil ? AD.green : AD.blue)
                             .symbolEffect(.pulse, isActive: sent == nil)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(sent.map { "후보 병원 \($0)곳에 전달됐습니다" } ?? stageTitle(stage))
+                            Text(sent.map { followup ? "환자 정보에 덧붙여 \($0)곳에 전달됐습니다" : "후보 병원 \($0)곳에 전달됐습니다" }
+                                 ?? (timedOut ? "전달되지 않았습니다" : stageTitle(stage)))
                                 .font(.system(size: 17, weight: .bold)).foregroundStyle(AD.navy)
-                            Text("통화: \(hospital)").font(.system(size: 12)).foregroundStyle(AD.sub)
+                            Text("\(followup ? "추가 통화" : "통화"): \(hospital)").font(.system(size: 12)).foregroundStyle(AD.sub)
                         }
                     }
                     // 진행 단계 — 음성 인식(AI) → 구조화(AI) → 병원 전달(규칙)
@@ -489,13 +540,33 @@ struct EndedView: View {
                     if case let .failed(reason)? = stage {
                         Text(reason).font(.system(size: 12)).foregroundStyle(AD.red)
                     }
+                    if timedOut {
+                        Text("인식된 말이 없었거나 음성 인식 서버에 닿지 않았습니다. 다시 걸 수 있습니다.")
+                            .font(.system(size: 12)).foregroundStyle(AD.red)
+                    }
                     Divider().overlay(AD.line)
                     Text("병원 응답 확인·이송 승인은 구급차 대시보드에서 합니다.")
                         .font(.system(size: 12)).foregroundStyle(AD.sub)
+                    if finished {
+                        Button { m.dismissEnded() } label: {
+                            Text(sent != nil ? "확인" : "확인 · 다시 걸기")
+                                .font(.system(size: 15, weight: .bold))
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                                .foregroundStyle(.white)
+                                .background(AD.blue, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             Spacer(minLength: 0)
         }
+        }
+    }
+
+    private func isFailed(_ s: CallSession.Stage?) -> Bool {
+        if case .failed? = s { return true }
+        return false
     }
 
     private func stageTitle(_ s: CallSession.Stage?) -> String {
@@ -512,7 +583,7 @@ struct EndedView: View {
     private func stepState(_ index: Int, stage: CallSession.Stage?, sent: Int?) -> StepRow.State {
         if sent != nil { return .done }
         switch stage {
-        case .failed?, .noSpeech?: return index == 0 ? .done : .failed
+        case .failed?, .noSpeech?, .cancelled?: return index == 0 ? .done : .failed
         case .finishing?: return index == 0 ? .active : .pending
         case .structuring?: return index == 0 ? .done : index == 1 ? .active : .pending
         case .sent?: return index < 2 ? .done : .active
@@ -542,6 +613,97 @@ struct StepRow: View {
                 .foregroundStyle(state == .pending ? AD.muted : AD.ink)
             Spacer()
             Pill(text: source, fg: source == "AI" ? AD.blue : AD.ink3, bg: source == "AI" ? AD.blueSoft : AD.chip)
+        }
+    }
+}
+
+// MARK: - 현장: 전달됨 · 추가 통화
+
+struct SentView: View {
+    @Environment(PhoneModel.self) private var m
+
+    var body: some View {
+        let n = m.caseId.flatMap { m.sentCount[$0] } ?? 0
+        VStack(spacing: 12) {
+            Spacer(minLength: 0)
+            Card(border: AD.green, borderWidth: 2) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 26, weight: .semibold)).foregroundStyle(AD.green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("후보 병원 \(n)곳에 전달됐습니다").font(.system(size: 17, weight: .bold)).foregroundStyle(AD.navy)
+                            Text("병원 응답 확인·이송 승인은 구급차 대시보드에서 합니다").font(.system(size: 12)).foregroundStyle(AD.sub)
+                        }
+                    }
+                    Divider().overlay(AD.line)
+                    Text("환자 상태가 바뀌었으면 다시 통화하세요. 새 통화 내용은 기존 환자 정보에 덧붙여 전달됩니다.")
+                        .font(.system(size: 12.5)).foregroundStyle(AD.ink3).fixedSize(horizontal: false, vertical: true)
+                    Button { m.wantsExtraCall = true } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "phone.badge.plus")
+                            Text("추가 통화").fontWeight(.bold)
+                        }
+                        .font(.system(size: 15))
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                        .foregroundStyle(AD.blue)
+                        .background(AD.blueSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+// MARK: - 이송 중: 목적지 병원과 통화
+
+/// 이송 중 환자 상태가 바뀌면 목적지 병원과 다시 통화한다(2026-10-05). 새 요약은 환자 정보에 덧붙어 병원 화면에 반영되고,
+/// 병원이 받을 수 없게 되면 병원 대시보드의 [이송 중 수용 철회]로 확정이 풀려 구급차는 다른 병원으로 재선택한다.
+struct TransportCallView: View {
+    @Environment(PhoneModel.self) private var m
+
+    var body: some View {
+        let rerouting = m.phase == .rerouting
+        let dest = m.destination
+        let eta = m.mySim?.etaSec.map { max(1, Int(($0 / 60).rounded(.up))) }
+        VStack(spacing: 12) {
+            Spacer(minLength: 0)
+            Card(border: rerouting ? AD.red : AD.line, borderWidth: rerouting ? 2 : 1) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Pill(text: rerouting ? "재선택 대기" : "병원 이송 중", fg: rerouting ? AD.red : AD.blue,
+                             bg: rerouting ? AD.redSoft : AD.blueSoft, bold: true)
+                        if !rerouting, let eta { Text("도착까지 약 \(eta)분").font(.system(size: 12)).foregroundStyle(AD.sub) }
+                    }
+                    if rerouting {
+                        Text("목적지 병원이 수용할 수 없게 됐습니다").font(.system(size: 18, weight: .bold)).foregroundStyle(AD.navy)
+                        Text("구급차 대시보드에서 승인한 다른 병원을 이송 승인하세요. 승인 병원이 없으면 범위를 넓혀 다시 요청합니다.")
+                            .font(.system(size: 12.5)).foregroundStyle(AD.ink3).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("목적지 병원").font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                            Text(dest?.name ?? "확정 병원").font(.system(size: 20, weight: .black)).foregroundStyle(AD.navy)
+                        }
+                        Text("이송 중 환자 상태가 바뀌면 목적지 병원과 통화하세요. 통화 내용은 환자 정보에 덧붙어 병원 화면에 바로 반영됩니다.")
+                            .font(.system(size: 12.5)).foregroundStyle(AD.ink3).fixedSize(horizontal: false, vertical: true)
+                        if let dest {
+                            Button { Task { await m.dial(hospitalId: dest.hospitalId, name: dest.name) } } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "phone.fill")
+                                    Text("목적지 병원과 통화").fontWeight(.bold)
+                                }
+                                .font(.system(size: 15))
+                                .frame(maxWidth: .infinity, minHeight: 50)
+                                .foregroundStyle(.white)
+                                .background(m.paused ? AD.control : AD.green, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 }
@@ -616,7 +778,7 @@ struct SettingsView: View {
                 Section {
                     Toggle("기기 안에서 음성 인식·구조화", isOn: $onDevice).tint(AD.blue)
                 } footer: {
-                    Text("끄면 웹 전화 앱처럼 음성을 hub로 보내 중앙 voice가 처리합니다. 켜면 음성은 기기 밖으로 나가지 않고 /voice/utterance·/voice/summary만 보냅니다(공개 도메인에선 404 — 로컬 모드 필요).")
+                    Text("끄면 웹 전화 앱처럼 음성을 hub로 보내 중앙 voice가 처리합니다. 켜면 음성은 기기 밖으로 나가지 않고, [전송]을 누를 때 구조화된 요약만 hub로 보냅니다(공개 도메인 가능).")
                 }
                 Section("무음 감지") {
                     LabeledContent("무음 기준 RMS \(rms, specifier: "%.3f")") { Slider(value: $rms, in: 0.002...0.05).tint(AD.blue) }
