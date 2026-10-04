@@ -354,6 +354,7 @@ def _run_match_job(voice: VoiceCallSummaryMessage) -> None:
         deliver(result, synthetic_path, LIVE_OUTPUT_DIR)
 
         _send_to_dashboard(result.model_dump())
+        _release_call_hold(voice.caseId, "summary_applied")
     except Exception as e:  # noqa: BLE001
         print(f"  [매칭] caseId={voice.caseId} 매칭 실패: {e!r}")
 
@@ -886,6 +887,8 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
             "device": signal.device, "state": "calling", "startedAt": signal.timestamp, "endedAt": None,
             "followup": followup, "cancelled": False,
         })
+        if followup:
+            _start_call_hold(signal.caseId, signal.apid)
         if signal.hospitalId and not followup:
             # 첫 연락 추천이 실제로 맞았나 — 추천과 구급대원이 고른 병원을 나란히 남긴다(적중률 재료).
             recommended = _case_recommended.get(signal.caseId)
@@ -900,6 +903,12 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
         if status:
             _send_call_status({**status, "state": "ended", "endedAt": signal.timestamp,
                                "cancelled": bool(signal.cancelled)})
+        if signal.cancelled:
+            _release_call_hold(signal.caseId, "cancelled")
+        else:
+            with _call_holds_lock:
+                if signal.caseId in _call_holds:
+                    _call_holds[signal.caseId]["deadline"] = time.time() + CALL_HOLD_AFTER_END_SEC
         if signal.cancelled:
             case_tracker.event(signal.caseId, "c", "통화 취소 — 전달하지 않음")
             decision_log.log_decision("call_cancelled", {"apid": signal.apid, "caseId": signal.caseId,
@@ -1752,6 +1761,8 @@ def _handle_sim_command(payload: dict) -> None:
     if isinstance(cmd, SimReset):
         # [시연 초기화](2026-10-04) — 모든 사건 종료(case_closed 전파) + 전 구급차 기지 복귀 +
         # 이송 중 병상 차감 해제. "시연 정지(일시정지)가 사건을 안 지운다"는 혼동을 분리한 리셋.
+        with _call_holds_lock:
+            _call_holds.clear()
         closed: list[str] = []
         for info in engine.list_ambulances():
             sim.reset(info.apid)
@@ -1853,7 +1864,56 @@ def _case_paused(case_id: str | None) -> bool:
 
 
 def _apid_paused(apid: str | None) -> bool:
-    return bool(sim is not None and apid and (sim.state(apid) or {}).get("paused"))
+    """운영자의 시연 일시정지인가 — 조작을 잠근다. 이송 중 추가 통화로 이동만 멈춘 경우(pauseReason "call")는 잠그지 않는다."""
+    state = (sim.state(apid) or {}) if sim is not None and apid else {}
+    return bool(state.get("paused")) and state.get("pauseReason") != "call"
+
+
+# ── 이송 중 추가 통화 동안 이동 멈춤(2026-10-05) ─────────────────────────────
+# 이송 중 목적지 병원과 다시 통화하면, 통화 내용을 듣고 정보를 처리하는 동안 구급차 이동(시뮬레이션)을 잠시 멈춘다.
+# 통화 취소면 바로, 전송이면 2차 요약이 반영된 뒤 다시 출발한다. 요약이 안 오면(음성 없음·실패) 안전 시간 뒤 푼다.
+CALL_HOLD_MAX_SEC = float(os.environ.get("HUB_CALL_HOLD_MAX_SEC", "600"))        # 통화가 이보다 길면 그냥 푼다
+CALL_HOLD_AFTER_END_SEC = float(os.environ.get("HUB_CALL_HOLD_AFTER_END_SEC", "120"))  # 전송 뒤 요약을 기다리는 최대 시간
+#: caseId -> {"apid", "deadline"(epoch)}
+_call_holds: dict[str, dict] = {}
+_call_holds_lock = threading.Lock()
+
+
+def _start_call_hold(case_id: str, apid: str) -> None:
+    if sim is None or sim.phase_of(apid) != "transporting":
+        return
+    ok, _ = sim.pause(apid, reason="call")
+    if not ok:
+        return  # 이미 멈춰 있다(운영자 일시정지 등)
+    with _call_holds_lock:
+        _call_holds[case_id] = {"apid": apid, "deadline": time.time() + CALL_HOLD_MAX_SEC}
+    case_tracker.event(case_id, "p", "추가 통화 — 통화·정보 처리 동안 이송 잠시 멈춤")
+    decision_log.log_decision("transport_call_hold", {"caseId": case_id, "apid": apid, "simulated": True})
+    _pause_zone_timers(apid, True)
+    _broadcast_sim_state(apid)
+
+
+def _release_call_hold(case_id: str, cause: str) -> None:
+    with _call_holds_lock:
+        hold = _call_holds.pop(case_id, None)
+    if hold is None or sim is None:
+        return
+    ok, _ = sim.resume(hold["apid"], reason="call")
+    decision_log.log_decision("transport_call_released", {"caseId": case_id, "apid": hold["apid"], "cause": cause,
+                                                          "resumed": ok, "simulated": True})
+    if ok:
+        label = {"cancelled": "통화 취소", "summary_applied": "통화 내용 반영", "timeout": "정보 처리 시간 초과"}.get(cause, cause)
+        case_tracker.event(case_id, "p", f"{label} — 이송 재개")
+        _pause_zone_timers(hold["apid"], False)
+        _broadcast_sim_state(hold["apid"])
+
+
+def _expire_call_holds(now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    with _call_holds_lock:
+        expired = [cid for cid, hold in _call_holds.items() if hold["deadline"] <= now]
+    for case_id in expired:
+        _release_call_hold(case_id, "timeout")
 
 
 def _touch_zone_timer(payload: dict) -> None:
@@ -2088,6 +2148,7 @@ def _send_pre_alert(
 
 def _sim_tick() -> None:
     """구급차를 한 칸 옮기고, 위치를 엔진(매칭·경로가 읽는 값)과 대시보드에 반영한다."""
+    _expire_call_holds()
     changed, moving = sim.tick()
     for state in changed + moving:
         if state.get("gps"):

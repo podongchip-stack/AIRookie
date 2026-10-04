@@ -251,6 +251,8 @@ class Unit:
     last_incident: Optional[tuple[float, float]] = None
     # [정지] 중(2026-10-03). 이동 중이면 trip도 멈춰 있고, 현장에선 이송 확정이 와도 출발하지 않는다.
     paused: bool = False
+    # 왜 멈췄나(2026-10-05): "manual"(시연 일시정지 — 조작 잠금) | "call"(이송 중 추가 통화 — 통화·정보 처리 동안만 이동 멈춤)
+    pause_reason: Optional[str] = None
 
     def snapshot(self, now: float) -> dict:
         """밖으로 내보낼 상태(경로 포함). app.py가 type·simulated를 붙인다."""
@@ -267,6 +269,7 @@ class Unit:
             "incident": self.incident.model_dump() if self.incident else None,
             "hospitalId": self.hospital_id,
             "paused": self.paused,
+            "pauseReason": self.pause_reason if self.paused else None,
         }
 
 
@@ -368,7 +371,7 @@ class DispatchSim:
             old_case = unit.case_id
             unit.phase, unit.trip, unit.gps = "idle", None, unit.base
             unit.case_id = unit.incident = unit.hospital_id = None
-            unit.paused = False
+            unit.paused, unit.pause_reason = False, None
             return old_case
 
     def scene_end(self, apid: str, case_id: str) -> bool:
@@ -402,8 +405,9 @@ class DispatchSim:
                 trip.pause(trip.started_at)
         return True
 
-    def pause(self, apid: str) -> tuple[bool, str]:
-        """[정지](2026-10-03): 출동 중·현장·이송 중일 때만. 위치·남은 시간·진행을 그 자리에 멈춘다."""
+    def pause(self, apid: str, reason: str = "manual") -> tuple[bool, str]:
+        """[정지](2026-10-03): 출동 중·현장·이송 중일 때만. 위치·남은 시간·진행을 그 자리에 멈춘다.
+        reason "call"(2026-10-05)은 이송 중 추가 통화 동안의 멈춤 — 조작 잠금은 하지 않는다(app.py)."""
         with self._lock:
             unit = self._units.get(apid)
             if unit is None:
@@ -413,19 +417,24 @@ class DispatchSim:
             if unit.phase not in PAUSABLE_PHASES:
                 return False, f"phase_{unit.phase}"
             unit.paused = True
+            unit.pause_reason = reason
             if unit.trip is not None:
                 unit.trip.pause(self._clock())
             return True, "ok"
 
-    def resume(self, apid: str) -> tuple[bool, str]:
-        """[상황 재개](2026-10-03): 멈춘 자리에서 이어 간다. 정지 중 이송 확정됐으면 이때 병원으로 출발한다."""
+    def resume(self, apid: str, reason: str | None = None) -> tuple[bool, str]:
+        """[상황 재개](2026-10-03): 멈춘 자리에서 이어 간다. 정지 중 이송 확정됐으면 이때 병원으로 출발한다.
+        reason을 주면 그 이유로 멈춘 경우만 푼다(통화 멈춤 해제가 운영자의 일시정지를 풀지 않게)."""
         with self._lock:
             unit = self._units.get(apid)
             if unit is None:
                 return False, "unknown_ambulance"
             if not unit.paused:
                 return False, "not_paused"
+            if reason is not None and unit.pause_reason != reason:
+                return False, f"paused_for_{unit.pause_reason}"
             unit.paused = False
+            unit.pause_reason = None
             if unit.trip is not None:
                 unit.trip.resume(self._clock())
             return True, "ok"
@@ -440,6 +449,7 @@ class DispatchSim:
             if unit.phase not in ("transporting", "dispatching") or unit.trip is None:
                 return False, f"phase_{unit.phase}"
             unit.paused = False
+            unit.pause_reason = None
             unit.trip.fast_forward(self._clock(), FAST_FORWARD_SEC)
             return True, "ok"
 

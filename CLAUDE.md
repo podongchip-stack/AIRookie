@@ -598,6 +598,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
 - **이송 중 수용 철회 · 추가 통화 · 일시정지 잠금(2026-10-05)** — 검증 `python test_transport_withdraw.py`
   - **이송 중 수용 철회**: 새 액션 `transport_withdraw`(병원, 사유 포함) — 구급차가 그 병원으로 **이송 중**일 때만. 도착 후 수용 불가와 같은 처리(확정 해제·병상 회수, 승인 병원이 없으면 존 확장 재요청)에 더해, 철회·도착 후 수용 불가 병원은 **그 사건에서 제외**(`HospitalMatch.excluded`, 다시 승인·이송 승인 거부). 구급차 시뮬레이션은 그 자리에서 `rerouting`. 거절 로그 `stage: "transport"`
   - **추가 통화(덧붙이기)**: "사건당 통화 한 번"은 현장 첫 연결에만 — 이송 중·재선택 대기에도 통화를 받는다(`CALLABLE_PHASES`). 같은 사건의 새 요약은 `HubEngine.add_call_summary()`가 덧붙인다: 최신 요약이 `patientInfo`, 앞선 요약은 `patientInfo.previousCalls`, `callRound`, 통화 전문은 "── N차 통화 ──"로 이어 붙임. 이송 확정 사건은 병원 목록·상태를 그대로 두고 환자 정보만 바꾼다(미확정이면 넓힌 존을 유지한 채 재매칭). `call_status`에 `followup`·`cancelled`
+  - **추가 통화 중 이송 멈춤**: 이송 중 추가 통화가 연결되면 hub가 구급차 이동(시뮬레이션)을 `pauseReason: "call"`로 멈추고, 2차 요약이 반영되면(또는 취소 즉시, 전송 뒤 `HUB_CALL_HOLD_AFTER_END_SEC`=120초·통화 최대 600초) 다시 출발시킨다. 운영자의 시연 일시정지(`pauseReason: "manual"`)와 달리 **조작을 잠그지 않는다**(`_apid_paused`는 manual만)
   - **통화 취소**: `call_signal`의 `cancelled: true`(call_ended와 함께) — 중앙 voice는 녹음만 `_cancelled.wav`로 남기고 인식·요약·전송을 하지 않는다
   - **아이폰 온디바이스 요약은 WebSocket `voice_summary`로**(구급차 소켓, 그 구급차 사건만) — 공개 도메인 터널은 `/voice/*` HTTP를 열지 않아 404였다
   - **일시정지 잠금**: 정지 중인 사건의 승인·불가·이송 승인·도착 결과·철회·건너뛰기·빨리감기·현장 종료·이송 중 활력징후·통화 시작을 hub가 거부하고 그 소켓에 `action_refused`(reason `paused`)를 보낸다. 매칭 결과·`case_overview`에 `paused`를 싣고, 정지·재개 때 다시 보낸다. 대시보드(병원·구급차·콘솔·웹/아이폰 전화 앱)는 버튼을 막고 "현재 시연 일시정지 중입니다." 안내를 잠깐 띄운다(`components/ui/PauseToast.tsx`). [재개]·[시연 초기화]는 그대로

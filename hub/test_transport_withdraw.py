@@ -99,14 +99,21 @@ def main() -> None:
                                       hospitalId=a.hospitalId, device="phone"), ambulance_tab)
     status = _last(ambulance_tab, "call_status", case_id)
     assert status["state"] == "calling" and status["followup"] is True, "이송 중에도 추가 통화를 받는다"
+    state = app.sim.state("A_T")
+    assert state["paused"] and state["pauseReason"] == "call", "추가 통화가 연결되면 이송(이동)이 잠시 멈춘다"
+    assert not app._case_paused(case_id), "통화 멈춤은 조작을 잠그지 않는다(운영자 일시정지와 구분)"
+    app._relay_call_signal(CallSignal(signal="call_ended", timestamp="t", apid="A_T", caseId=case_id,
+                                      hospitalId=a.hospitalId, device="phone"), ambulance_tab)
+    assert app.sim.state("A_T")["paused"], "전송 뒤에도 요약이 반영될 때까지는 멈춰 있다"
     app._run_match_job(_voice(case_id, "2차 통화", "흉통 악화 — 쇼크 의심"))
+    assert not app.sim.state("A_T")["paused"] and app.sim.phase_of("A_T") == "transporting", "요약이 반영되면 이송 재개"
     after = app.engine.get_case_result(case_id)
     p = after.patientInfo
     assert p.callRound == 2 and p.expectedDiagnosis == "흉통 악화 — 쇼크 의심", p
     assert [u.expectedDiagnosis for u in p.previousCalls] == ["흉통 — 경색 의심"], p.previousCalls
     assert "1차 통화" in p.rawTranscript and "2차 통화" in p.rawTranscript and "── 2차 통화 ──" in p.rawTranscript
     assert [(h.hospitalId, h.status) for h in after.hospitals] == [(h.hospitalId, h.status) for h in before.hospitals]
-    print("  [확인] 2차 요약이 최신 환자 정보, 1차는 previousCalls, 통화 전문 이어 붙임, 확정 병원 유지")
+    print("  [확인] 추가 통화 중 이동 멈춤(조작 잠금 없음)→요약 반영 뒤 재개, 2차 요약이 최신 환자 정보, 1차는 previousCalls, 확정 병원 유지")
 
     print("=== 병원의 이송 중 수용 철회 → 확정 해제·제외·재선택 대기 ===")
     app._handle_dashboard_action(_action(case_id, "transport_withdraw", a.hospitalId, reason="BEDS_FULL"))
@@ -131,6 +138,7 @@ def main() -> None:
                                       hospitalId=b.hospitalId, device="phone", cancelled=True), ambulance_tab)
     status = _last(ambulance_tab, "call_status", case_id)
     assert status["state"] == "ended" and status["cancelled"] is True, status
+    assert not app.sim.state("A_T")["paused"], "취소하면 바로 이송 재개"
     assert any("통화 취소" in e["text"] for e in app.case_tracker.events(case_id))
     print("  [확인] 취소 통화 → call_status.cancelled=true, 진행 과정 '통화 취소 — 전달하지 않음'")
     app.sim = None
