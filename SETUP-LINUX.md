@@ -283,3 +283,63 @@ git pull                      # 지금 브랜치만
 ```
 
 코드가 바뀐 뒤에는 `--skip-build` 없이 다시 띄워 dashboard를 새로 빌드한다. 의존성 파일(`requirements.txt`·`package-lock.json`)이 바뀌었으면 3·5단계의 설치 줄을 다시 실행한다.
+
+## 11. E-Gen 수집기와 데이터
+
+### 11-1. 수집기는 클라우드에서 돈다 — 리눅스는 동기화만
+
+- E-Gen 병상 스냅샷 수집은 2026-10-04부터 **Supabase(클라우드)에서 20분마다** 돈다. 이 장비에서 수집기를 따로 띄우지 않는다.
+- 이 장비는 클라우드에 쌓인 원본을 내려받아 `info/Hospital_inform/info/data/snapshots_nationwide/<날짜>.jsonl`로 복원만 한다.
+  `./start-all.sh`가 이 동기화를 자동으로 띄운다 — 1분마다 클라우드에 새 수집분이 생겼는지 보고, 생기면 바로 동기화해서 신뢰도 그래프가 20분 주기에 맞춰 따라온다.
+- 필요한 키는 4-2의 `SNAPSHOT_SUPABASE_URL`·`SNAPSHOT_SUPABASE_ANON_KEY` 두 개뿐이다.
+- 업로드용 `SNAPSHOT_SUPABASE_SERVICE_KEY`는 넣지 않는다. 이 키가 없으면 "하루가 끝난 날짜를 하루치 파일(`days/`)로 정리해 올리는 작업"만 안 할 뿐이고,
+  수집·동기화·그래프는 그대로다(정리되지 않은 날짜는 20분 단위 원본에서 만들어서 처음 받을 때 조금 더 걸린다).
+
+### 11-2. 첫 동기화 (약 1.5GB, 오래 걸림)
+
+과거 전체(9월 초~)를 처음 한 번 내려받는다. 받는 동안에도 서버는 정상으로 뜨고, 받은 날짜만큼 신뢰도 그래프·병상 신뢰도가 채워진다.
+두 번째 실행부터는 바뀐 날짜만 받는다.
+
+```bash
+tail -f /tmp/goldenlink-logs/snapshot.log          # 진행 확인 ("<날짜>: days/에서 복원" … "동기화 완료")
+```
+
+서버를 띄우기 전에 미리 받아 두려면:
+
+```bash
+cd info/Hospital_inform/info && conda run -n rookie_info python snapshot_cloud.py --sync && cd ../../..
+```
+
+### 11-3. 윈도우 서버에서 리눅스로 옮기기 (데이터 이전)
+
+클라우드에 없는 데이터(약 100MB)는 직접 옮긴다. 스냅샷(11-1)은 옮기지 않는다 — 리눅스가 클라우드에서 받는다.
+
+| 폴더 | 내용 |
+|---|---|
+| `hub/data/logs/` | 의사결정 로그(해시 체인 — 위변조 검증 기록) |
+| `hub/data/state/` | hub 상태(병원·구급차 레지스트리, 지난 사건 기록) |
+| `hub/data/live/`, `hub/data/sim/` | 실서버 매칭 결과 사본, 시뮬레이션 데이터 |
+| `info/Hospital_inform/info/data/rejections/` | 거절 로그(정답 데이터 — 소급해서 다시 만들 수 없음) |
+| `info/Hospital_inform/info/data/verification/` | 신뢰도 검증 화면 데이터 |
+| `info/Hospital_inform/info/data/hira/` | 심평원 캐시(옮기면 6단계 생략 가능) |
+| `data/voice_data/` | 통화 원본·STT 원문·요약 |
+
+순서 — **같은 도메인은 한 장비만 연결해야 하므로(0단계 경고) 윈도우를 먼저 끈다.** 켜진 채 복사하면 로그·상태 파일이 중간에 잘릴 수도 있다.
+
+1. 크롬 원격 데스크톱으로 윈도우에 접속해 `./start-all.sh` 터미널을 **Ctrl-C**로 끄고, voice 터미널도 끈다.
+2. 윈도우 Git Bash, 저장소 루트에서 압축:
+   ```bash
+   tar -czf ~/goldenlink-data.tgz hub/data/logs hub/data/state hub/data/live hub/data/sim \
+     info/Hospital_inform/info/data/rejections info/Hospital_inform/info/data/verification \
+     info/Hospital_inform/info/data/hira data/voice_data
+   ```
+3. `goldenlink-data.tgz`(사용자 폴더)를 리눅스로 옮긴다 — 크롬 원격 데스크톱 파일 전송(세션 메뉴 → 파일 전송) 또는 구글 드라이브.
+   **통화 원본(환자 음성·원문)이 들어 있으니** 공유 링크로 퍼지지 않게 하고, 옮긴 뒤 드라이브에서 지운다.
+4. 리눅스 저장소 루트(`AIRookie/`)에서 푼다(경로가 그대로 들어 있어 제자리에 풀린다):
+   ```bash
+   tar -xzf ~/goldenlink-data.tgz
+   ```
+5. 리눅스에서 `./start-all.sh` — hub가 상태 파일을 읽어 지난 사건 기록·레지스트리를 이어받고, 의사결정 로그도 같은 파일에 이어 쌓여 해시 체인이 이어진다.
+   진행 중이던 사건은 재시작 규칙대로 닫힌다(시뮬레이션 모드에선 재시작하면 구급차가 기지로 돌아가므로).
+
+`hub/data/test/`는 테스트용이라 옮기지 않는다.
