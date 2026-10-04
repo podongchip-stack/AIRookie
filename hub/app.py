@@ -343,7 +343,8 @@ def _run_match_job(voice: VoiceCallSummaryMessage) -> None:
     try:
         ambulance_gps, gps_fallback = _resolve_ambulance_gps(voice.caseId)
         start_zone = engine.resolve_start_zone(ambulance_gps)
-        result = engine.process_voice_summary(
+        # 같은 사건의 추가 통화(환자 상태 변화, 2026-10-05)는 add_call_summary가 덧붙인다 — 첫 통화면 기존과 같다
+        result = engine.add_call_summary(
             voice, ambulance_gps, max_zone=start_zone, gps_fallback=gps_fallback
         )
 
@@ -560,8 +561,10 @@ def _send_to_dashboard(payload: dict) -> None:
     실시간 전송은 WebSocket 연결을 쥐고 있는 여기서 처리한다. 전송 실패한
     소켓은 죽은 것으로 보고 집합에서 뺀다 (voice의 send_to_hub()와 동일한
     방어 패턴 — 연결이 없거나 끊겼어도 본 요청은 계속돼야 함)."""
-    message = json.dumps(payload, ensure_ascii=False)
     is_match = payload.get("type") == "match_result" and bool(payload.get("caseId"))
+    if is_match:
+        payload = {**payload, "paused": _case_paused(payload["caseId"])}
+    message = json.dumps(payload, ensure_ascii=False)
     if is_match:
         case_tracker.observe(payload)  # 관제 지도 사건 기록(2026-10-04) — 직전 결과와 비교해 이벤트를 남긴다
         _touch_zone_timer(payload)
@@ -612,6 +615,7 @@ def _monitor_case(payload: dict) -> dict:
         events=case_tracker.events(payload["caseId"]),
         zoneExpandAt=_zone_expand_at(payload),
         zonePausedLeftSec=_zone_paused_left(payload),
+        paused=_case_paused(payload["caseId"]),
         caseId=payload["caseId"],
         apid=payload.get("apid"),
         ambulanceName=payload.get("ambulanceName"),
@@ -851,26 +855,38 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
             decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
                                                              "reason": "dashboard_call_off"})
             return
-        # 출동 시뮬레이션 중엔 현장 도착 뒤, 그 출동의 사건으로만 통화를 시작한다(버튼만 막는 게
-        # 아니라 hub도 규칙을 지킨다).
-        if sim is not None and (sim.phase_of(signal.apid) != "on_scene" or sim.case_of(signal.apid) != signal.caseId):
+        # 출동 시뮬레이션 중엔 그 출동의 사건으로만, 현장 도착 뒤에 통화한다(버튼만 막는 게 아니라 hub도 규칙을
+        # 지킨다). 2026-10-05부터 "사건당 통화 한 번"은 현장 첫 연결에만 해당한다 — 환자 상태가 바뀌면 이송 중
+        # (목적지 병원)이나 재선택 대기 중에도 다시 통화할 수 있다. 새 요약은 환자 정보에 덧붙는다.
+        if sim is not None and (sim.phase_of(signal.apid) not in CALLABLE_PHASES or sim.case_of(signal.apid) != signal.caseId):
             print(f"  [시뮬레이션] {signal.apid} 통화 시작 거부 — 현장 도착 전이거나 다른 사건")
             decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
                                                              "phase": sim.phase_of(signal.apid)})
+            _notify_refused(ws, signal.caseId, "phase")
+            return
+        if _case_paused(signal.caseId):
+            decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
+                                                             "reason": "paused"})
+            _notify_refused(ws, signal.caseId, "paused")
             return
         engine.register_case(signal.caseId, signal.apid)
-        _send_scene_candidates(signal.caseId, signal.apid)
+        followup = engine.get_case_result(signal.caseId) is not None
+        if not followup:
+            _send_scene_candidates(signal.caseId, signal.apid)
         ambulance = engine.get_ambulance(signal.apid)
         hospital = engine.get_hospital(signal.hospitalId) if signal.hospitalId else None
         case_tracker.start(signal.caseId, signal.apid, ambulance.name if ambulance else None)
-        case_tracker.event(signal.caseId, "p", f"현장 통화 시작" + (f" · {hospital.name}" if hospital else ""))
+        phase = sim.phase_of(signal.apid) if sim is not None else None
+        label = "이송 중 추가 통화" if phase == "transporting" else "추가 통화" if followup else "현장 통화 시작"
+        case_tracker.event(signal.caseId, "p", label + (f" · {hospital.name}" if hospital else ""))
         _send_call_status({
             "type": "call_status", "caseId": signal.caseId, "apid": signal.apid,
             "ambulanceName": ambulance.name if ambulance else None,
             "hospitalId": signal.hospitalId, "hospitalName": hospital.name if hospital else None,
             "device": signal.device, "state": "calling", "startedAt": signal.timestamp, "endedAt": None,
+            "followup": followup, "cancelled": False,
         })
-        if signal.hospitalId:
+        if signal.hospitalId and not followup:
             # 첫 연락 추천이 실제로 맞았나 — 추천과 구급대원이 고른 병원을 나란히 남긴다(적중률 재료).
             recommended = _case_recommended.get(signal.caseId)
             decision_log.log_decision("first_call_selected", {
@@ -882,7 +898,12 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
         with _sockets_lock:
             status = dict(_case_call.get(signal.caseId) or {})
         if status:
-            _send_call_status({**status, "state": "ended", "endedAt": signal.timestamp})
+            _send_call_status({**status, "state": "ended", "endedAt": signal.timestamp,
+                               "cancelled": bool(signal.cancelled)})
+        if signal.cancelled:
+            case_tracker.event(signal.caseId, "c", "통화 취소 — 전달하지 않음")
+            decision_log.log_decision("call_cancelled", {"apid": signal.apid, "caseId": signal.caseId,
+                                                         "hospitalId": signal.hospitalId, "device": signal.device})
 
     central_url = _central_voice_url()
     if central_url is not None:
@@ -899,7 +920,7 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
     try:
         requests.post(
             f"{voice_base_url}{path}",
-            json={"timestamp": signal.timestamp, "caseId": signal.caseId},
+            json={"timestamp": signal.timestamp, "caseId": signal.caseId, "cancelled": bool(signal.cancelled)},
             timeout=10,
         )
     except requests.RequestException as e:
@@ -932,7 +953,7 @@ def _relay_to_central_voice(signal: CallSignal, ws, base_url: str) -> None:
         relay = _audio_relays.get(signal.caseId)
         for sock in [s for s, cid in _socket_call.items() if cid == signal.caseId]:
             del _socket_call[sock]
-    end_payload = {"caseId": signal.caseId, "timestamp": signal.timestamp}
+    end_payload = {"caseId": signal.caseId, "timestamp": signal.timestamp, "cancelled": bool(signal.cancelled)}
     if relay is not None:
         relay.finish(end_payload)  # 남은 음성을 다 보낸 뒤 /call/end
         return
@@ -969,7 +990,7 @@ def _send_catchup(ws, identify: DashboardIdentify) -> list[str]:
     )
     print(f"  [통신] {identify.role} {identify.id} 연결 — 진행 중인 사건 {len(cases)}건 따라잡기 전송")
     for result in cases:
-        _send_to_socket(ws, result.model_dump(), "따라잡기")
+        _send_to_socket(ws, {**result.model_dump(), "paused": _case_paused(result.caseId)}, "따라잡기")
         # 따라잡기로 받아 본 것도 "도달"이다 — 뒤늦게 연결한 병원이 요청을
         # 봤는데 무응답이면 미도달이 아니라 무시로 분류돼야 한다.
         if identify.role == "hospital" and any(
@@ -1098,7 +1119,7 @@ def _build_rejection_payload(action: ApprovalAction) -> dict:
     )
     # 도착 전 응답(병원 화면의 "불가")과 도착 후 수용 불가를 구분한다(2026-10-01). 도착 후 거절은
     # 구급차가 실제로 가서 확인한 결과라 신뢰도 모델의 가장 강한 독립 관측(G2)이다.
-    payload["stage"] = "arrival" if action.action == "arrival_refused" else "request"
+    payload["stage"] = {"arrival_refused": "arrival", "transport_withdraw": "transport"}.get(action.action, "request")
     return payload
 
 
@@ -1196,7 +1217,17 @@ def _close_case(case_id: str, reason: str, include_confirmed: bool = False) -> b
     return True
 
 
-def _handle_dashboard_action(payload: dict) -> None:
+#: 출동 시뮬레이션에서 통화를 시작할 수 있는 단계 — 현장(첫 통화·추가 통화), 이송 중·재선택 대기(추가 통화, 2026-10-05)
+CALLABLE_PHASES = ("on_scene", "transporting", "rerouting")
+
+
+def _notify_refused(ws, case_id: str | None, reason: str) -> None:
+    """조작이 거부됐다고 그 소켓에만 알린다(2026-10-05) — 대시보드가 "현재 시연 일시정지 중입니다." 같은 안내를 띄운다."""
+    if ws is not None:
+        _send_to_socket(ws, {"type": "action_refused", "caseId": case_id, "reason": reason}, "조작 거부")
+
+
+def _handle_dashboard_action(payload: dict, ws=None) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
     구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
     확인하고(maybe_expand_zone — 후보 0개 사각지대 보정 + 거절 비율 기반
@@ -1207,6 +1238,12 @@ def _handle_dashboard_action(payload: dict) -> None:
         action = ApprovalAction.model_validate(payload)
     except ValidationError as exc:
         print(f"  [통신] 잘못된 ApprovalAction 수신: {exc.errors()}")
+        return
+
+    # 시연 일시정지 중엔 모든 조작을 받지 않는다(2026-10-05) — 화면에서도 막지만 다른 탭에서 우회되지 않게.
+    if _case_paused(action.caseId):
+        decision_log.log_decision("approval_action_refused", {"action": action.model_dump(), "reason": "paused"})
+        _notify_refused(ws, action.caseId, "paused")
         return
 
     # 승인 액션도 사건의 "활동"이다 — 미결 sweep의 유휴 판정 기준을 갱신한다.
@@ -1227,9 +1264,20 @@ def _handle_dashboard_action(payload: dict) -> None:
                 "action": action.model_dump(), "reason": "ambulance has not arrived (simulation)",
                 "ambulancePhase": state["phase"] if state else None})
             return
+    # 이송 중 수용 철회(2026-10-05)는 구급차가 그 병원으로 가는 중일 때만 — 이미 도착했으면 "도착 후 수용 불가"를 쓴다.
+    if sim is not None and action.action == "transport_withdraw":
+        apid = engine.get_case_apid(action.caseId)
+        state = sim.state(apid) if apid else None
+        if not state or state["phase"] != "transporting" or state["caseId"] != action.caseId \
+                or state["hospitalId"] != action.hospital_id:
+            print(f"  [시뮬레이션] 이송 중 철회 거부 — 구급차가 {action.hospital_id}로 이송 중이 아님")
+            decision_log.log_decision("approval_action_refused", {
+                "action": action.model_dump(), "reason": "ambulance is not transporting to this hospital (simulation)",
+                "ambulancePhase": state["phase"] if state else None})
+            return
 
     # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
-    arrival_refusal = _build_rejection_payload(action) if action.action == "arrival_refused" else None
+    arrival_refusal = _build_rejection_payload(action) if action.action in ("arrival_refused", "transport_withdraw") else None
     applied = engine.apply_approval_action(action)
 
     # maybe_expand_zone()은 거절 액션에만 부른다 — reject_ratio가 누적 계산이라
@@ -1244,12 +1292,14 @@ def _handle_dashboard_action(payload: dict) -> None:
 
         ambulance_gps, _ = _resolve_ambulance_gps(action.caseId)
         expanded_result = engine.maybe_expand_zone(action.caseId, ambulance_gps)
-    elif action.action == "arrival_refused" and arrival_refusal is not None and applied:
+    elif action.action in ("arrival_refused", "transport_withdraw") and arrival_refusal is not None and applied:
         send_rejection_to_info(arrival_refusal)
+        if action.action == "transport_withdraw":
+            case_tracker.event(action.caseId, "r", "이송 중 수용 철회 — 다른 병원 재선택")
         # 승인한 다른 병원이 없으면 그 자리에서 존을 넓혀 같은 환자 정보로 다시 요청한다(재통화 없음).
         if not engine.has_other_approved(action.caseId, action.hospital_id):
             ambulance_gps, _ = _resolve_ambulance_gps(action.caseId)
-            expanded_result = engine.force_expand_zone(action.caseId, ambulance_gps)
+            expanded_result = engine.force_expand_zone(action.caseId, ambulance_gps, cause=action.action)
     elif action.action == "arrival_accepted" and applied:
         # 무응답은 사건이 끝날 때 기록한다(2026-10-01). 예전엔 첫 이송 승인 순간에 기록해서, 그 뒤
         # 승인하고 재선택된 병원까지 "무응답"으로 남았다.
@@ -1268,6 +1318,10 @@ def _handle_dashboard_action(payload: dict) -> None:
         apid = engine.get_case_apid(action.caseId)
         if apid and sim.on_arrival_result(apid, action.caseId, accepted=action.action == "arrival_accepted"):
             _broadcast_sim_state(apid)
+    if sim is not None and applied and action.action == "transport_withdraw":
+        apid = engine.get_case_apid(action.caseId)
+        if apid and sim.on_transport_withdrawn(apid, action.caseId):
+            _broadcast_sim_state(apid)
 
     if sim is not None and action.action == "final_approval" and updated_result is not None:
         confirmed = next((h for h in updated_result.hospitals if h.status == "confirmed"), None)
@@ -1277,7 +1331,7 @@ def _handle_dashboard_action(payload: dict) -> None:
 
     # 확정·도착 결과는 병원별 이송 중 건수(TTL 오버레이)를 바꾼다 — 관제 지도의
     # "이 병원으로 이송 중 N건" 표시가 따라오도록 overview를 다시 보낸다(2026-10-03).
-    if action.action in ("final_approval", "arrival_accepted", "arrival_refused"):
+    if action.action in ("final_approval", "arrival_accepted", "arrival_refused", "transport_withdraw"):
         _send_map_overview()
 
 
@@ -1594,6 +1648,20 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 DashboardIdentify 수신: {exc.errors()}")
                     continue
                 _handle_identify(ws, identify)
+            elif payload.get("type") == "voice_summary":
+                # 아이폰 앱의 온디바이스 통화 요약(2026-10-05) — /voice/summary(HTTP)와 같은 내용을 이 연결로 받는다.
+                # 공개 도메인 터널은 /voice/*를 열지 않아서(인증 없는 주입 경로 차단) 기기에서 만든 요약이 404가 났다.
+                # 구급차(role=ambulance) 소켓에서 온 것만, 그 구급차의 사건 요약만 받는다.
+                role, sock_apid = _socket_identity.get(ws, (None, None))
+                try:
+                    voice = VoiceCallSummaryMessage.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 voice_summary 수신: {exc.errors()}")
+                    continue
+                if role != "ambulance" or engine.get_case_apid(voice.caseId) not in (None, sock_apid):
+                    print(f"  [통신] voice_summary 거부 — 구급차 소켓이 아니거나 다른 구급차의 사건 (caseId={voice.caseId})")
+                    continue
+                _match_executor.submit(_run_match_job, voice)
             elif payload.get("type") == "info_confirm":
                 try:
                     confirm = HospitalInfoConfirm.model_validate(payload)
@@ -1607,8 +1675,15 @@ def dashboard_socket(ws):
                 except ValidationError as exc:
                     print(f"  [통신] 잘못된 TransportVitals 수신: {exc.errors()}")
                     continue
+                if _case_paused(vitals.caseId):
+                    _notify_refused(ws, vitals.caseId, "paused")
+                    continue
                 _handle_transport_vitals(vitals)
             elif payload.get("type") in ("dispatch", "scene_end", "sim_pause", "sim_resume", "sim_reset", "sim_fast_forward"):
+                # 일시정지 중엔 재개·초기화만 받는다(2026-10-05). 빨리감기·현장 종료도 조작이라 막는다.
+                if payload.get("type") in ("scene_end", "sim_fast_forward") and _apid_paused(payload.get("apid")):
+                    _notify_refused(ws, payload.get("caseId"), "paused")
+                    continue
                 _handle_sim_command(payload)
             elif payload.get("type") == "zone_expand_now":
                 try:
@@ -1616,9 +1691,12 @@ def dashboard_socket(ws):
                 except ValidationError as exc:
                     print(f"  [통신] 잘못된 ZoneExpandNow 수신: {exc.errors()}")
                     continue
+                if _case_paused(expand.caseId):
+                    _notify_refused(ws, expand.caseId, "paused")
+                    continue
                 _match_executor.submit(_expand_case_zone, expand.caseId, "manual")
             elif "action" in payload:
-                _handle_dashboard_action(payload)
+                _handle_dashboard_action(payload, ws)
     finally:
         with _sockets_lock:
             _dashboard_sockets.discard(ws)
@@ -1769,8 +1847,12 @@ def _zone_waiting(payload: dict) -> bool:
     return not any(h.get("status") in ("approved", "confirmed") for h in payload.get("hospitals") or [])
 
 
-def _case_paused(case_id: str) -> bool:
-    apid = engine.get_case_apid(case_id)
+def _case_paused(case_id: str | None) -> bool:
+    apid = engine.get_case_apid(case_id) if case_id else None
+    return _apid_paused(apid)
+
+
+def _apid_paused(apid: str | None) -> bool:
     return bool(sim is not None and apid and (sim.state(apid) or {}).get("paused"))
 
 
@@ -1838,6 +1920,11 @@ def _pause_zone_timers(apid: str, pausing: bool) -> None:
         if result is not None:
             with _sockets_lock:
                 _send_to_monitors_locked(_monitor_case(result.model_dump()))
+    # 병원·구급차 탭도 일시정지 여부를 알아야 버튼을 막는다(2026-10-05) — 타이머가 없는 사건(이송 중 등)까지 전부
+    for case_id in engine.get_case_ids_for_apid(apid):
+        result = engine.get_case_result(case_id)
+        if result is not None:
+            _send_to_dashboard(result.model_dump())
 
 
 def _expand_case_zone(case_id: str, cause: str) -> None:

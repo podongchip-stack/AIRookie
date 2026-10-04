@@ -103,6 +103,11 @@ class LiveTranscriber:
         self._process(final=True)
         return self._segments
 
+    def cancel(self) -> None:
+        """통화 취소(2026-10-05): 감시만 멈추고 남은 소리는 인식하지 않는다(요약·전달 없음)."""
+        self._stop.set()
+        self._thread.join()
+
     def _run(self) -> None:
         # 여기서 예외로 스레드가 죽어도 통화를 잃지 않는다 — _consumed가 멈춘 자리부터 finish()가 다시 인식한다
         try:

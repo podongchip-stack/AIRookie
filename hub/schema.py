@@ -255,6 +255,20 @@ class VoiceRegistration(BaseModel):
 
 # ── feature/hub → feature/dashboard (출력) ──────────────────────────────────
 
+class PatientUpdate(BaseModel):
+    """이 사건의 앞선 통화 요약 한 건(2026-10-05). 환자 상태가 바뀌어 다시 통화하면(이송 중 목적지 병원과의
+    통화 등) 새 요약이 patientInfo가 되고, 앞선 요약은 지우지 않고 여기 쌓는다 — "덧붙이기" 원칙(AI 처리 결과)."""
+
+    callRound: int
+    receivedAt: str
+    expectedDiagnosis: str
+    severityTag: Severity
+    injuryStatus: list[str] = Field(default_factory=list)
+    ktasLevel: Optional[int] = None
+    vitals: list[Vital] = Field(default_factory=list)
+    consciousness: Optional[str] = None
+
+
 class PatientInfo(BaseModel):
     injuryStatus: list[str]
     expectedDiagnosis: str
@@ -270,6 +284,9 @@ class PatientInfo(BaseModel):
     onset: Optional[str] = None
     chiefComplaint: Optional[str] = None
     requiredDepartment: Optional[str] = None
+    # 몇 번째 통화 요약인지(2026-10-05) — 1이면 현장 첫 통화. 2 이상이면 previousCalls에 앞선 요약이 있다.
+    callRound: int = 1
+    previousCalls: list[PatientUpdate] = Field(default_factory=list)
 
 
 class SpecialtyMatch(BaseModel):
@@ -405,6 +422,8 @@ class HospitalMatch(BaseModel):
     # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
     # "확인된 만실"로 보지 않는다(beds_full로 안 내림). bedCountUnknown과는 별개 축이다.
     bedDataStale: bool = False
+    # 이 사건에서 제외된 병원(2026-10-05) — 도착 후 수용 불가·이송 중 수용 철회. 같은 사건엔 다시 승인할 수 없다
+    excluded: bool = False
     # 전문성·등급 가산(2026-10-01, scoring.expertise_bonus_min). 이동시간에서 뺀 분과 그 이유.
     emergencyLevel: Optional[str] = None
     travelBonusMin: float = 0.0
@@ -464,8 +483,11 @@ class HubMatchResult(BaseModel):
 
 # arrival_accepted / arrival_refused(2026-10-01): 구급차가 확정 병원에 도착한 뒤 병원이 누르는 실제 수용
 # 결과. 신뢰도 모델의 독립 관측(G2 라벨, AIROOKIE-EGEN.md §7 ④)이 생기는 지점이다.
+# transport_withdraw(2026-10-05): 이송 확정 뒤 **도착 전**에 병원이 수용을 철회한다(환자 상태 변화·병원 사정).
+# 확정을 풀고 그 병원은 이 사건에서 제외 — 구급차는 그 자리에서 재선택 대기(도착 후 수용 불가와 같은 처리).
 ApprovalActionType = Literal[
-    "hospital_approve", "hospital_reject", "final_approval", "arrival_accepted", "arrival_refused"
+    "hospital_approve", "hospital_reject", "final_approval", "arrival_accepted", "arrival_refused",
+    "transport_withdraw",
 ]
 Actor = Literal["hospital", "paramedic"]
 
@@ -522,6 +544,8 @@ class CallSignal(BaseModel):
     # 않고, hub가 그 병원 대시보드에 "📞 통화 중"을 띄우고 첫 통화 병원을 기록한다(first_call_selected).
     hospitalId: Optional[str] = None
     device: Optional[Literal["phone", "tablet"]] = None
+    # 통화 취소(2026-10-05): call_ended와 함께 true면 이 통화 음성은 처리하지 않고 버린다(요약·전달 없음).
+    cancelled: Optional[bool] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 소켓 연결 시 자기소개) ───────────
@@ -684,6 +708,8 @@ class MonitorCase(BaseModel):
     zoneExpandAt: Optional[str] = None
     # [정지] 중이면 멈춰 있는 남은 시간(초) — 이때 zoneExpandAt은 None(시간이 흐르지 않는다)
     zonePausedLeftSec: Optional[int] = None
+    # 시연 일시정지 중(2026-10-05) — 콘솔·관제 화면이 조작을 막는다
+    paused: Optional[bool] = None
     source: Literal["rule"] = "rule"
 
 

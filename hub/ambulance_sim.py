@@ -456,6 +456,19 @@ class DispatchSim:
                 unit.phase, unit.hospital_id, unit.hospital_gps, unit.dwell_until = "rerouting", None, None, None
             return True
 
+    def on_transport_withdrawn(self, apid: str, case_id: str) -> bool:
+        """이송 중 수용 철회(2026-10-05): 목적지 병원이 도착 전에 못 받는다고 했다 — 그 자리에 멈춰 재선택 대기
+        (rerouting). 승인한 다른 병원으로 이송 승인하면 지금 위치에서 다시 출발한다(on_confirmed)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None or unit.phase != "transporting" or unit.case_id != case_id:
+                return False
+            if unit.trip is not None:
+                lat, lng, _ = unit.trip.position(self._clock())
+                unit.gps = GpsPoint(lat=lat, lng=lng)
+            unit.phase, unit.trip, unit.hospital_id, unit.hospital_gps = "rerouting", None, None, None
+            return True
+
     def tick(self) -> tuple[list[dict], list[dict]]:
         """위치를 한 칸 옮긴다. (상태가 바뀐 구급차들의 snapshot, 움직이는 구급차들의 snapshot)."""
         now = self._clock()
