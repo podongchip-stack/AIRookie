@@ -45,8 +45,14 @@ export default function Home() {
       setError("코드 형식이 올바르지 않습니다. 예: H-A1100009(병원), A-A0000001(구급차), P-A0000001(전화 앱)");
       return;
     }
-    const [, roleChar, id] = match;
+    const [, roleChar, rawId] = match;
     const page = ROUTE_BY_PREFIX[roleChar.toUpperCase() as keyof typeof ROUTE_BY_PREFIX];
+    // P-AUTO(2026-10-04) — 전화 앱 자동 전환. 휴대폰에서 코드 입력칸에 바로 칠 수 있게 코드로도 받는다
+    if (page === "phone" && rawId.toLowerCase() === "auto") {
+      window.location.assign("/phone?id=auto");
+      return;
+    }
+    const id = rawId;
     const role = page === "hospital" ? "hospital" : "ambulance"; // 전화 앱도 구급차 코드로 확인한다
 
     setChecking(true);
@@ -117,6 +123,10 @@ export default function Home() {
         </button>
         <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/hospital?id=auto")}>
           병원 대시보드 (자동 전환)
+        </button>
+        {/* 전화 앱 자동 전환(2026-10-04) — 휴대폰 확대가 남지 않게 페이지를 새로 불러 연다(코드 P-AUTO와 같음) */}
+        <button type="button" className={secondaryButtonStyle} onClick={() => window.location.assign("/phone?id=auto")}>
+          휴대폰 전화 앱 (자동 전환)
         </button>
         {/* 시연 통제 콘솔(2026-10-04) — 운영자가 출동·통화·승인·활력징후 시나리오를 한 화면에서 조작 */}
         <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/control")}>

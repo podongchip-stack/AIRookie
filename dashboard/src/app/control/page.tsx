@@ -129,6 +129,11 @@ export default function ControlPage() {
   const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [reported, setReported] = useState<Record<string, boolean>>({});
+  // ② 현장 확인 입력 방식(2026-10-04): 대원 휴대폰 전화 앱의 실제 음성(STT → MF_BERT 구조화) 또는
+  // 정해진 상황 카드(가상 환자). 어느 쪽으로 들어온 사건인지 이후 화면에 표시한다 — 음성 사건은 hub의
+  // 통화 상태(call_status)로 알아보고, 정해진 상황은 보낼 때 templateCases에 기록한다.
+  const [inputMode, setInputMode] = useState<"voice" | "template">("template");
+  const [templateCases, setTemplateCases] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   // sim이 꺼진 환경 전용 — 도착 게이팅이 없어 [도착 결과 입력]으로 수동 전환한다
   const [manualArrival, setManualArrival] = useState(false);
@@ -138,7 +143,12 @@ export default function ControlPage() {
 
   const now = () => new Date().toISOString();
   const note = (text: string) => setFeedback(`${new Date().toLocaleTimeString("ko-KR")} · ${text}`);
-  const isReported = caseId != null && (reported[caseId] === true || myCase != null);
+  const myCall = caseId ? state.callStatus[caseId] ?? null : null;
+  // 휴대폰 통화가 끝나면 음성 분석(STT·구조화)을 기다리는 "매칭 중" 화면으로 넘어간다
+  const isReported = caseId != null && (reported[caseId] === true || myCase != null || myCall?.state === "ended");
+  const caseSource: "voice" | "template" | null = caseId
+    ? templateCases[caseId] ? "template" : myCall ? "voice" : null
+    : null;
 
   // ── 화면 = hub 상태 (상태가 곧 단계라 잘못된 순서로 누를 수 없다) ──
   const screen: Screen = (() => {
@@ -206,7 +216,12 @@ export default function ControlPage() {
   async function handleReportFor(targetApid: string, targetCaseId: string, templateKey: string) {
     const template = PATIENT_TEMPLATES.find((t) => t.key === templateKey);
     if (!template) return;
-    sendCallSignal("call_started", targetApid, targetCaseId);
+    // 통화 신호는 시뮬레이션이 꺼진 환경에서만 보낸다(사건을 구급차에 묶는 용도). 시뮬레이션 중엔 출동 때 이미
+    // 묶여 있고, 중앙 voice가 떠 있으면 이 신호가 빈 통화로 voice에 가서 음성 없는 요약이 정해진 상황을 덮어쓸
+    // 수 있었다(2026-10-04) — 정해진 상황은 음성 경로를 아예 타지 않게 한다.
+    const signal = !simOn;
+    if (signal) sendCallSignal("call_started", targetApid, targetCaseId);
+    setTemplateCases((prev) => ({ ...prev, [targetCaseId]: template.label }));
     try {
       const response = await fetch("/api/demo/voice", {
         method: "POST",
@@ -216,16 +231,23 @@ export default function ControlPage() {
           transcript: { raw_text: template.transcript, filtered_text: template.transcript },
           summary: template.summary,
           source: "ai",
+          // hub는 읽지 않는 필드 — 원본 사본(hub data/live/output)에서 음성 입력과 구분하는 표시
+          model_used: { stt: "scenario-template", llm: "scenario-template" },
         }),
       });
       if (response.ok) {
         setReported((prev) => ({ ...prev, [targetCaseId]: true }));
-        note(`신고 접수 — ${template.label} · 인근 병원 동시 전달`);
+        note(`현장 확인(정해진 상황) — ${template.label} · 인근 병원 동시 전달`);
       } else {
+        setTemplateCases((prev) => {
+          const next = { ...prev };
+          delete next[targetCaseId];
+          return next;
+        });
         note(`전송 실패 (${response.status})`);
       }
     } finally {
-      sendCallSignal("call_ended", targetApid, targetCaseId);
+      if (signal) sendCallSignal("call_ended", targetApid, targetCaseId);
     }
   }
 
@@ -474,30 +496,9 @@ export default function ControlPage() {
         })}
       </nav>
 
-      {/* 사건 보기 전환 칩(2026-10-04) — **출동대 선택이 아니다**(출동대는 지점 최근접으로 자동
-          결정). 대량사고처럼 사건이 여럿일 때 어느 사건의 화면을 볼지 고르는 용도다. */}
-      {ambulances.length > 1 && (
-        <div className={css({ display: "flex", gap: "1.5", flexWrap: "wrap", justifyContent: "center", alignItems: "center" })}>
-          <span className={css({ fontSize: "2xs", color: "ink3" })}>사건 보기:</span>
-          {ambulances.map((ambulance) => {
-            const ambulanceSim = state.ambulanceSim[ambulance.apid];
-            return (
-              <button
-                key={ambulance.apid}
-                type="button"
-                className={ambulance.apid === apid ? chipSelectedStyle : chipStyle}
-                onClick={() => setSelectedApid(ambulance.apid)}
-              >
-                🚑 {ambulance.name} · {ambulanceSim ? PHASE_SHORT[ambulanceSim.phase] : "대기"}
-              </button>
-            );
-          })}
-        </div>
-      )}
       {mciOn && (
         <p className={css({ display: "flex", alignItems: "center", gap: "2", justifyContent: "center", fontSize: "xs", fontWeight: "semibold", color: "coral", textAlign: "center" })}>
           🔥 대량사고 진행 중 — 대기 사상자 {mciRemaining}명(복귀하는 구급대가 자동 재출동).
-          사건 보기 칩으로 오가며 병원 응답(③)·도착 결과(⑤)를 처리하세요.
           <button
             type="button"
             className={miniStyle}
@@ -652,43 +653,101 @@ export default function ControlPage() {
         {/* ── ② 신고 접수 ── */}
         {screen === "report" && (
           <ScreenCard title="② 현장 확인 — 환자 상태를 확정하면 인근 병원에 동시 전달됩니다">
-            {reportedKey && (
-              <p className={css({ fontSize: "xs", color: "ink", backgroundColor: "surfaceSub", paddingX: "3", paddingY: "2", borderRadius: "field" })}>
-                📞 신고 내용: <b>{PATIENT_TEMPLATES.find((t) => t.key === reportedKey)?.label}</b> — 현장
-                평가가 신고와 다르면 다른 카드를 선택하세요(신고 ≠ 현장일 수 있습니다).
-              </p>
-            )}
-            <div className={css({ display: "grid", gridTemplateColumns: { base: "1fr", md: "repeat(3, 1fr)" }, gap: "2.5" })}>
-              {PATIENT_TEMPLATES.map((template) => (
-                <button
-                  key={template.key}
-                  type="button"
-                  disabled={sending}
-                  className={cx(templateCardStyle, reportedKey === template.key ? css({ borderColor: "navy", borderWidth: "2px" }) : undefined)}
-                  onClick={() => handleReport(template.key)}
-                >
-                  <span className={css({ display: "flex", alignItems: "center", gap: "1.5", fontSize: "sm", fontWeight: "bold", color: "ink" })}>
-                    {template.label}
-                    <span className={template.severity === "중증" ? severeChipStyle : mildChipStyle}>{template.severity}</span>
-                  </span>
-                  <span className={css({ fontSize: "xs", color: "ink2", textAlign: "left" })}>{template.detail}</span>
-                </button>
-              ))}
+            {/* 입력 방식(2026-10-04) — 실제 음성(전화 앱) 또는 정해진 상황. 통화가 시작되면 음성으로 고정된다 */}
+            <div role="tablist" className={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2" })}>
+              {([
+                ["voice", "🎙 음성으로 확인", "대원 휴대폰 전화 앱 · 실제 통화 음성 → AI 구조화"],
+                ["template", "📋 정해진 상황 선택", "가상 환자 카드 · 음성 없이 바로 전달"],
+              ] as const).map(([mode, label, sub]) => {
+                const selected = (myCall ? "voice" : inputMode) === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    disabled={myCall != null || sending}
+                    className={cx(modeTabStyle, selected ? modeTabSelectedStyle : undefined)}
+                    onClick={() => setInputMode(mode)}
+                  >
+                    <span className={css({ fontSize: "sm", fontWeight: "bold" })}>{label}</span>
+                    <span className={css({ fontSize: "2xs", color: "ink2" })}>{sub}</span>
+                  </button>
+                );
+              })}
             </div>
-            {sending && <Waiting text="통화 요약 전송 중…" />}
+
+            {myCall != null || inputMode === "voice" ? (
+              <div className={css({ display: "flex", flexDirection: "column", gap: "2.5" })}>
+                {myCall?.state === "calling" ? (
+                  <p className={voiceStatusStyle}>
+                    <span className={css({ display: "inline-block", width: "2.5", height: "2.5", borderRadius: "full", backgroundColor: "mint", animation: "pulse 1.2s ease-in-out infinite" })} />
+                    <span>
+                      📞 <b>{myCall.hospitalName ?? "병원"}</b>과 통화 중 — 통화를 끝내면 음성을 인식·구조화해 인근 병원에 동시 전달합니다.
+                    </span>
+                  </p>
+                ) : (
+                  <>
+                    <p className={voiceStatusStyle}>
+                      대원 휴대폰에서 전화 앱을 열고, 병원 목록에서 한 곳을 눌러 통화하세요. 통화 음성이 실제 STT 입력이 됩니다.
+                    </p>
+                    <p className={hintStyle}>
+                      전화 앱 열기: 첫 페이지 코드 <b>P-AUTO</b>(자동 전환) 또는 <b>P-{apid}</b> · 음성 인식은 중앙 voice가
+                      떠 있어야 합니다(voice/start-voice.sh를 인자 없이 실행).
+                    </p>
+                    <Waiting text="휴대폰 통화를 기다리는 중…" />
+                  </>
+                )}
+              </div>
+            ) : (
+              <>
+                {reportedKey && (
+                  <p className={css({ fontSize: "xs", color: "ink", backgroundColor: "surfaceSub", paddingX: "3", paddingY: "2", borderRadius: "field" })}>
+                    📞 신고 내용: <b>{PATIENT_TEMPLATES.find((t) => t.key === reportedKey)?.label}</b> — 현장
+                    평가가 신고와 다르면 다른 카드를 선택하세요(신고 ≠ 현장일 수 있습니다).
+                  </p>
+                )}
+                <div className={css({ display: "grid", gridTemplateColumns: { base: "1fr", md: "repeat(3, 1fr)" }, gap: "2.5" })}>
+                  {PATIENT_TEMPLATES.map((template) => (
+                    <button
+                      key={template.key}
+                      type="button"
+                      disabled={sending}
+                      className={cx(templateCardStyle, reportedKey === template.key ? css({ borderColor: "navy", borderWidth: "2px" }) : undefined)}
+                      onClick={() => handleReport(template.key)}
+                    >
+                      <span className={css({ display: "flex", alignItems: "center", gap: "1.5", fontSize: "sm", fontWeight: "bold", color: "ink" })}>
+                        {template.label}
+                        <span className={template.severity === "중증" ? severeChipStyle : mildChipStyle}>{template.severity}</span>
+                      </span>
+                      <span className={css({ fontSize: "xs", color: "ink2", textAlign: "left" })}>{template.detail}</span>
+                    </button>
+                  ))}
+                </div>
+                {sending && <Waiting text="환자 정보 전송 중…" />}
+              </>
+            )}
           </ScreenCard>
         )}
 
         {/* ── 매칭 중 (중간 화면) ── */}
         {screen === "matching" && (
           <ScreenCard title="병원 매칭 중…">
-            <Waiting text="존(Zone) 안 후보 병원을 적합도로 정렬해 동시에 요청을 보내고 있습니다." />
+            <SourceBadge source={caseSource} label={caseId ? templateCases[caseId] : undefined} />
+            <Waiting
+              text={
+                caseSource === "voice"
+                  ? "통화 음성을 인식(STT)·구조화(MF_BERT)한 뒤 존(Zone) 안 후보 병원에 동시에 요청을 보냅니다."
+                  : "존(Zone) 안 후보 병원을 적합도로 정렬해 동시에 요청을 보내고 있습니다."
+              }
+            />
           </ScreenCard>
         )}
 
         {/* ── ③ 병원 응답 ── */}
         {screen === "respond" && myCase && (
           <ScreenCard title="③ 병원 응답 — 대신 누르거나, 실제 병원 탭에서 눌러도 됩니다">
+            <SourceBadge source={caseSource} label={caseId ? templateCases[caseId] : undefined} />
             {(() => {
               const pendingCount = myCase.hospitals.filter((h) => h.status === "pending").length;
               return (
@@ -798,9 +857,28 @@ function CasualtyStepper({ label, value, color, onChange }: {
   );
 }
 
+// 현장 확인 입력 출처 표시(2026-10-04) — 음성(전화 앱, AI 구조화)인지 정해진 상황(가상 환자)인지
+function SourceBadge({ source, label }: { source: "voice" | "template" | null; label?: string }) {
+  if (!source) return null;
+  const voice = source === "voice";
+  return (
+    <p
+      className={css({
+        alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: "1.5",
+        fontSize: "xs", fontWeight: "semibold", paddingX: "2.5", paddingY: "1", borderRadius: "chip",
+        color: voice ? "navy" : "severity.medium", backgroundColor: voice ? "navySoft" : "severity.medium.subtle",
+      })}
+    >
+      {voice ? "🎙 현장 확인: 음성 (휴대폰 통화 · AI 구조화)" : `📋 현장 확인: 정해진 상황${label ? ` — ${label}` : ""} (가상 환자)`}
+    </p>
+  );
+}
+
 function ScreenCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className={css({ display: "flex", flexDirection: "column", gap: "3", backgroundColor: "surface", borderWidth: "1px", borderColor: "line", borderRadius: "panel", padding: "5", minHeight: "320px" })}>
+    // flexShrink 0(2026-10-04): 스크롤 영역(main) 안의 세로 flex 자식이라 기본값(줄어듦)이면 내용이 길어져도
+    // 카드(흰 배경)는 화면 높이에 맞춰 줄고 내용만 아래로 삐져나왔다 — 존 확장으로 병원이 늘어나는 ③에서 보임
+    <section className={css({ display: "flex", flexDirection: "column", gap: "3", backgroundColor: "surface", borderWidth: "1px", borderColor: "line", borderRadius: "panel", padding: "5", minHeight: "320px", flexShrink: 0 })}>
       <h2 className={css({ fontSize: "md", fontWeight: "bold", color: "ink" })}>{title}</h2>
       {children}
     </section>
@@ -817,6 +895,17 @@ function Waiting({ text }: { text: string }) {
 }
 
 const hintStyle = css({ fontSize: "xs", color: "ink3" });
+const modeTabStyle = css({
+  display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5", textAlign: "left",
+  paddingX: "3.5", paddingY: "2.5", borderRadius: "field", borderWidth: "1px", borderColor: "line",
+  backgroundColor: "surface", color: "ink", cursor: "pointer",
+  _disabled: { cursor: "default" },
+});
+const modeTabSelectedStyle = css({ borderColor: "navy", borderWidth: "2px", backgroundColor: "navySoft" });
+const voiceStatusStyle = css({
+  display: "flex", alignItems: "center", gap: "2", fontSize: "sm", color: "ink",
+  backgroundColor: "surfaceSub", paddingX: "3.5", paddingY: "3", borderRadius: "field",
+});
 const chipStyle = css({
   fontSize: "xs", fontWeight: "semibold", color: "ink",
   borderWidth: "1px", borderColor: "line", borderRadius: "chip",

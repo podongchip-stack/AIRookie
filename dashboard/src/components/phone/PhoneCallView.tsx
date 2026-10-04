@@ -704,6 +704,16 @@ export function PhoneCallView({
       </>);
   }
 
+  // ── 정해진 상황으로 이미 전달됨(2026-10-04) — 운영자가 시연 콘솔 ②에서 정해진 상황 카드를 골라 통화 없이
+  // 환자 정보가 나간 사건. 통화는 사건마다 한 번이고, 여기서 또 통화하면 음성 요약이 그 정보를 덮어쓴다.
+  if (caseId && !callStatus && sentHospitalCount != null) {
+    return lightScreen(4, <>
+        <StatusPanel icon={<CheckIcon />} tone="mint" title={`후보 병원 ${sentHospitalCount}곳에 전달됐습니다`}>
+          현장 확인을 정해진 상황(시연 콘솔)으로 마쳐 이 사건은 통화하지 않습니다. 병원 응답 확인·이송 승인은 구급차 대시보드에서 하세요.
+        </StatusPanel>
+      </>);
+  }
+
   // ── 대기(현장 도착 전·시뮬레이션 꺼짐) ──
   const onScene = simOn && sim?.phase === "on_scene" && caseId != null && sim.caseId === caseId;
   if (!onScene) {

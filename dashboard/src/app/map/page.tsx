@@ -15,7 +15,7 @@ function reasonNote(hospital: MonitorCaseHospital): string | null {
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
-  LEVEL_COLORS, MAP_COLORS, PHASE_SHORT, SEVERITY_SHORT, STATUS_ICON, STATUS_SHORT, hospitalRequests, statusColor,
+  AMBULANCE_PHASE_COLORS, LEVEL_COLORS, MAP_COLORS, PHASE_SHORT, SEVERITY_SHORT, STATUS_ICON, STATUS_SHORT, hospitalRequests, statusColor,
 } from "@/lib/monitor";
 
 // 관제 지도(2026-10-03). hub에 role=monitor로 붙어 전체 병원·구급차 위치와 사건 요약만 받는다 — 통화 전문 등
@@ -84,7 +84,13 @@ export default function MonitorMapPage() {
           <LegendDot color={MAP_COLORS.approved} label="✓ 수용 승인" round />
           <LegendDot color={MAP_COLORS.rejected} label="✕ 수용 불가" round />
           <LegendDot color={MAP_COLORS.confirmed} label="🚑 이송 확정" round />
-          <LegendDot color={MAP_COLORS.ambulance} label="구급차 (시뮬레이션 위치)" />
+          {/* 구급차 단계별 마커 색(2026-10-04) — 이름은 움직이는 구급차만 뜬다 */}
+          <LegendDot color={AMBULANCE_PHASE_COLORS.idle} label="구급차 기지 대기" />
+          <LegendDot color={AMBULANCE_PHASE_COLORS.dispatching} label="출동 중" />
+          <LegendDot color={AMBULANCE_PHASE_COLORS.on_scene} label="현장 도착" />
+          <LegendDot color={AMBULANCE_PHASE_COLORS.transporting} label="병원 이송 중" />
+          <LegendDot color={AMBULANCE_PHASE_COLORS.at_hospital} label="병원 도착" />
+          <LegendDot color={AMBULANCE_PHASE_COLORS.returning} label="기지 복귀 중" />
           <LegendDot color={MAP_COLORS.zone} label="요청 존 범위" dashed />
           <span className={css({ color: CONNECTION_LABEL[connectionMode].color })}>{CONNECTION_LABEL[connectionMode].text}</span>
         </div>
@@ -240,27 +246,9 @@ export default function MonitorMapPage() {
             )}
           </SideSection>
 
-          <SideSection title={`구급차 ${ambulances.length}대`}>
-            {ambulances.map((ambulance) => {
-              const sim = state.ambulanceSim[ambulance.apid];
-              return (
-                <div key={ambulance.apid} className={css({ display: "flex", justifyContent: "space-between", gap: "2", fontSize: "xs", color: "ink" })}>
-                  <span className={css({ fontWeight: "semibold" })}>{ambulance.name}</span>
-                  <span className={css({ color: "ink3" })}>
-                    {sim ? `${PHASE_SHORT[sim.phase]}${sim.paused ? " · 정지" : ""}` : "위치 고정"}
-                    {(() => {
-                      const call = calls.find((c) => c.apid === ambulance.apid);
-                      return call ? (
-                        <span className={css({ color: "mint", fontWeight: "semibold" })}>
-                          {" "}
-                          · 📞 {call.hospitalName ?? "병원"} 통화 중
-                        </span>
-                      ) : null;
-                    })()}
-                  </span>
-                </div>
-              );
-            })}
+          {/* 구급차 목록(2026-10-04) — 서울 119 구급차 160여 대로 바뀌어 한 줄씩 나열하던 목록을 뺐다. 자리만 남김 */}
+          <SideSection title="구급차">
+            <p className={css({ fontSize: "xs", color: "ink3" })}>테스트</p>
           </SideSection>
 
           <p className={css({ fontSize: "2xs", color: "ink3" })}>

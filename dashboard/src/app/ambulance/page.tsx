@@ -376,10 +376,14 @@ function AmbulanceAutoFollow() {
   const active = Object.values(state.ambulanceSim).find(
     (sim) => !["idle", "returning"].includes(sim.phase),
   );
-  useEffect(() => {
-    if (active && active.apid !== apid) setApid(active.apid);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.apid]);
+  // 지금 보는 구급대의 사건이 끝나면 곧바로 대기 화면으로 되돌린다(2026-10-04) — 시연 초기화(즉시 기지 대기),
+  // 상황 취소(사건 없이 기지 복귀 중), 수용 완료 후 복귀 모두. 예전엔 한 번 전환되면 그 구급대 화면에 남았고,
+  // 그다음엔 기지에 도착(idle)해야만 돌아와서 상황 취소 뒤 복귀 이동 동안 끝난 사건 화면이 남아 있었다.
+  const currentSim = apid ? state.ambulanceSim[apid] ?? null : null;
+  const caseEnded = currentSim !== null && !currentSim.caseId && ["idle", "returning"].includes(currentSim.phase);
+  // 렌더 중 조건부 갱신(React 권장 패턴 — effect에서 setState하면 렌더가 한 번 더 돈다)
+  if (active && active.apid !== apid) setApid(active.apid);
+  else if (!active && apid && caseEnded) setApid(null);
   if (apid) return <AmbulanceDashboardContent key={apid} apid={apid} />;
   return (
     <div
