@@ -865,6 +865,7 @@ HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화�
 | 방치 사건 닫기 | 확정 없이 120분 활동이 없으면 무응답(`NO_RESPONSE`)을 기록한 뒤 사건을 닫고 `{"type":"case_closed"}`를 보낸다 — 대시보드가 카드를 지운다(2026-10-01) | `HUB_UNRESOLVED_TIMEOUT_MIN` |
 | 현장 후보 | 통화 시작(출동 시뮬레이션이면 현장 도착) 때 거리순 후보를 `{"type":"scene_candidates"}`로 그 구급차 탭에만 보낸다(규칙 기반, 환자 정보 전이라 병원 탭엔 안 보냄). 2026-10-03부터 후보마다 `bedReliability`(병상 신뢰도, AI — 매칭 결과와 같은 `BedReliabilityMatch` 형태, 없으면 null)가 붙고, **첫 연락 추천** 한 곳에 `firstCallRecommended: true`가 표시된다 — 빈 병상이 실제로 확인됐고(미상·확인된 만실·1일 넘은 값 제외) 도착 시점 유효 확률(rArrive)이 가장 높은 병원, 동률이면 가까운 쪽. 순위(거리순)·finalScore에는 여전히 신뢰도를 안 쓴다 — 첫 통화 상대 제안은 틀려도 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라 여기만 확률을 직접 쓴다. 추천은 `first_call_recommended`로 의사결정 로그에 남아, 나중에 승인·거절 로그와 대조해 적중률(추천 병원이 실제로 수용했는가)을 셀 수 있다 | — |
 | 병원 목록 동기화 | info가 한 주기 끝에 `POST /info/hospitals/roster {"hospitalIds": [...]}`를 보내면 목록에 없는 병원을 뺀다. 진행 중 사건 후보는 보류, 목록이 절반 아래로 급감하면 부분 조회 실패로 보고 안 뺀다 | — |
+| 구급차 목록 동기화 | info가 구급차를 `POST /info/ambulances/batch {"ambulances": [...]}`로 한 번에 보내고(관제 지도 전송 한 번, 형식 틀린 한 대는 `rejected`) 이어서 `POST /info/ambulances/roster {"apids": [...]}`를 보내면 목록에 없는 구급차를 레지스트리·시뮬레이션·voice 주소에서 뺀다(2026-10-04). 진행 중 사건·출동 중 구급차는 보류, 목록이 비었거나 절반 아래로 급감하면 안 뺀다. 한 대씩 받는 `POST /info/ambulances`도 그대로 | — |
 | 출동 시뮬레이션 | 아래 "출동 시뮬레이션" 절 | `HUB_SIM_DISPATCH=1` |
 
 ### 출동 시뮬레이션 (2026-10-01, 시연용 가짜 위치)

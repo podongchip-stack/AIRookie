@@ -210,6 +210,59 @@ def receive_ambulance_info():
     return jsonify({"status": "ok", "apid": info.apid}), 200
 
 
+@app.post("/info/ambulances/batch")
+def receive_ambulance_batch():
+    """구급차 여러 대를 한 번에 받는다(2026-10-04). 서울 119 구급차(160여 대)로 바꾸면서 한 대씩 받으면
+    주기마다 관제 지도 전송이 대수만큼 나가서, 묶어 받고 관제 지도는 끝에 한 번만 보낸다.
+    형식이 틀린 한 대는 건너뛰고(rejected에 이유) 나머지는 그대로 반영한다."""
+    body = request.get_json(force=True, silent=True) or {}
+    items = body.get("ambulances")
+    if not isinstance(items, list):
+        return jsonify({"error": "ambulances(list[AmbulanceInfo])가 필요합니다"}), 400
+    accepted, rejected = [], []
+    for item in items:
+        try:
+            info = AmbulanceInfo.model_validate(item)
+        except ValidationError as exc:
+            rejected.append({"apid": (item or {}).get("apid") if isinstance(item, dict) else None,
+                             "detail": exc.errors(include_url=False, include_context=False)})
+            continue
+        engine.update_ambulance_info(info)
+        if sim is not None:
+            sim.ensure_unit(info.apid, info.gps)
+        accepted.append(info.apid)
+    _send_map_overview()
+    return jsonify({"status": "ok", "accepted": len(accepted), "rejected": rejected}), 200
+
+
+@app.post("/info/ambulances/roster")
+def receive_ambulance_roster():
+    """feature/info가 한 주기에 보낸 구급차 전체 목록(2026-10-04). 여기 없는 구급차를 레지스트리에서 뺀다 —
+    병원 목록 동기화와 같은 규칙(진행 중 사건·출동 중 구급차는 남기고, 목록이 급감하면 안 뺀다)."""
+    body = request.get_json(force=True, silent=True) or {}
+    ids = body.get("apids")
+    if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+        return jsonify({"error": "apids(list[str])가 필요합니다"}), 400
+    busy: set[str] = set()
+    if sim is not None:
+        busy = {a.apid for a in engine.list_ambulances() if sim.phase_of(a.apid) not in (None, "idle")}
+    removed, kept = engine.apply_ambulance_roster(ids, busy=busy)
+    if sim is not None:
+        for apid in removed:
+            sim.remove_unit(apid)
+    if removed:
+        with _voice_addresses_lock:
+            for apid in removed:
+                _voice_addresses.pop(apid, None)
+        _mark_voice_addresses_dirty()
+    if removed or kept:
+        decision_log.log_decision("ambulance_roster_applied", {"removed": removed, "kept": kept, "rosterSize": len(ids)})
+        print(f"  [통신] 구급차 목록 반영 — 빠진 구급차 {len(removed)}대 제거, {len(kept)}대 보류(진행 중 사건·출동 중이거나 목록 급감)")
+    if removed:
+        _send_map_overview()
+    return jsonify({"status": "ok", "removed": removed, "kept": kept}), 200
+
+
 @app.post("/voice/register")
 def receive_voice_registration():
     """feature/voice가 뜰 때 자기 IP를 자동 탐지해 보내는 자가 등록.

@@ -278,6 +278,15 @@ class DispatchSim:
             if unit.phase == "idle":
                 unit.gps = base
 
+    def remove_unit(self, apid: str) -> bool:
+        """구급차 목록 동기화(2026-10-04)에서 빠진 구급차를 지운다. 출동 중이면 안 지운다(False)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None or unit.phase != "idle":
+                return False
+            del self._units[apid]
+            return True
+
     def gps_for(self, apid: str) -> Optional[GpsPoint]:
         with self._lock:
             unit = self._units.get(apid)

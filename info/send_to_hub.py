@@ -83,6 +83,9 @@ load_dotenv(HOSPITAL_INFORM_INFO_DIR.parent / ".env")
 HUB_HOSPITALS_URL = os.environ.get("HUB_HOSPITALS_URL", "http://127.0.0.1:5001/info/hospitals")
 HUB_AMBULANCES_URL = os.environ.get("HUB_AMBULANCES_URL", "http://127.0.0.1:5001/info/ambulances")
 HUB_ROSTER_URL = os.environ.get("HUB_ROSTER_URL", "http://127.0.0.1:5001/info/hospitals/roster")
+# 구급차 묶음 전송·목록 동기화(2026-10-04) — 기본값은 HUB_AMBULANCES_URL 뒤에 붙인다
+HUB_AMBULANCES_BATCH_URL = os.environ.get("HUB_AMBULANCES_BATCH_URL", HUB_AMBULANCES_URL.rstrip("/") + "/batch")
+HUB_AMBULANCE_ROSTER_URL = os.environ.get("HUB_AMBULANCE_ROSTER_URL", HUB_AMBULANCES_URL.rstrip("/") + "/roster")
 
 AMBULANCE_SUPABASE_URL = os.environ.get("AMBULANCE_SUPABASE_URL")
 AMBULANCE_SUPABASE_KEY = os.environ.get("AMBULANCE_SUPABASE_KEY")
@@ -401,6 +404,33 @@ def send_ambulance_to_hub(ambulance: AmbulanceInfo) -> None:
     print(f"  [통신] {ambulance.apid} {ambulance.name} 전송 완료 -> {HUB_AMBULANCES_URL}")
 
 
+
+def send_ambulances_to_hub(ambulances: list[AmbulanceInfo]) -> None:
+    """구급차를 한 번에 보내고(2026-10-04) 전체 apid 목록을 알린다 — hub는 목록에 없는 구급차를 뺀다
+    (Supabase 테이블을 통째로 바꿔도 옛 구급차가 hub에 남지 않게). 서울 119 구급차 160여 대를 한 대씩
+    보내면 hub가 대수만큼 관제 지도를 다시 보내서 묶었다. 묶음 주소가 없는 예전 hub(404)면 한 대씩 보내고
+    목록 동기화는 건너뛴다."""
+    response = requests.post(
+        HUB_AMBULANCES_BATCH_URL,
+        json={"ambulances": [json.loads(a.model_dump_json()) for a in ambulances]},
+        timeout=30,
+    )
+    if response.status_code == 404:
+        print(f"  [통신] hub에 묶음 수신이 없어 한 대씩 보냅니다(예전 hub) -> {HUB_AMBULANCES_URL}")
+        for ambulance in ambulances:
+            send_ambulance_to_hub(ambulance)
+        return
+    response.raise_for_status()
+    body = response.json()
+    print(f"  [통신] 구급차 {body.get('accepted')}대 전송 완료, 거부 {len(body.get('rejected', []))}대 -> {HUB_AMBULANCES_BATCH_URL}")
+    for item in body.get("rejected", []):
+        print(f"    거부: {item.get('apid')} {item.get('detail')}")
+    response = requests.post(HUB_AMBULANCE_ROSTER_URL, json={"apids": [a.apid for a in ambulances]}, timeout=10)
+    response.raise_for_status()
+    body = response.json()
+    print(f"  [통신] 구급차 목록 {len(ambulances)}대 전송 — hub 제거 {len(body.get('removed', []))}대, "
+          f"보류 {len(body.get('kept', []))}대 -> {HUB_AMBULANCE_ROSTER_URL}")
+
 def sync_once() -> None:
     hospitals = fetch_hospitals()
     print(f"\n=== 병원 정보 {len(hospitals)}건을 feature/hub로 전송 ===")
@@ -412,8 +442,7 @@ def sync_once() -> None:
     ambulances = fetch_ambulances()
     if ambulances:
         print(f"\n=== 구급차 정보 {len(ambulances)}건을 feature/hub로 전송 ===")
-        for ambulance in ambulances:
-            send_ambulance_to_hub(ambulance)
+        send_ambulances_to_hub(ambulances)
 
 
 def main() -> None:

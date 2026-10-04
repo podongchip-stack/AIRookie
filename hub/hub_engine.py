@@ -512,6 +512,28 @@ class HubEngine:
             self._ambulances[info.apid] = info
             self._dirty = True
 
+    def apply_ambulance_roster(self, apids: list[str], busy: set[str] | None = None) -> tuple[list[str], list[str]]:
+        """feature/info가 한 주기에 보낸 구급차 전체 목록(2026-10-04). 여기 없는 구급차를 레지스트리에서 뺀다 —
+        Supabase ambulances 테이블을 통째로 바꿔도(시연용 3대 → 서울 119 구급차) 옛 구급차가 hub 메모리·상태
+        파일에 계속 남던 문제. apply_hospital_roster와 같은 방어: 목록이 비었거나 지금의 절반 미만이면 아무것도
+        안 빼고(조회 실패·일부만 온 경우), 진행 중 사건이 있거나 busy(출동 시뮬레이션 중)인 구급차는 남긴다.
+        돌려주는 값은 (뺀 apid, 남긴 apid)."""
+        roster = set(apids)
+        busy = busy or set()
+        with self._lock:
+            missing = [apid for apid in self._ambulances if apid not in roster]
+            if not missing or not roster or len(roster) < len(self._ambulances) / 2:
+                return [], missing
+            in_use = {apid for cid, apid in self._case_apid.items() if cid not in self._case_arrival} | busy
+            removed = [apid for apid in missing if apid not in in_use]
+            kept = [apid for apid in missing if apid in in_use]
+            for apid in removed:
+                del self._ambulances[apid]
+                self._gps_override.pop(apid, None)
+            if removed:
+                self._dirty = True
+            return removed, kept
+
     def get_ambulance(self, apid: str) -> AmbulanceInfo | None:
         """시뮬레이션 위치가 있으면 그 GPS로 바꾼 사본을 돌려준다(매칭·경로·ETA가 전부 이걸 쓴다)."""
         with self._lock:
