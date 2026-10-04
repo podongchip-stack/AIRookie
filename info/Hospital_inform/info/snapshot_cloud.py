@@ -2,6 +2,7 @@
 
     python snapshot_cloud.py --seed    # (1회, 수집 장비에서) 기존 아카이브를 days/로 업로드
     python snapshot_cloud.py --sync    # 클라우드 수집분을 data/snapshots_nationwide/로 내려받기
+    python snapshot_cloud.py --watch   # 상시: 클라우드에 새 수집분이 생기면 바로 sync (start-all이 띄움)
 
 왜 이 구조인가 (2026-10-04)
 ---------------------------
@@ -24,6 +25,18 @@ SNAPSHOT_SUPABASE_SERVICE_KEY(seed 업로드에만 필요).
 안전장치: 로컬 수집기(snapshot.py)가 쓰고 있는 오늘 파일은 sync가 건드리지 않는다
 (이 스크립트가 만든 파일만 상태 파일에 기록해 두고 그것만 다시 만든다) — 이관
 과도기에 양쪽이 같은 파일을 두드려 관측이 사라지는 사고를 막는다.
+
+넘겨받기(2026-10-04 추가): 그 로컬 파일이 ADOPT_IDLE_SEC(기본 1시간) 넘게 안 바뀌었으면
+로컬 수집기가 꺼진 것으로 보고 sync가 그 날짜를 넘겨받는다 — 실제로 이관 당일 로컬 수집이
+16:52에 멈춘 뒤로 오늘 파일이 계속 "건드리지 않음"이라 신뢰도 그래프가 거기서 멈춰 있었다.
+넘겨받을 때 원래 로컬 파일은 <날짜>.jsonl.local-base로 보관하고(*.jsonl이 아니라 다른
+소비자는 읽지 않는다), 다시 만들 때마다 그 내용을 바탕으로 깔고 클라우드 수집분을 이어 붙인다
+— 로컬에만 있던 관측이 사라지지 않는다.
+
+watch(2026-10-04 추가): 클라우드 수집기가 원본을 올리면 그걸 신호로 바로 sync한다.
+Supabase가 이 장비로 직접 알릴 길(들어오는 연결)이 없어서, WATCH_INTERVAL_SEC(기본 60초)마다
+오늘 raw/ 목록 개수만 가볍게 보고 늘었으면 sync한다(한 회차의 두 오퍼레이션이 1~2초 차이로
+올라오므로 조금 기다렸다 한 번에). 예전 20분 고정 주기보다 그래프 반영이 최대 20분 빨라진다.
 """
 from __future__ import annotations
 
@@ -32,7 +45,9 @@ import gzip
 import io
 import json
 import os
+import shutil
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -47,6 +62,10 @@ KST = timezone(timedelta(hours=9))
 BUCKET = "egen-snapshots"
 SNAPSHOT_DIR = BASE_DIR / "data" / "snapshots_nationwide"
 STATE_PATH = SNAPSHOT_DIR / ".cloud_sync_state.json"
+# 로컬 수집기가 이만큼 안 쓰면 꺼진 것으로 보고 그 날짜를 sync가 넘겨받는다
+ADOPT_IDLE_SEC = int(os.environ.get("SNAPSHOT_ADOPT_IDLE_SEC", "3600"))
+WATCH_INTERVAL_SEC = int(os.environ.get("SNAPSHOT_WATCH_INTERVAL_SEC", "60"))
+SEED_INTERVAL_SEC = 1200  # watch에서 seed(SERVICE_KEY 있는 장비)는 예전처럼 20분마다만
 
 
 def _env() -> tuple[str, str, str | None]:
@@ -151,6 +170,11 @@ def seed(url: str, service_key: str) -> None:
 
 # ── sync: days/ + raw/ → 로컬 날짜 파일 ──────────────────────────────────────
 
+def _local_base(date: str) -> Path:
+    """넘겨받은 날짜의 원래 로컬 수집분 보관 파일(*.jsonl이 아니라 다른 소비자는 읽지 않는다)."""
+    return SNAPSHOT_DIR / f"{date}.jsonl.local-base"
+
+
 def _rebuild_day(url: str, anon: str, date: str, objects: list[dict], has_partial: bool) -> str:
     """raw/<date>/ 객체들(+ 있으면 partial/ 중간본)로 스냅샷 JSONL 하루치를 만든다
     (snapshot.py fetch_one과 같은 줄). partial은 수집 장비가 올린 로컬 수집분이라
@@ -171,12 +195,18 @@ def _rebuild_day(url: str, anon: str, date: str, objects: list[dict], has_partia
             groups[(hms, op)]["error_obj"] = name
 
     records: dict[tuple[str, str], dict] = {}
+    base = _local_base(date)
+    if base.exists():  # 넘겨받은 날짜 — 원래 로컬 수집분을 바탕으로 깐다
+        for line in base.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                records[(rec.get("ts", ""), rec.get("operation", ""))] = rec
     if has_partial:
         try:
             text = gzip.decompress(_download(url, f"partial/{date}.jsonl.gz")).decode("utf-8")
             for line in text.splitlines():
                 rec = json.loads(line)
-                records[(rec.get("ts", ""), rec.get("operation", ""))] = rec
+                records.setdefault((rec.get("ts", ""), rec.get("operation", "")), rec)
         except Exception as exc:  # noqa: BLE001 — 중간본이 깨져도 raw만으로 진행
             print(f"  {date}: partial 읽기 실패({type(exc).__name__}) — raw만으로 복원")
 
@@ -231,9 +261,17 @@ def sync(url: str, anon: str) -> None:
             continue
         local = SNAPSHOT_DIR / f"{date}.jsonl"
         if local.exists() and date not in state["managedDays"]:
-            print(f"  {date}: 로컬 수집기(snapshot.py)가 만든 파일 — 건드리지 않음 "
-                  f"(이관 끝나면 그쪽 수집을 끄고, 이 날짜는 --seed로 올릴 것)")
-            continue
+            idle = time.time() - local.stat().st_mtime
+            if idle < ADOPT_IDLE_SEC:
+                print(f"  {date}: 로컬 수집기(snapshot.py)가 쓰는 중인 파일 — 건드리지 않음 "
+                      f"({ADOPT_IDLE_SEC // 60}분 넘게 안 바뀌면 sync가 넘겨받는다)")
+                continue
+            # 로컬 수집기가 멈췄다 — 원래 파일을 보관하고 그걸 바탕으로 클라우드 수집분을 이어 붙인다
+            base = _local_base(date)
+            if not base.exists():
+                shutil.copy2(local, base)
+            print(f"  {date}: 로컬 수집기가 {idle / 60:.0f}분째 멈춤 — sync가 넘겨받음 "
+                  f"(원래 파일은 {base.name}로 보관, 그 위에 클라우드 수집분을 이어 붙임)")
         objects = _list_all(url, anon, f"raw/{date}")
         fingerprint = f"{len(objects)}|{partials.get(date, '')}"
         if state["managedDays"].get(date) == fingerprint and local.exists():
@@ -249,11 +287,40 @@ def sync(url: str, anon: str) -> None:
     print("동기화 완료")
 
 
+def _today_raw_count(url: str, anon: str) -> tuple[str, int]:
+    today = datetime.now(KST).date().isoformat()
+    return today, len([o for o in _list_all(url, anon, f"raw/{today}") if o.get("name")])
+
+
+def watch(url: str, anon: str, service: str | None) -> None:
+    """클라우드 수집기가 새 원본을 올리면 바로 sync한다(수집 = 트리거). 네트워크가 잠깐 끊겨도 죽지 않는다."""
+    print(f"감시 시작 — {WATCH_INTERVAL_SEC}초마다 클라우드 새 수집분 확인, 생기면 바로 동기화", flush=True)
+    last_seed = 0.0
+    seen: tuple[str, int] | None = None
+    while True:
+        try:
+            if service and time.time() - last_seed >= SEED_INTERVAL_SEC:
+                seed(url, service)
+                last_seed = time.time()
+            current = _today_raw_count(url, anon)
+            if current != seen:
+                if seen is not None:
+                    print(f"[{datetime.now(KST):%H:%M:%S}] 클라우드 새 수집분 감지 "
+                          f"(raw/{current[0]}/ {seen[1] if seen[0] == current[0] else 0} → {current[1]}개) — 동기화", flush=True)
+                    time.sleep(20)  # 한 회차의 두 오퍼레이션이 다 올라올 때까지 잠깐 기다린다
+                sync(url, anon)
+                seen = _today_raw_count(url, anon)
+        except Exception as exc:  # noqa: BLE001 — 한 번 실패가 상시 감시를 끝내면 안 된다
+            print(f"  감시 중 오류, 다음 확인 때 다시: {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(WATCH_INTERVAL_SEC)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--seed", action="store_true", help="기존 로컬 아카이브를 days/로 업로드 (수집 장비 1회)")
     group.add_argument("--sync", action="store_true", help="클라우드 수집분을 로컬로 복원")
+    group.add_argument("--watch", action="store_true", help="상시 감시 — 클라우드에 새 수집분이 생기면 바로 sync")
     args = parser.parse_args()
 
     url, anon, service = _env()
@@ -261,6 +328,11 @@ def main() -> int:
         if not service:
             raise SystemExit("--seed에는 SNAPSHOT_SUPABASE_SERVICE_KEY가 필요하다")
         seed(url, service)
+    elif args.watch:
+        try:
+            watch(url, anon, service)
+        except KeyboardInterrupt:
+            print("감시 종료")
     else:
         sync(url, anon)
     return 0

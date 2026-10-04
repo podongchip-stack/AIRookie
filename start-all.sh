@@ -269,14 +269,11 @@ if [ "$RUN_INFO" = 1 ]; then
   if [ "$RUN_SNAPSHOT" = 1 ]; then
     INFO_ENV="info/Hospital_inform/.env"
     if grep -q '^SNAPSHOT_SUPABASE_URL=' "$INFO_ENV" 2>/dev/null; then
-      echo "E-Gen 스냅샷 동기화 시작 (클라우드 → 로컬, 20분 주기 — 첫 실행은 과거분 전체라 오래 걸릴 수 있음)..."
-      (cd info/Hospital_inform/info && export PYTHONIOENCODING=utf-8 && while true; do
-          if grep -q '^SNAPSHOT_SUPABASE_SERVICE_KEY=' ../.env 2>/dev/null; then
-            "$INFO_PY" -u snapshot_cloud.py --seed || true
-          fi
-          "$INFO_PY" -u snapshot_cloud.py --sync || true
-          sleep 1200
-        done) > "$LOG_DIR/snapshot.log" 2>&1 &
+      echo "E-Gen 스냅샷 동기화 시작 (클라우드 → 로컬, 새 수집분이 생기면 바로 — 첫 실행은 과거분 전체라 오래 걸릴 수 있음)..."
+      # --watch(2026-10-04): 클라우드 수집기가 올리는 것을 1분마다 확인해 생기면 바로 sync — 예전 20분 고정
+      # 주기보다 그래프 반영이 빠르다. SERVICE_KEY 있는 장비의 --seed는 감시 안에서 20분마다 그대로 한다.
+      (cd info/Hospital_inform/info && export PYTHONIOENCODING=utf-8 && \
+          exec "$INFO_PY" -u snapshot_cloud.py --watch) > "$LOG_DIR/snapshot.log" 2>&1 &
       PIDS+=("$!")
     else
       echo "⚠️  $INFO_ENV 에 SNAPSHOT_SUPABASE_URL이 없어 스냅샷 동기화를 건너뜁니다 — 신뢰도 보드가 이 장비의 과거 수집분만 봅니다."

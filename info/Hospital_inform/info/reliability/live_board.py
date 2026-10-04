@@ -305,7 +305,10 @@ def build(window_hours: int = WINDOW_HOURS_DEFAULT) -> dict:
 
 def cached(window_hours: int = WINDOW_HOURS_DEFAULT, refresh_sec: int = CACHE_REFRESH_SEC) -> dict:
     """캐시가 신선하면 그대로, 아니면 다시 만든다(생성 수십 초 — ingest가 락으로 감싼다)."""
-    if CACHE_PATH.is_file() and time.time() - CACHE_PATH.stat().st_mtime < refresh_sec:
+    # 스냅샷 파일이 캐시보다 새로우면(클라우드 수집 → 동기화 직후, 2026-10-04) 20분을 기다리지 않고 다시 만든다
+    newest = max((p.stat().st_mtime for p in SNAPSHOT_DIR.glob("*.jsonl")), default=0.0)
+    if CACHE_PATH.is_file() and time.time() - CACHE_PATH.stat().st_mtime < refresh_sec \
+            and newest <= CACHE_PATH.stat().st_mtime:
         body = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
         if body.get("schemaVersion") == 4:  # 구버전 캐시는 무시하고 다시 만든다
             return body
