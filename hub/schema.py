@@ -72,6 +72,9 @@ class VoiceCallSummaryMessage(BaseModel):
     transcript: VoiceTranscript
     summary: VoiceSummary
     source: Literal["ai"] = "ai"
+    # 어떤 모델이 만들었나(voice가 원래 보내던 필드, 2026-10-05부터 읽는다) — 콘솔의 정해진 상황은
+    # stt "scenario-template"이라 이송 중 2차 통화 활력징후를 가상(demo)으로 표시할 때 쓴다.
+    model_used: Optional[dict] = None
 
 
 # ── feature/info → feature/hub (입력) ───────────────────────────────────────
@@ -711,6 +714,22 @@ class MonitorCase(BaseModel):
     # 시연 일시정지 중(2026-10-05) — 콘솔·관제 화면이 조작을 막는다
     paused: Optional[bool] = None
     source: Literal["rule"] = "rule"
+
+
+class MciAllocate(BaseModel):
+    """시연 콘솔 → hub: 대량사고 [분배 확정](2026-10-05). 사상자 사건들을 **중증 → 중등증 → 경증** 순으로, 사건마다
+    승인 병원 중 hub 순위 1위로 이송 확정한다. 하나 확정할 때마다 다음 사건 순위를 다시 매겨 이송 중 부하 페널티가
+    반영된다(같은 병원으로 몰리면 다음 병원으로). 분배 규칙은 평시 hub 순위 그대로 — 콘솔이 따로 계산하지 않는다."""
+    type: Literal["mci_allocate"] = "mci_allocate"
+    caseIds: list[str]
+    timestamp: Optional[str] = None
+
+
+class MciPreview(BaseModel):
+    """시연 콘솔 → hub: 대량사고 자동 분배 미리 보기(2026-10-05) — 지금 승인 상태로 [분배 확정]하면 누가 어디로 가는지.
+    hub가 mci_plan으로 답한다. 확정은 하지 않는다."""
+    type: Literal["mci_preview"] = "mci_preview"
+    caseIds: list[str]
 
 
 class ZoneExpandNow(BaseModel):

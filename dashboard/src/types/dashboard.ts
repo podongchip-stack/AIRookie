@@ -348,6 +348,33 @@ export interface CallStatus {
   cancelled?: boolean;
 }
 
+// hub → 시연 콘솔: 대량사고 [분배 확정] 결과(2026-10-05). reason: confirmed | no_approved_hospital | paused | already_confirmed | no_result
+export interface MciAllocationResult {
+  caseId: string;
+  hospitalId: string | null;
+  hospitalName?: string | null;
+  loadPenaltyMin?: number | null;
+  reason: string;
+}
+export interface MciAllocated {
+  type: "mci_allocated";
+  results: MciAllocationResult[];
+}
+// hub → 시연 콘솔: 대량사고 자동 분배 미리 보기(2026-10-05) — 지금 승인 상태로 [분배 확정]하면 누가 어디로 가는지.
+// hub가 확정 때도 같은 계획을 쓴다(중증부터, 승인 병원 중 finalScore 최고, 앞 배정마다 부하 페널티). hospitalId null = 승인 병원 없음
+export interface MciPlanItem {
+  caseId: string;
+  hospitalId: string | null;
+  hospitalName?: string | null;
+  severityTag?: string | null;
+  loadPenaltyMin?: number | null;
+}
+export interface MciPlan {
+  type: "mci_plan";
+  caseIds: string[];
+  plan: MciPlanItem[];
+}
+
 // hub → 조작한 탭: 조작이 거부됨(2026-10-05). reason "paused" = 시연 일시정지 중
 export interface ActionRefused {
   type: "action_refused";
@@ -439,6 +466,10 @@ export interface DashboardState {
   caseHistory: CaseHistoryItem[];
   // 마지막으로 hub가 거부한 조작(2026-10-05) — 화면이 "현재 시연 일시정지 중입니다." 같은 안내를 잠깐 띄운다
   actionRefused: { at: number; reason: string; caseId: string | null } | null;
+  // 마지막 대량사고 분배 확정 결과(시연 콘솔)
+  mciAllocated: { at: number; results: MciAllocationResult[] } | null;
+  // 마지막 대량사고 자동 분배 미리 보기(시연 콘솔 ③)
+  mciPlan: { at: number; caseIds: string[]; plan: MciPlanItem[] } | null;
 }
 
 // ── 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04) ─────────────────────────
@@ -796,4 +827,6 @@ export type InboundMessage =
   | PreAlert
   | CaseMeta
   | CaseHistory
-  | ActionRefused;
+  | ActionRefused
+  | MciAllocated
+  | MciPlan;

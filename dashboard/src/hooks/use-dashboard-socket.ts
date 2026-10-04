@@ -74,6 +74,8 @@ const INITIAL_STATE: DashboardState = {
   caseMeta: {},
   caseHistory: [],
   actionRefused: null,
+  mciAllocated: null,
+  mciPlan: null,
 };
 
 // 관제 지도 "병원 응답" 기록에 남길 최대 개수
@@ -385,6 +387,12 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "case_history":
               setState((prev) => ({ ...prev, caseHistory: parsed.cases }));
               break;
+            case "mci_allocated":
+              setState((prev) => ({ ...prev, mciAllocated: { at: Date.now(), results: parsed.results } }));
+              break;
+            case "mci_plan":
+              setState((prev) => ({ ...prev, mciPlan: { at: Date.now(), caseIds: parsed.caseIds, plan: parsed.plan } }));
+              break;
             case "action_refused":
               setState((prev) => ({ ...prev, actionRefused: { at: Date.now(), reason: parsed.reason, caseId: parsed.caseId } }));
               break;
@@ -591,7 +599,23 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals, sendZoneExpand };
+  // 대량사고 [분배 확정](2026-10-05) — hub가 중증부터 사건마다 승인 병원 중 순위 1위로 이송 확정한다(부하 페널티 반영)
+  const sendMciAllocate = useCallback((caseIds: string[]): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "mci_allocate", caseIds, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
+  // 대량사고 자동 분배 미리 보기(2026-10-05) — 확정하지 않고 hub의 계획만 받는다(mci_plan)
+  const sendMciPreview = useCallback((caseIds: string[]): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "mci_preview", caseIds }));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.

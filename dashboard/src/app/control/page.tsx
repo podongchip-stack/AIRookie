@@ -18,6 +18,7 @@ import type {
   GeocodeResult,
   HospitalStatus,
   MapHospital,
+  MciPlanItem,
   MonitorCase,
   MonitorCaseHospital,
   RejectionReason,
@@ -188,7 +189,7 @@ const LEVEL_SHORT: Record<string, string> = {
 type MciCasualty = { no: number; caseId: string; apid: string; templateKey: string };
 
 export default function ControlPage() {
-  const { state, connectionMode, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand } =
+  const { state, connectionMode, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview } =
     useDashboardSocket({ role: "monitor", id: "control" });
   const simOn = state.identity.simDispatch === true;
   const ambulances = state.mapOverview?.ambulances ?? [];
@@ -247,16 +248,19 @@ export default function ControlPage() {
   const [followupMode, setFollowupMode] = useState<"voice" | "template">("template");
   const [followupKey, setFollowupKey] = useState<string>("shock");
   const [followupSent, setFollowupSent] = useState<Record<string, string[]>>({});
-  const [rejectTarget, setRejectTarget] = useState<{ caseId: string; hospitalId: string; name: string; action: RejectAction } | null>(null);
+  // caseIds: 대량사고 병원 행은 그 병원이 후보인 사건 여러 건에 한 번에 응답한다
+  const [rejectTarget, setRejectTarget] = useState<{ caseIds: string[]; hospitalId: string; name: string; action: RejectAction } | null>(null);
   function sendReject(reason: RejectionReason) {
     if (!rejectTarget) return;
-    const { caseId: targetCase, hospitalId, name, action } = rejectTarget;
+    const { caseIds: targetCases, hospitalId, name, action } = rejectTarget;
     setRejectTarget(null);
-    if (locked) {
+    if (locked && !mciOn) {
       pauseToast.notify();
       return;
     }
-    sendAction({ caseId: targetCase, action, hospital_id: hospitalId, actor: "hospital", timestamp: now(), reason });
+    for (const targetCase of targetCases) {
+      sendAction({ caseId: targetCase, action, hospital_id: hospitalId, actor: "hospital", timestamp: now(), reason });
+    }
     const label = rejectionReasonLabel(reason) ?? "사유 없음";
     if (action === "arrival_refused") {
       setManualArrival(false);
@@ -264,7 +268,7 @@ export default function ControlPage() {
     } else if (action === "transport_withdraw") {
       note(`${name} 이송 중 수용 철회(${label}) — 구급차는 다른 승인 병원으로 재선택`);
     } else {
-      note(`${name} 수용 불가 · ${label}`);
+      note(`${name} 수용 불가 · ${label}${targetCases.length > 1 ? ` (사상자 ${targetCases.length}명)` : ""}`);
     }
   }
   const myCall = caseId ? state.callStatus[caseId] ?? null : null;
@@ -434,7 +438,6 @@ export default function ControlPage() {
   // 재출동한다(왕복 수송). 현장 도착 시 그 사상자의 중증도로 자동 신고. 병원 쪽 분배는
   // hub 몫이다 — 중증도-센터 가산과 이송 중 부하 페널티가 같은 병원에 몰아 보내지 않는다.
   const mciPlanRef = useRef<Record<string, string>>({});
-  const autoSendingRef = useRef<Set<string>>(new Set());
   const mciQueueRef = useRef<string[]>([]);          // 대기 사상자(템플릿 키, 중증 우선 정렬)
   const mciSpotRef = useRef<Spot>(null);             // 이 대량사고의 현장(재출동도 같은 곳으로)
   const mciDispatchedRef = useRef(0);                // 현장 마커 간격용 누적 카운터
@@ -445,6 +448,12 @@ export default function ControlPage() {
   // 사상자별 사건(2026-10-05, 대량사고 현황표) — 화면에 그리려고 ref와 별도로 상태로도 든다
   const [mciCasualties, setMciCasualties] = useState<MciCasualty[]>([]);
   const [mciTotal, setMciTotal] = useState(0);
+  // ② 사상자마다 고른 현장 유형(caseId -> 템플릿 키) · ⑤ 사상자마다 기록한 도착 결과(병원 역할, 재분배·종료 때 hub로) ·
+  // 재분배 중인 사상자(⑤의 수용 불가만 ③으로 되돌린다 — 이미 수용된 환자는 다시 처리하지 않는다)
+  const [mciChoice, setMciChoice] = useState<Record<string, string>>({});
+  const [mciDecisions, setMciDecisions] = useState<Record<string, { result: "accepted" | "refused" | "sent"; reason?: RejectionReason }>>({});
+  const [mciRedo, setMciRedo] = useState<string[] | null>(null);
+  const [mciRefuseTarget, setMciRefuseTarget] = useState<{ caseId: string; name: string } | null>(null);
   const [mciSpotLabel, setMciSpotLabel] = useState("");
   // 사건별로 마지막에 본 이송 확정 병원 — 사건이 닫혀(case_closed) 목록에서 사라진 뒤에도 표에 남긴다
   const [caseHospital, setCaseHospital] = useState<Record<string, string>>({});
@@ -501,6 +510,9 @@ export default function ControlPage() {
     mciDispatchedRef.current = 0;
     setMciCasualties([]);
     setMciTotal(total);
+    setMciChoice({});
+    setMciDecisions({});
+    setMciRedo(null);
     setMciOn(true);
     const firstWave = Math.min(idle.length, total);
     idle.slice(0, firstWave).forEach((ambulance) => mciDispatchTo(ambulance.apid));
@@ -510,23 +522,13 @@ export default function ControlPage() {
     );
   }
 
-  // 대량사고 자동 신고 + 자원 재분배: 계획된 사건의 구급차가 현장에 도착하면 그 자리에서
-  // 신고를 보내고, 어떤 구급대든 대기(복귀)로 돌아오면 대기열의 다음 사상자에게 재출동한다.
+  // 대량사고 자원 재분배: 어떤 구급대든 대기(복귀)로 돌아오면 대기열의 다음 사상자에게 재출동한다.
+  // 현장 확인(신고)은 자동으로 보내지 않는다(2026-10-05) — ② 현장 확인에서 사상자마다 유형을 고른 뒤 한 번에 보낸다(시안).
   useEffect(() => {
     for (const unit of Object.values(state.ambulanceSim)) {
       // 보낸 출동이 반영됐으면 중복 방지 표시 해제
       if (pendingDispatchRef.current[unit.apid] && unit.caseId === pendingDispatchRef.current[unit.apid]) {
         delete pendingDispatchRef.current[unit.apid];
-      }
-      const planCaseId = unit.caseId;
-      if (planCaseId && unit.phase === "on_scene") {
-        const templateKey = mciPlanRef.current[planCaseId];
-        if (templateKey && !reported[planCaseId] && !autoSendingRef.current.has(planCaseId)) {
-          autoSendingRef.current.add(planCaseId);
-          void handleReportFor(unit.apid, planCaseId, templateKey).finally(() => {
-            autoSendingRef.current.delete(planCaseId);
-          });
-        }
       }
       // 재분배: 대기 사상자가 남아 있으면 복귀한 구급대를 바로 다시 보낸다
       if (
@@ -574,6 +576,9 @@ export default function ControlPage() {
     setMciRemaining(0);
     setMciCasualties([]);
     setMciTotal(0);
+    setMciChoice({});
+    setMciDecisions({});
+    setMciRedo(null);
     setLocalCaseIds({});
     setReported({});
     setManualArrival(false);
@@ -645,20 +650,24 @@ export default function ControlPage() {
     const stage = !live
       ? 5
       : unitPhase === "dispatching" ? 0
-      : unitPhase === "on_scene" ? (monitorCase ? 2 : 1)
+      : unitPhase === "on_scene" ? (monitorCase || reported[casualty.caseId] ? 2 : 1)
       : unitPhase === "transporting" ? (confirmed ? 3 : 2)
       : unitPhase === "at_hospital" ? 4
       : unitPhase === "rerouting" ? 2
       : 5;
     return { ...casualty, template, unit: live ? unit : null, monitorCase, confirmed, stage, hospitalName: confirmed?.name ?? caseHospital[casualty.caseId] ?? null };
   });
-  const mciStep = (() => {
-    if (!mciOn || casualtyView.length === 0) return 1;
-    const active = casualtyView.filter((c) => c.stage < 5);
-    if (active.length === 0) return mciRemaining > 0 ? 1 : 5;
-    const lag = Math.min(...active.map((c) => c.stage));
-    return [1, 2, 3, 4, 5][Math.min(4, lag)];
+  // 대량사고 화면 단계(시안의 대량 ①~⑤) — 아직 도착 결과를 기록하지 않은 사상자 중 가장 늦은 단계를 보여 준다
+  const mciStage: MciStage = (() => {
+    const open = casualtyView.filter((c) => !mciDecisions[c.caseId] && c.stage < 5);
+    if (casualtyView.length === 0 || open.some((c) => c.stage === 0)) return "dispatch";
+    if (open.some((c) => c.stage === 1)) return "verify";
+    if (open.some((c) => c.stage === 2)) return "hospital";
+    if (open.some((c) => c.stage === 3)) return "transit";
+    return "arrival";
   })();
+  const mciRedoActive = mciRedo && casualtyView.some((c) => mciRedo.includes(c.caseId) && c.stage === 2) ? mciRedo : null;
+  const mciStep = { dispatch: 1, verify: 2, hospital: 3, transit: 4, arrival: 5 }[mciStage];
   const step = mciOn ? mciStep : SCREEN_STEP[screen];
 
   // ── 상황 요약 띠 ──
@@ -674,7 +683,10 @@ export default function ControlPage() {
         { label: "출동대", value: `구급대 ${casualtyView.filter((c) => c.stage < 5).length}대`, sub: mciRemaining > 0 ? `대기 ${mciRemaining}명` : null },
         {
           label: "현장 확인",
-          value: `중증 ${mciCounts.high} · 중등증 ${mciCounts.medium} · 경증 ${mciCounts.low}`,
+          value: mciStep >= 3
+            ? `중증 ${casualtyView.filter((c) => c.template.severity === "중증").length} · 중등증 ${casualtyView.filter((c) => c.template.severity === "중등증").length} · 경증 ${casualtyView.filter((c) => c.template.severity === "경증").length}`
+            : mciStep === 2 ? "확인 중…" : "대기",
+          muted: mciStep < 3,
         },
         { label: "요청 범위", value: "사상자별 존", muted: true },
         {
@@ -737,6 +749,17 @@ export default function ControlPage() {
       <div style={{ width: "100%", maxWidth: 1500, height: "100%", minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
         <style>{CONSOLE_CSS}</style>
         {pauseToast.node}
+        {mciRefuseTarget && (
+          <RejectReasonModal
+            title={`${mciRefuseTarget.name} — 도착 후 수용 불가 사유`}
+            note="기록만 해 둡니다 — [수용 불가 N명 재분배]를 누르면 그 병원을 빼고 ③에서 다시 분배합니다."
+            onPick={(reason) => {
+              setMciDecisions((prev) => ({ ...prev, [mciRefuseTarget.caseId]: { result: "refused", reason } }));
+              setMciRefuseTarget(null);
+            }}
+            onClose={() => setMciRefuseTarget(null)}
+          />
+        )}
         {rejectTarget && (
           <RejectReasonModal
             title={
@@ -865,73 +888,116 @@ export default function ControlPage() {
         {/* 단계 본문 */}
         <main style={{ flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
           {mciOn ? (
-            <MciBoard
+            <MciWizard
+              stage={mciStage}
+              plan={state.mciPlan?.plan ?? null}
+              onPreview={sendMciPreview}
               total={mciTotal}
               remaining={mciRemaining}
               spotLabel={mciSpotLabel}
               casualties={casualtyView}
+              choice={mciChoice}
+              decisions={mciDecisions}
+              redoIds={mciRedoActive}
+              hospitalInfo={hospitalInfo}
               ambulanceName={ambulanceName}
               tripProgress={tripProgress}
-              onApproveAll={() => {
-                let cases = 0;
-                let hospitals = 0;
-                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
-                  if (c.stage === 2 && c.monitorCase && !c.confirmed) {
-                    const n = bulkRespond(c.monitorCase, "hospital_approve");
-                    if (n > 0) { cases += 1; hospitals += n; }
-                  }
+              sending={sending}
+              lastAllocation={
+                state.mciAllocated
+                  ? {
+                      confirmed: state.mciAllocated.results.filter((r) => r.reason === "confirmed").length,
+                      skipped: state.mciAllocated.results.filter((r) => r.reason === "no_approved_hospital").length,
+                    }
+                  : null
+              }
+              onChoose={(id, key) => setMciChoice((prev) => ({ ...prev, [id]: key }))}
+              onVerify={async (batch) => {
+                setSending(true);
+                try {
+                  const keys = Object.fromEntries(batch.map((c) => [c.caseId, mciChoice[c.caseId] ?? c.templateKey]));
+                  setMciCasualties((prev) => prev.map((c) => (keys[c.caseId] ? { ...c, templateKey: keys[c.caseId] } : c)));
+                  await Promise.all(batch.map((c) => handleReportFor(c.apid, c.caseId, keys[c.caseId])));
+                  note(`현장 확인 — 사상자 ${batch.length}명(${sevSummary(batch.map((c) => ({ ...c, template: templateOf(keys[c.caseId])! })))}) 인근 병원 동시 전달`);
+                } finally {
+                  setSending(false);
                 }
-                note(`대량사고 — 응답 대기 사건 ${cases}건의 미응답 병원 ${hospitals}곳 일괄 승인`);
               }}
-              onConfirmAll={() => {
-                let n = 0;
-                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
-                  if (c.stage !== 2 || !c.monitorCase || c.confirmed) continue;
-                  const first = c.monitorCase.hospitals.find((h) => h.status === "approved");
-                  if (!first) continue;
-                  sendAction({ caseId: c.caseId, action: "final_approval", hospital_id: first.hospitalId, actor: "paramedic", timestamp: now() });
-                  n += 1;
+              onHospitalApprove={(hospitalId, ids) => {
+                ids.forEach((id) => sendAction({ caseId: id, action: "hospital_approve", hospital_id: hospitalId, actor: "hospital", timestamp: now() }));
+                note(`병원 응답(병원 역할) — ${hospitalInfo.get(hospitalId)?.name ?? hospitalId} 사상자 ${ids.length}명 수용 승인`);
+              }}
+              onHospitalReject={(hospitalId, name, ids) => setRejectTarget({ caseIds: ids, hospitalId, name, action: "hospital_reject" })}
+              onBulk={(action, pairs) => {
+                pairs.forEach((p) => sendAction({ caseId: p.caseId, action, hospital_id: p.hospitalId, actor: "hospital", timestamp: now() }));
+                const n = new Set(pairs.map((p) => p.hospitalId)).size;
+                note(action === "hospital_approve" ? `병원 응답(병원 역할) — 미응답 병원 ${n}곳 모두 승인` : `병원 응답(병원 역할) — 미응답 병원 ${n}곳 전부 불가(사유 없음)`);
+              }}
+              onAllocate={(ids) => {
+                if (sendMciAllocate(ids)) {
+                  setMciRedo(null);
+                  note(`분배 확정(상황실·구급대) — 사상자 ${ids.length}명을 중증부터 hub 순위로 배정`);
                 }
-                note(`대량사고 — 승인 병원 1순위로 ${n}건 이송 확정(병원 순위는 hub 규칙)`);
               }}
-              onFastAll={() => {
+              onFastAll={(phase) => {
                 let n = 0;
-                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
-                  if (c.unit && ["dispatching", "transporting"].includes(c.unit.phase)) {
+                for (const c of casualtyView) {
+                  if (c.unit?.phase === phase && !(c.unit.paused && c.unit.pauseReason !== "call")) {
                     sendSimCommand("sim_fast_forward", c.apid, c.caseId);
                     n += 1;
                   }
                 }
-                note(`대량사고 — 이동 중인 구급대 ${n}대 빨리감기`);
+                note(`대량사고 — ${phase === "dispatching" ? "출동" : "이송"} 중인 구급대 ${n}대 빨리감기`);
               }}
-              onAcceptAll={() => {
-                let n = 0;
-                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
-                  if (c.stage === 4 && c.confirmed) {
+              onDecide={(c, result) => {
+                if (result === "undo") {
+                  setMciDecisions((prev) => {
+                    const next = { ...prev };
+                    delete next[c.caseId];
+                    return next;
+                  });
+                } else if (result === "refused") {
+                  setMciRefuseTarget({ caseId: c.caseId, name: c.hospitalName ?? "병원" });
+                } else {
+                  setMciDecisions((prev) => ({ ...prev, [c.caseId]: { result: "accepted" } }));
+                }
+              }}
+              onAcceptAllLocal={(list) =>
+                setMciDecisions((prev) => ({ ...prev, ...Object.fromEntries(list.map((c) => [c.caseId, { result: "accepted" as const }])) }))
+              }
+              onRedistribute={() => {
+                // 수용 완료는 hub에 기록(사건 종료), 수용 불가는 도착 후 수용 불가로 보내 그 병원을 빼고 ③에서 다시 분배
+                const refusedIds: string[] = [];
+                for (const c of casualtyView) {
+                  const d = mciDecisions[c.caseId];
+                  if (!d || !c.confirmed || d.result === "sent") continue;
+                  const action = d.result === "accepted" ? "arrival_accepted" : "arrival_refused";
+                  sendAction({ caseId: c.caseId, action, hospital_id: c.confirmed.hospitalId, actor: "hospital", timestamp: now(), ...(d.reason ? { reason: d.reason } : {}) });
+                  if (d.result === "refused") refusedIds.push(c.caseId);
+                }
+                setMciDecisions((prev) => {
+                  const next: typeof prev = {};
+                  for (const [id, d] of Object.entries(prev)) if (d.result !== "refused") next[id] = { result: "sent" };
+                  return next;
+                });
+                setMciRedo(refusedIds);
+                note(`수용 불가 ${refusedIds.length}명 재분배 — 그 병원을 빼고 ③ 병원 응답에서 다시 분배합니다`);
+              }}
+              onFinish={() => {
+                for (const c of casualtyView) {
+                  const d = mciDecisions[c.caseId];
+                  if (d?.result === "accepted" && c.confirmed) {
                     sendAction({ caseId: c.caseId, action: "arrival_accepted", hospital_id: c.confirmed.hospitalId, actor: "hospital", timestamp: now() });
-                    n += 1;
                   }
                 }
-                note(`대량사고 — 도착한 ${n}명 환자 수용 완료`);
-              }}
-              onCaseApprove={(c) => (c.unit?.paused && c.unit.pauseReason !== "call" ? pauseToast.notify() : c.monitorCase && bulkRespond(c.monitorCase, "hospital_approve"))}
-              onCaseConfirm={(c) => {
-                if (c.unit?.paused && c.unit.pauseReason !== "call") return pauseToast.notify();
-                const first = c.monitorCase?.hospitals.find((h) => h.status === "approved");
-                if (first) sendAction({ caseId: c.caseId, action: "final_approval", hospital_id: first.hospitalId, actor: "paramedic", timestamp: now() });
-              }}
-              onCaseFast={(c) => (c.unit?.paused && c.unit.pauseReason !== "call" ? pauseToast.notify() : sendSimCommand("sim_fast_forward", c.apid, c.caseId))}
-              onCaseArrival={(c, accepted) => {
-                if (c.unit?.paused && c.unit.pauseReason !== "call") return pauseToast.notify();
-                if (!c.confirmed) return;
-                sendAction({ caseId: c.caseId, action: accepted ? "arrival_accepted" : "arrival_refused", hospital_id: c.confirmed.hospitalId, actor: "hospital", timestamp: now() });
-                note(`사상자 ${c.no} — ${accepted ? "환자 수용 완료" : "도착 후 수용 불가(재선택 대기)"}`);
-              }}
-              onEnd={() => {
                 mciQueueRef.current = [];
                 setMciRemaining(0);
                 setMciOn(false);
-                note("대량사고 종료 — 대기열을 비웠습니다(진행 중 이송은 그대로 끝까지)");
+                setMciCasualties([]);
+                setMciDecisions({});
+                setMciChoice({});
+                setMciRedo(null);
+                note("대량사고 종료 — 모든 사상자 수용 완료, ① 화면으로");
               }}
             />
           ) : (
@@ -1257,7 +1323,7 @@ export default function ControlPage() {
                         hospital={hospital}
                         info={hospitalInfo.get(hospital.hospitalId)}
                         onApprove={g(() => sendAction({ caseId: myCase.caseId, action: "hospital_approve", hospital_id: hospital.hospitalId, actor: "hospital", timestamp: now() }))}
-                        onReject={g(() => setRejectTarget({ caseId: myCase.caseId, hospitalId: hospital.hospitalId, name: hospital.name, action: "hospital_reject" }))}
+                        onReject={g(() => setRejectTarget({ caseIds: [myCase.caseId], hospitalId: hospital.hospitalId, name: hospital.name, action: "hospital_reject" }))}
                         onConfirm={g(() => sendAction({ caseId: myCase.caseId, action: "final_approval", hospital_id: hospital.hospitalId, actor: "paramedic", timestamp: now() }))}
                       />
                     ))}
@@ -1295,7 +1361,7 @@ export default function ControlPage() {
                             {phase === "transporting" && caseId && confirmedHospital && (
                               <button
                                 type="button"
-                                onClick={g(() => setRejectTarget({ caseId, hospitalId: confirmedHospital.hospitalId, name: confirmedHospital.name, action: "transport_withdraw" }))}
+                                onClick={g(() => setRejectTarget({ caseIds: [caseId], hospitalId: confirmedHospital.hospitalId, name: confirmedHospital.name, action: "transport_withdraw" }))}
                                 style={{ ...bulkButton("red", false), alignSelf: "flex-start" }}
                               >
                                 <Icon name="x" size={13} color={C.red} stroke={3} />목적지 병원 수용 철회 (병원 역할 · 사유 선택)
@@ -1472,7 +1538,7 @@ export default function ControlPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={g(() => setRejectTarget({ caseId, hospitalId: confirmedId, name: confirmedHospital?.name ?? "병원", action: "arrival_refused" }))}
+                        onClick={g(() => setRejectTarget({ caseIds: [caseId], hospitalId: confirmedId, name: confirmedHospital?.name ?? "병원", action: "arrival_refused" }))}
                         style={{ flex: "1 1 100px", minHeight: 80, padding: "0 26px", background: C.redSoft, border: `1px solid ${C.red}`, borderRadius: 12, color: C.red, fontSize: 22, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
                       >
                         <Icon name="x" size={24} color={C.red} stroke={3} />도착 후 수용 불가 (재선택 시연)
@@ -1495,7 +1561,10 @@ export default function ControlPage() {
   );
 }
 
-// ── 대량사고 현황판(2026-10-05 시안의 대량 ①~⑤를 실제 사건으로) ──
+// ── 대량사고 화면(2026-10-05, 시연 시나리오 콘솔 시안의 대량 ①~⑤) ──
+// 시안처럼 단계별 화면이다: ① 출동 중 → ② 현장 확인(사상자마다 유형 선택) → ③ 병원 응답·분배(병원 × 중증도) → ④ 이송 중 →
+// ⑤ 도착 결과(병원 × 중증도, 사상자마다 수용/불가 → 불가만 재분배). 사상자 한 명 = 사건 한 건(hub)이고, 분배는 콘솔이
+// 계산하지 않는다 — [분배 확정]을 hub가 받아 중증부터 사건마다 승인 병원 중 순위 1위로 확정한다(부하 페널티로 분산).
 type CasualtyView = MciCasualty & {
   template: Template;
   unit: AmbulanceSimState | null;
@@ -1505,169 +1574,541 @@ type CasualtyView = MciCasualty & {
   hospitalName: string | null;
 };
 
-const STAGE_LABEL = ["현장 출동 중", "현장 확인 중", "병원 응답 대기", "병원 이송 중", "병원 도착", "완료"];
+type MciStage = "dispatch" | "verify" | "hospital" | "transit" | "arrival";
+const SEVS: SevLabel[] = ["중증", "중등증", "경증"];
+const SEV_DESC: Record<SevLabel, string> = {
+  중증: "즉시 이송 · 생명 위협 외상·심정지 위험 · 상급종합 우선",
+  중등증: "신속 이송 · 골절·출혈 등 중등도 부상",
+  경증: "대기 가능 · 보행 가능 · 경미한 부상",
+};
 
-function MciBoard({
-  total, remaining, spotLabel, casualties, ambulanceName, tripProgress,
-  onApproveAll, onConfirmAll, onFastAll, onAcceptAll, onCaseApprove, onCaseConfirm, onCaseFast, onCaseArrival, onEnd,
+function sevSummary(list: CasualtyView[]): string {
+  const n = (sev: SevLabel) => list.filter((c) => c.template.severity === sev).length;
+  return `중증 ${n("중증")} · 중등증 ${n("중등증")} · 경증 ${n("경증")} (총 ${list.length}명)`;
+}
+
+function MciWizard({
+  stage, plan, onPreview, total, remaining, spotLabel, casualties, choice, decisions, redoIds, hospitalInfo, ambulanceName, tripProgress,
+  onChoose, onVerify, onHospitalApprove, onHospitalReject, onBulk, onAllocate, onFastAll, onDecide, onAcceptAllLocal,
+  onRedistribute, onFinish, lastAllocation, sending,
 }: {
+  stage: MciStage;
+  plan: MciPlanItem[] | null;
+  onPreview: (caseIds: string[]) => boolean;
   total: number;
   remaining: number;
   spotLabel: string;
   casualties: CasualtyView[];
+  choice: Record<string, string>;
+  decisions: Record<string, { result: "accepted" | "refused" | "sent"; reason?: RejectionReason }>;
+  redoIds: string[] | null;
+  hospitalInfo: Map<string, MapHospital>;
   ambulanceName: (apid: string) => string;
   tripProgress: (unit: AmbulanceSimState | null) => { left: number | null; p: number };
-  onApproveAll: () => void;
-  onConfirmAll: () => void;
-  onFastAll: () => void;
-  onAcceptAll: () => void;
-  onCaseApprove: (c: CasualtyView) => void;
-  onCaseConfirm: (c: CasualtyView) => void;
-  onCaseFast: (c: CasualtyView) => void;
-  onCaseArrival: (c: CasualtyView, accepted: boolean) => void;
-  onEnd: () => void;
+  onChoose: (caseId: string, key: string) => void;
+  onVerify: (batch: CasualtyView[]) => void;
+  onHospitalApprove: (hospitalId: string, caseIds: string[]) => void;
+  onHospitalReject: (hospitalId: string, name: string, caseIds: string[]) => void;
+  onBulk: (action: "hospital_approve" | "hospital_reject", pairs: { caseId: string; hospitalId: string }[]) => void;
+  onAllocate: (caseIds: string[]) => void;
+  onFastAll: (phase: "dispatching" | "transporting") => void;
+  onDecide: (c: CasualtyView, result: "accepted" | "refused" | "undo") => void;
+  onAcceptAllLocal: (list: CasualtyView[]) => void;
+  onRedistribute: () => void;
+  onFinish: () => void;
+  lastAllocation: { confirmed: number; skipped: number } | null;
+  sending: boolean;
 }) {
-  const bySev = (sev: SevLabel) => casualties.filter((c) => c.template.severity === sev).length;
-  const active = casualties.filter((c) => c.stage < 5);
-  const waitingResponse = casualties.filter((c) => c.stage === 2 && c.monitorCase && !c.confirmed);
-  const confirmable = waitingResponse.filter((c) => c.monitorCase!.hospitals.some((h) => h.status === "approved"));
-  const moving = casualties.filter((c) => c.unit && ["dispatching", "transporting"].includes(c.unit.phase));
-  const arrived = casualties.filter((c) => c.stage === 4);
-  const done = casualties.filter((c) => c.stage === 5 && c.hospitalName).length;
+  const box = (bg: string, bd: string): CSSProperties => ({
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, minHeight: 40, minWidth: 0,
+    padding: "3px 4px", boxSizing: "border-box", textAlign: "center", borderRadius: 8, background: bg, border: `1px solid ${bd}`,
+  });
+  // ③ 자동 분배 미리 보기 — 병원 응답이 바뀔 때마다 hub에 계획을 물어본다(확정 아님). [분배 확정]도 같은 계획으로 확정된다.
+  const previewBatch = stage === "hospital"
+    ? casualties.filter((c) => c.stage === 2 && c.monitorCase && (redoIds == null || redoIds.includes(c.caseId)))
+    : [];
+  const previewKey = previewBatch
+    .map((c) => `${c.caseId}:${c.monitorCase!.hospitals.map((h) => `${h.hospitalId}=${h.status}`).join(",")}`)
+    .join("|");
+  useEffect(() => {
+    if (!previewKey) return;
+    onPreview(previewKey.split("|").map((part) => part.split(":")[0]));
+  }, [previewKey, onPreview]);
 
-  // 병원별 분배 현황 — 이송 확정(또는 완료)된 사상자를 병원 × 중증도로 모은다(시안의 분배표 자리)
-  const distribution = new Map<string, Record<SevLabel, number>>();
-  for (const c of casualties) {
-    if (!c.hospitalName) continue;
-    const row = distribution.get(c.hospitalName) ?? { 중증: 0, 중등증: 0, 경증: 0 };
-    row[c.template.severity] += 1;
-    distribution.set(c.hospitalName, row);
+  const colHead = (sev: SevLabel, n: number) => (
+    <div key={sev} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "#f8fafc", border: `1px solid ${C.lineSoft}`, borderRadius: 10, padding: "6px 8px" }}>
+      <SevChip sev={sev} text={`${sev} ${n}명`} />
+    </div>
+  );
+
+  // ── ① 출동 중 ──
+  if (stage === "dispatch") {
+    const moving = casualties.filter((c) => c.stage === 0);
+    const progress = moving.map((c) => tripProgress(c.unit));
+    const left = progress.reduce<number | null>((max, x) => (x.left == null ? max : Math.max(max ?? 0, x.left)), null);
+    const p = progress.length ? Math.min(...progress.map((x) => x.p)) : 0;
+    const tiles: [string, number, string, string, string][] = [
+      ["사상자 합계", total, "명", C.bg, C.ink],
+      ["중증", casualties.filter((c) => c.template.severity === "중증").length, "명", C.redSoft, C.redInk],
+      ["중등증", casualties.filter((c) => c.template.severity === "중등증").length, "명", C.amberSoft, C.amberInk],
+      ["경증", casualties.filter((c) => c.template.severity === "경증").length, "명", C.greenSoft, C.greenInk],
+      ["출동 구급대", moving.length, "대", C.blueSoft, C.blue],
+      ["재출동 대기", remaining, "명", C.bg, C.ink3],
+    ];
+    return (
+      <ScreenCard title={`출동 중… 대량사고 — 구급대 ${moving.length}대 동시 출동`}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+          {tiles.map(([label, n, unit, bg, fg]) => (
+            <div key={label} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "14px 16px", borderRadius: 12, background: bg, color: fg }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
+              <span style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                <span style={{ fontSize: 34, fontWeight: 700, lineHeight: 1 }}>{n}</span>
+                <span style={{ fontSize: 15, fontWeight: 700 }}>{unit}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+        <ProgressTrack p={p} start="인근 119안전센터" end={spotLabel || "현장"} endIcon="pin" />
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 700, color: C.blue }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: C.blue, display: "inline-block" }} />
+            {left != null ? `마지막 구급대 현장 도착까지 ${left}초` : "현장 도착 대기"}
+          </div>
+          {left != null && left > 3 && <FastButton onClick={() => onFastAll("dispatching")} />}
+        </div>
+        <div style={{ background: "#fff6f5", border: "1px solid #f0d9d7", borderRadius: 10, padding: "10px 14px", fontSize: 13, lineHeight: 1.6, color: C.ink3 }}>
+          분배 계획: 사상자 {total}명 · 1차 {casualties.length}명 이송(중증 우선), 대기 {remaining}명은 구급대가 복귀하는 대로 자동 재출동.
+          병원 분배는 hub가 한다(중증→센터 가산 + 이송 중 부하 페널티로 한 병원 쏠림 방지).
+        </div>
+      </ScreenCard>
+    );
   }
 
-  const tiles: [string, number, string, string, string][] = [
-    ["사상자 합계", total, "명", C.bg, C.ink],
-    ["중증", bySev("중증"), "명", C.redSoft, C.redInk],
-    ["중등증", bySev("중등증"), "명", C.amberSoft, C.amberInk],
-    ["경증", bySev("경증"), "명", C.greenSoft, C.greenInk],
-    ["활동 구급대", active.length, "대", C.blueSoft, C.blue],
-    ["재출동 대기", remaining, "명", C.bg, C.ink3],
-  ];
+  // ── ② 현장 확인 — 사상자마다 유형 선택 ──
+  if (stage === "verify") {
+    const batch = casualties.filter((c) => c.stage === 1);
+    const chosen = (c: CasualtyView) => templateOf(choice[c.caseId] ?? c.templateKey)!;
+    const counts = (sev: SevLabel) => batch.filter((c) => chosen(c).severity === sev).length;
+    return (
+      <ScreenCard title="② 현장 확인 — 사상자 구성을 확정하면 인근 병원에 동시 전달됩니다">
+        <div style={{ ...softBox, padding: "9px 14px", fontSize: 13 }}>
+          신고 내용: <b>대량사고 · 사상자 {total}명</b> — 현장 트리아지 결과에 맞게 사상자마다 상태를 고르세요.
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "flex-start" }}>
+          <div style={{ flex: "2.4 1 640px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.ink3 }}>
+              환자별 현장 상태를 선택하세요 — 선택한 내용이 병원에 전달됩니다 (가상 환자 {batch.length}명)
+            </div>
+            {batch.map((c) => {
+              const t = chosen(c);
+              return (
+                <div key={c.caseId} style={{ display: "grid", gridTemplateColumns: "28px 56px minmax(0, 1fr) 80px 84px", alignItems: "center", columnGap: 10, padding: "5px 12px", borderRadius: 10, background: "#ffffff", border: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.muted }}>{c.no}</span>
+                  <SevChip sev={t.severity} width={56} />
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6, minWidth: 0 }}>
+                    {PATIENT_TEMPLATES.map((o) => {
+                      const on = o.key === t.key;
+                      return (
+                        <button
+                          key={o.key}
+                          type="button"
+                          onClick={() => onChoose(c.caseId, o.key)}
+                          style={{
+                            minHeight: 36, padding: "2px 6px", textAlign: "center", fontSize: 13, lineHeight: 1.25, cursor: "pointer", borderRadius: 8,
+                            color: C.ink, background: on ? C.blueSoft : "#ffffff", border: on ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
+                          }}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{t.summary.patient}</span>
+                  <span style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: C.blue, background: C.blueDept, padding: "4px 0", borderRadius: 8 }}>{t.summary.required_department}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.ink3 }}>병원 전달 요약</div>
+            {SEVS.map((sev) => (
+              <div key={sev} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 16px", borderRadius: 12, background: SEV_COLORS[sev].bg }}>
+                <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <SevChip sev={sev} />
+                  <span style={{ display: "flex", alignItems: "baseline", gap: 3, color: SEV_COLORS[sev].fg }}>
+                    <span style={{ fontSize: 32, fontWeight: 700, lineHeight: 1 }}>{counts(sev)}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700 }}>명</span>
+                  </span>
+                </span>
+                <span style={{ fontSize: 12, lineHeight: 1.4, color: C.ink2 }}>{SEV_DESC[sev]}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={sending || batch.length === 0}
+          onClick={() => onVerify(batch)}
+          style={{ minHeight: 46, background: C.blue, border: "none", borderRadius: 10, color: "#ffffff", fontSize: 15, fontWeight: 700, cursor: sending ? "wait" : "pointer", opacity: sending ? 0.6 : 1 }}
+        >
+          {sending ? "전달 중…" : `사상자 ${batch.length}명 확정 — 인근 병원에 동시 전달`}
+        </button>
+      </ScreenCard>
+    );
+  }
 
-  return (
-    <ScreenCard title={`대량사고 — ${spotLabel} · 사상자 ${total}명 (사상자마다 구급대 1대 · 사건 1건)`}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
-        {tiles.map(([label, n, unit, bg, fg]) => (
-          <div key={label} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 16px", borderRadius: 12, background: bg, color: fg }}>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
-            <span style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-              <span style={{ fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{n}</span>
-              <span style={{ fontSize: 15, fontWeight: 700 }}>{unit}</span>
+  // ── ③ 병원 응답 · 분배 — 병원 × 중증도 ──
+  if (stage === "hospital") {
+    const redo = redoIds != null;
+    const batch = casualties.filter((c) => c.stage === 2 && c.monitorCase && (!redo || redoIds!.includes(c.caseId)));
+    const sevsInBatch = SEVS.filter((sev) => batch.some((c) => c.template.severity === sev));
+    const grid = `minmax(180px, 1.4fr) repeat(${Math.max(1, sevsInBatch.length)}, minmax(0, 1fr)) 52px 78px 120px`;
+    type Row = { hospitalId: string; name: string; zone: number; bySev: Record<SevLabel, { req: number; status: string[]; reason: string | null }>; pending: string[]; approved: number; rejected: number; total: number };
+    const rows = new Map<string, Row>();
+    for (const c of batch) {
+      for (const h of c.monitorCase!.hospitals) {
+        const row = rows.get(h.hospitalId) ?? {
+          hospitalId: h.hospitalId, name: h.name, zone: h.zone, pending: [], approved: 0, rejected: 0, total: 0,
+          bySev: { 중증: { req: 0, status: [], reason: null }, 중등증: { req: 0, status: [], reason: null }, 경증: { req: 0, status: [], reason: null } },
+        };
+        const cell = row.bySev[c.template.severity];
+        cell.req += 1;
+        cell.status.push(h.status);
+        if (h.status === "rejected") cell.reason = unavailableReasonLabel(h.unavailableReason) ?? rejectionReasonLabel(h.rejectReason) ?? "병원 판단";
+        row.total += 1;
+        if (h.status === "pending" && !h.unavailableReason) row.pending.push(c.caseId);
+        else if (h.status === "approved") row.approved += 1;
+        else if (h.status === "rejected") row.rejected += 1;
+        row.zone = Math.min(row.zone, h.zone);
+        rows.set(h.hospitalId, row);
+      }
+    }
+    if (batch.length === 0) {
+      return (
+        <ScreenCard title="③ 병원 응답 — 병원 매칭 중…">
+          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 15, color: C.ink2 }}>
+            <Pulse color={C.blue} />존(Zone) 안 후보 병원을 사상자마다 정렬해 동시에 요청을 보내고 있습니다.
+          </div>
+        </ScreenCard>
+      );
+    }
+    // hub 자동 분배 계획(미리 보기) — 이번 배치 사건 것만
+    const batchIds = new Set(batch.map((c) => c.caseId));
+    const planBy = new Map((plan ?? []).filter((item) => batchIds.has(item.caseId)).map((item) => [item.caseId, item]));
+    const planReady = batch.every((c) => planBy.has(c.caseId));
+    const assigned = (hospitalId: string) => batch.filter((c) => planBy.get(c.caseId)?.hospitalId === hospitalId);
+    const hospitalRows = [...rows.values()].sort((a, b) => (b.approved > 0 ? 1 : 0) - (a.approved > 0 ? 1 : 0) || a.zone - b.zone || b.total - a.total);
+    const pendingPairs = batch.flatMap((c) =>
+      c.monitorCase!.hospitals.filter((h) => h.status === "pending" && !h.unavailableReason).map((h) => ({ caseId: c.caseId, hospitalId: h.hospitalId })),
+    );
+    const pendingHospitals = new Set(pendingPairs.map((p) => p.hospitalId)).size;
+    const allocatable = planReady
+      ? batch.filter((c) => planBy.get(c.caseId)?.hospitalId)
+      : batch.filter((c) => c.monitorCase!.hospitals.some((h) => h.status === "approved"));
+    const approvedHospitals = planReady
+      ? new Set(allocatable.map((c) => planBy.get(c.caseId)!.hospitalId)).size
+      : hospitalRows.filter((r) => r.approved > 0).length;
+    const unassigned = batch.length - allocatable.length;
+    const unassignedList = batch.filter((c) => !allocatable.includes(c));
+    return (
+      <ScreenCard
+        title={redo ? `③ 병원 응답 — 수용 불가 환자 ${batch.length}명을 다른 병원에 다시 분배합니다` : "③ 병원 응답 — 승인한 병원에 hub가 사상자를 자동 분배합니다"}
+        fixed
+      >
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px" }}>
+          <div style={{ background: C.redSoft, color: C.redInk, fontSize: 13, fontWeight: 700, padding: "8px 12px", borderRadius: 10 }}>
+            {redo ? "재분배 대상: " : "현장 확인: 대량사고 — "}{sevSummary(batch)}
+          </div>
+          <button type="button" disabled={pendingPairs.length === 0} style={bulkButton("green", pendingPairs.length === 0)} onClick={() => onBulk("hospital_approve", pendingPairs)}>
+            <Icon name="check" size={13} color={C.greenInk} stroke={3} />미응답 {pendingHospitals}곳 일괄 응답 — 모두 승인 (병원 역할)
+          </button>
+          <button type="button" disabled={pendingPairs.length === 0} style={bulkButton("red", pendingPairs.length === 0)} onClick={() => onBulk("hospital_reject", pendingPairs)}>
+            <Icon name="x" size={13} color={C.red} stroke={3} />미응답 {pendingHospitals}곳 전부 불가 (존 확장 연출)
+          </button>
+        </div>
+        {redo && (
+          <div style={{ background: C.bg, borderRadius: 10, padding: "8px 14px", fontSize: 13, lineHeight: 1.5, color: C.ink2 }}>
+            {batch.map((c) => `#${c.no} ${c.template.label}`).join(" · ")} — 도착 후 수용 불가한 병원은 이 환자 배정에서 빠집니다. 이미 수용된 환자는 다시 처리하지 않습니다.
+          </div>
+        )}
+        {unassigned > 0 && approvedHospitals > 0 && (
+          <div style={{ background: C.redSoft, color: C.redInk, borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700 }}>
+            배정 불가 {unassigned}명 — 그 환자들의 후보 중 승인한 병원이 없습니다. 병원 승인을 더 받거나 존을 넓히세요.
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+              {unassignedList.map((c) => <PatientTag key={c.caseId} c={c} />)}
             </span>
           </div>
-        ))}
-      </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px" }}>
-        <button type="button" disabled={waitingResponse.length === 0} style={bulkButton("green", waitingResponse.length === 0)} onClick={onApproveAll}>
-          <Icon name="check" size={13} color={C.greenInk} stroke={3} />응답 대기 {waitingResponse.length}건 미응답 병원 전부 승인
-        </button>
-        <button type="button" disabled={confirmable.length === 0} style={bulkButton("blue", confirmable.length === 0)} onClick={onConfirmAll}>
-          승인 병원 1순위로 {confirmable.length}건 이송 확정
-        </button>
-        <button type="button" disabled={moving.length === 0} style={bulkButton("plain", moving.length === 0)} onClick={onFastAll}>
-          <Icon name="ff" size={11} color={C.ink} />이동 중 {moving.length}대 빨리감기
-        </button>
-        <button type="button" disabled={arrived.length === 0} style={bulkButton("green", arrived.length === 0)} onClick={onAcceptAll}>
-          도착 {arrived.length}명 전부 수용 완료
-        </button>
-        <button type="button" style={{ ...bulkButton("red", false), marginLeft: "auto" }} onClick={onEnd}>
-          대량사고 종료 (대기열 비우기)
-        </button>
-      </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "flex-start" }}>
-        {/* 사상자별 진행 — 시안 대량 ④의 구급대별 행 */}
-        <div style={{ flex: "1.7 1 560px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink3 }}>사상자별 진행 — 가상 환자 · 완료 {done}명</div>
-          {casualties.length === 0 && <div style={{ fontSize: 13, color: C.muted }}>출동 준비 중…</div>}
-          {casualties.map((c) => {
-            const { left, p } = tripProgress(c.unit);
-            const finished = c.stage === 5;
-            const responses = c.monitorCase?.hospitals ?? [];
-            const okN = responses.filter((h) => h.status === "approved").length;
-            const noN = responses.filter((h) => h.status === "rejected").length;
-            const hospitalText = c.hospitalName
-              ?? (c.stage === 2 && c.monitorCase ? `응답 승인 ${okN} · 불가 ${noN} · 대기 ${responses.length - okN - noN}` : "—");
-            const barColor = finished || c.stage === 4 ? C.green : C.blue;
-            const barWidth = finished || c.stage >= 4 ? 1 : c.stage === 3 ? p : c.stage === 0 ? p * 0.5 : 0;
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: grid, columnGap: 10, padding: "0 12px", alignItems: "stretch" }}>
+          <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: C.ink3 }}>병원</span>
+          {sevsInBatch.map((sev) => colHead(sev, batch.filter((c) => c.template.severity === sev).length))}
+          <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: C.ink3, textAlign: "center" }}>합계</span>
+          <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: C.ink3, textAlign: "center" }}>응답</span>
+          <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: C.ink3, textAlign: "center" }}>병원 응답</span>
+        </div>
+        <div className="ctl-scroll" style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+          {hospitalRows.map((row) => {
+            const info = hospitalInfo.get(row.hospitalId);
+            const beds = info?.bedCountUnknown || info?.availableBedCount == null ? "병상 미상" : `응급 ${info.availableBedCount}병상`;
+            const level = info?.emergencyLevel ? LEVEL_SHORT[info.emergencyLevel] ?? info.emergencyLevel : null;
+            const status = row.pending.length > 0 ? "pending" : row.approved > 0 ? "approved" : "rejected";
+            const chip = STATUS_CHIP[status];
+            const lock = row.pending.length === 0;
             return (
               <div
-                key={c.caseId}
+                key={row.hospitalId}
                 style={{
-                  display: "grid", gridTemplateColumns: "28px 52px minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(60px, 0.8fr) 52px auto", alignItems: "center",
-                  columnGap: 10, padding: "6px 12px", borderRadius: 10, boxSizing: "border-box",
-                  background: finished ? C.greenRow : "#ffffff", border: `1px solid ${finished ? C.greenLine : C.lineSoft}`,
+                  flex: "0 0 auto", display: "grid", gridTemplateColumns: grid, columnGap: 10, alignItems: "center", padding: "4px 12px", borderRadius: 10,
+                  border: `1px solid ${status === "approved" ? C.greenLine : C.lineSoft}`, background: status === "approved" ? C.greenRow : "#ffffff",
+                  opacity: status === "rejected" ? 0.6 : 1,
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.muted }}>{c.no}</span>
-                <SevChip sev={c.template.severity} width={52} />
-                <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.template.label}</span>
-                  <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ambulanceName(c.apid)} · {STAGE_LABEL[c.stage]}</span>
+                <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontSize: 13, lineHeight: 1.35, fontWeight: status === "approved" ? 700 : 400, color: status === "rejected" ? "#8795a4" : C.ink, wordBreak: "keep-all", overflowWrap: "anywhere" }}>{row.name}</span>
+                  <span style={{ fontSize: 11, color: C.muted }}>{[level, `존 ${row.zone}`].filter(Boolean).join(" · ")}</span>
                 </span>
-                <span style={{ minWidth: 0, fontSize: 13, lineHeight: 1.3, color: c.hospitalName ? C.ink : C.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hospitalText}</span>
-                <div style={{ position: "relative", height: 8, borderRadius: 4, background: C.lineSoft }}>
-                  <div style={{ height: 8, borderRadius: 4, background: barColor, width: `${(barWidth * 100).toFixed(1)}%` }} />
-                </div>
-                <span style={{ textAlign: "right", fontSize: 13, fontWeight: 700, color: finished || c.stage === 4 ? C.greenInk : C.blue }}>
-                  {finished ? "완료" : c.stage === 4 ? "도착" : left != null ? `${left}초` : ""}
-                </span>
+                {sevsInBatch.map((sev) => {
+                  const cell = row.bySev[sev];
+                  if (cell.req === 0) return <div key={sev} style={box("#f8fafc", "#eef2f6")}><span style={{ fontSize: 14, color: C.faint }}>—</span></div>;
+                  if (cell.status.every((st) => st === "rejected")) {
+                    return (
+                      <div key={sev} style={box("#f1f3f5", "#e1e6eb")}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#8795a4" }}>수용 불가</span>
+                        <span style={{ fontSize: 11, color: "#a0abb7" }}>{cell.reason}</span>
+                      </div>
+                    );
+                  }
+                  const approved = cell.status.filter((st) => st === "approved").length;
+                  const toHere = assigned(row.hospitalId).filter((c) => c.template.severity === sev).length;
+                  return approved > 0 ? (
+                    <div key={sev} style={box(C.green, C.green)}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#ffffff" }}>{approved}명 수용 가능</span>
+                      <span style={{ fontSize: 11, color: "#d8f3e8" }}>{planReady ? `자동 배정 ${toHere}명 · ${beds}` : beds}</span>
+                    </div>
+                  ) : (
+                    <div key={sev} style={box(C.greenSoft, C.greenLine)}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.greenInk }}>요청 {cell.req}명</span>
+                      <span style={{ fontSize: 11, color: "#4d8f74" }}>{beds}</span>
+                    </div>
+                  );
+                })}
+                <span style={{ textAlign: "center", fontSize: 14, fontWeight: 700 }}>{row.total}명</span>
+                <span style={{ textAlign: "center", fontSize: 12, fontWeight: 700, padding: "4px 0", borderRadius: 999, background: chip.bg, color: chip.fg }}>{chip.label}</span>
                 <span style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                  {c.stage === 2 && c.monitorCase && responses.some((h) => h.status === "pending") && (
-                    <button type="button" style={rowButton("green")} onClick={() => onCaseApprove(c)}>일괄 승인</button>
-                  )}
-                  {c.stage === 2 && okN > 0 && (
-                    <button type="button" style={rowButton("blue")} onClick={() => onCaseConfirm(c)}>이송 확정</button>
-                  )}
-                  {c.unit && ["dispatching", "transporting"].includes(c.unit.phase) && (left == null || left > 3) && (
-                    <button type="button" style={rowButton("plain")} onClick={() => onCaseFast(c)}>빨리감기</button>
-                  )}
-                  {c.stage === 4 && (
-                    <>
-                      <button type="button" style={rowButton("green")} onClick={() => onCaseArrival(c, true)}>수용</button>
-                      <button type="button" style={rowButton("red")} onClick={() => onCaseArrival(c, false)}>불가</button>
-                    </>
-                  )}
+                  <button type="button" disabled={lock} style={{ ...rowButton("green"), opacity: lock ? 0.35 : 1 }} onClick={() => onHospitalApprove(row.hospitalId, row.pending)}>승인</button>
+                  <button type="button" disabled={lock} style={{ ...rowButton("red"), opacity: lock ? 0.35 : 1 }} onClick={() => onHospitalReject(row.hospitalId, row.name, row.pending)}>불가</button>
                 </span>
+                {row.approved > 0 && planReady && (
+                  <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "6px 0 2px", borderTop: `1px dashed ${C.greenLine}`, marginTop: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.greenInk }}>자동 배정 →</span>
+                    {assigned(row.hospitalId).length === 0 ? (
+                      <span style={{ fontSize: 12, color: C.muted }}>배정 없음 — 이 환자들에겐 다른 승인 병원이 더 적합(순위·부하)</span>
+                    ) : (
+                      assigned(row.hospitalId).map((c) => <PatientTag key={c.caseId} c={c} />)
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
+        <div style={{ fontSize: 12, lineHeight: 1.6, color: C.ink3, flex: "none" }}>
+          [승인]/[불가]는 <b>병원의 응답</b>(콘솔이 병원 역할 연출) — 그 병원이 후보인 사상자 전부에 한 번에 응답합니다. 승인이 들어오면
+          hub가 승인 병원들 사이의 <b>자동 배정</b>을 바로 계산해 병원 행 아래에 보여 주고, [분배 확정]은 보이는 그대로 확정합니다. 분배 규칙(hub 순위 그대로):
+          ① 중증 → 중등증 → 경증 순서 ② 사상자마다 승인 병원 중 순위 1위(중증은 권역·지역센터 가산, 경증은 센터 역가산) ③ 같은 병원으로 이송 중인
+          환자가 쌓이면 부하 페널티로 다음 병원에 배정 — 병상이 남아도 한꺼번에 몰아 받지 않습니다.
+          {lastAllocation && ` · 직전 분배: ${lastAllocation.confirmed}명 확정${lastAllocation.skipped ? `, ${lastAllocation.skipped}명 보류` : ""}`}
+        </div>
+        <button
+          type="button"
+          disabled={allocatable.length === 0}
+          onClick={() => onAllocate(batch.map((c) => c.caseId))}
+          style={{
+            flex: "none", minHeight: 46, border: "none", borderRadius: 10, color: "#ffffff", fontSize: 15, fontWeight: 700,
+            cursor: allocatable.length === 0 ? "not-allowed" : "pointer", background: allocatable.length === 0 ? C.blueOff : C.blue,
+          }}
+        >
+          {allocatable.length === 0
+            ? "승인된 병원이 없습니다 — 한 곳 이상 승인하면 분배가 시작됩니다"
+            : `${redo ? "재분배 확정" : "분배 확정"} — ${approvedHospitals}개 병원에 ${allocatable.length}명 이송 시작 (상황실·구급대 이송 승인)${unassigned ? ` · 배정 불가 ${unassigned}명 제외` : ""}`}
+        </button>
+      </ScreenCard>
+    );
+  }
 
-        {/* 병원별 분배 — 시안 대량 ③의 분배표 자리. 분배 자체는 hub 규칙(사건마다)이 정한다 */}
-        <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink3 }}>병원별 분배 (이송 확정 기준)</div>
-          {distribution.size === 0 ? (
-            <div style={{ fontSize: 13, color: C.muted, background: C.bg, borderRadius: 10, padding: "10px 14px" }}>아직 이송 확정된 사상자가 없습니다.</div>
-          ) : (
-            [...distribution.entries()]
-              .sort((a, b) => Object.values(b[1]).reduce((s, n) => s + n, 0) - Object.values(a[1]).reduce((s, n) => s + n, 0))
-              .map(([name, row]) => (
-                <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.lineSoft}`, background: "#ffffff" }}>
-                  <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: 13, fontWeight: 700, wordBreak: "keep-all", overflowWrap: "anywhere" }}>{name}</span>
-                  {(Object.entries(row) as [SevLabel, number][]).filter(([, n]) => n > 0).map(([sev, n]) => (
-                    <SevChip key={sev} sev={sev} text={`${sev} ${n}`} />
-                  ))}
+  // ── ④ 이송 중 ──
+  if (stage === "transit") {
+    const units = casualties
+      .filter((c) => c.stage === 3 || (c.stage === 4 && !decisions[c.caseId]))
+      .sort((a, b) => SEVS.indexOf(a.template.severity) - SEVS.indexOf(b.template.severity));
+    const progress = units.map((c) => ({ c, ...tripProgress(c.unit) }));
+    const lastLeft = progress.reduce<number | null>((max, x) => (x.left == null ? max : Math.max(max ?? 0, x.left)), null);
+    const hospitals = new Set(units.map((c) => c.hospitalName).filter(Boolean)).size;
+    return (
+      <ScreenCard title={`④ 이송 중 — 구급대 ${units.length}대가 분배된 병원으로 이송 중입니다`}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "stretch" }}>
+          <div style={{ flex: "1 1 300px", minWidth: 0, background: "#f8fafc", border: `1px solid ${C.lineSoft}`, borderRadius: 12, padding: "20px 22px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: C.muted }}>마지막 구급대 도착까지</span>
+              <span style={{ display: "flex", alignItems: "baseline", gap: 6, color: C.blue }}>
+                <span style={{ fontSize: 56, fontWeight: 700, lineHeight: 1 }}>{lastLeft ?? 0}</span>
+                <span style={{ fontSize: 20, fontWeight: 700 }}>초</span>
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", borderRadius: 10, background: "#e8f1fb", color: C.blue }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>이송 중</span>
+                <span style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{units.filter((c) => c.stage === 3).length}명</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", borderRadius: 10, background: "#ffffff", border: `1px solid ${C.line}`, color: C.ink3 }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>분배 병원</span>
+                <span style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, color: C.ink }}>{hospitals}곳</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px", fontSize: 13, color: C.ink3 }}>
+              <span>모두 도착하면 도착 결과 화면으로 넘어갑니다.</span>
+              {lastLeft != null && lastLeft > 3 && <FastButton onClick={() => onFastAll("transporting")} />}
+            </div>
+          </div>
+          <div style={{ flex: "1.7 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+            {progress.map(({ c, left, p }) => {
+              const arrived = c.stage === 4;
+              return (
+                <div key={c.caseId} style={{ flex: "1 1 44px", maxHeight: 64, display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", borderRadius: 10, background: arrived ? C.greenRow : "#ffffff", border: `1px solid ${arrived ? C.greenLine : C.lineSoft}` }}>
+                  <span style={{ flex: "none", width: 92, fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ambulanceName(c.apid)}>#{c.no} {ambulanceName(c.apid).replace(/119안전센터\s*/, "")}</span>
+                  <SevChip sev={c.template.severity} width={52} />
+                  <span style={{ flex: "0 0 150px", minWidth: 0, fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${c.template.label} · ${c.template.summary.patient}`}>{c.template.label}</span>
+                  <span style={{ flex: "0 0 190px", minWidth: 0, fontSize: 13, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {c.hospitalName}</span>
+                  <div style={{ flex: "1 1 auto", height: 8, borderRadius: 4, background: C.lineSoft }}>
+                    <div style={{ height: 8, borderRadius: 4, background: arrived ? C.green : C.blue, width: `${((arrived ? 1 : p) * 100).toFixed(1)}%`, transition: "width 0.9s linear" }} />
+                  </div>
+                  <span style={{ flex: "none", width: 44, textAlign: "right", fontSize: 13, fontWeight: 700, color: arrived ? C.greenInk : C.blue }}>{arrived ? "도착" : left != null ? `${left}초` : ""}</span>
                 </div>
-              ))
-          )}
-          <div style={{ fontSize: 12, lineHeight: 1.6, color: C.ink3 }}>
-            분배 규칙(hub): ① 중증은 권역·지역센터에 이동 시간 가산 ② 경증은 센터에 역가산(센터 보존) ③ 같은 병원으로
-            이송 중인 환자가 쌓일수록 순위가 밀림(부하 페널티) — 만실 전에 자연히 다음 병원으로 분산됩니다.
+              );
+            })}
           </div>
         </div>
+      </ScreenCard>
+    );
+  }
+
+  // ── ⑤ 도착 결과 — 병원 × 중증도, 사상자마다 수용/불가 ──
+  const reached = casualties.filter((c) => c.stage === 4 || decisions[c.caseId]);
+  const accepted = reached.filter((c) => decisions[c.caseId]?.result === "accepted" || decisions[c.caseId]?.result === "sent").length;
+  const refused = reached.filter((c) => decisions[c.caseId]?.result === "refused");
+  const pendingArrivals = reached.filter((c) => !decisions[c.caseId]);
+  const byHospital = new Map<string, CasualtyView[]>();
+  for (const c of reached) {
+    const key = c.hospitalName ?? "병원";
+    byHospital.set(key, [...(byHospital.get(key) ?? []), c]);
+  }
+  const sevsInArrival = SEVS.filter((sev) => reached.some((c) => c.template.severity === sev));
+  const grid = `minmax(170px, 1.3fr) repeat(${Math.max(1, sevsInArrival.length)}, minmax(0, 1fr)) 110px`;
+  const allAccepted = reached.length > 0 && accepted === reached.length;
+  const stillMoving = casualties.some((c) => c.stage < 4 && !decisions[c.caseId]);
+  const itemButton = (tone: "green" | "red" | "plain"): CSSProperties => ({ ...rowButton(tone), minHeight: 28, padding: "0 10px" });
+  return (
+    <ScreenCard title="⑤ 도착 결과 — 병원별로 실제 수용 여부를 기록합니다" fixed>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, flex: "none" }}>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 6, color: C.blue }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>수용 완료</span>
+          <span style={{ fontSize: 26, fontWeight: 700, lineHeight: 1 }}>{accepted}</span>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>/ {reached.length}명</span>
+        </span>
+        <button
+          type="button"
+          disabled={refused.length === 0}
+          onClick={onRedistribute}
+          style={{ ...bulkButton("red", refused.length === 0) }}
+        >
+          수용 불가 {refused.length}명 재분배
+        </button>
+        <button type="button" disabled={pendingArrivals.length === 0} style={bulkButton("green", pendingArrivals.length === 0)} onClick={() => onAcceptAllLocal(pendingArrivals)}>
+          전부 수용 완료 처리
+        </button>
+        <button
+          type="button"
+          disabled={!allAccepted || stillMoving}
+          onClick={onFinish}
+          style={{ minHeight: 42, padding: "0 20px", border: "none", borderRadius: 10, color: "#ffffff", fontSize: 14, fontWeight: 700, cursor: !allAccepted || stillMoving ? "not-allowed" : "pointer", background: !allAccepted || stillMoving ? C.blueOff : C.blue }}
+        >
+          사건 종료 — ① 화면으로
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: grid, columnGap: 10, padding: "0 12px", flex: "none" }}>
+        <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: C.ink3 }}>병원</span>
+        {sevsInArrival.map((sev) => colHead(sev, reached.filter((c) => c.template.severity === sev).length))}
+        <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: C.ink3, textAlign: "center" }}>병원 전체</span>
+      </div>
+      <div className="ctl-scroll" style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+        {[...byHospital.entries()].map(([name, list]) => {
+          const allOk = list.every((c) => decisions[c.caseId] && decisions[c.caseId].result !== "refused");
+          const anyNo = list.some((c) => decisions[c.caseId]?.result === "refused");
+          const open = list.filter((c) => !decisions[c.caseId]);
+          return (
+            <div key={name} style={{ flex: "0 0 auto", display: "grid", gridTemplateColumns: grid, columnGap: 10, alignItems: "center", padding: "6px 12px", borderRadius: 10, background: allOk ? C.greenRow : "#ffffff", border: `1px solid ${allOk ? C.greenLine : anyNo ? C.redLine : C.lineSoft}` }}>
+              <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.3, wordBreak: "keep-all", overflowWrap: "anywhere" }}>{name}</span>
+              {sevsInArrival.map((sev) => {
+                const people = list.filter((c) => c.template.severity === sev);
+                if (people.length === 0) return <div key={sev} style={box("#f8fafc", "#eef2f6")}><span style={{ fontSize: 15, fontWeight: 700, color: "#b3bdc8" }}>—</span></div>;
+                return (
+                  <div key={sev} style={{ display: "flex", flexDirection: "column", gap: 6, padding: 5, borderRadius: 8, background: "#f8fafc", border: `1px solid ${C.lineSoft}` }}>
+                    {people.map((c) => {
+                      const d = decisions[c.caseId]?.result;
+                      const ok = d === "accepted" || d === "sent";
+                      const no = d === "refused";
+                      return (
+                        <div key={c.caseId} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: 6, borderRadius: 6, background: ok ? C.greenSoft : no ? C.redSoft : "#ffffff", border: `1px solid ${ok ? C.greenLine : no ? C.redLine : C.line}` }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 14, fontWeight: 700 }}>#{c.no}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: ok || no ? "#ffffff" : C.amberSoft, color: ok ? C.greenInk : no ? C.redInk : C.amberInk }}>
+                              {ok ? "수용 완료" : no ? "수용 불가" : "확인 대기"}
+                            </span>
+                          </span>
+                          <span style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.3, textAlign: "center", wordBreak: "keep-all" }}>{c.template.label}</span>
+                          <span style={{ fontSize: 11, color: C.muted }}>{c.template.summary.patient} · {c.template.summary.required_department}</span>
+                          {!d && (
+                            <span style={{ display: "flex", gap: 6 }}>
+                              <button type="button" style={itemButton("green")} onClick={() => onDecide(c, "accepted")}>수용</button>
+                              <button type="button" style={itemButton("red")} onClick={() => onDecide(c, "refused")}>불가</button>
+                            </span>
+                          )}
+                          {(d === "accepted" || d === "refused") && (
+                            <button type="button" style={itemButton("plain")} onClick={() => onDecide(c, "undo")}>되돌리기</button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <button type="button" disabled={open.length === 0} style={{ ...itemButton("green"), opacity: open.length === 0 ? 0.4 : 1 }} onClick={() => open.forEach((c) => onDecide(c, "accepted"))}>전체 수용</button>
+                <button type="button" disabled={open.length === 0} style={{ ...itemButton("red"), opacity: open.length === 0 ? 0.4 : 1 }} onClick={() => open.forEach((c) => onDecide(c, "refused"))}>전체 불가</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 12, lineHeight: 1.6, color: C.ink3, flex: "none" }}>
+        환자별로 수용 여부를 기록합니다(병원 역할 연출). 수용 불가는 표시만 되고, [수용 불가 N명 재분배]를 누르면 불가 환자만 모아 ③에서 다시
+        분배합니다 — 이미 수용된 환자는 다시 처리하지 않습니다.{stillMoving ? " 아직 도착하지 않은 구급대가 있습니다." : ""}
       </div>
     </ScreenCard>
+  );
+}
+
+// 대량사고 사상자 태그 — 번호만으론 누군지 몰라서 부상 유형까지 붙인다(2026-10-05)
+function PatientTag({ c }: { c: CasualtyView }) {
+  const color = SEV_COLORS[c.template.severity];
+  return (
+    <span
+      title={`${c.template.label} · ${c.template.summary.patient} · ${c.template.summary.required_department}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 999, background: "#ffffff", border: `1px solid ${C.line}`, fontSize: 12, fontWeight: 700, color: C.ink }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color.fg, display: "inline-block" }} />
+      #{c.no} {c.template.label}
+    </span>
   );
 }
 

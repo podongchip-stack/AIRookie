@@ -25,7 +25,7 @@ os.environ["HUB_REJECTION_URL"] = "http://127.0.0.1:9/hub/rejection"
 import app  # noqa: E402
 from ambulance_sim import DispatchSim  # noqa: E402
 from schema import (  # noqa: E402
-    AmbulanceInfo, CallSignal, DashboardIdentify, GpsPoint, VoiceCallSummaryMessage, VoiceSummary, VoiceTranscript,
+    AmbulanceInfo, CallSignal, DashboardIdentify, GpsPoint, Vital, VoiceCallSummaryMessage, VoiceSummary, VoiceTranscript,
 )
 from test_app_background import _FakeSocket, _hospital  # noqa: E402
 
@@ -105,7 +105,13 @@ def main() -> None:
     app._relay_call_signal(CallSignal(signal="call_ended", timestamp="t", apid="A_T", caseId=case_id,
                                       hospitalId=a.hospitalId, device="phone"), ambulance_tab)
     assert app.sim.state("A_T")["paused"], "전송 뒤에도 요약이 반영될 때까지는 멈춰 있다"
-    app._run_match_job(_voice(case_id, "2차 통화", "흉통 악화 — 쇼크 의심"))
+    second = _voice(case_id, "2차 통화", "흉통 악화 — 쇼크 의심")
+    second.summary.vitals = [Vital(sbp=82, dbp=50, hr=132, rr=26, spo2=90)]
+    second.summary.consciousness = "V"
+    app._run_match_job(second)
+    monitored = _last(ambulance_tab, "transport_assessment", case_id)
+    assert monitored["observation"]["source"] == "voice" and monitored["observation"]["sbp"] == 82, monitored
+    assert monitored["news2"] >= 7, "2차 통화 활력징후가 이송 중 모니터링(NEWS2) 판정에 들어간다"
     assert not app.sim.state("A_T")["paused"] and app.sim.phase_of("A_T") == "transporting", "요약이 반영되면 이송 재개"
     after = app.engine.get_case_result(case_id)
     p = after.patientInfo
@@ -113,7 +119,7 @@ def main() -> None:
     assert [u.expectedDiagnosis for u in p.previousCalls] == ["흉통 — 경색 의심"], p.previousCalls
     assert "1차 통화" in p.rawTranscript and "2차 통화" in p.rawTranscript and "── 2차 통화 ──" in p.rawTranscript
     assert [(h.hospitalId, h.status) for h in after.hospitals] == [(h.hospitalId, h.status) for h in before.hospitals]
-    print("  [확인] 추가 통화 중 이동 멈춤(조작 잠금 없음)→요약 반영 뒤 재개, 2차 요약이 최신 환자 정보, 1차는 previousCalls, 확정 병원 유지")
+    print("  [확인] 추가 통화 중 이동 멈춤(조작 잠금 없음)→요약 반영 뒤 재개, 2차 통화 활력징후→이송 중 모니터링(NEWS2), 2차 요약이 최신 환자 정보, 1차는 previousCalls, 확정 병원 유지")
 
     print("=== 병원의 이송 중 수용 철회 → 확정 해제·제외·재선택 대기 ===")
     app._handle_dashboard_action(_action(case_id, "transport_withdraw", a.hospitalId, reason="BEDS_FULL"))

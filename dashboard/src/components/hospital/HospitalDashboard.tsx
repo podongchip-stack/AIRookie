@@ -102,6 +102,7 @@ function TransportAlertBanner({ assessments }: { assessments: TransportAssessmen
       <p className={css({ fontSize: "xs", fontWeight: "bold", color: critical ? "coral" : "severity.medium" })}>
         🚑 이송 중 상태 변화 · NEWS2 {latest.news2}
         {latest.si != null ? ` · 쇼크지수 ${latest.si}` : ""}
+        {latest.observation.source === "voice" ? " · 이송 중 2차 통화" : ""}
         {latest.demo ? " · 가상 시나리오" : ""}
       </p>
       {vitals.length > 0 && (

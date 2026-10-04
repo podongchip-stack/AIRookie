@@ -1279,6 +1279,51 @@ class HubEngine:
         decision_log.log_decision("hub_match_result", _redact_transcript(result.model_dump()))
         return result
 
+    def plan_mci(self, case_ids: list[str]) -> list[dict]:
+        """대량사고 자동 분배 계획(2026-10-05) — 승인 병원들 사이에 사상자를 나눈다. 콘솔 ③의 미리 보기와 [분배 확정]이
+        같은 계획을 쓴다(보이는 대로 확정된다).
+
+        규칙은 평시 순위 그대로(규칙 기반): 중증 → 중등증 → 경증 순으로, 사상자마다 그 사건에서 **승인한** 병원(제외 병원
+        빼고) 중 finalScore 최고 — 진료과 적합도 0.6 + 이동시간 0.4, 중증 센터 가산·경증 센터 역가산(travelBonusMin).
+        앞 사상자를 배정할 때마다 그 병원의 이송 중 건수를 하나 늘리고 병상을 하나 줄여 부하 페널티를 다시 매긴다 —
+        한 병원에 몰리지 않고 다음 병원으로 퍼진다. 병상 신뢰도는 쓰지 않는다(순위 원칙)."""
+        order = {"high": 0, "medium": 1, "low": 2}
+        now = _utcnow()
+        with self._lock:
+            items = []
+            for index, case_id in enumerate(dict.fromkeys(case_ids)):
+                result = self._case_results.get(case_id)
+                if result is None:
+                    continue
+                items.append((order.get(result.patientInfo.severityTag, 3), index, case_id, result))
+            extra: dict[str, int] = {}
+            plan = []
+            for _, _, case_id, result in sorted(items, key=lambda x: (x[0], x[1])):
+                best = None
+                for rank, h in enumerate(result.hospitals):
+                    if h.status != "approved" or (case_id, h.hospitalId) in self._case_excluded:
+                        continue
+                    info = self._hospitals.get(h.hospitalId)
+                    added = extra.get(h.hospitalId, 0)
+                    if info is not None:
+                        in_flight = self._prune_and_count_overlay(h.hospitalId, now) + added
+                        beds = self.effective_bed_count(info) - added
+                        load_min, _ = load_penalty_min(in_flight, beds, _is_bed_count_unknown(info))
+                    else:
+                        load_min = 0.0
+                    travel = h.travelMin if h.travelMin is not None else h.distanceKm * 3.0
+                    score = final_score(h.specialtyMatch.score, travel, h.travelBonusMin or 0.0, load_min)
+                    if best is None or score > best[0] + 1e-9:
+                        best = (score, rank, h, load_min)
+                if best is None:
+                    plan.append({"caseId": case_id, "hospitalId": None, "severityTag": result.patientInfo.severityTag})
+                    continue
+                _, _, h, load_min = best
+                extra[h.hospitalId] = extra.get(h.hospitalId, 0) + 1
+                plan.append({"caseId": case_id, "hospitalId": h.hospitalId, "hospitalName": h.name,
+                             "severityTag": result.patientInfo.severityTag, "loadPenaltyMin": round(load_min, 1)})
+            return plan
+
     def is_excluded(self, case_id: str, hospital_id: str) -> bool:
         with self._lock:
             return (case_id, hospital_id) in self._case_excluded

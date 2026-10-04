@@ -275,6 +275,7 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
                   caseId={activeCaseId}
                   apid={apid}
                   assessments={state.transportAssessments[activeCaseId] ?? []}
+                  patientInfo={myResult?.patientInfo ?? null}
                   live={connectionMode === "live"}
                   onSendVitals={(...args: Parameters<typeof sendTransportVitals>) => {
                     if (simPaused) {

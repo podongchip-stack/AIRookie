@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { distanceLabel } from "@/lib/distance";
 import { REJECTION_REASON_GROUPS, rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { HD } from "@/components/hospital/hospital-design";
+import { FollowupCallBox } from "@/components/panels/FollowupCallBox";
 import type {
   AmbulanceSimState, ApprovalAction, HospitalCandidate, HubMatchResult, RejectionReason, Severity,
 } from "@/types/dashboard";
@@ -142,6 +143,8 @@ export function RequestCard({
       <div style={{ flex: "none", width: 6, background: m.band }} />
       <div style={{ flex: 1, minWidth: 0, padding: "12px 16px 12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
         {banner}
+        {/* 이송 중 2차 통화로 갱신된 환자 정보 — 직전 통화와 바뀐 점(2026-10-05) */}
+        <FollowupCallBox patientInfo={p} />
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "10px 14px" }}>
           {/* KTAS */}
           <div

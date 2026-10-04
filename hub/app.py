@@ -54,6 +54,8 @@ from schema import (
     CaseHistory,
     CaseMeta,
     ZoneExpandNow,
+    MciAllocate,
+    MciPreview,
     MonitorCaseHospital,
     SceneEnd,
     SimControl,
@@ -61,6 +63,7 @@ from schema import (
     TransportAlternative,
     TransportAssessmentMessage,
     TransportVitals,
+    VitalObservationIn,
     VoiceCallSummaryMessage,
     VoiceRegistration,
     VoiceUtterance,
@@ -354,9 +357,75 @@ def _run_match_job(voice: VoiceCallSummaryMessage) -> None:
         deliver(result, synthetic_path, LIVE_OUTPUT_DIR)
 
         _send_to_dashboard(result.model_dump())
+        _feed_followup_vitals(voice, result)
         _release_call_hold(voice.caseId, "summary_applied")
     except Exception as e:  # noqa: BLE001
         print(f"  [매칭] caseId={voice.caseId} 매칭 실패: {e!r}")
+
+
+def _mci_allocate(case_ids: list[str], ws=None) -> list[dict]:
+    """대량사고 [분배 확정](2026-10-05): 콘솔 ③에 미리 보여준 자동 분배 계획(engine.plan_mci — 중증부터, 승인 병원 중
+    finalScore 최고, 앞 배정마다 부하 페널티)대로 사건마다 이송 확정한다(구급대원의 이송 승인과 같은 final_approval).
+    보이는 대로 확정된다. 승인 병원이 없거나(제외 포함) 일시정지 중인 사건은 건너뛴다. 결과를 콘솔 소켓에
+    mci_allocated로 돌려준다."""
+    results = []
+    plan = engine.plan_mci(case_ids)
+    planned = {item["caseId"] for item in plan}
+    for case_id in dict.fromkeys(case_ids):
+        if case_id not in planned:
+            results.append({"caseId": case_id, "hospitalId": None, "reason": "no_result"})
+    for item in plan:
+        case_id = item["caseId"]
+        if _case_paused(case_id):
+            results.append({"caseId": case_id, "hospitalId": None, "reason": "paused"})
+            continue
+        current = engine.get_case_result(case_id)
+        if current is None or any(h.status == "confirmed" for h in current.hospitals):
+            results.append({"caseId": case_id, "hospitalId": None, "reason": "already_confirmed"})
+            continue
+        if item["hospitalId"] is None:
+            results.append({"caseId": case_id, "hospitalId": None, "reason": "no_approved_hospital"})
+            continue
+        _handle_dashboard_action({
+            "caseId": case_id, "action": "final_approval", "hospital_id": item["hospitalId"], "actor": "paramedic",
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }, ws)
+        results.append({"caseId": case_id, "hospitalId": item["hospitalId"], "hospitalName": item.get("hospitalName"),
+                        "loadPenaltyMin": item.get("loadPenaltyMin"), "reason": "confirmed"})
+    decision_log.log_decision("mci_allocated", {"results": results})
+    confirmed = sum(1 for r in results if r["reason"] == "confirmed")
+    print(f"  [대량사고] 분배 확정 — {confirmed}/{len(results)}건 이송 확정(중증부터, hub 순위·부하 페널티)")
+    if ws is not None:
+        _send_to_socket(ws, {"type": "mci_allocated", "results": results}, "대량사고 분배")
+    return results
+
+
+def _feed_followup_vitals(voice: VoiceCallSummaryMessage, result) -> None:
+    """이송 중 2차 통화(2026-10-05)에서 읽은 활력징후를 이송 중 모니터링(규칙 엔진, NEWS2)에 측정 1회로 넣는다
+    (source "voice"). 구급차의 이송 중 모니터링 패널에 판정이 쌓이고, 상태 변화가 지속되면(notify 이상) 목적지 병원
+    화면에도 상태 변화 배너가 뜬다. 첫 통화(현장)나 이송 확정 전 사건은 건드리지 않는다."""
+    if result.patientInfo.callRound < 2 or not any(h.status == "confirmed" for h in result.hospitals):
+        return
+    vital = voice.summary.vitals[-1] if voice.summary.vitals else None
+    avpu = (voice.summary.consciousness or "").strip().upper()[:1] or None
+    avpu = avpu if avpu in ("A", "V", "P", "U") else None
+
+    def as_int(value):
+        return int(round(value)) if value is not None else None
+
+    observation = VitalObservationIn(
+        measuredAt=datetime.now(timezone.utc).isoformat(timespec="seconds"), source="voice",
+        rr=as_int(vital.rr) if vital else None, spo2=as_int(vital.spo2) if vital else None,
+        sbp=as_int(vital.sbp) if vital else None, dbp=as_int(vital.dbp) if vital else None,
+        hr=as_int(vital.hr) if vital else None, bt=vital.bt if vital else None, avpu=avpu,
+    )
+    if all(getattr(observation, k) is None for k in ("rr", "spo2", "sbp", "hr", "bt", "avpu")):
+        return
+    demo = (voice.model_used or {}).get("stt") == "scenario-template"
+    _handle_transport_vitals(TransportVitals(
+        caseId=voice.caseId, apid=engine.get_case_apid(voice.caseId), demo=demo,
+        scenario="followup_call" if demo else None, observation=observation,
+    ))
 
 
 @app.get("/route")
@@ -1694,6 +1763,21 @@ def dashboard_socket(ws):
                     _notify_refused(ws, payload.get("caseId"), "paused")
                     continue
                 _handle_sim_command(payload)
+            elif payload.get("type") == "mci_preview":
+                try:
+                    preview = MciPreview.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 MciPreview 수신: {exc.errors()}")
+                    continue
+                _send_to_socket(ws, {"type": "mci_plan", "caseIds": preview.caseIds,
+                                     "plan": engine.plan_mci(preview.caseIds)}, "대량사고 분배 미리 보기")
+            elif payload.get("type") == "mci_allocate":
+                try:
+                    allocate = MciAllocate.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 MciAllocate 수신: {exc.errors()}")
+                    continue
+                _match_executor.submit(_mci_allocate, allocate.caseIds, ws)
             elif payload.get("type") == "zone_expand_now":
                 try:
                     expand = ZoneExpandNow.model_validate(payload)

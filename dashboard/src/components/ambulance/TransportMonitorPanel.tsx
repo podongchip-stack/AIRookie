@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { css, cx } from "styled-system/css";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
-import type { TransportAssessment, TransportTier, VitalObservationIn } from "@/types/dashboard";
+import { FollowupCallBox } from "@/components/panels/FollowupCallBox";
+import type { PatientInfo, TransportAssessment, TransportTier, VitalObservationIn } from "@/types/dashboard";
+
+const SOURCE_LABEL: Record<string, string> = { voice: "2차 통화", demo: "가상", manual: "수기", monitor: "모니터" };
 
 // 이송 중 모니터링 패널 (2.5단계, 2026-10-04). 이송 확정 뒤에 뜬다.
 //
@@ -131,7 +134,10 @@ export function TransportMonitorPanel({
   assessments,
   live,
   onSendVitals,
+  patientInfo = null,
 }: {
+  // 이송 중 2차 통화로 갱신된 환자 정보(2026-10-05) — 있으면 패널 위쪽에 바뀐 점을 보여준다
+  patientInfo?: PatientInfo | null;
   caseId: string;
   apid: string;
   assessments: TransportAssessment[];
@@ -204,6 +210,9 @@ export function TransportMonitorPanel({
         </span>
       </header>
 
+      {/* 이송 중 2차 통화 — 통화로 읽은 활력징후는 hub가 이 모니터링(NEWS2)에 측정 1회(출처: 2차 통화)로 넣는다 */}
+      <FollowupCallBox patientInfo={patientInfo} compact />
+
       {/* 시나리오 선택 — 활력징후 입력 구멍의 데모 어댑터. 실제 운영에선 이 자리에
           재통화·차량 내 음성·구급차 모니터가 같은 형식으로 꽂힌다. */}
       <div className={css({ display: "flex", flexDirection: "column", gap: "1" })}>
@@ -233,6 +242,7 @@ export function TransportMonitorPanel({
           <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
             <span className={tierChipStyle(latest.tier)}>{TIER_LABEL[latest.tier]}</span>
             <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink" })}>NEWS2 {latest.news2}</span>
+            <span className={css({ fontSize: "xs", color: "ink2" })}>측정 출처: {SOURCE_LABEL[latest.observation.source] ?? latest.observation.source}</span>
             {latest.si != null && (
               <span className={css({ fontSize: "xs", color: "ink2" })}>쇼크지수 {latest.si}</span>
             )}
@@ -282,7 +292,7 @@ export function TransportMonitorPanel({
           {assessments.map((a, i) => (
             <p key={`${a.timestamp}-${i}`} className={css({ fontSize: "xs", color: "ink2" })}>
               {a.observation.measuredAt.slice(11, 19)} · NEWS2 {a.news2}
-              {a.si != null ? ` · SI ${a.si}` : ""} · {TIER_LABEL[a.tier]}
+              {a.si != null ? ` · SI ${a.si}` : ""} · {TIER_LABEL[a.tier]} · {SOURCE_LABEL[a.observation.source] ?? a.observation.source}
             </p>
           ))}
         </div>
