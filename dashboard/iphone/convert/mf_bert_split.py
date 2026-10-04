@@ -33,7 +33,9 @@ class Encoder(nn.Module):
         self.n = model.layer_count
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        out = self.encoder(input_ids=input_ids, attention_mask=torch.ones_like(input_ids), output_hidden_states=True)
+        # 마스크가 전부 1이라 넘기지 않는다(결과 같음, 최대 차 0). 넘기면 transformers 5의 마스크 생성이 new_ones를 써서
+        # coremltools 9가 변환하지 못한다.
+        out = self.encoder(input_ids=input_ids, output_hidden_states=True)
         return torch.stack(out.hidden_states[-self.n:])[:, 0]  # (N, L, H)
 
 
