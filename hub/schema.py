@@ -658,6 +658,8 @@ class MonitorCaseHospital(BaseModel):
     unavailableReason: Optional[str] = None
     # 이 병원이 든 존(1부터, 5km 간격). 존이 넓혀지면 바깥 존 병원들이 새로 들어온다.
     zone: int
+    # 이 병원이 이 사건에 응답(승인·불가·확정)한 시각(2026-10-04, case_history 기록) — 관제 지도의 응답 시각 칸
+    respondedAt: Optional[str] = None
 
 
 class MonitorCase(BaseModel):
@@ -672,6 +674,43 @@ class MonitorCase(BaseModel):
     zoneActive: list[int]
     zoneBandKm: float
     hospitals: list[MonitorCaseHospital]
+    # 관제 지도 개편(2026-10-04, case_history): 오늘의 사건 번호, 시작 시각(출동·통화·첫 매칭 중 가장 이른 것),
+    # 증상 한 줄(신고 1차 증상 또는 구조화된 주 호소), 진행 과정. 모두 Optional — 예전 dashboard는 무시한다.
+    num: Optional[int] = None
+    startedAt: Optional[str] = None
+    symptom: Optional[str] = None
+    events: list[dict] = []
+    # 시간 기반 존 확장(2026-10-04): 다음 자동 확장 예정 시각. 승인·확정 병원이 있거나 더 넓힐 수 없으면 None
+    zoneExpandAt: Optional[str] = None
+    source: Literal["rule"] = "rule"
+
+
+class ZoneExpandNow(BaseModel):
+    """dashboard(시연 콘솔) → hub: [건너뛰기](2026-10-04) — 자동 존 확장 시각을 기다리지 않고 지금 한 단계 넓힌다."""
+    type: Literal["zone_expand_now"] = "zone_expand_now"
+    caseId: str
+    timestamp: Optional[str] = None
+
+
+class CaseMeta(BaseModel):
+    """매칭 전 사건(출동~현장 통화 전)의 번호·시작 시각·증상(2026-10-04) — 관제 지도 사건 목록용.
+    매칭되면 case_overview가 같은 값을 이어받는다."""
+    type: Literal["case_meta"] = "case_meta"
+    caseId: str
+    num: int
+    startedAt: str
+    symptom: Optional[str] = None
+    severity: Optional[str] = None
+    apid: Optional[str] = None
+    ambulanceName: Optional[str] = None
+    events: list[dict] = []
+    source: Literal["rule"] = "rule"
+
+
+class CaseHistory(BaseModel):
+    """오늘(KST) 종료된 사건 목록(2026-10-04) — 관제 지도 '지난 사건' 모달. 최근 종료 순."""
+    type: Literal["case_history"] = "case_history"
+    cases: list[dict]
     source: Literal["rule"] = "rule"
 
 
@@ -701,8 +740,9 @@ class SceneEnd(BaseModel):
 
 class SimControl(BaseModel):
     """dashboard → hub: [일시정지]·[상황 재개](2026-10-03) — 출동 중·현장·이송 중인 시연 상황을 멈추고 이어 간다.
+    [빨리감기](sim_fast_forward, 2026-10-04) — 병원으로 이송 중이면 남은 이동을 3초 안에 마친다.
     구급차는 apid로 가린다(한 대는 한 번에 한 사건). caseId는 로그용."""
-    type: Literal["sim_pause", "sim_resume"]
+    type: Literal["sim_pause", "sim_resume", "sim_fast_forward"]
     apid: str
     caseId: Optional[str] = None
     timestamp: str

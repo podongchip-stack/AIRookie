@@ -28,13 +28,14 @@ from flask_sock import Sock
 from pydantic import ValidationError
 
 import bed_reliability
-from ambulance_sim import TRIP_SEC as SIM_TRIP_SEC, DispatchSim
+from ambulance_sim import TRANSPORT_SEC as SIM_TRANSPORT_SEC, TRIP_SEC as SIM_TRIP_SEC, DispatchSim
 import decision_log
 from delivery import HUB_REJECTION_URL, LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
 from geo import ZONE_BAND_KM, haversine_km, zone_of
 from scoring import DEFAULT_MIN_PER_KM
 from hub_engine import HubEngine, _is_bed_count_unknown
+from case_history import CaseTracker
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -50,6 +51,9 @@ from schema import (
     MapHospital,
     MapOverview,
     MonitorCase,
+    CaseHistory,
+    CaseMeta,
+    ZoneExpandNow,
     MonitorCaseHospital,
     SceneEnd,
     SimControl,
@@ -558,6 +562,9 @@ def _send_to_dashboard(payload: dict) -> None:
     방어 패턴 — 연결이 없거나 끊겼어도 본 요청은 계속돼야 함)."""
     message = json.dumps(payload, ensure_ascii=False)
     is_match = payload.get("type") == "match_result" and bool(payload.get("caseId"))
+    if is_match:
+        case_tracker.observe(payload)  # 관제 지도 사건 기록(2026-10-04) — 직전 결과와 비교해 이벤트를 남긴다
+        _touch_zone_timer(payload)
     with _sockets_lock:
         if is_match:
             apid, hospital_ids = _match_recipients(payload)
@@ -598,7 +605,12 @@ def _send_to_dashboard(payload: dict) -> None:
 def _monitor_case(payload: dict) -> dict:
     """매칭 결과(HubMatchResult를 dump한 dict) → 관제 지도용 사건 요약."""
     patient = payload.get("patientInfo") or {}
+    meta = case_tracker.meta(payload["caseId"]) or {}
+    responded = case_tracker.responded(payload["caseId"])
     return MonitorCase(
+        num=meta.get("num"), startedAt=meta.get("startedAt"), symptom=meta.get("symptom"),
+        events=case_tracker.events(payload["caseId"]),
+        zoneExpandAt=_zone_expand_at(payload),
         caseId=payload["caseId"],
         apid=payload.get("apid"),
         ambulanceName=payload.get("ambulanceName"),
@@ -614,6 +626,7 @@ def _monitor_case(payload: dict) -> dict:
                 status="rejected" if h.get("unavailableReason") and h.get("status") == "pending" else h.get("status", "pending"),
                 distanceKm=h["distanceKm"], roadDistanceKm=h.get("roadDistanceKm"), zone=zone_of(h["distanceKm"]),
                 rejectReason=h.get("rejectReason"), unavailableReason=h.get("unavailableReason"),
+                respondedAt=responded.get(h["hospitalId"]),
             )
             for h in payload.get("hospitals") or []
         ],
@@ -848,6 +861,8 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
         _send_scene_candidates(signal.caseId, signal.apid)
         ambulance = engine.get_ambulance(signal.apid)
         hospital = engine.get_hospital(signal.hospitalId) if signal.hospitalId else None
+        case_tracker.start(signal.caseId, signal.apid, ambulance.name if ambulance else None)
+        case_tracker.event(signal.caseId, "p", f"현장 통화 시작" + (f" · {hospital.name}" if hospital else ""))
         _send_call_status({
             "type": "call_status", "caseId": signal.caseId, "apid": signal.apid,
             "ambulanceName": ambulance.name if ambulance else None,
@@ -940,6 +955,11 @@ def _send_catchup(ws, identify: DashboardIdentify) -> list[str]:
         print(f"  [통신] 관제 지도 연결 — 진행 중인 사건 {len(cases)}건 요약 전송")
         for result in cases:
             _send_to_socket(ws, _monitor_case(result.model_dump()), "관제 지도 따라잡기")
+        matched = {result.caseId for result in cases}
+        for case_id in list(_pre_alerts):
+            if case_id not in matched:
+                _send_case_meta(case_id, ws)
+        _send_to_socket(ws, CaseHistory(cases=case_tracker.history()).model_dump(), "지난 사건")
         return [result.caseId for result in cases]
     cases = (
         engine.get_cases_for_hospital(identify.id)
@@ -1155,9 +1175,10 @@ def _sweep_unresolved_cases(now: datetime | None = None) -> int:
     return len(due)
 
 
-def _close_case(case_id: str, reason: str) -> bool:
-    """확정 없이 끝난 사건을 닫고 대시보드에 알린다. 방치 정리(sweep)와 현장 종료가 같이 쓴다."""
-    if not engine.close_case(case_id):
+def _close_case(case_id: str, reason: str, include_confirmed: bool = False) -> bool:
+    """확정 없이 끝난 사건을 닫고 대시보드에 알린다. 방치 정리(sweep)와 현장 종료가 같이 쓴다.
+    include_confirmed=True면 이송 확정 사건도 닫는다(시연 초기화)."""
+    if not engine.close_case(case_id, include_confirmed=include_confirmed):
         return False
     with _sockets_lock:
         _case_audience.pop(case_id, None)
@@ -1167,6 +1188,7 @@ def _close_case(case_id: str, reason: str) -> bool:
     with _triage_lock:
         _transport_triage.pop(case_id, None)
     _pre_alerts.pop(case_id, None)
+    _record_case_closed(case_id, reason)
     decision_log.log_decision("case_closed", {"caseId": case_id, "reason": reason})
     _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": reason})
     print(f"  [정리] caseId={case_id} 사건 종료({reason}) — 캐시에서 제거, 대시보드에 알림")
@@ -1238,6 +1260,7 @@ def _handle_dashboard_action(payload: dict) -> None:
     if action.action == "arrival_accepted" and applied:
         # 환자 수용으로 이송이 끝났다 — 두 대시보드에서 이 사건(병원 후보·수용 요청·통화 요약)을 지운다
         # (2026-10-01). 엔진에는 기록·병상 차감 때문에 확정 60분 동안 남지만, 따라잡기에서도 빠진다.
+        _record_case_closed(action.caseId, "arrival_accepted")
         _send_to_dashboard({"type": "case_closed", "caseId": action.caseId, "reason": "arrival_accepted"})
 
     if sim is not None and applied and action.action in ("arrival_accepted", "arrival_refused"):
@@ -1584,8 +1607,15 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 TransportVitals 수신: {exc.errors()}")
                     continue
                 _handle_transport_vitals(vitals)
-            elif payload.get("type") in ("dispatch", "scene_end", "sim_pause", "sim_resume", "sim_reset"):
+            elif payload.get("type") in ("dispatch", "scene_end", "sim_pause", "sim_resume", "sim_reset", "sim_fast_forward"):
                 _handle_sim_command(payload)
+            elif payload.get("type") == "zone_expand_now":
+                try:
+                    expand = ZoneExpandNow.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 ZoneExpandNow 수신: {exc.errors()}")
+                    continue
+                _match_executor.submit(_expand_case_zone, expand.caseId, "manual")
             elif "action" in payload:
                 _handle_dashboard_action(payload)
     finally:
@@ -1635,7 +1665,7 @@ def _handle_sim_command(payload: dict) -> None:
         return
     try:
         model = {"dispatch": DispatchRequest, "sim_pause": SimControl, "sim_resume": SimControl,
-                 "sim_reset": SimReset}.get(payload.get("type"), SceneEnd)
+                 "sim_fast_forward": SimControl, "sim_reset": SimReset}.get(payload.get("type"), SceneEnd)
         cmd = model.model_validate(payload)
     except ValidationError as exc:
         print(f"  [통신] 잘못된 시뮬레이션 명령: {exc.errors()}")
@@ -1645,15 +1675,29 @@ def _handle_sim_command(payload: dict) -> None:
         # 이송 중 병상 차감 해제. "시연 정지(일시정지)가 사건을 안 지운다"는 혼동을 분리한 리셋.
         closed: list[str] = []
         for info in engine.list_ambulances():
-            old_case = sim.reset(info.apid)
+            sim.reset(info.apid)
             _broadcast_sim_state(info.apid)
-            if old_case:
-                closed.append(old_case)
-                _close_case(old_case, "sim_reset")
+        # 진행 중인 사건은 **전부** 닫는다(2026-10-04) — 예전엔 구급차가 지금 맡은 사건만 닫았고, 그것도 이송 확정
+        # 사건은 엔진이 60분 보관 규칙으로 거절해서 대량사고를 연달아 돌린 뒤 초기화하면 이송 중·병원 도착 사건이
+        # 남았다. 구급차는 기지로 돌아가 주인 없는 사건이 되어 구급차 대시보드에도 이어지지 않았다.
+        for case_id in engine.list_open_case_ids():
+            if _close_case(case_id, "sim_reset", include_confirmed=True):
+                closed.append(case_id)
+        for case_id in case_tracker.open_case_ids():  # 출동만 하고 엔진엔 없는 사건까지
+            _record_case_closed(case_id, "sim_reset")
         engine.clear_bed_overlay()
         decision_log.log_decision("sim_reset", {"closedCases": closed, "simulated": True})
         _send_map_overview()
         print(f"  [시뮬레이션] 시연 초기화 — 사건 {len(closed)}건 종료, 전 구급차 기지 복귀")
+        return
+    if isinstance(cmd, SimControl) and cmd.type == "sim_fast_forward":
+        # [빨리감기](2026-10-04) — 이송 중 남은 이동을 3초 안에 마친다
+        ok, reason = sim.fast_forward(cmd.apid)
+        decision_log.log_decision("sim_fast_forward" if ok else "sim_control_refused",
+                                  {"apid": cmd.apid, "caseId": cmd.caseId, "command": cmd.type, "reason": reason, "simulated": True})
+        print(f"  [시뮬레이션] {cmd.apid} 빨리감기" + ("" if ok else f" 거부 ({reason})"))
+        if ok:
+            _broadcast_sim_state(cmd.apid)
         return
     if isinstance(cmd, SimControl):
         pausing = cmd.type == "sim_pause"
@@ -1674,6 +1718,10 @@ def _handle_sim_command(payload: dict) -> None:
                                    "targetMode": cmd.targetMode or "random", "targetCoarse": coarse})
         if ok:
             engine.register_case(cmd.caseId, cmd.apid)
+            ambulance = engine.get_ambulance(cmd.apid)
+            reported = f" · 신고: {cmd.reportedSymptom}" if cmd.reportedSymptom else ""
+            case_tracker.start(cmd.caseId, cmd.apid, ambulance.name if ambulance else None,
+                               cmd.reportedSeverity, cmd.reportedSymptom, event_text=f"출동{reported}")
             print(f"  [시뮬레이션] {cmd.apid} 출동 — caseId={cmd.caseId}")
             _send_pre_alert(cmd.apid, cmd.caseId, cmd.reportedSymptom, cmd.reportedSeverity)
             # 1차 신고 기반 가추천(2026-10-04) — 출동 즉시, 현장 좌표 기준으로 후보를 띄운다.
@@ -1693,6 +1741,131 @@ def _handle_sim_command(payload: dict) -> None:
         else:
             print(f"  [시뮬레이션] {cmd.apid} 현장 종료 거부 — 현장에 있지 않거나 다른 사건")
     _broadcast_sim_state(cmd.apid)
+
+
+#: 관제 지도용 사건 기록(2026-10-04) — 사건 번호·시작 시각·증상·병원별 응답 시각·진행 과정·오늘 종료 사건.
+#: 매칭 결과가 나갈 때마다(_send_to_dashboard) 직전과 비교해 이벤트를 만든다(case_history.py).
+case_tracker = CaseTracker()
+
+
+# ── 시간 기반 존 확장(2026-10-04) ─────────────────────────────────────────────
+# 거절 비율(40%) 확장은 병원이 "거절"을 눌러야만 움직인다 — 아무도 답하지 않으면 존이 그대로 멈춘다. 그래서 요청이
+# 나간 뒤(또는 마지막 확장 뒤) ZONE_EXPAND_SEC 동안 승인·확정 병원이 없으면 존을 한 단계 넓힌다. 시연 콘솔의
+# [건너뛰기]는 기다리지 않고 바로 넓힌다. 넓힐 수 없으면(상한) 타이머를 멈춘다. 규칙 기반.
+ZONE_EXPAND_SEC = float(os.environ.get("HUB_ZONE_EXPAND_SEC", "30"))
+ZONE_TIMER_TICK_SEC = 1.0
+#: caseId -> (지금 존, 그 존이 시작된 시각 epoch, 더 넓힐 수 있는지)
+_zone_timer: dict[str, tuple[int, float, bool]] = {}
+_zone_timer_lock = threading.Lock()
+
+
+def _zone_waiting(payload: dict) -> bool:
+    """아직 갈 곳을 찾는 중인가 — 승인·확정 병원이 없을 때만 시간 확장이 돈다."""
+    return not any(h.get("status") in ("approved", "confirmed") for h in payload.get("hospitals") or [])
+
+
+def _touch_zone_timer(payload: dict) -> None:
+    """매칭 결과가 나갈 때마다: 처음 보는 사건이거나 존이 바뀌었으면 타이머를 지금부터 다시 잰다."""
+    case_id = payload["caseId"]
+    zone = max(payload.get("zoneActive") or [1])
+    with _zone_timer_lock:
+        current = _zone_timer.get(case_id)
+        if current is None or current[0] != zone:
+            _zone_timer[case_id] = (zone, time.time(), True)
+
+
+def _zone_expand_at(payload: dict) -> str | None:
+    if ZONE_EXPAND_SEC <= 0 or not _zone_waiting(payload):
+        return None
+    with _zone_timer_lock:
+        timer = _zone_timer.get(payload["caseId"])
+    if timer is None or not timer[2]:
+        return None
+    return datetime.fromtimestamp(timer[1] + ZONE_EXPAND_SEC, timezone.utc).isoformat(timespec="seconds")
+
+
+def _expand_case_zone(case_id: str, cause: str) -> None:
+    """존을 한 단계 넓혀 같은 환자 정보로 다시 요청한다. cause: "timeout"(30초) | "manual"(건너뛰기)."""
+    result = engine.get_case_result(case_id)
+    if result is None or not _zone_waiting(result.model_dump()):
+        return
+    label = f"{int(ZONE_EXPAND_SEC)}초 동안 수용 병원 없음" if cause == "timeout" else "관제 건너뛰기"
+    case_tracker.note_expand_cause(case_id, label)
+    gps, _ = _resolve_ambulance_gps(case_id)
+    current = max(result.zoneActive or [1])
+    target = engine.next_zone_with_new(gps, current)
+    expanded = engine.force_expand_zone(case_id, gps, cause=f"zone_{cause}", to_zone=target) if target else None
+    if expanded is None:
+        # 더 넓힐 수 없다(상한) — 타이머를 멈추고 화면의 카운트다운도 지운다
+        with _zone_timer_lock:
+            zone, since, _ = _zone_timer.get(case_id, (0, time.time(), True))
+            _zone_timer[case_id] = (zone, since, False)
+        case_tracker.note_expand_cause(case_id, "")
+        _send_to_dashboard(result.model_dump())
+        print(f"  [존 확장] case={case_id} 더 넓힐 수 없음 — 시간 확장 멈춤")
+        return
+    _send_to_dashboard(expanded.model_dump())
+
+
+def _zone_timer_loop() -> None:
+    while True:
+        time.sleep(ZONE_TIMER_TICK_SEC)
+        try:
+            _zone_timer_tick()
+        except Exception as e:  # noqa: BLE001
+            print(f"  [존 확장 타이머] 오류(계속 진행): {e!r}")
+
+
+def _zone_timer_tick(now: float | None = None) -> None:
+    """시간이 된 사건의 존을 넓힌다(작업 스레드로). 테스트가 now를 넘겨 한 번만 돌린다."""
+    now = time.time() if now is None else now
+    with _zone_timer_lock:
+        due = [cid for cid, (_, since, ok) in _zone_timer.items() if ok and now - since >= ZONE_EXPAND_SEC]
+        # 닫힌 사건은 지운다
+        for cid in [c for c in _zone_timer if engine.get_case_result(c) is None]:
+            _zone_timer.pop(cid, None)
+    for case_id in due:
+        result = engine.get_case_result(case_id)
+        if result is None:
+            continue
+        apid = engine.get_case_apid(case_id)
+        if sim is not None and apid and (sim.state(apid) or {}).get("paused"):
+            # [정지] 중엔 시간도 멈춘다 — 재개하면 남은 시간부터
+            with _zone_timer_lock:
+                zone, since, ok = _zone_timer[case_id]
+                _zone_timer[case_id] = (zone, since + ZONE_TIMER_TICK_SEC, ok)
+            continue
+        if not _zone_waiting(result.model_dump()):
+            with _zone_timer_lock:  # 승인 병원이 생겼다 — 다시 대기로 돌아오면 그때부터 잰다
+                zone, _, ok = _zone_timer[case_id]
+                _zone_timer[case_id] = (zone, now, ok)
+            continue
+        with _zone_timer_lock:  # 중복 실행 방지 — 결과가 오면 _touch_zone_timer가 새로 잰다
+            zone, _, ok = _zone_timer[case_id]
+            _zone_timer[case_id] = (zone, now, ok)
+        _match_executor.submit(_expand_case_zone, case_id, "timeout")
+
+
+def _send_case_meta(case_id: str, ws=None) -> None:
+    """매칭 전 사건의 번호·시작 시각·증상을 관제 지도에 보낸다(ws가 있으면 그 소켓에만 — 따라잡기)."""
+    meta = case_tracker.meta(case_id)
+    if meta is None:
+        return
+    payload = CaseMeta(**meta, events=case_tracker.events(case_id)).model_dump()
+    if ws is not None:
+        _send_to_socket(ws, payload, "사건 정보")
+        return
+    with _sockets_lock:
+        _send_to_monitors_locked(payload)
+
+
+def _record_case_closed(case_id: str, reason: str) -> None:
+    """사건이 끝나면 지난 사건 목록에 남기고 관제 지도에 새 목록을 보낸다."""
+    if case_tracker.close(case_id, reason) is None:
+        return
+    payload = CaseHistory(cases=case_tracker.history()).model_dump()
+    with _sockets_lock:
+        _send_to_monitors_locked(payload)
 
 
 #: 매칭 전(통화 전) 사건의 예비 고지 요약(caseId -> payload). 관제가 신고 접수 단계부터
@@ -1742,6 +1915,7 @@ def _send_pre_alert(
     }
     # 매칭 전 사건의 관제 따라잡기 재료(2026-10-04) — 늦게 연 관제 탭도 신고 단계부터 보이게.
     _pre_alerts[case_id] = summary
+    _send_case_meta(case_id)
     summary_json = json.dumps(summary, ensure_ascii=False)
     with _sockets_lock:
         for ws, (role, id_) in list(_socket_identity.items()):
@@ -1827,6 +2001,7 @@ def save_state() -> None:
     """엔진 상태 + voice 주소를 원자적으로(임시 파일 → 교체) 저장한다."""
     global _voice_addresses_dirty
     state = engine.export_state()
+    state["caseHistory"] = case_tracker.export_state()
     with _voice_addresses_lock:
         state["voiceAddresses"] = dict(_voice_addresses)
         _voice_addresses_dirty = False
@@ -1846,6 +2021,7 @@ def load_state() -> None:
         print(f"  [상태 복구] 상태 파일을 읽지 못해 빈 상태로 시작: {e}")
         return
     counts = engine.import_state(state)
+    case_tracker.import_state(state.get("caseHistory") or {})
     with _voice_addresses_lock:
         _voice_addresses.update(state.get("voiceAddresses") or {})
     print(
@@ -1874,6 +2050,7 @@ def _maintenance_loop() -> None:
                     _case_call.pop(case_id, None)
                     _case_recommended.pop(case_id, None)
                     _case_scene.pop(case_id, None)
+                _record_case_closed(case_id, "retention_expired")
                 _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": "retention_expired"})
             if PERSIST_STATE and (engine.take_dirty() or _voice_addresses_dirty):
                 save_state()
@@ -1896,6 +2073,9 @@ def _settle_restored_cases() -> None:
         for case_id in case_ids:
             if engine.close_case(case_id, include_confirmed=True):
                 decision_log.log_decision("case_closed", {"caseId": case_id, "reason": "hub_restart_sim_reset"})
+        # 관제 지도 사건 기록도 닫는다 — 매칭 전(출동만 한) 사건까지(2026-10-04)
+        for case_id in case_tracker.open_case_ids():
+            case_tracker.close(case_id, "hub_restart_sim_reset")
         if case_ids:
             print(f"  [상태 복구] 출동 시뮬레이션 — 지난 사건 {len(case_ids)}건은 구급차가 기지로 돌아가 닫음")
         return
@@ -1920,11 +2100,13 @@ def start_background() -> None:
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     _settle_restored_cases()
     threading.Thread(target=_maintenance_loop, name="hub-maintenance", daemon=True).start()
+    if ZONE_EXPAND_SEC > 0:
+        threading.Thread(target=_zone_timer_loop, name="hub-zone-timer", daemon=True).start()
     if sim is not None:
         # 재시작하면 구급차는 전부 기지(대기)에서 다시 시작한다 — 시뮬레이션 상태는 저장하지 않는다.
         for ambulance in engine.list_ambulances():
             sim.ensure_unit(ambulance.apid, ambulance.gps)
-        decision_log.log_decision("sim_dispatch_enabled", {"tripSec": SIM_TRIP_SEC})
+        decision_log.log_decision("sim_dispatch_enabled", {"tripSec": SIM_TRIP_SEC, "transportSec": SIM_TRANSPORT_SEC})
         print("  [시뮬레이션] 출동 시뮬레이션 켜짐 (구급차 위치는 시연용 가짜 위치)")
         threading.Thread(target=_sim_loop, name="hub-sim", daemon=True).start()
 

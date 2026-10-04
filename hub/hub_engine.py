@@ -608,6 +608,11 @@ class HubEngine:
         with self._lock:
             return list(set(self._case_results) | set(self._case_apid))
 
+    def list_open_case_ids(self) -> list[str]:
+        """아직 끝나지 않은 사건(환자 수용으로 끝난 사건 제외 — 그건 화면에서 이미 지웠고 기록용으로만 60분 남는다)."""
+        with self._lock:
+            return [cid for cid in set(self._case_results) | set(self._case_apid) if cid not in self._case_arrival]
+
     def get_unconfirmed_case_ids(self) -> list[str]:
         """확정 전 사건(재시작 뒤 정리용)."""
         with self._lock:
@@ -1288,7 +1293,18 @@ class HubEngine:
         with self._lock:
             return self._case_max_zone.get(case_id, 1)
 
-    def force_expand_zone(self, case_id: str, ambulance_gps: GpsPoint) -> HubMatchResult | None:
+    def next_zone_with_new(self, ambulance_gps: GpsPoint, current: int, cap: int = 10) -> int | None:
+        """current 바깥에서 새 병원이 처음 들어오는 존(2026-10-04, 시간 기반 확장). 없으면 None —
+        _expand_until_nonempty는 "후보가 하나라도 있으면"이라 이미 있는 병원만으로도 멈춰, 시간 확장이
+        병원 없는 빈 존으로 계속 넓어졌다."""
+        known = len(self._candidates_in_zone(ambulance_gps, current))
+        for zone in range(current + 1, cap + 1):
+            if len(self._candidates_in_zone(ambulance_gps, zone)) > known:
+                return zone
+        return None
+
+    def force_expand_zone(self, case_id: str, ambulance_gps: GpsPoint, cause: str = "arrival_refused",
+                          to_zone: int | None = None) -> HubMatchResult | None:
         """존을 한 단계 넓혀 **기존 환자 정보(통화 요약) 그대로** 다시 매칭한다(2026-10-01).
         도착 후 수용 불가로 갈 곳이 없어졌을 때 — 다시 통화하지 않고 넓어진 존의 병원들에게 같은
         요청을 보내려는 것이다(역할별 전송이 새 후보 병원 탭에도 보낸다). 새 존이 비면 후보가 잡힐
@@ -1299,12 +1315,12 @@ class HubEngine:
             gps_fallback = self._case_gps_fallback.get(case_id, False)
         if voice is None:
             return None
-        new_max = self._expand_until_nonempty(ambulance_gps, current + 1)
+        new_max = to_zone if to_zone is not None else self._expand_until_nonempty(ambulance_gps, current + 1)
         if new_max <= current:
             return None
-        print(f"  [존 확장] case={case_id} 도착 후 수용 불가 — zone 1~{current} -> 1~{new_max}")
+        print(f"  [존 확장] case={case_id} {cause} — zone 1~{current} -> 1~{new_max}")
         decision_log.log_decision("zone_expanded", {"caseId": case_id, "from": current, "to": new_max,
-                                                    "cause": "arrival_refused"})
+                                                    "cause": cause})
         return self.process_voice_summary(voice, ambulance_gps, max_zone=new_max, gps_fallback=gps_fallback)
 
     def _is_confirmed_full(self, hospital_id: str) -> bool:

@@ -54,6 +54,10 @@ FALLBACK_SPEED_KMH = 30.0     # 도로 경로가 없을 때 직선 이동 속도
 SPEEDUP = float(os.environ.get("HUB_SIM_SPEEDUP", "5"))
 #: 구급차 화면 이동 시간(초, 2026-10-03). 출동·이송·복귀 모든 구간에 같은 고정값 — 가까워도 멀어도 이 시간에 도착한다.
 TRIP_SEC = float(os.environ.get("HUB_SIM_TRIP_SEC", "5"))
+#: 병원으로 이송하는 구간만 따로(2026-10-04) — 이송 중 환자 상태 변화(활력징후 시나리오)를 고를 시간이 필요해 30초.
+#: [빨리감기]를 누르면 남은 이동을 FAST_FORWARD_SEC 안에 마친다.
+TRANSPORT_SEC = float(os.environ.get("HUB_SIM_TRANSPORT_SEC", "30"))
+FAST_FORWARD_SEC = float(os.environ.get("HUB_SIM_FAST_FORWARD_SEC", "3"))
 #: 정지할 수 있는 단계(2026-10-03) — 현장으로 출동 중 · 현장 도착 · 병원으로 이송 중
 PAUSABLE_PHASES = ("dispatching", "on_scene", "transporting")
 #: [환자 수용 완료] 뒤 병원에 머무는 시간(초). 2026-10-03부터 0 — 수용을 누르면 다음 위치 갱신(1초 안)에 바로
@@ -111,6 +115,16 @@ class Trip:
     def done(self, now: float) -> bool:
         return self.progress(now) >= 1.0
 
+    def fast_forward(self, now: float, within_sec: float) -> None:
+        """[빨리감기](2026-10-04): 지금 위치(진행률)는 그대로 두고 남은 구간을 within_sec 안에 마치게 배속을 바꾼다."""
+        if self.paused_at is not None:
+            self.resume(now)
+        p = self.progress(now)
+        if p >= 1.0 or within_sec <= 0 or self.duration_sec <= 0:
+            return
+        self.speedup = self.duration_sec * (1.0 - p) / within_sec
+        self.started_at = now - p * self.duration_sec / self.speedup
+
     def remaining_sec(self, now: float) -> int:
         """실제 도로 기준 남은 시간(초). 받아 둔 경로의 남은 비율로 계산 — 카카오를 다시 안 부른다."""
         return int(round(self.duration_sec * (1.0 - self.progress(now))))
@@ -138,15 +152,16 @@ def fixed_speedup(duration_sec: float, display_sec: float = TRIP_SEC) -> float:
     return duration_sec / display_sec
 
 
-def plan_trip(router, origin: GpsPoint, dest: GpsPoint, now: float) -> Trip:
-    """도로 경로로 Trip을 만든다. 키가 없거나 실패하면 직선 + 기본 속도. 화면 시간은 TRIP_SEC 고정(fixed_speedup)."""
+def plan_trip(router, origin: GpsPoint, dest: GpsPoint, now: float, display_sec: float = TRIP_SEC) -> Trip:
+    """도로 경로로 Trip을 만든다. 키가 없거나 실패하면 직선 + 기본 속도. 화면 시간은 display_sec 고정(fixed_speedup) —
+    기본 TRIP_SEC, 병원 이송 구간은 TRANSPORT_SEC."""
     route = router.route(origin, dest) if router is not None else None
     if route and route.get("path"):
         path, duration = [tuple(p) for p in route["path"]], float(route["durationSec"])
     else:
         km = haversine_km(origin.lat, origin.lng, dest.lat, dest.lng)
         path, duration = [(origin.lat, origin.lng), (dest.lat, dest.lng)], km / FALLBACK_SPEED_KMH * 3600.0
-    return Trip(path, duration, now, speedup=fixed_speedup(duration))
+    return Trip(path, duration, now, speedup=fixed_speedup(duration, display_sec))
 
 
 # ── 환자 발생 위치 후보 ──────────────────────────────────────────────────────
@@ -379,7 +394,7 @@ class DispatchSim:
             if unit.phase == "transporting" and unit.hospital_id == hospital_id:
                 return False
             origin = unit.gps or unit.base
-        trip = plan_trip(self._router, origin, hospital_gps, self._clock())
+        trip = plan_trip(self._router, origin, hospital_gps, self._clock(), display_sec=TRANSPORT_SEC)
         with self._lock:
             unit = self._units[apid]
             unit.phase, unit.trip, unit.hospital_id, unit.hospital_gps = "transporting", trip, hospital_id, hospital_gps
@@ -413,6 +428,18 @@ class DispatchSim:
             unit.paused = False
             if unit.trip is not None:
                 unit.trip.resume(self._clock())
+            return True, "ok"
+
+    def fast_forward(self, apid: str) -> tuple[bool, str]:
+        """[빨리감기](2026-10-04): 병원으로 이송 중일 때만 — 남은 이동을 FAST_FORWARD_SEC 안에 마친다(정지 중이면 풀고)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None:
+                return False, "unknown_ambulance"
+            if unit.phase != "transporting" or unit.trip is None:
+                return False, f"phase_{unit.phase}"
+            unit.paused = False
+            unit.trip.fast_forward(self._clock(), FAST_FORWARD_SEC)
             return True, "ok"
 
     def on_arrival_result(self, apid: str, case_id: str, accepted: bool) -> bool:
