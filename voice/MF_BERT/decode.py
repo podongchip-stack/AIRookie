@@ -6,6 +6,10 @@ metrics.masked_minor()·data.decode_spans()를 합쳐 가져왔다.
 
 다중 선택 헤드는 로짓 > 0(=sigmoid 0.5)을 양성으로 본다. `chief_complaint`는 대분류에 속한 소분류만 남기고
 고른다(masked_minor) — 매 헤드를 따로 argmax하면 서로 다른 대분류가 나올 수 있어서다.
+
+처치 세부·손상 좌우는 부모(처치 종류·손상 부위)로 예측된 항목에 붙인다. 세부·좌우가 여럿이면 정답 데이터처럼
+항목을 그만큼 나눈다. 한 부위에 손상 유형과 좌우가 모두 여럿이면 어느 짝인지 알 수 없어 모든 조합을 낸다.
+사고 세부는 정답 데이터에서도 유형당 하나뿐이라 첫 번째만 붙인다. 부모가 예측되지 않은 세부·좌우는 버린다.
 """
 
 from __future__ import annotations
@@ -103,7 +107,7 @@ def decode(text: str, logits: dict[str, torch.Tensor], offsets: list[tuple[int, 
     treatments = []
     for item in _positives("treatment", logits["treatment"]):
         cat, status = item.split("/", 1)
-        treatments.append({"category": cat, "status": status, "detail": (treat_detail.get(cat) or [None])[0]})
+        treatments.extend({"category": cat, "status": status, "detail": d} for d in treat_detail.get(cat) or [None])
 
     symptoms = []
     for item in _positives("symptoms", logits["symptoms"]):
@@ -113,11 +117,11 @@ def decode(text: str, logits: dict[str, torch.Tensor], offsets: list[tuple[int, 
     injury_side = {}
     for item in _positives("injury_side", logits["injury_side"]):
         region, side = item.split("/", 1)
-        injury_side[region] = side
+        injury_side.setdefault(region, []).append(side)
     injuries = []
     for item in _positives("injury", logits["injury"]):
         region, itype = item.split("/", 1)
-        injuries.append({"region": region, "type": itype, "side": injury_side.get(region), "status": "확인"})
+        injuries.extend({"region": region, "type": itype, "side": s, "status": "확인"} for s in injury_side.get(region) or [None])
 
     tags = logits[SPAN_HEAD][0].argmax(-1).tolist()
     spans = decode_spans(tags, offsets)
