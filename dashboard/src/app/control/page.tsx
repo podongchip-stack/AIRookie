@@ -105,7 +105,7 @@ const SCREEN_STEP: Record<Screen, number> = {
 const STEP_TITLES = ["환자 발생", "신고 접수", "병원 응답", "이송 중", "도착 결과"];
 
 export default function ControlPage() {
-  const { state, connectionMode, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals } =
+  const { state, connectionMode, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand } =
     useDashboardSocket({ role: "monitor", id: "control" });
   const simOn = state.identity.simDispatch === true;
   const ambulances = state.mapOverview?.ambulances ?? [];
@@ -143,6 +143,12 @@ export default function ControlPage() {
 
   const now = () => new Date().toISOString();
   const note = (text: string) => setFeedback(`${new Date().toLocaleTimeString("ko-KR")} · ${text}`);
+  // 방금 한 동작 안내(초록 박스)는 5초 뒤 사라진다(2026-10-04). 새 안내가 오면 그때부터 다시 5초.
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = setTimeout(() => setFeedback(null), 5000);
+    return () => clearTimeout(timer);
+  }, [feedback]);
   const myCall = caseId ? state.callStatus[caseId] ?? null : null;
   // 휴대폰 통화가 끝나면 음성 분석(STT·구조화)을 기다리는 "매칭 중" 화면으로 넘어간다
   const isReported = caseId != null && (reported[caseId] === true || myCase != null || myCall?.state === "ended");
@@ -748,6 +754,11 @@ export default function ControlPage() {
         {screen === "respond" && myCase && (
           <ScreenCard title="③ 병원 응답 — 대신 누르거나, 실제 병원 탭에서 눌러도 됩니다">
             <SourceBadge source={caseSource} label={caseId ? templateCases[caseId] : undefined} />
+            <ZoneCountdown
+              expandAt={myCase.zoneExpandAt ?? null}
+              zone={Math.max(1, ...myCase.zoneActive)}
+              onSkip={() => sendZoneExpand(myCase.caseId) && note("건너뛰기 — 요청 범위를 지금 한 단계 넓힙니다")}
+            />
             {(() => {
               const pendingCount = myCase.hospitals.filter((h) => h.status === "pending").length;
               return (
@@ -806,7 +817,19 @@ export default function ControlPage() {
               </p>
             )}
             {simOn ? (
-              <Waiting text={`${PHASE_SHORT[phase]} — 병원에 도착하면 도착 결과 화면으로 넘어갑니다.`} />
+              <div className={css({ display: "flex", alignItems: "center", gap: "3", flexWrap: "wrap" })}>
+                <Waiting text={`${PHASE_SHORT[phase]} — 병원까지 30초, 도착하면 도착 결과 화면으로 넘어갑니다.`} />
+                {/* 빨리감기(2026-10-04) — 이송 30초 동안 상황을 다 골랐으면 3초 안에 병원 도착 */}
+                {phase === "transporting" && apid && caseId && (
+                  <button
+                    type="button"
+                    className={miniStyle}
+                    onClick={() => sendSimCommand("sim_fast_forward", apid, caseId) && note("빨리감기 — 3초 안에 병원에 도착합니다")}
+                  >
+                    ⏩ 빨리감기 (3초 안에 도착)
+                  </button>
+                )}
+              </div>
             ) : (
               <button type="button" className={bigButtonStyle} onClick={() => setManualArrival(true)}>
                 🏥 병원 도착 — 도착 결과 입력으로
@@ -871,6 +894,36 @@ function SourceBadge({ source, label }: { source: "voice" | "template" | null; l
     >
       {voice ? "🎙 현장 확인: 음성 (휴대폰 통화 · AI 구조화)" : `📋 현장 확인: 정해진 상황${label ? ` — ${label}` : ""} (가상 환자)`}
     </p>
+  );
+}
+
+// 시간 기반 존 확장 카운트다운(2026-10-04) — 승인·확정 병원이 없으면 hub가 30초마다 요청 범위를 한 단계 넓힌다.
+// [건너뛰기]는 기다리지 않고 바로 넓힌다. expandAt이 없으면(승인 병원 있음·더 넓힐 수 없음) 멈춤 안내만.
+function ZoneCountdown({ expandAt, zone, onSkip }: { expandAt: string | null; zone: number; onSkip: () => void }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, []);
+  const left = expandAt ? Math.max(0, Math.ceil((Date.parse(expandAt) - now) / 1000)) : null;
+  return (
+    <div className={css({ display: "flex", alignItems: "center", gap: "2.5", flexWrap: "wrap", fontSize: "sm", color: "ink", backgroundColor: "surfaceSub", paddingX: "3.5", paddingY: "2.5", borderRadius: "field" })}>
+      <span>
+        요청 범위 <b>{zone > 1 ? `존 1~${zone}` : "존 1"}</b> ·{" "}
+        {left == null ? (
+          <span className={css({ color: "ink3" })}>자동 확장 멈춤(수용 승인 병원이 있거나 더 넓힐 곳이 없음)</span>
+        ) : (
+          <>
+            응답 없으면 <b className={css({ color: "severity.medium", fontVariantNumeric: "tabular-nums" })}>{left}초</b> 뒤 다음 존으로 자동 확장
+          </>
+        )}
+      </span>
+      {left != null && (
+        <button type="button" className={miniStyle} onClick={onSkip}>
+          ⏭ 건너뛰기 (지금 확장)
+        </button>
+      )}
+    </div>
   );
 }
 

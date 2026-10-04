@@ -401,6 +401,9 @@ export interface DashboardState {
   transportAssessments: Record<string, TransportAssessment[]>;
   // caseId -> 예비 고지(2026-10-04). 실제 요청이 오면(matchResults에 그 사건이 생기면) 지운다.
   preAlerts: Record<string, PreAlert>;
+  // 관제 지도 전용(2026-10-04): 매칭 전 사건의 번호·시작 시각·증상, 오늘 종료된 사건 목록
+  caseMeta: Record<string, CaseMeta>;
+  caseHistory: CaseHistoryItem[];
 }
 
 // ── 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04) ─────────────────────────
@@ -532,6 +535,53 @@ export interface MonitorCaseHospital {
   unavailableReason?: string | null;
   // 이 병원이 든 존(1부터, zoneBandKm 간격). 거절 비율로 존이 넓혀지면 바깥 존 병원이 새로 들어온다.
   zone: number;
+  // 이 병원이 이 사건에 응답(승인·불가·확정)한 시각(2026-10-04, hub case_history)
+  respondedAt?: string | null;
+}
+
+// 사건 진행 과정 한 줄(2026-10-04, hub case_history — 규칙 기반 기록). kind: p 출동·통화 / s 요청 시작 /
+// r 수용 불가 / x 범위 확장 / a 수용 승인 / t 이송 확정 / c 취소·해제 / d 이송 완료
+export interface CaseEvent {
+  t: string;
+  kind: "p" | "s" | "r" | "x" | "a" | "t" | "c" | "d" | string;
+  text: string;
+}
+
+// hub → 관제: 매칭 전 사건의 번호·시작 시각·증상(2026-10-04). 매칭되면 case_overview가 이어받는다.
+export interface CaseMeta {
+  type: "case_meta";
+  caseId: string;
+  num: number;
+  startedAt: string;
+  symptom?: string | null;
+  severity?: Severity | string | null;
+  apid?: string | null;
+  ambulanceName?: string | null;
+  events?: CaseEvent[];
+}
+
+// 오늘 종료된 사건 하나(관제 '지난 사건')
+export interface CaseHistoryItem {
+  caseId: string;
+  num: number;
+  startedAt: string;
+  endedAt: string;
+  symptom?: string | null;
+  severity?: Severity | string | null;
+  apid?: string | null;
+  ambulanceName?: string | null;
+  requested: number;
+  rejected: number;
+  zone: number;
+  hospital?: string | null;
+  result: "done" | "cancel";
+  reason: string;
+  events: CaseEvent[];
+}
+
+export interface CaseHistory {
+  type: "case_history";
+  cases: CaseHistoryItem[];
 }
 
 // 사건 요약 — 통화 전문·활력징후 등 환자 상세는 없다(그건 요청을 받은 병원 대시보드만 본다).
@@ -545,6 +595,13 @@ export interface MonitorCase {
   zoneActive: number[];
   zoneBandKm: number;
   hospitals: MonitorCaseHospital[];
+  // 관제 지도 개편(2026-10-04): 오늘의 사건 번호·시작 시각·증상 한 줄·진행 과정(구버전 hub면 없음)
+  num?: number | null;
+  startedAt?: string | null;
+  symptom?: string | null;
+  events?: CaseEvent[];
+  // 시간 기반 존 확장(2026-10-04): 다음 자동 확장 예정 시각. 승인·확정 병원이 있거나 더 넓힐 수 없으면 null
+  zoneExpandAt?: string | null;
   source: "rule";
 }
 
@@ -648,7 +705,8 @@ export interface AmbulanceSimState {
 // dashboard → hub: [이동] · [현장 종료] · [정지] · [상황 재개](2026-10-03)
 export interface DispatchCommand {
   // sim_reset(2026-10-04): [시연 초기화] — 모든 사건 종료 + 전 구급차 기지 복귀(apid는 "*")
-  type: "dispatch" | "scene_end" | "sim_pause" | "sim_resume" | "sim_reset";
+  // sim_fast_forward(2026-10-04): [빨리감기] — 병원으로 이송 중이면 남은 이동을 3초 안에 마친다
+  type: "dispatch" | "scene_end" | "sim_pause" | "sim_resume" | "sim_reset" | "sim_fast_forward";
   apid: string;
   caseId: string;
   timestamp: string;
@@ -694,4 +752,6 @@ export type InboundMessage =
   | CallStatus
   | CaseSync
   | TransportAssessment
-  | PreAlert;
+  | PreAlert
+  | CaseMeta
+  | CaseHistory;

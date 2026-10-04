@@ -119,6 +119,9 @@ function TransportAlertBanner({ assessments }: { assessments: TransportAssessmen
 // 병원 대시보드는 병원 1곳 전용 화면이라 자신의 병원 ID(hpid)가 고정된다. 첫 페이지에서 병원 접근 코드(H-<hpid>)로
 // 들어온 /hospital?id= 페이지가 이 컴포넌트를 그린다(2026-10-03 회의로 관제 지도와 분리). onClose를 주면 상단바에
 // [닫기] 버튼이 생긴다(다른 화면 위에 띄울 때용, 지금은 쓰지 않음). 이 화면은 자기 hub 소켓을 연다(role=hospital).
+// 수용 요청 카드 정렬 — 위험한 순(2026-10-04)
+const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
 export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string; onClose?: () => void }) {
   const MY_HOSPITAL_ID: string | null = hospitalId || null;
   const { state, connectionMode, sendAction, sendInfoConfirm } = useDashboardSocket(
@@ -149,6 +152,15 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
           ({ result, hospital }) =>
             hospital.status === "confirmed" ||
             !result.hospitals.some((h) => h.hospitalId !== MY_HOSPITAL_ID && h.status === "confirmed"),
+        )
+        // 위험한 환자부터(2026-10-04): 중증도(중증 → 중등증 → 경증) → KTAS(1이 가장 위급) → 먼저 온 요청.
+        // 예전엔 받은 순서 그대로라, 요청이 몰리면 중증 환자 카드가 아래에 묻혔다.
+        .map((entry, arrival) => ({ ...entry, arrival }))
+        .sort(
+          (a, b) =>
+            SEVERITY_RANK[a.result.patientInfo.severityTag] - SEVERITY_RANK[b.result.patientInfo.severityTag] ||
+            (a.result.patientInfo.ktasLevel ?? 9) - (b.result.patientInfo.ktasLevel ?? 9) ||
+            a.arrival - b.arrival,
         )
     : [];
 
