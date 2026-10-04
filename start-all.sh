@@ -286,6 +286,10 @@ fi
 export NEXT_PUBLIC_DASHBOARD_WS_URL="$WS_URL"
 export NEXT_PUBLIC_HUB_HTTP_URL="$HUB_HTTP_URL"
 export NEXT_PUBLIC_LIDAR_VIEWER_URL="$VIEWER_URL"
+# 서버측(Next 라우트 핸들러) 전용 — 공개 모드에선 NEXT_PUBLIC_HUB_HTTP_URL이 터널 도메인인데
+# 터널은 /voice/* 를 hub로 안 넘기므로(의도적), Next→hub 서버간 호출은 루프백으로 직접 간다.
+# NEXT_PUBLIC_이 아니라 빌드에 안 박히고 next start가 실행 시점에 읽는다.
+export HUB_INTERNAL_HTTP_URL="http://127.0.0.1:$HUB_PORT"
 
 # 카카오맵 키는 접속 주소마다 따로 발급돼 있다(콘솔의 JavaScript SDK 도메인). 로컬 모드는
 # .env.local의 NEXT_PUBLIC_KAKAO_MAP_APP_KEY(localhost용)를 그대로 쓰고, 도메인 모드는
