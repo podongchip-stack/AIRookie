@@ -343,3 +343,65 @@ cd info/Hospital_inform/info && conda run -n rookie_info python snapshot_cloud.p
    진행 중이던 사건은 재시작 규칙대로 닫힌다(시뮬레이션 모드에선 재시작하면 구급차가 기지로 돌아가므로).
 
 `hub/data/test/`는 테스트용이라 옮기지 않는다.
+
+## 12. voice 서버 (중앙 음성 인식)
+
+### 12-1. 언제 필요한가
+
+| 통화 방법 | voice 필요? |
+|---|---|
+| 아이폰 앱 — 하단에 "온디바이스 음성 인식·구조화" | **불필요** — 아이폰 안에서 인식·구조화하고 [전송] 때 요약을 hub로 바로 보낸다 |
+| 아이폰 앱 — 하단에 "서버 음성 인식"(모델 미포함 빌드·온디바이스 꺼짐) | **필요** |
+| 웹 전화 앱(휴대폰 브라우저, 첫 페이지 `P-…`) | **필요** |
+| 구급차 대시보드 [통화 시작](`--dashboard-call`) | **필요** |
+
+시연 때는 아이폰 모델이 못 올라와 서버 인식으로 넘어가는 경우를 대비해 **켜 두는 것을 권한다**. voice는 hub와 같은 장비에서
+띄운다(`HUB_BASE_URL` 기본 `http://127.0.0.1:5001`) — 터널을 거치지 않고, 휴대폰 음성은 hub가 중계한다.
+
+### 12-2. 준비 (3-3 환경 + 1단계 `libportaudio2`가 끝난 뒤)
+
+GPU 확인 — NVIDIA 장비면 드라이버가 잡혀 있어야 cu128 torch가 GPU를 쓴다(없으면 CPU로 돌아 통화 1건도 실시간을 못 따라간다 —
+CPU 전용 i7 실측: 통화 종료 → 요약 약 11초, 동시 2건이면 약 72초):
+
+```bash
+nvidia-smi                                                                   # GPU·드라이버 확인(없으면 CPU 모드)
+conda run -n rookie_voice python -c "import torch; print('cuda', torch.cuda.is_available())"
+```
+
+모델 가중치 미리 받기(약 3GB, 한 번만 — 안 하면 첫 실행 때 받는다):
+
+```bash
+cd voice
+conda run -n rookie_voice python -c "
+from huggingface_hub import snapshot_download
+import weights
+snapshot_download('Qwen/Qwen3-ASR-0.6B-hf')          # ASR 베이스
+print('ASR 어댑터', weights.resolve_asr_adapter_dir())
+print('MF_BERT', weights.resolve_mf_bert_dir())      # 커밋 해시로 고정된 가중치
+"
+cd ..
+```
+
+### 12-3. 실행 · 계속 켜 두기
+
+`./start-all.sh`는 voice를 띄우지 않는다 — 따로 띄운다. 원격(크롬 원격 데스크톱·SSH)으로 띄우고 창을 닫아도 꺼지지 않게
+**tmux** 세션 안에서 돌린다:
+
+```bash
+sudo apt install -y tmux                          # 한 번만
+tmux new -d -s voice './voice/start-voice.sh'     # 저장소 루트에서 — 백그라운드 세션으로 시작
+tmux attach -t voice                              # 화면 보기(빠져나오기: Ctrl-b 누른 뒤 d — 서버는 계속 돈다)
+tmux kill-session -t voice                        # 끄기
+```
+
+확인:
+
+```bash
+tmux capture-pane -pt voice | tail -5             # "모델 로딩 완료", "hub에 중앙 voice로 등록 완료"가 보이면 정상
+grep -c "중앙 voice" /tmp/goldenlink-logs/hub.log  # hub 쪽에도 등록 기록(30초마다 다시 등록)
+```
+
+- GPU 강제/해제: `VOICE_DEVICE=cuda ./voice/start-voice.sh` 또는 `VOICE_DEVICE=cpu …` (기본 auto)
+- 통화 원본·STT 원문·요약은 `data/voice_data/` 아래에 남는다(원본 보존 원칙 — 취소한 통화는 `_cancelled.wav`로 음성만)
+- **코드를 받은 뒤(`git pull`)엔 voice도 다시 띄운다** — `tmux kill-session -t voice` 후 다시 `tmux new …`
+- hub를 다시 띄워도 voice는 그대로 둬도 된다(30초 안에 hub에 다시 등록된다)
