@@ -66,6 +66,8 @@ export function RequestCard({
   banner,
   onSelect,
   onAction,
+  paused = false,
+  onPaused,
 }: {
   result: HubMatchResult;
   hospital: HospitalCandidate;
@@ -78,8 +80,16 @@ export function RequestCard({
   banner?: ReactNode;
   onSelect: () => void;
   onAction: (action: ApprovalAction) => void;
+  // 시연 일시정지 중(2026-10-05) — 버튼을 눌러도 보내지 않고 onPaused(화면 위 안내)만 부른다
+  paused?: boolean;
+  onPaused?: () => void;
 }) {
-  const [rejecting, setRejecting] = useState<null | "hospital_reject" | "arrival_refused">(null);
+  const [rejecting, setRejecting] = useState<null | "hospital_reject" | "arrival_refused" | "transport_withdraw">(null);
+  // 일시정지 중엔 모든 조작을 막는다(2026-10-05) — 사유 칸을 여는 것부터 막아 hub로 아무것도 안 간다
+  const act = (fn: () => void) => () => {
+    if (paused) onPaused?.();
+    else fn();
+  };
   const p = result.patientInfo;
   const m = KIND[kind];
   const sev = SEV[p.severityTag];
@@ -112,7 +122,9 @@ export function RequestCard({
       ? "환자 수용이 완료되었습니다."
       : kind === "full"
         ? `수용 불가 · ${unavailableReasonLabel(hospital.unavailableReason) ?? "응급실 병상 없음(E-Gen 0)"} — 지금은 수용 승인을 할 수 없습니다`
-        : `수용 불가 처리됨 · 사유: ${rejectionReasonLabel(hospital.rejectReason) ?? "사유 없음"}`;
+        : hospital.excluded
+          ? `수용 철회·불가로 이 사건에서 제외됨 · 사유: ${rejectionReasonLabel(hospital.rejectReason) ?? "사유 없음"}`
+          : `수용 불가 처리됨 · 사유: ${rejectionReasonLabel(hospital.rejectReason) ?? "사유 없음"}`;
 
   const facts = [
     p.consciousness && `의식 ${p.consciousness}`,
@@ -147,6 +159,14 @@ export function RequestCard({
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 8px" }}>
               <span style={{ fontSize: 13.5, fontWeight: 700, color: HD.navy }}>{result.ambulanceName ?? result.apid ?? "구급차"}</span>
               <span style={{ fontSize: 11.5, color: HD.muted }}>실시간 환자 정보 요약</span>
+              {(p.callRound ?? 1) > 1 && (
+                <span
+                  style={{ fontSize: 10.5, fontWeight: 700, color: HD.orange, background: HD.orangeSoft, borderRadius: 999, padding: "2px 8px" }}
+                  title="환자 상태가 바뀌어 구급대가 다시 통화했습니다 — 최신 통화 내용이 위에 반영되고, 앞선 요약은 아래에 남습니다"
+                >
+                  {p.callRound}차 통화로 갱신
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", alignItems: "center" }}>
               <span
@@ -184,6 +204,18 @@ export function RequestCard({
                 <Vital label="혈압" value={vital.sbp != null || vital.dbp != null ? `${vital.sbp ?? "?"}/${vital.dbp ?? "?"}` : "-"} bad={warn.bp(vital.sbp)} first />
                 <Vital label="맥박" value={vital.hr != null ? String(vital.hr) : "-"} bad={warn.hr(vital.hr)} />
                 <Vital label="SpO₂" value={vital.spo2 != null ? `${vital.spo2}%` : "-"} bad={warn.sp(vital.spo2)} />
+              </div>
+            )}
+
+            {/* 앞선 통화 요약(덧붙이기, 2026-10-05) — 지우지 않고 회차별로 남긴다 */}
+            {(p.previousCalls ?? []).length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, background: HD.line2, borderRadius: 8, padding: "5px 9px" }}>
+                {(p.previousCalls ?? []).map((u) => (
+                  <span key={u.callRound} style={{ fontSize: 11.5, color: HD.sub }}>
+                    <b style={{ color: HD.ink3 }}>{u.callRound}차 통화</b> · {SEV[u.severityTag].label} · {u.expectedDiagnosis}
+                    {u.ktasLevel != null ? ` · KTAS ${u.ktasLevel}` : ""}
+                  </span>
+                ))}
               </div>
             )}
 
@@ -235,13 +267,13 @@ export function RequestCard({
 
             {rejecting === null && (kind === "pending" || kind === "approved" || kind === "declined") && (
               <>
-                {kind !== "approved" && (
-                  <button type="button" onClick={() => send("hospital_approve")} style={primaryBtn}>
+                {kind !== "approved" && !hospital.excluded && (
+                  <button type="button" onClick={act(() => send("hospital_approve"))} style={pausedStyle(primaryBtn, paused)}>
                     {kind === "declined" ? "승인으로 변경" : "병원 승인"}
                   </button>
                 )}
                 {kind !== "declined" && (
-                  <button type="button" onClick={() => setRejecting("hospital_reject")} style={dangerBtn}>
+                  <button type="button" onClick={act(() => setRejecting("hospital_reject"))} style={pausedStyle(dangerBtn, paused)}>
                     {kind === "approved" ? "불가로 변경 (사유)" : "불가 (사유 선택)"}
                   </button>
                 )}
@@ -249,16 +281,26 @@ export function RequestCard({
             )}
             {rejecting === null && kind === "arrived" && (
               <>
-                <button type="button" onClick={() => send("arrival_accepted")} style={{ ...primaryBtn, background: HD.lime }}>
+                <button type="button" onClick={act(() => send("arrival_accepted"))} style={pausedStyle({ ...primaryBtn, background: HD.lime }, paused)}>
                   환자 수용 완료
                 </button>
-                <button type="button" onClick={() => setRejecting("arrival_refused")} style={dangerBtn}>
+                <button type="button" onClick={act(() => setRejecting("arrival_refused"))} style={pausedStyle(dangerBtn, paused)}>
                   도착 후 수용 불가 (사유)
                 </button>
               </>
             )}
-            {kind === "transit" && (
-              <span style={{ fontSize: 11.5, color: HD.muted, textAlign: "center" }}>구급차가 도착하면 수용 결과 버튼이 열립니다</span>
+            {kind === "transit" && rejecting === null && (
+              <>
+                {/* 이송 중 수용 철회(2026-10-05) — 도착 전에 환자 상태·본원 사정으로 못 받게 되면 바로 알린다.
+                    구급차는 그 자리에서 다른 승인 병원으로 재선택하고, 본원은 이 사건에서 빠진다. */}
+                <button type="button" onClick={act(() => setRejecting("transport_withdraw"))} style={pausedStyle(dangerBtn, paused)}>
+                  이송 중 수용 철회 (사유)
+                </button>
+                <span style={{ fontSize: 11.5, color: HD.muted, textAlign: "center" }}>구급차가 도착하면 수용 결과 버튼이 열립니다</span>
+              </>
+            )}
+            {paused && !closed && (
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: HD.orange, textAlign: "center" }}>시연 일시정지 중 — 조작 잠김</span>
             )}
           </div>
         </div>
@@ -267,14 +309,19 @@ export function RequestCard({
         {rejecting !== null && (
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, background: HD.redSoft, borderRadius: 10, padding: "7px 10px" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: HD.red, marginRight: 4 }}>
-              {rejecting === "arrival_refused" ? "도착 후 수용 불가 사유를 선택하세요" : "불가 사유를 선택하세요"}
+              {rejecting === "arrival_refused"
+                ? "도착 후 수용 불가 사유를 선택하세요"
+                : rejecting === "transport_withdraw"
+                  ? "이송 중 수용 철회 사유를 선택하세요 — 구급차는 다른 병원으로 재선택합니다"
+                  : "불가 사유를 선택하세요"}
             </span>
             {REASONS.map((r) => (
               <button
                 key={r.value}
                 type="button"
                 onClick={() => {
-                  send(rejecting, r.value);
+                  if (paused) onPaused?.();
+                  else send(rejecting, r.value);
                   setRejecting(null);
                 }}
                 style={{ minHeight: 36, padding: "0 11px", borderRadius: 8, border: "1.5px solid #EBA9A3", background: "#FFFFFF", color: HD.red, fontSize: 13, fontFamily: "inherit", cursor: "pointer" }}
@@ -303,6 +350,11 @@ function Vital({ label, value, bad, first }: { label: string; value: string; bad
       <span style={{ fontSize: 16, fontWeight: 700, color: bad ? HD.red : HD.navy }}>{value}</span>
     </span>
   );
+}
+
+// 일시정지 중엔 버튼을 흐리게(누르면 안내만 뜬다)
+function pausedStyle(style: React.CSSProperties, paused: boolean): React.CSSProperties {
+  return paused ? { ...style, opacity: 0.45, cursor: "not-allowed" } : style;
 }
 
 const primaryBtn: React.CSSProperties = {

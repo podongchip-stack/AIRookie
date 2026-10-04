@@ -245,28 +245,9 @@ export function HospitalCandidateListPanel({
   const visible = data.hospitals.filter((hospital) => !focusConfirmed || showOthers || hospital.hospitalId === confirmedHospitalId);
   const zoneMax = Math.max(1, ...data.zoneActive);
 
-  // 존 경계(2026-10-04 존별 블록 → 시안의 가로 줄에선 구분 표식) — 거절로 넓힌 존은 보라색 표식 카드로 시작한다.
+  // 요청 범위(존)는 목록 머리글의 "Zone 1~N"으로만 보인다 — 보라색 존 구분 카드는 2026-10-05 요청으로 뺐다.
   const items: ReactNode[] = [];
-  let lastZone: number | null = null;
   for (const hospital of visible) {
-    const zone = hospital.zone ?? Math.max(1, Math.ceil(hospital.distanceKm / 5));
-    if (!focusConfirmed && lastZone !== null && zone !== lastZone) {
-      items.push(
-        <div
-          key={`zone-${zone}`}
-          style={{
-            flex: "0 0 92px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 4,
-            borderRadius: 18, border: "1px dashed #C9BBF5", background: "#F7F4FE", color: "#7048E8", textAlign: "center", padding: 8,
-            whiteSpace: "normal",
-          }}
-        >
-          <b style={{ fontSize: 14 }}>Zone {zone}</b>
-          <span style={{ fontSize: 11 }}>{(zone - 1) * 5}~{zone * 5}km</span>
-          <span style={{ fontSize: 11 }}>거절로 확장</span>
-        </div>,
-      );
-    }
-    lastZone = zone;
     items.push(
       <CandidateCard
         key={hospital.hospitalId}
@@ -459,7 +440,7 @@ function CandidateCard({
         </button>
       ) : (
         <button type="button" disabled style={approveButton("disabled")}>
-          {statusKey === "rejected" ? "수용 불가" : "병원 응답 대기"}
+          {hospital.excluded ? "이 사건에서 제외됨" : statusKey === "rejected" ? "수용 불가" : "병원 응답 대기"}
         </button>
       )}
     </div>

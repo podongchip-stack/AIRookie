@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePauseToast } from "@/components/ui/PauseToast";
 import { css } from "styled-system/css";
 import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
 import { HospitalSelfInfoPanel } from "@/components/hospital/HospitalSelfInfoPanel";
@@ -130,6 +131,8 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
     MY_HOSPITAL_ID ? { role: "hospital", id: MY_HOSPITAL_ID } : null,
   );
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  // 시연 일시정지 안내(2026-10-05) — 일시정지 중 버튼을 누르거나 hub가 조작을 거부하면 화면 위에 잠깐
+  const pauseToast = usePauseToast(state.actionRefused);
   // 예비 고지에서 [확인]을 누른 사건 — 모달만 닫고, 실제 요청·사건 종료 시 훅이 데이터를 지운다.
   const [dismissedPreAlerts, setDismissedPreAlerts] = useState<Set<string>>(new Set());
   const activePreAlerts = Object.values(state.preAlerts).filter((alert) => !dismissedPreAlerts.has(alert.caseId));
@@ -208,6 +211,7 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
           ".hd-list{overflow:visible!important;flex:none!important}.hd-map{max-width:none!important;flex:1 1 100%!important;height:520px}}"}
       </style>
       <div className="hd-inner" style={{ width: "100%", maxWidth: 1360, margin: "0 auto", flex: "1 1 0", minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+        {pauseToast.node}
         <HospitalTopBar
           caseCount={activeCount}
           connectionMode={connectionMode}
@@ -286,6 +290,8 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
                     banner={<TransportAlertBanner assessments={state.transportAssessments[result.caseId] ?? []} />}
                     onSelect={() => setSelectedCaseId(result.caseId)}
                     onAction={sendAction}
+                    paused={result.paused === true}
+                    onPaused={pauseToast.notify}
                   />
                 ))
               )}

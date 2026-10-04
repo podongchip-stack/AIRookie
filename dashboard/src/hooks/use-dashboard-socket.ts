@@ -45,6 +45,7 @@ const MOCK_ACTION_TO_STATUS: Record<ApprovalActionType, HospitalStatus> = {
   final_approval: "confirmed",
   arrival_accepted: "confirmed",
   arrival_refused: "rejected",
+  transport_withdraw: "rejected",
 };
 
 // hub 연결 상태. "reconnecting"은 hub 주소는 설정돼 있는데 연결이 끊겨 다시 붙는 중이라는
@@ -72,6 +73,7 @@ const INITIAL_STATE: DashboardState = {
   preAlerts: {},
   caseMeta: {},
   caseHistory: [],
+  actionRefused: null,
 };
 
 // 관제 지도 "병원 응답" 기록에 남길 최대 개수
@@ -383,6 +385,9 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "case_history":
               setState((prev) => ({ ...prev, caseHistory: parsed.cases }));
               break;
+            case "action_refused":
+              setState((prev) => ({ ...prev, actionRefused: { at: Date.now(), reason: parsed.reason, caseId: parsed.caseId } }));
+              break;
             case "match_result":
             case undefined:
               applyMatchResult(parsed);
@@ -452,7 +457,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       signal: CallSignalType,
       apid: string,
       caseId: string,
-      extra?: { hospitalId?: string | null; device?: CallDevice },
+      extra?: { hospitalId?: string | null; device?: CallDevice; cancelled?: boolean },
     ): boolean => {
     const payload: CallSignal = {
       type: "call_signal",
@@ -462,6 +467,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       caseId,
       ...(extra?.hospitalId ? { hospitalId: extra.hospitalId } : {}),
       ...(extra?.device ? { device: extra.device } : {}),
+      ...(extra?.cancelled ? { cancelled: true } : {}),
     };
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {

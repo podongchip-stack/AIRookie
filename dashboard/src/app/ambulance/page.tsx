@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { css } from "styled-system/css";
 import { AmbulanceLegend, AmbulanceTopBar } from "@/components/ambulance/AmbulanceTopBar";
 import { AD } from "@/components/ambulance/ambulance-design";
+import { usePauseToast } from "@/components/ui/PauseToast";
 import { CallSummaryEditablePanel } from "@/components/ambulance/CallSummaryEditablePanel";
 import { CallDemoPanel } from "@/components/ambulance/CallDemoPanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
@@ -130,7 +131,15 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
     }
   }
 
+  // 시연 일시정지 중엔 이 화면의 조작(이송 승인·현장 종료·이송 중 시나리오)을 막고 위쪽에 안내를 잠깐 띄운다(2026-10-05)
+  const simPaused = simOn && mySim?.paused === true;
+  const pauseToast = usePauseToast(state.actionRefused);
+
   function handleSceneEnd() {
+    if (simPaused) {
+      pauseToast.notify();
+      return;
+    }
     // hub가 기억하는 이 구급차의 사건으로 보낸다 — 다른 caseId면 hub가 거부한다.
     const caseId = simCaseId ?? activeCaseId;
     if (!apid || !caseId) return;
@@ -167,6 +176,10 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
   }
 
   function handleApprove(hospitalId: string) {
+    if (simPaused) {
+      pauseToast.notify();
+      return;
+    }
     if (!activeCaseId) return;
     setPendingConfirm({ hospitalId, result: myResult });
     sendAction({
@@ -209,6 +222,7 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
     <div className="amb-root" style={{ background: AD.bg, color: AD.ink, fontSize: 13, lineHeight: 1.4, fontVariantNumeric: "tabular-nums" }}>
       <style>{PAGE_CSS}</style>
       <div className="amb-page">
+        {pauseToast.node}
         <AmbulanceTopBar
           confirmedName={confirmedName}
           connectionMode={connectionMode}
@@ -262,7 +276,13 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
                   apid={apid}
                   assessments={state.transportAssessments[activeCaseId] ?? []}
                   live={connectionMode === "live"}
-                  onSendVitals={sendTransportVitals}
+                  onSendVitals={(...args: Parameters<typeof sendTransportVitals>) => {
+                    if (simPaused) {
+                      pauseToast.notify();
+                      return false;
+                    }
+                    return sendTransportVitals(...args);
+                  }}
                 />
               </div>
             )}

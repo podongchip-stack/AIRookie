@@ -79,8 +79,8 @@ export function AmbulanceTopBar({
         {/* 신뢰도 검증은 맨 오른쪽(2026-10-05 요청) */}
         <VerificationButton
           buttonStyle={{
-            minHeight: 44, padding: "0 18px", border: 0, borderRadius: 999, background: AD.blue,
-            color: "#FFFFFF", fontWeight: 700, fontSize: 13, cursor: "pointer",
+            minHeight: 34, padding: "0 14px", border: 0, borderRadius: 999, background: AD.blue,
+            color: "#FFFFFF", fontWeight: 700, fontSize: 12, cursor: "pointer",
           }}
         />
       </div>

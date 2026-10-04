@@ -11,7 +11,8 @@ import {
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import { searchPlaces } from "@/lib/geocode";
 import { PHASE_SHORT } from "@/lib/monitor";
-import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
+import { REJECTION_REASON_GROUPS, rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
+import { usePauseToast } from "@/components/ui/PauseToast";
 import type {
   AmbulanceSimState,
   GeocodeResult,
@@ -19,6 +20,7 @@ import type {
   MapHospital,
   MonitorCase,
   MonitorCaseHospital,
+  RejectionReason,
   VitalObservationIn,
 } from "@/types/dashboard";
 
@@ -206,6 +208,32 @@ export default function ControlPage() {
 
   const now = () => new Date().toISOString();
   const note = (text: string) => setLastNote({ t: new Date().toISOString(), text });
+  // 시연 일시정지 중엔 [재개]·[시연 초기화] 말고는 모든 조작을 막고, 누르면 위쪽에 안내를 잠깐 띄운다(2026-10-05)
+  const locked = simOn && sim?.paused === true;
+  const pauseToast = usePauseToast(state.actionRefused);
+  const g = (fn: () => void) => pauseToast.guard(locked, fn);
+  // 불가 사유 선택 모달(2026-10-05) — 병원 대시보드와 같은 4축 사유. 이송 중 수용 철회·도착 후 수용 불가도 같은 모달
+  type RejectAction = "hospital_reject" | "transport_withdraw" | "arrival_refused";
+  const [rejectTarget, setRejectTarget] = useState<{ caseId: string; hospitalId: string; name: string; action: RejectAction } | null>(null);
+  function sendReject(reason: RejectionReason) {
+    if (!rejectTarget) return;
+    const { caseId: targetCase, hospitalId, name, action } = rejectTarget;
+    setRejectTarget(null);
+    if (locked) {
+      pauseToast.notify();
+      return;
+    }
+    sendAction({ caseId: targetCase, action, hospital_id: hospitalId, actor: "hospital", timestamp: now(), reason });
+    const label = rejectionReasonLabel(reason) ?? "사유 없음";
+    if (action === "arrival_refused") {
+      setManualArrival(false);
+      note(`도착 후 수용 불가(${label}) — 재선택 대기(병원 응답 화면으로)`);
+    } else if (action === "transport_withdraw") {
+      note(`${name} 이송 중 수용 철회(${label}) — 구급차는 다른 승인 병원으로 재선택`);
+    } else {
+      note(`${name} 수용 불가 · ${label}`);
+    }
+  }
   const myCall = caseId ? state.callStatus[caseId] ?? null : null;
   // 휴대폰 통화가 끝나면 음성 분석(STT·구조화)을 기다리는 "매칭 중" 화면으로 넘어간다
   const isReported = caseId != null && (reported[caseId] === true || myCase != null || myCall?.state === "ended");
@@ -640,6 +668,25 @@ export default function ControlPage() {
     <div className="ctl-root" style={{ boxSizing: "border-box", background: C.bg, color: C.ink, padding: "10px 16px 8px", display: "flex", justifyContent: "center", fontVariantNumeric: "tabular-nums" }}>
       <div style={{ width: "100%", maxWidth: 1500, height: "100%", minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
         <style>{CONSOLE_CSS}</style>
+        {pauseToast.node}
+        {rejectTarget && (
+          <RejectReasonModal
+            title={
+              rejectTarget.action === "transport_withdraw"
+                ? `${rejectTarget.name} — 이송 중 수용 철회 사유`
+                : rejectTarget.action === "arrival_refused"
+                  ? `${rejectTarget.name} — 도착 후 수용 불가 사유`
+                  : `${rejectTarget.name} — 수용 불가 사유`
+            }
+            note={
+              rejectTarget.action === "transport_withdraw"
+                ? "철회한 병원은 이 사건에서 제외되고, 구급차는 그 자리에서 다른 승인 병원으로 재선택합니다."
+                : "고른 사유는 병원 대시보드와 거절 로그에 그대로 남습니다."
+            }
+            onPick={sendReject}
+            onClose={() => setRejectTarget(null)}
+          />
+        )}
         {/* 헤더 */}
         <header style={{ ...panel, padding: "8px 16px", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
@@ -662,7 +709,7 @@ export default function ControlPage() {
               </button>
             )}
             {simOn && phase === "on_scene" && sim?.caseId && !mciOn && (
-              <button type="button" style={headerButton} onClick={() => sendSimCommand("scene_end", apid!, sim.caseId!) && note("현장 종료 — 상황 취소, 복귀")}>
+              <button type="button" style={headerButton} onClick={g(() => sendSimCommand("scene_end", apid!, sim.caseId!) && note("현장 종료 — 상황 취소, 복귀"))}>
                 상황 취소
               </button>
             )}
@@ -741,6 +788,12 @@ export default function ControlPage() {
           </div>
         </section>
 
+        {locked && !mciOn && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.orangeSoft, color: C.orangeInk, borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700 }}>
+            시연 일시정지 중 — 조작이 잠겼습니다. 상단 [재개]를 누르면 이어 갑니다.
+          </div>
+        )}
+
         {/* 단계 본문 */}
         <main style={{ flex: "1 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
           {mciOn ? (
@@ -754,7 +807,7 @@ export default function ControlPage() {
               onApproveAll={() => {
                 let cases = 0;
                 let hospitals = 0;
-                for (const c of casualtyView) {
+                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
                   if (c.stage === 2 && c.monitorCase && !c.confirmed) {
                     const n = bulkRespond(c.monitorCase, "hospital_approve");
                     if (n > 0) { cases += 1; hospitals += n; }
@@ -764,7 +817,7 @@ export default function ControlPage() {
               }}
               onConfirmAll={() => {
                 let n = 0;
-                for (const c of casualtyView) {
+                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
                   if (c.stage !== 2 || !c.monitorCase || c.confirmed) continue;
                   const first = c.monitorCase.hospitals.find((h) => h.status === "approved");
                   if (!first) continue;
@@ -775,7 +828,7 @@ export default function ControlPage() {
               }}
               onFastAll={() => {
                 let n = 0;
-                for (const c of casualtyView) {
+                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
                   if (c.unit && ["dispatching", "transporting"].includes(c.unit.phase)) {
                     sendSimCommand("sim_fast_forward", c.apid, c.caseId);
                     n += 1;
@@ -785,7 +838,7 @@ export default function ControlPage() {
               }}
               onAcceptAll={() => {
                 let n = 0;
-                for (const c of casualtyView) {
+                for (const c of casualtyView.filter((x) => !x.unit?.paused)) {
                   if (c.stage === 4 && c.confirmed) {
                     sendAction({ caseId: c.caseId, action: "arrival_accepted", hospital_id: c.confirmed.hospitalId, actor: "hospital", timestamp: now() });
                     n += 1;
@@ -793,13 +846,15 @@ export default function ControlPage() {
                 }
                 note(`대량사고 — 도착한 ${n}명 환자 수용 완료`);
               }}
-              onCaseApprove={(c) => c.monitorCase && bulkRespond(c.monitorCase, "hospital_approve")}
+              onCaseApprove={(c) => (c.unit?.paused ? pauseToast.notify() : c.monitorCase && bulkRespond(c.monitorCase, "hospital_approve"))}
               onCaseConfirm={(c) => {
+                if (c.unit?.paused) return pauseToast.notify();
                 const first = c.monitorCase?.hospitals.find((h) => h.status === "approved");
                 if (first) sendAction({ caseId: c.caseId, action: "final_approval", hospital_id: first.hospitalId, actor: "paramedic", timestamp: now() });
               }}
-              onCaseFast={(c) => sendSimCommand("sim_fast_forward", c.apid, c.caseId)}
+              onCaseFast={(c) => (c.unit?.paused ? pauseToast.notify() : sendSimCommand("sim_fast_forward", c.apid, c.caseId))}
               onCaseArrival={(c, accepted) => {
+                if (c.unit?.paused) return pauseToast.notify();
                 if (!c.confirmed) return;
                 sendAction({ caseId: c.caseId, action: accepted ? "arrival_accepted" : "arrival_refused", hospital_id: c.confirmed.hospitalId, actor: "hospital", timestamp: now() });
                 note(`사상자 ${c.no} — ${accepted ? "환자 수용 완료" : "도착 후 수용 불가(재선택 대기)"}`);
@@ -981,7 +1036,7 @@ export default function ControlPage() {
                           {dispatchInfo ? ` · 거리 ${dispatchInfo.km.toFixed(1)}km` : ""}
                         </div>
                         {left != null && left > 3 && apid && caseId && (
-                          <FastButton onClick={() => sendSimCommand("sim_fast_forward", apid, caseId) && note("빨리감기 — 3초 안에 현장에 도착합니다")} />
+                          <FastButton onClick={g(() => sendSimCommand("sim_fast_forward", apid, caseId) && note("빨리감기 — 3초 안에 현장에 도착합니다"))} />
                         )}
                       </div>
                       {alert?.hospitalCount != null && (
@@ -1051,7 +1106,7 @@ export default function ControlPage() {
                             <button
                               type="button"
                               disabled={sending}
-                              onClick={() => handleReport(verifyTemplate.key)}
+                              onClick={g(() => handleReport(verifyTemplate.key))}
                               style={{ minHeight: 38, padding: "0 16px", background: "#ffffff", border: `1px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
                             >
                               시연용 · 통화 없이 진행 ({verifyTemplate.label} — 정해진 상황으로 전달)
@@ -1076,7 +1131,7 @@ export default function ControlPage() {
                       <button
                         type="button"
                         disabled={sending}
-                        onClick={() => handleReport(verifyTemplate.key)}
+                        onClick={g(() => handleReport(verifyTemplate.key))}
                         style={{ minHeight: 46, background: C.blue, border: "none", borderRadius: 10, color: "#ffffff", fontSize: 15, fontWeight: 700, cursor: sending ? "wait" : "pointer", opacity: sending ? 0.6 : 1 }}
                       >
                         {sending ? "환자 정보 전송 중…" : `환자 상태 확정 — ${verifyTemplate.label} · 인근 병원에 동시 전달`}
@@ -1109,11 +1164,11 @@ export default function ControlPage() {
                       return (
                         <>
                           <button type="button" disabled={pendingCount === 0} style={bulkButton("green", pendingCount === 0)}
-                            onClick={() => note(`미응답 ${bulkRespond(myCase, "hospital_approve")}곳 일괄 승인`)}>
+                            onClick={g(() => note(`미응답 ${bulkRespond(myCase, "hospital_approve")}곳 일괄 승인`))}>
                             <Icon name="check" size={13} color={C.greenInk} stroke={3} />미응답 {pendingCount}곳 전부 승인
                           </button>
                           <button type="button" disabled={pendingCount === 0} style={bulkButton("red", pendingCount === 0)}
-                            onClick={() => note(`미응답 ${bulkRespond(myCase, "hospital_reject")}곳 일괄 불가`)}>
+                            onClick={g(() => note(`미응답 ${bulkRespond(myCase, "hospital_reject")}곳 일괄 불가 (사유 없음)`))}>
                             <Icon name="x" size={13} color={C.red} stroke={3} />미응답 {pendingCount}곳 전부 불가 (존 확장 연출)
                           </button>
                         </>
@@ -1124,7 +1179,7 @@ export default function ControlPage() {
                     expandAt={myCase.zoneExpandAt ?? null}
                     pausedLeft={myCase.zonePausedLeftSec ?? null}
                     zone={zoneMax}
-                    onSkip={() => sendZoneExpand(myCase.caseId) && note("건너뛰기 — 요청 범위를 지금 한 단계 넓힙니다")}
+                    onSkip={g(() => sendZoneExpand(myCase.caseId) && note("건너뛰기 — 요청 범위를 지금 한 단계 넓힙니다"))}
                   />
                   {/* 존이 넓혀져 병원이 늘어나도 이 목록 안에서만 스크롤된다 */}
                   <div className="ctl-scroll" style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", alignContent: "start", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 520px), 1fr))", gridAutoRows: "minmax(48px, auto)", gap: "8px 12px", paddingRight: 2 }}>
@@ -1133,9 +1188,9 @@ export default function ControlPage() {
                         key={hospital.hospitalId}
                         hospital={hospital}
                         info={hospitalInfo.get(hospital.hospitalId)}
-                        onApprove={() => sendAction({ caseId: myCase.caseId, action: "hospital_approve", hospital_id: hospital.hospitalId, actor: "hospital", timestamp: now() })}
-                        onReject={() => sendAction({ caseId: myCase.caseId, action: "hospital_reject", hospital_id: hospital.hospitalId, actor: "hospital", timestamp: now() })}
-                        onConfirm={() => sendAction({ caseId: myCase.caseId, action: "final_approval", hospital_id: hospital.hospitalId, actor: "paramedic", timestamp: now() })}
+                        onApprove={g(() => sendAction({ caseId: myCase.caseId, action: "hospital_approve", hospital_id: hospital.hospitalId, actor: "hospital", timestamp: now() }))}
+                        onReject={g(() => setRejectTarget({ caseId: myCase.caseId, hospitalId: hospital.hospitalId, name: hospital.name, action: "hospital_reject" }))}
+                        onConfirm={g(() => sendAction({ caseId: myCase.caseId, action: "final_approval", hospital_id: hospital.hospitalId, actor: "paramedic", timestamp: now() }))}
                       />
                     ))}
                   </div>
@@ -1162,9 +1217,19 @@ export default function ControlPage() {
                               <span>{sim?.paused ? "일시정지 중 — " : ""}도착하면 도착 결과 화면으로 넘어갑니다.</span>
                               {/* 빨리감기(2026-10-04) — 이송 30초 동안 상황을 다 골랐으면 3초 안에 병원 도착 */}
                               {phase === "transporting" && apid && caseId && (simTrip.left == null || simTrip.left > 3) && (
-                                <FastButton onClick={() => sendSimCommand("sim_fast_forward", apid, caseId) && note("빨리감기 — 3초 안에 병원에 도착합니다")} />
+                                <FastButton onClick={g(() => sendSimCommand("sim_fast_forward", apid, caseId) && note("빨리감기 — 3초 안에 병원에 도착합니다"))} />
                               )}
                             </div>
+                            {/* 이송 중 수용 철회(2026-10-05) — 목적지 병원 역할을 대신 연출한다(실제 병원 탭의 [이송 중 수용 철회]와 같다) */}
+                            {phase === "transporting" && caseId && confirmedHospital && (
+                              <button
+                                type="button"
+                                onClick={g(() => setRejectTarget({ caseId, hospitalId: confirmedHospital.hospitalId, name: confirmedHospital.name, action: "transport_withdraw" }))}
+                                style={{ ...bulkButton("red", false), alignSelf: "flex-start" }}
+                              >
+                                <Icon name="x" size={13} color={C.red} stroke={3} />목적지 병원 수용 철회 (병원 역할 · 사유 선택)
+                              </button>
+                            )}
                           </>
                         ) : (
                           <>
@@ -1191,7 +1256,7 @@ export default function ControlPage() {
                               key={scenario.key}
                               type="button"
                               disabled={disabled}
-                              onClick={() => (sel ? stopScenario(caseId!) : playScenario(scenario.key))}
+                              onClick={() => (locked ? pauseToast.notify() : sel ? stopScenario(caseId!) : playScenario(scenario.key))}
                               style={{
                                 flex: "1 1 60px", maxHeight: 100, textAlign: "left", borderRadius: 10, padding: "10px 16px", display: "flex", flexDirection: "column",
                                 justifyContent: "center", gap: 3, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
@@ -1234,14 +1299,14 @@ export default function ControlPage() {
                     <div style={{ flex: "1 1 360px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
                       <button
                         type="button"
-                        onClick={() => { sendAction({ caseId, action: "arrival_accepted", hospital_id: confirmedId, actor: "hospital", timestamp: now() }); note("환자 수용 완료 — 사건 종료, 구급차 복귀 → ①로 돌아갑니다"); }}
+                        onClick={g(() => { sendAction({ caseId, action: "arrival_accepted", hospital_id: confirmedId, actor: "hospital", timestamp: now() }); note("환자 수용 완료 — 사건 종료, 구급차 복귀 → ①로 돌아갑니다"); })}
                         style={{ flex: "1 1 100px", minHeight: 80, padding: "0 26px", background: C.blue, border: "none", borderRadius: 12, color: "#ffffff", fontSize: 22, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
                       >
                         <Icon name="check" size={24} color="#ffffff" stroke={3} />환자 수용 완료
                       </button>
                       <button
                         type="button"
-                        onClick={() => { sendAction({ caseId, action: "arrival_refused", hospital_id: confirmedId, actor: "hospital", timestamp: now() }); setManualArrival(false); note("도착 후 수용 불가 — 재선택 대기(병원 응답 화면으로)"); }}
+                        onClick={g(() => setRejectTarget({ caseId, hospitalId: confirmedId, name: confirmedHospital?.name ?? "병원", action: "arrival_refused" }))}
                         style={{ flex: "1 1 100px", minHeight: 80, padding: "0 26px", background: C.redSoft, border: `1px solid ${C.red}`, borderRadius: 12, color: C.red, fontSize: 22, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
                       >
                         <Icon name="x" size={24} color={C.red} stroke={3} />도착 후 수용 불가 (재선택 시연)
@@ -1437,6 +1502,61 @@ function MciBoard({
         </div>
       </div>
     </ScreenCard>
+  );
+}
+
+// 불가 사유 선택 모달(2026-10-05) — 병원 대시보드의 [불가]와 같은 4축 어휘. "사유 없음"을 맨 앞에 둬 급할 땐 바로 보낸다.
+function RejectReasonModal({ title, note, onPick, onClose }: {
+  title: string;
+  note: string;
+  onPick: (reason: RejectionReason) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const reasonButton: CSSProperties = {
+    minHeight: 40, padding: "0 14px", borderRadius: 10, border: "1.5px solid #eba9a3", background: "#ffffff",
+    color: C.redInk, fontSize: 14, fontWeight: 700, cursor: "pointer",
+  };
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 900, background: "rgba(22, 32, 43, 0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ ...panel, width: "min(560px, 100%)", padding: "18px 20px", display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 12px 40px rgba(22, 32, 43, 0.25)" }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 700 }}>{title}</div>
+            <div style={{ fontSize: 12, color: C.ink3, marginTop: 2 }}>{note}</div>
+          </div>
+          <button type="button" onClick={onClose} style={headerButton} aria-label="닫기">닫기</button>
+        </div>
+        <button type="button" onClick={() => onPick("UNSPECIFIED")} style={{ ...reasonButton, alignSelf: "flex-start", color: C.ink, borderColor: C.control }}>
+          사유 없음 (바로 보내기)
+        </button>
+        {REJECTION_REASON_GROUPS.map((group) => (
+          <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.muted }}>{group.label}</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {group.options.map((option) => (
+                <button key={option.value} type="button" onClick={() => onPick(option.value)} style={reasonButton}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

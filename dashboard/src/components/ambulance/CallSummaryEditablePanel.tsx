@@ -141,7 +141,12 @@ export function CallSummaryEditablePanel({
           <div style={{ fontSize: 16, fontWeight: 700, color: AD.navy }}>통화 요약 · 구조화</div>
           <div style={labelStyle}>통화 음성 → 항목 추출</div>
         </div>
-        <div style={pill(AD.blueSoft, AD.blue)}>Qwen3-ASR · MF_BERT</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <div style={pill(AD.blueSoft, AD.blue)}>Qwen3-ASR · MF_BERT</div>
+          {(patientInfo?.callRound ?? 1) > 1 && (
+            <div style={pill(AD.orangeSoft, AD.orange, 700)}>{patientInfo?.callRound}차 통화로 갱신</div>
+          )}
+        </div>
       </div>
 
       {!patientInfo || !draft ? (
@@ -190,6 +195,17 @@ export function CallSummaryEditablePanel({
             <div style={{ fontSize: 12, color: AD.ink3 }}>
               <b style={{ fontWeight: 700, color: AD.navy }}>활력징후</b>&nbsp; {vitalText}
               {(draft.vitals?.length ?? 0) > 1 && <span style={{ color: AD.muted }}> (측정 {draft.vitals?.length}회 중 최근)</span>}
+            </div>
+          )}
+          {/* 앞선 통화 요약(덧붙이기, 2026-10-05) — 환자 상태가 바뀌어 다시 통화해도 이전 요약은 남긴다 */}
+          {(patientInfo.previousCalls ?? []).length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, background: AD.chip, borderRadius: 10, padding: "6px 10px" }}>
+              {(patientInfo.previousCalls ?? []).map((u) => (
+                <div key={u.callRound} style={{ fontSize: 11.5, color: AD.sub }}>
+                  <b style={{ color: AD.ink3 }}>{u.callRound}차 통화</b> · {SEVERITY_RISK_LABEL[u.severityTag]} · {u.expectedDiagnosis}
+                  {u.ktasLevel != null ? ` · KTAS ${u.ktasLevel}` : ""}
+                </div>
+              ))}
             </div>
           )}
           {showTranscript && transcriptBox}

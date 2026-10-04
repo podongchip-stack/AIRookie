@@ -24,7 +24,7 @@ export const PHASE_LABEL: Record<AmbulancePhase, string> = {
   on_scene: "현장 도착",
   transporting: "병원으로 이송 중",
   at_hospital: "병원 도착 — 수용 결과 대기",
-  rerouting: "재선택 대기 (도착 병원 수용 불가)",
+  rerouting: "재선택 대기 (목적지 병원 수용 불가)",
   returning: "기지 복귀 중",
 };
 
@@ -117,7 +117,7 @@ export function DispatchControlPanel({
       : phase === "at_hospital"
         ? "병원이 수용 결과를 고를 때까지 병원 앞에서 기다립니다"
         : phase === "rerouting"
-          ? "넓힌 존의 병원들에 다시 요청했습니다 — 승인한 병원을 이송 승인하세요"
+          ? "목적지 병원이 수용할 수 없게 됐습니다 — 승인한 다른 병원을 이송 승인하세요(없으면 범위를 넓혀 다시 요청)"
           : phase === "on_scene"
             ? callActive
               ? "통화를 끝내야 현장 종료할 수 있습니다"

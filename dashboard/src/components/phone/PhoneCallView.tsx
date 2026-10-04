@@ -379,6 +379,11 @@ export function PhoneCallView({
   async function handleCall(h: SceneCandidate) {
     if (!caseId || myCall) return;
     setError(null);
+    // 시연 일시정지 중엔 통화를 시작하지 않는다(2026-10-05, hub도 거부한다)
+    if (sim?.paused) {
+      setError("현재 시연 일시정지 중입니다.");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("이 브라우저는 마이크를 쓸 수 없습니다. https 주소(도메인)로 열었는지 확인하세요.");
       return;
