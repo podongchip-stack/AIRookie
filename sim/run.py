@@ -21,6 +21,11 @@ from engine import ARMS, SimParams, percentile, simulate, summarize
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
 
+def _share_mean(runs: list[dict], key: str) -> float | None:
+    values = [r[key] for r in runs if r.get(key) is not None]
+    return round(statistics.mean(values), 3) if values else None
+
+
 def run_all(params: SimParams, scene: dict, snapshot_date: str, target_hhmm: str,
             radius_km: float, seeds: int) -> dict:
     snapshot_ts, hospitals = build_world(snapshot_date, target_hhmm, radius_km,
@@ -50,6 +55,9 @@ def run_all(params: SimParams, scene: dict, snapshot_date: str, target_hhmm: str
             "finishedAtMin": {"mean": round(statistics.mean(finished), 1), "min": min(finished), "max": max(finished)},
             "transfersMean": round(statistics.mean(r["transfers"] for r in runs), 1),
             "rejectedCallsMean": round(statistics.mean(r["rejectedCalls"] for r in runs), 1),
+            # 등급 데이터가 없는 스냅샷이면 None — 지표 자체를 비워 둔다
+            "mildCenterShareMean": _share_mean(runs, "mildCenterShare"),
+            "severeCenterShareMean": _share_mean(runs, "severeCenterShare"),
             "hospitals": hospital_rows,
             # 대표 시드(0)의 환자별 이송 시간 — CDF 차트용
             "transportTimesSeed0": sorted(
@@ -92,7 +100,7 @@ def run_all(params: SimParams, scene: dict, snapshot_date: str, target_hhmm: str
         },
         "hospitals": [
             {"hpid": h.hpid, "name": h.name, "lat": h.lat, "lng": h.lng,
-             "capacity": h.capacity, "distanceKm": h.distance_km}
+             "capacity": h.capacity, "distanceKm": h.distance_km, "level": h.level}
             for h in hospitals
         ],
         "arms": arms,
@@ -156,12 +164,15 @@ def main() -> None:
     print(f"[{scene['label']}]")
     print(f"스냅샷 {results['scenario']['snapshotTs']} — 병원 {results['scenario']['nHospitals']}곳, "
           f"가용 {results['scenario']['totalBeds']}병상, 환자 {patients}명, 시드 {args.seeds}개")
-    print(f"{'arm':<12}{'이송 중앙값':>12}{'p90':>8}{'쏠림 최대':>10}{'재이송':>8}{'거절 전화':>10}{'종료':>8}")
+    print(f"{'arm':<12}{'이송 중앙값':>12}{'p90':>8}{'쏠림 최대':>10}{'재이송':>8}{'거절 전화':>10}"
+          f"{'경증→센터':>10}{'중증→센터':>10}{'종료':>8}")
     for arm in ARMS:
         a = results["arms"][arm]
+        mild = f"{a['mildCenterShareMean'] * 100:.0f}%" if a["mildCenterShareMean"] is not None else "—"
+        severe = f"{a['severeCenterShareMean'] * 100:.0f}%" if a["severeCenterShareMean"] is not None else "—"
         print(f"{arm:<12}{a['medianTransportMin']['mean']:>10.1f}분{a['p90TransportMin']['mean']:>7.1f}분"
               f"{a['maxLoadRatio']['mean']:>9.1f}x{a['transfersMean']:>8.1f}{a['rejectedCallsMean']:>10.1f}"
-              f"{a['finishedAtMin']['mean']:>7.1f}분")
+              f"{mild:>10}{severe:>10}{a['finishedAtMin']['mean']:>7.1f}분")
 
     from html_report import render
     html_path = OUT_DIR / f"mci_report_{args.scene}.html"
