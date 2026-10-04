@@ -10,7 +10,8 @@ import {
   escapeHtml,
 } from "@/lib/kakao-map-markers";
 import {
-  MAP_COLORS, PHASE_SHORT, STATUS_ICON, STATUS_SHORT, requestColor, statusInk, topStatus, type HospitalRequest,
+  MAP_COLORS, PHASE_SHORT, STATUS_ICON, STATUS_SHORT, hospitalLevelColor, requestColor, statusInk, topStatus,
+  type HospitalRequest,
 } from "@/lib/monitor";
 import type { AmbulanceSimState, CallStatus, MapOverview, MonitorCase } from "@/types/dashboard";
 
@@ -64,18 +65,35 @@ function callBadgeElement(calls: CallStatus[]): HTMLElement {
   return el;
 }
 
-// 병원 이름표 — 이름과 병원 대시보드 접근 코드(H-<hpid>)를 같이 보여준다(2026-10-03). 모양은 createLabelOverlay와 같다.
-// 이송 중(이 병원으로 확정돼 아직 도착 전인 환자, TTL 오버레이)이 있으면 함께 표시 — hub가 이 수만큼 순위를
-// 뒤로 밀어 다음 환자를 다른 병원으로 분산시키는 중이라는 뜻이다(쏠림 방지 장치의 작동 표시).
-function hospitalLabel(name: string, hospitalId: string, inFlight = 0): string {
+// 병원 이름표 — 이름·접근 코드(H-<hpid>)·병상 상태를 같이 보여준다(2026-10-04 병상 추가 —
+// 관제는 모든 병원의 현재 상태를 봐야 한다). 만실(0 확인)은 빨강, 미상은 회색("미상 ≠ 만실" 원칙).
+// 이송 중(이 병원으로 확정돼 아직 도착 전인 환자, TTL 오버레이)이 있으면 함께 표시 — hub가 이 수만큼
+// 순위를 뒤로 밀어 다음 환자를 분산시키는 중이라는 뜻이다(쏠림 방지 장치의 작동 표시).
+function hospitalLabel(name: string, hospitalId: string, inFlight = 0, hospital?: MapHospitalInfo): string {
   const load =
     inFlight > 0 ? ` <span style="color:#B87514;font-weight:700;">🚑 이송 중 ${inFlight}건</span>` : "";
+  let beds = "";
+  if (hospital && hospital.bedCountUnknown !== undefined) {
+    beds = hospital.bedCountUnknown
+      ? ` <span style="color:#8A94A0;">병상 미상</span>`
+      : (hospital.availableBedCount ?? 0) > 0
+        ? ` <span style="color:#0E9F6E;font-weight:700;">병상 ${hospital.availableBedCount}</span>`
+        : ` <span style="color:#D93F35;font-weight:700;">만실</span>`;
+  }
   return (
     `<div style="transform:translateY(14px);font-size:11px;font-weight:600;white-space:nowrap;` +
     `background:#FFFFFF;border:1px solid #E2E8EF;padding:1px 6px;border-radius:6px;color:#16222E;">` +
-    `${escapeHtml(name)} <span style="color:#1E5FA8;font-weight:700;">H-${escapeHtml(hospitalId)}</span>${load}</div>`
+    `${escapeHtml(name)} <span style="color:#1E5FA8;font-weight:700;">H-${escapeHtml(hospitalId)}</span>${beds}${load}</div>`
   );
 }
+
+// 확인된 만실(병상 0, 미상 아님)이면 등급 색 대신 회색 — 관제가 "지금 못 받는 병원"을 한눈에 거른다
+function markerFill(hospital: { emergencyLevel?: string | null; availableBedCount?: number; bedCountUnknown?: boolean }): string {
+  const full = hospital.bedCountUnknown === false && (hospital.availableBedCount ?? 0) <= 0;
+  return full ? MAP_COLORS.full : hospitalLevelColor(hospital.emergencyLevel);
+}
+
+type MapHospitalInfo = { availableBedCount?: number; bedCountUnknown?: boolean };
 
 function zoneLabel(text: string): string {
   return (
@@ -90,6 +108,7 @@ export function MonitorMapPanel({
   ambulanceSim,
   requests,
   calls = [],
+  focus = null,
 }: {
   overview: MapOverview | null;
   cases: Record<string, MonitorCase>;
@@ -97,6 +116,9 @@ export function MonitorMapPanel({
   requests: Map<string, HospitalRequest[]>;
   // 지금 진행 중인 통화(state "calling")
   calls?: CallStatus[];
+  // 사건 선택(2026-10-04) — 왼쪽에서 사건을 클릭하면 그 사건 중심으로 지도를 당긴다.
+  // key가 바뀔 때만 이동한다(같은 사건을 보는 동안 지도 조작을 방해하지 않게).
+  focus?: { lat: number; lng: number; key: string } | null;
 }) {
   const { ready, error } = useKakaoMapScript();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -177,7 +199,7 @@ export function MonitorMapPanel({
       inFlightRef.current.set(hospital.hospitalId, hospital.inFlightCount ?? 0);
       const existing = layers.get(hospital.hospitalId);
       if (existing) {
-        existing.label.setContent(hospitalLabel(hospital.name, hospital.hospitalId, hospital.inFlightCount ?? 0));
+        existing.label.setContent(hospitalLabel(hospital.name, hospital.hospitalId, hospital.inFlightCount ?? 0, hospital));
         continue;
       }
       const pos = new kakao.maps.LatLng(hospital.gps.lat, hospital.gps.lng);
@@ -185,7 +207,8 @@ export function MonitorMapPanel({
         position: pos,
         map,
         title: hospital.emergencyLevel ? `${hospital.name} (${hospital.emergencyLevel})` : hospital.name,
-        image: createColoredMarkerImage(MAP_COLORS.hospital, 18),
+        // 등급별 색(2026-10-04): 권역센터(중증)=자홍 · 지역센터(중등)=청록 · 기관(경증)=남색 · 만실=회색
+        image: createColoredMarkerImage(markerFill(hospital), 18),
         zIndex: 1,
       });
       // 관제 지도는 병원 대시보드를 열지 않는다(2026-10-03 회의로 분리 — 병원 대시보드는 첫 페이지에서 접근 코드로).
@@ -196,7 +219,7 @@ export function MonitorMapPanel({
       });
       const label = new kakao.maps.CustomOverlay({
         position: pos,
-        content: hospitalLabel(hospital.name, hospital.hospitalId, hospital.inFlightCount ?? 0),
+        content: hospitalLabel(hospital.name, hospital.hospitalId, hospital.inFlightCount ?? 0, hospital),
         yAnchor: 0,
       });
       layers.set(hospital.hospitalId, { marker, label });
@@ -205,6 +228,16 @@ export function MonitorMapPanel({
     // ensureMap·applyLabelVisibility는 ref만 읽는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, overview?.hospitals]);
+
+  // ── 사건 선택 시 지도 이동 (2026-10-04) ──
+  useEffect(() => {
+    const map = ensureMap();
+    if (!map || !focus) return;
+    const { kakao } = window;
+    map.setLevel(6);
+    map.setCenter(new kakao.maps.LatLng(focus.lat, focus.lng));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, focus?.key]);
 
   // ── 환자 요청 표시 (사건 요약이 바뀔 때) ──
   useEffect(() => {
@@ -215,8 +248,11 @@ export function MonitorMapPanel({
     badgesRef.current.clear();
     hospitalsRef.current.forEach((layer, id) => {
       const list = requests.get(id);
+      const hospital = overview.hospitals.find((h) => h.hospitalId === id);
       layer.marker.setImage(
-        list ? createColoredMarkerImage(requestColor(list), 26) : createColoredMarkerImage(MAP_COLORS.hospital, 18),
+        list
+          ? createColoredMarkerImage(requestColor(list), 26)
+          : createColoredMarkerImage(hospital ? markerFill(hospital) : MAP_COLORS.hospital, 18),
       );
       layer.marker.setZIndex(list ? 20 : 1);
     });

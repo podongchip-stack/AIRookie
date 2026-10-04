@@ -14,7 +14,22 @@ export const MAP_COLORS = {
   rejected: "#D93F35",
   zone: "#7048E8",
   incident: "#D93F35",
+  // 확인된 만실(병상 0, 미상 아님) 병원 마커(2026-10-04) — 등급 색 대신 회색으로 가라앉힌다
+  full: "#9AA5B1",
 } as const;
+
+// 응급의료기관 등급별 마커 색(2026-10-04) — 분산 원칙과 같은 축으로 "어떤 중증도의 환자가
+// 가는 병원인가"를 지도에서 바로 읽게 한다: 권역응급의료센터(중증 최종치료)=자홍,
+// 지역응급의료센터(중등증)=청록, 그 외 기관(경증)=남색. 사건이 걸린 병원은 응답 상태 색이
+// 우선한다(기존 규칙 유지 — 등급 색은 평시 표시).
+export const LEVEL_COLORS: Record<string, string> = {
+  권역응급의료센터: "#C2255C",
+  지역응급의료센터: "#1098AD",
+};
+
+export function hospitalLevelColor(level?: string | null): string {
+  return (level && LEVEL_COLORS[level]) || MAP_COLORS.hospital;
+}
 
 export const PHASE_SHORT: Record<AmbulancePhase, string> = {
   idle: "기지 대기",
@@ -48,6 +63,14 @@ export interface HospitalRequest {
 // 병원별로 "지금 받은 환자 요청" 목록. 병원 대시보드의 카드 목록과 같은 규칙이다 — 그 사건이 다른 병원으로
 // 이미 이송 확정됐으면 이 병원엔 더 이상 의미가 없어 뺀다(본원이 확정 병원이면 남긴다). 여기 들어 있는 병원만
 // 지도에서 눌러 병원 대시보드를 열 수 있다.
+// 수용 불가의 종류 — E-Gen 병상 없음이면 그것, 병원이 직접 거절했으면 고른 사유(2026-10-03)
+export function hospitalReasonNote(hospital: {
+  unavailableReason?: string | null;
+  rejectReason?: string | null;
+}): string | null {
+  return unavailableReasonLabel(hospital.unavailableReason) ?? rejectionReasonLabel(hospital.rejectReason);
+}
+
 export function hospitalRequests(cases: Record<string, MonitorCase>): Map<string, HospitalRequest[]> {
   const byHospital = new Map<string, HospitalRequest[]>();
   for (const monitorCase of Object.values(cases)) {

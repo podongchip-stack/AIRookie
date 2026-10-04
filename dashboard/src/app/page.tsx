@@ -111,6 +111,20 @@ export default function Home() {
         <p className={css({ fontSize: "xs", color: "gray.500" })}>
           병원·구급차 위치와 환자 요청 현황을 실시간으로 봅니다. 병원 접근 코드도 여기서 확인할 수 있습니다.
         </p>
+        {/* 시연용 자동 로그인(2026-10-04) — 상황이 발생하면 해당 구급대/1순위 병원 대시보드로 자동 전환 */}
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/ambulance?id=auto")}>
+          구급대 대시보드 (자동 전환)
+        </button>
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/hospital?id=auto")}>
+          병원 대시보드 (자동 전환)
+        </button>
+        {/* 시연 통제 콘솔(2026-10-04) — 운영자가 출동·통화·승인·활력징후 시나리오를 한 화면에서 조작 */}
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/control")}>
+          시연 통제 콘솔
+        </button>
+        <p className={css({ fontSize: "xs", color: "gray.500" })}>
+          운영자 전용 — 출동·통화·가짜 환자 전송·승인·이송 중 시나리오를 한 화면에서 조작합니다.
+        </p>
       </div>
     </main>
   );

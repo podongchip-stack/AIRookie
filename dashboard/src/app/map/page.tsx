@@ -15,7 +15,7 @@ function reasonNote(hospital: MonitorCaseHospital): string | null {
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
-  MAP_COLORS, PHASE_SHORT, SEVERITY_SHORT, STATUS_ICON, STATUS_SHORT, hospitalRequests, statusColor,
+  LEVEL_COLORS, MAP_COLORS, PHASE_SHORT, SEVERITY_SHORT, STATUS_ICON, STATUS_SHORT, hospitalRequests, statusColor,
 } from "@/lib/monitor";
 
 // 관제 지도(2026-10-03). hub에 role=monitor로 붙어 전체 병원·구급차 위치와 사건 요약만 받는다 — 통화 전문 등
@@ -27,6 +27,19 @@ export default function MonitorMapPage() {
   const cases = Object.values(state.monitorCases);
   const ambulances = state.mapOverview?.ambulances ?? [];
   const calls = Object.values(state.callStatus).filter((c) => c.state === "calling");
+  // 사건 클릭(2026-10-04) — 관제 지도 본창은 항상 **전체 현황**(모든 병원 상태·모든 구급대)을
+  // 유지한다. 사건 하나를 깊게 보는 건 새 창의 사건 상황판(/case?id=) 몫이다.
+  const openCaseBoard = (caseId: string) => window.open(`/case?id=${encodeURIComponent(caseId)}`, "_blank", "noopener");
+  // 매칭 전(신고 접수 → 출동 → 현장 통화 전) 사건(2026-10-04) — 관제는 신고 접수부터 전 과정을
+  // 팔로잉한다. 구급차 시뮬레이션 상태(사건 배정됨)와 예비 고지 요약으로 만들고, 현장 통화가
+  // 끝나 매칭되면 case_overview(아래 목록)가 같은 caseId로 이어받는다.
+  const preCases = Object.values(state.ambulanceSim)
+    .filter((s) => s.caseId && !state.monitorCases[s.caseId] && !["idle", "returning"].includes(s.phase))
+    .map((s) => ({
+      sim: s,
+      alert: s.caseId ? state.preAlerts[s.caseId] ?? null : null,
+      name: ambulances.find((a) => a.apid === s.apid)?.name ?? s.apid,
+    }));
 
   return (
     <div
@@ -63,7 +76,10 @@ export default function MonitorMapPage() {
           </span>
         </div>
         <div className={css({ display: "flex", alignItems: "center", gap: "3.5", flexWrap: "wrap", fontSize: "xs", color: "ink" })}>
-          <LegendDot color={MAP_COLORS.hospital} label="병원" round />
+          {/* 등급별 색(2026-10-04) — 분산 원칙의 축: 중증은 센터로, 경증은 기관으로 */}
+          <LegendDot color={LEVEL_COLORS["권역응급의료센터"]} label="권역센터 (중증)" round />
+          <LegendDot color={LEVEL_COLORS["지역응급의료센터"]} label="지역센터 (중등증)" round />
+          <LegendDot color={MAP_COLORS.hospital} label="응급의료기관 (경증)" round />
           <LegendDot color={MAP_COLORS.request} label="🚨 판단 대기" round />
           <LegendDot color={MAP_COLORS.approved} label="✓ 수용 승인" round />
           <LegendDot color={MAP_COLORS.rejected} label="✕ 수용 불가" round />
@@ -96,17 +112,60 @@ export default function MonitorMapPage() {
             thinScrollbarStyle,
           )}
         >
-          <SideSection title={`진행 중인 환자 요청 ${cases.length}건`}>
-            {cases.length === 0 ? (
+          <SideSection title={`진행 중인 사건 ${cases.length + preCases.length}건`}>
+            {/* 매칭 전 단계 — 신고 접수·출동·현장. 클릭하면 사건 상황판이 신고 단계부터 열린다. */}
+            {preCases.map(({ sim, alert, name }) => (
+              <div
+                key={sim.caseId}
+                role="button"
+                tabIndex={0}
+                onClick={() => sim.caseId && openCaseBoard(sim.caseId)}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && sim.caseId) openCaseBoard(sim.caseId);
+                }}
+                title="클릭하면 사건 상황판이 새 창으로 열립니다"
+                className={cx(cardStyle, css({ cursor: "pointer", _hover: { borderColor: "navy" } }))}
+              >
+                <div className={css({ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2" })}>
+                  <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink" })}>🚨 {name}</span>
+                  {alert?.reportedSeverity === "high" && (
+                    <span className={css({ fontSize: "2xs", fontWeight: "semibold", color: "coral", backgroundColor: "coralSoft", paddingX: "1.5", borderRadius: "chip" })}>
+                      중증 의심
+                    </span>
+                  )}
+                </div>
+                <span className={css({ fontSize: "xs", color: "ink" })}>
+                  {PHASE_SHORT[sim.phase]}{sim.paused ? " · 정지" : ""}
+                  {alert?.reportedSymptom ? ` · 신고: ${alert.reportedSymptom}` : ""}
+                </span>
+                <span className={css({ fontSize: "xs", color: "ink3" })}>
+                  {alert && (alert.hospitalCount ?? 0) > 0
+                    ? `예비 고지 ${alert.hospitalCount}곳 발송됨`
+                    : "예비 고지 없음(경증 신고)"}
+                  {" · 현장 통화 전"}
+                </span>
+              </div>
+            ))}
+            {cases.length === 0 && preCases.length === 0 ? (
               <p className={css({ fontSize: "xs", color: "ink3" })}>
-                아직 환자 요청이 없습니다. 구급차가 현장에서 통화를 마치면 인근 병원에 요청이 갑니다.
+                아직 사건이 없습니다. 신고가 접수되면(구급대 출동) 여기부터 팔로잉됩니다.
               </p>
             ) : (
               cases.map((monitorCase) => {
                 const maxZone = Math.max(...monitorCase.zoneActive, 1);
                 const confirmedId = monitorCase.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
                 return (
-                  <div key={monitorCase.caseId} className={cardStyle}>
+                  <div
+                    key={monitorCase.caseId}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openCaseBoard(monitorCase.caseId)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") openCaseBoard(monitorCase.caseId);
+                    }}
+                    title="클릭하면 사건 상황판이 새 창으로 열립니다 — 이 지도는 전체 현황을 유지합니다"
+                    className={cx(cardStyle, css({ cursor: "pointer", _hover: { borderColor: "navy" } }))}
+                  >
                     <div className={css({ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2" })}>
                       <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink" })}>
                         {monitorCase.ambulanceName ?? monitorCase.apid ?? "구급차"}
