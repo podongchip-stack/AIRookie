@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MF_BERT 벤치마크 하이라이트</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* 레이아웃: 통화 기록 모니터 같은 무대(장면 6개가 한 칸에 겹쳐 있고 하나씩 재생) + 아래 장면 칩과 숫자 표 */
+:root {
+  --bg: #eef1f5;
+  --stage: #fbfcfd;
+  --ink: #0f1724;
+  --ink-2: #4a5466;
+  --muted: #7a8394;
+  --line: #dde2ea;
+  --track: #e9edf3;
+  --band: rgba(42, 120, 214, 0.07);
+  --hl: rgba(42, 120, 214, 0.16);
+  --mf: #2a78d6;
+  --lora: #eb6834;
+  --llm: #1baf7a;
+  --cell: #8e97a7;
+  --good: #006300;
+  --bad: #c03030;
+  --f-sans: "IBM Plex Sans KR", system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1017; --stage: #131a23; --ink: #eef2f7; --ink-2: #b4bfcd; --muted: #7f8a9a;
+    --line: #263142; --track: #1c2532; --band: rgba(57, 135, 229, 0.10); --hl: rgba(57, 135, 229, 0.26);
+    --mf: #3987e5; --lora: #d95926; --llm: #199e70; --cell: #5f6a7b; --good: #0ca30c; --bad: #e66767;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1017; --stage: #131a23; --ink: #eef2f7; --ink-2: #b4bfcd; --muted: #7f8a9a;
+  --line: #263142; --track: #1c2532; --band: rgba(57, 135, 229, 0.10); --hl: rgba(57, 135, 229, 0.26);
+  --mf: #3987e5; --lora: #d95926; --llm: #199e70; --cell: #5f6a7b; --good: #0ca30c; --bad: #e66767;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-sans); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1100px; margin: 0 auto; padding-inline: clamp(16px, 4vw, 32px); padding-block: 28px 56px; display: grid; gap: 18px; }
+
+.intro { display: grid; gap: 4px; }
+.intro .meta { font-family: var(--f-mono); font-size: 12px; letter-spacing: 0.06em; color: var(--muted); }
+.intro h1 { margin: 0; font-size: clamp(1.5rem, 3.2vw, 2.1rem); font-weight: 700; letter-spacing: -0.015em; text-wrap: balance; }
+.intro p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+
+/* 무대 */
+.stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.stage-bar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 9px 18px; border-bottom: 1px solid var(--line); font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.stage-bar .live { display: inline-flex; align-items: center; gap: 8px; }
+.stage-bar .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--mf); }
+.tabnum { font-variant-numeric: tabular-nums; }
+.scenes { display: grid; }
+@media (min-width: 900px) { .scenes { aspect-ratio: 16 / 8.4; } }
+.scene { grid-area: 1 / 1; min-width: 0; padding: clamp(18px, 3.2vw, 36px); display: flex; flex-direction: column; gap: 18px; visibility: hidden; opacity: 0; transition: opacity 0.45s ease, visibility 0s linear 0.45s; }
+.scene.is-active { visibility: visible; opacity: 1; transition: opacity 0.45s ease; }
+.scene-head { display: grid; gap: 4px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: 0.08em; color: var(--muted); }
+.scene h2 { margin: 0; font-size: clamp(1.2rem, 2.3vw, 1.65rem); font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+.foot { margin-top: auto; font-size: 12.5px; color: var(--muted); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); }
+.key { display: inline-flex; align-items: center; gap: 6px; }
+.key::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--c); flex: none; }
+.c-mf { --c: var(--mf); } .c-lora { --c: var(--lora); } .c-llm { --c: var(--llm); } .c-base { --c: var(--cell); }
+
+/* 1. 과제 */
+.s1 { display: grid; grid-template-columns: 1.1fr 1fr; gap: clamp(18px, 3vw, 36px); min-height: 0; }
+.panel-title { font-family: var(--f-mono); font-size: 11.5px; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 8px; }
+.call { display: grid; gap: 7px; font-size: 14.5px; line-height: 1.55; }
+.turn { display: grid; grid-template-columns: 3.4rem 1fr; gap: 10px; min-width: 0; }
+.who { font-family: var(--f-mono); font-size: 11px; color: var(--muted); padding-top: 3px; }
+.skip { color: var(--muted); padding-left: 3.4rem; margin-left: 10px; font-size: 13px; line-height: 1; }
+mark { color: inherit; background: transparent; border-radius: 3px; padding: 0 2px; box-shadow: inset 0 -2px 0 transparent; transition: background-color 0.4s ease, box-shadow 0.4s ease; }
+mark.on { background: var(--hl); box-shadow: inset 0 -2px 0 var(--mf); }
+.fields { display: grid; align-content: start; }
+.field { display: grid; grid-template-columns: 5.4rem 1fr auto; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.field .k { font-size: 12.5px; color: var(--muted); }
+.field .v { font-weight: 500; min-width: 0; }
+.field .v small { font-weight: 400; color: var(--ink-2); font-size: 12.5px; }
+.ok, .ng { font-size: 12px; white-space: nowrap; }
+.ok { color: var(--good); }
+.ng { color: var(--bad); }
+
+/* 2. 시험지 */
+.s2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: clamp(18px, 3vw, 40px); align-items: start; }
+.ktas { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.ktas-col { display: grid; gap: 6px; justify-items: start; }
+.ktas-col b { font-family: var(--f-mono); font-size: 12px; font-weight: 500; }
+.ktas-col span { font-size: 11.5px; color: var(--muted); }
+.cells { display: grid; grid-template-columns: repeat(4, 11px); gap: 4px; }
+.cell { width: 11px; height: 11px; border-radius: 2px; background: var(--cell); }
+.models { display: grid; gap: 12px; }
+.kind { display: grid; gap: 5px; }
+.kind-head { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; }
+.kind-head b { font-family: var(--f-mono); font-weight: 500; }
+.dots { display: flex; flex-wrap: wrap; gap: 5px; }
+.dot { width: 13px; height: 13px; border-radius: 50%; background: var(--c); }
+.facts { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; color: var(--ink-2); }
+.facts li { display: grid; grid-template-columns: 1.2rem 1fr; }
+.facts li::before { content: "✓"; color: var(--good); }
+
+/* 3. 속도 */
+.clock { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.clock .t { font-family: var(--f-mono); font-size: clamp(1.8rem, 4.2vw, 2.8rem); font-weight: 500; letter-spacing: -0.02em; line-height: 1.1; }
+.clock .cap { font-size: 12.5px; color: var(--muted); }
+.race { display: grid; gap: 14px; }
+.lane { display: grid; grid-template-columns: minmax(8.5rem, 13rem) minmax(0, 1fr) 7.5rem; gap: 14px; align-items: center; }
+.who2 { display: grid; gap: 1px; min-width: 0; }
+.who2 .name { font-weight: 500; font-size: 14px; display: inline-flex; align-items: center; gap: 7px; }
+.who2 .name::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--c); flex: none; }
+.who2 .sub { font-size: 12px; color: var(--muted); padding-left: 17px; }
+.track { position: relative; height: 22px; background: var(--track); border-radius: 0 4px 4px 0; }
+.fill { height: 100%; background: var(--c); border-radius: 0 4px 4px 0; }
+.count { font-family: var(--f-mono); font-size: 13.5px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; }
+.lane.done .count { color: var(--ink); font-weight: 500; }
+.note { min-height: 1.6em; font-size: 14px; color: var(--ink); font-weight: 500; }
+
+/* 4. 정확도 */
+.bars { display: grid; grid-template-columns: minmax(8.5rem, 12.5rem) minmax(0, 1fr) 10.5rem; column-gap: 14px; row-gap: 9px; align-items: center; position: relative; }
+.band { grid-column: 1 / -1; grid-row: 1 / span 3; align-self: stretch; margin: -5px -10px; border-radius: 8px; background: var(--band); }
+.bars .lbl { grid-column: 1; font-size: 13.5px; display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.bars .lbl::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--c); flex: none; }
+.bars .lbl.me { font-weight: 700; }
+.btrack { grid-column: 2; position: relative; height: 18px; background-image: linear-gradient(to right, var(--line) 1px, transparent 1px); background-size: 25% 100%; }
+.bar { position: absolute; inset: 0 auto 0 0; background: var(--c); border-radius: 0 4px 4px 0; }
+.val { position: absolute; top: 50%; transform: translateY(-50%); padding-left: 6px; font-family: var(--f-mono); font-size: 13px; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.row-hit { grid-column: 1 / 3; height: 26px; margin-block: -4px; border-radius: 6px; cursor: default; }
+.row-hit:focus-visible { outline: 2px solid var(--mf); outline-offset: 2px; }
+.n1 { grid-column: 3; grid-row: 1 / span 3; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
+.n1 b { color: var(--ink); }
+.axis { grid-column: 2; position: relative; height: 16px; font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+.axis span { position: absolute; transform: translateX(-50%); }
+.callouts { display: grid; gap: 6px; font-size: 13.5px; }
+.callouts p { margin: 0; }
+.callouts b { font-weight: 700; }
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--ink); color: var(--stage); font-size: 12.5px; line-height: 1.45; padding: 7px 10px; border-radius: 6px; max-width: 16rem; }
+
+/* 5. 크기 */
+.s5 { display: grid; grid-template-columns: 1fr 1.05fr; gap: clamp(18px, 3vw, 40px); align-items: center; }
+.sizes svg { width: 100%; max-width: 440px; height: auto; display: block; }
+.sizes circle { transform-box: fill-box; transform-origin: 50% 100%; stroke: var(--stage); stroke-width: 2; }
+.sizes .nm { fill: var(--ink-2); font-size: 12px; font-family: var(--f-sans); }
+.sizes .vl { fill: var(--ink); font-size: 14px; font-family: var(--f-mono); font-weight: 500; }
+.sizes .base { stroke: var(--line); stroke-width: 1; }
+.sizes figcaption { font-size: 12.5px; color: var(--muted); }
+.meters { display: grid; gap: 12px; }
+.meters h3 { margin: 0; font-size: 14px; font-weight: 500; }
+.meter { display: grid; grid-template-columns: minmax(7.5rem, 10rem) minmax(0, 1fr) 4.2rem; gap: 12px; align-items: center; font-size: 13.5px; }
+.meter .mt { position: relative; height: 18px; background: var(--track); border-radius: 0 4px 4px 0; }
+.meter .mf { position: absolute; inset: 0 auto 0 0; background: var(--c); border-radius: 0 4px 4px 0; }
+.meter .mv { font-family: var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.scale { display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+.disk { font-size: 12.5px; color: var(--ink-2); }
+
+/* 6. 정리 */
+.wins { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(14px, 2.4vw, 28px); }
+.win { display: grid; gap: 6px; align-content: start; padding-top: 12px; border-top: 2px solid var(--mf); }
+.win .big { font-size: clamp(1.6rem, 3.6vw, 2.4rem); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.win p { margin: 0; font-size: 14px; color: var(--ink-2); }
+.weak { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }
+.weak .tag { font-size: 12.5px; font-weight: 700; color: var(--bad); white-space: nowrap; }
+.weak p { margin: 0; color: var(--ink-2); }
+
+/* 조작 */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.btn { font: 500 13.5px var(--f-sans); color: var(--ink); background: var(--stage); border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.btn:focus-visible, .chip:focus-visible { outline: 2px solid var(--mf); outline-offset: 2px; }
+.btn.primary { background: var(--ink); color: var(--stage); border-color: var(--ink); min-width: 6.5rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; }
+.chip { position: relative; overflow: hidden; font: 13px var(--f-sans); color: var(--ink-2); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+.chip[aria-current="step"] { color: var(--ink); border-color: var(--ink-2); font-weight: 500; }
+.chip .prog { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--mf); }
+
+/* 아래: 출처와 숫자 표 */
+.below { display: grid; gap: 10px; font-size: 13.5px; color: var(--ink-2); }
+.below p { margin: 0; max-width: 75ch; }
+details summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+.tablewrap { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--f-mono); }
+
+@media (max-width: 760px) {
+  .s1, .s2, .s5, .wins { grid-template-columns: 1fr; }
+  .lane { grid-template-columns: minmax(0, 1fr) 6.5rem; }
+  .lane .track { grid-column: 1 / -1; grid-row: 2; }
+  .bars { grid-template-columns: minmax(7rem, 9rem) minmax(0, 1fr); }
+  .n1 { grid-column: 1 / -1; grid-row: auto; }
+  .band { grid-row: 1 / span 3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene, .scene.is-active, mark { transition: none; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="intro">
+    <div class="meta">2026-10-03 · 시험지 100건 · 모델 22개</div>
+    <h1>같은 시험지 100문제, MF_BERT와 LLM의 결과</h1>
+    <p>119 구급대와 병원 사이의 통화를 읽고 환자 정보를 채우는 과제입니다. 학습에 쓰지 않은 통화 100건으로 모든 모델을 같은 조건에서 채점했습니다. 이 100건은 Claude Opus 5.5로 만든 합성 데이터입니다.</p>
+  </header>
+
+  <section class="player" aria-label="벤치마크 결과 애니메이션">
+    <div class="stage" id="stage">
+      <div class="stage-bar">
+        <span class="live">119 통화 정보 추출 벤치마크</span>
+        <span class="tabnum">장면 <span id="sceneNo">1</span> / 6 · <span id="clockAll">0:00</span> / 0:44</span>
+      </div>
+
+      <div class="scenes">
+        <!-- 1. 과제 -->
+        <article class="scene is-active" data-dur="8" aria-label="장면 1 과제">
+          <div class="scene-head">
+            <div class="eyebrow">1 · 과제</div>
+            <h2>통화를 읽고, 환자 정보를 채웁니다</h2>
+          </div>
+          <div class="s1">
+            <div>
+              <p class="panel-title">시험 문제 bench_026 · 통화 원문 일부</p>
+              <div class="call">
+                <div class="turn"><span class="who">구급대</span><span>아 네 수고하십니다 일일구 구급대에요 <mark data-k="cc">코피가 안멈추는</mark> 할아버지 한분 모시고 갈라구요</span></div>
+                <div class="turn"><span class="who">병원</span><span>네 언제부터 났어요</span></div>
+                <div class="turn"><span class="who">구급대</span><span><mark data-k="onset">한 사십분 전에</mark> 티비 보시다가 갑자기 났대요</span></div>
+                <div class="skip">⋯</div>
+                <div class="turn"><span class="who">병원</span><span>연세가요</span></div>
+                <div class="turn"><span class="who">구급대</span><span><mark data-k="age">칠십칠세 남자분이요</mark></span></div>
+                <div class="skip">⋯</div>
+                <div class="turn"><span class="who">병원</span><span>활력징후는요</span></div>
+                <div class="turn"><span class="who">구급대</span><span><mark data-k="vitals">혈압 백육십에 구십 맥박 88 불규칙하구요 호흡 십팔 산소포화도 97 체온 36.4요</mark></span></div>
+              </div>
+            </div>
+            <div>
+              <p class="panel-title">MF_BERT가 채운 답</p>
+              <div class="fields">
+                <div class="field"><span class="k">KTAS</span><span class="v">3등급 <small>응급</small></span><span class="ok">✓ 정답</span></div>
+                <div class="field" data-k="cc"><span class="k">주증상</span><span class="v">코 › 코피</span><span class="ok">✓ 정답</span></div>
+                <div class="field" data-k="age"><span class="k">환자</span><span class="v">남성 · 77세</span><span class="ok">✓ 정답</span></div>
+                <div class="field" data-k="onset"><span class="k">발병 시점</span><span class="v">40분 전</span><span class="ok">✓ 정답</span></div>
+                <div class="field" data-k="vitals"><span class="k">활력징후</span><span class="v">혈압 160/90 · 맥박 88 · 호흡 18 · SpO₂ 97 · 체온 36.4</span><span class="ok">✓ 정답</span></div>
+                <div class="field"><span class="k">처치</span><span class="v">상처처치 › 지혈</span><span class="ok">✓ 정답</span></div>
+                <div class="field"><span class="k">의식</span><span class="v">A <small>명료</small></span><span class="ok">✓ 정답</span></div>
+                <div class="field"><span class="k">증상</span><span class="v">비출혈 있음 <small>+ 없는 증상 몇 개를 더 넣음</small></span><span class="ng">✗ 일부 틀림</span></div>
+              </div>
+            </div>
+          </div>
+          <p class="foot" data-anim="foot">실제 시험 문제와 MF_BERT(현재 공개 모델)의 실제 출력입니다. 통화 1건에 평균 0.015초가 걸립니다.</p>
+        </article>
+
+        <!-- 2. 시험지 -->
+        <article class="scene" data-dur="6" aria-label="장면 2 시험지">
+          <div class="scene-head">
+            <div class="eyebrow">2 · 시험지</div>
+            <h2>처음 보는 통화 100건으로 시험을 봤습니다</h2>
+          </div>
+          <div class="s2">
+            <div>
+              <p class="panel-title">KTAS 등급마다 20건 (네모 하나 = 통화 1건)</p>
+              <div class="ktas" id="ktasGrid">
+                <div class="ktas-col"><b>KTAS 1</b><span>소생</span><div class="cells"></div></div>
+                <div class="ktas-col"><b>KTAS 2</b><span>긴급</span><div class="cells"></div></div>
+                <div class="ktas-col"><b>KTAS 3</b><span>응급</span><div class="cells"></div></div>
+                <div class="ktas-col"><b>KTAS 4</b><span>준응급</span><div class="cells"></div></div>
+                <div class="ktas-col"><b>KTAS 5</b><span>비응급</span><div class="cells"></div></div>
+              </div>
+            </div>
+            <div class="models">
+              <p class="panel-title">시험 본 모델 22개</p>
+              <div class="kind c-mf"><div class="kind-head"><span class="key c-mf">MF_BERT (공개 모델 + 실험 모델)</span><b>14</b></div><div class="dots" data-n="14"></div></div>
+              <div class="kind c-lora"><div class="kind-head"><span class="key c-lora">소형 LLM + 같은 과제로 학습</span><b>2</b></div><div class="dots" data-n="2"></div></div>
+              <div class="kind c-llm"><div class="kind-head"><span class="key c-llm">큰 LLM, 학습 없이 지시문만</span><b>4</b></div><div class="dots" data-n="4"></div></div>
+              <div class="kind c-base"><div class="kind-head"><span class="key c-base">학습 전 소형 LLM (기준선)</span><b>2</b></div><div class="dots" data-n="2"></div></div>
+              <ul class="facts">
+                <li>Claude Opus 5.5로 만든 합성 통화 (실제 통화 아님)</li>
+                <li>학습 데이터와 겹치는 통화 0건</li>
+                <li>같은 PC (RTX 5080 16GB), 같은 채점 코드</li>
+                <li>KTAS·주증상 등 15개 항목 + 원문 구간 5종</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- 3. 속도 -->
+        <article class="scene" data-dur="9" aria-label="장면 3 속도">
+          <div class="scene-head">
+            <div class="eyebrow">3 · 속도</div>
+            <h2>100건을 처리하는 데 걸리는 시간</h2>
+          </div>
+          <div class="clock"><span class="t tabnum" id="raceClock">59분 18초</span><span class="cap">흐른 시간 · 실제 측정값으로 빨리 감기 (1건씩 차례로 처리)</span></div>
+          <div class="race">
+            <div class="lane done c-mf" data-lat="0.01502"><div class="who2"><span class="name">MF_BERT</span><span class="sub">우리 모델</span></div><div class="track"><div class="fill" style="width:100%"></div></div><span class="count">1.5초</span></div>
+            <div class="lane done c-lora" data-lat="6.91767"><div class="who2"><span class="name">Qwen3-1.7B + LoRA</span><span class="sub">소형 LLM + 학습</span></div><div class="track"><div class="fill" style="width:100%"></div></div><span class="count">11분 31초</span></div>
+            <div class="lane done c-llm" data-lat="35.5883"><div class="who2"><span class="name">gpt-oss-20B (생각 중간)</span><span class="sub">큰 LLM, 학습 없음</span></div><div class="track"><div class="fill" style="width:100%"></div></div><span class="count">59분 18초</span></div>
+          </div>
+          <p class="note" id="raceNote">MF_BERT는 소형 LLM보다 약 370~460배 빠릅니다.</p>
+        </article>
+
+        <!-- 4. 정확도 -->
+        <article class="scene" data-dur="8" aria-label="장면 4 정확도">
+          <div class="scene-head">
+            <div class="eyebrow">4 · 정확도</div>
+            <h2>종합 점수 (0~100점, 모든 항목 점수의 평균)</h2>
+          </div>
+          <div class="legend"><span class="key c-mf">우리 모델</span><span class="key c-lora">소형 LLM + 학습</span><span class="key c-llm">큰 LLM, 학습 없음</span></div>
+          <div class="bars" id="bars">
+            <div class="band" data-anim="band"></div>
+            <span class="n1" data-anim="n1">위 세 모델의 차이는 <b>100건으로는 구분되지 않습니다</b>. (95% 구간이 0을 포함)</span>
+          </div>
+          <div class="callouts">
+            <p data-anim="c2">MF_BERT는 학습 없는 큰 LLM보다 <b>17~31점 높습니다</b>. 우연으로 볼 수 없는 차이입니다.</p>
+            <p data-anim="c3">답이 하나인 8개 항목(KTAS, 주증상, 의식 등)의 평균 정답률은 <b>MF_BERT 91.0%</b>로 가장 높습니다. (소형 LLM 88.1~90.2%)</p>
+          </div>
+        </article>
+
+        <!-- 5. 크기 -->
+        <article class="scene" data-dur="6" aria-label="장면 5 크기">
+          <div class="scene-head">
+            <div class="eyebrow">5 · 크기</div>
+            <h2>모델 크기와 GPU 메모리</h2>
+          </div>
+          <div class="legend"><span class="key c-mf">우리 모델</span><span class="key c-lora">소형 LLM + 학습</span><span class="key c-llm">큰 LLM, 학습 없음</span></div>
+          <div class="s5">
+            <figure class="sizes" style="margin:0">
+              <svg viewBox="0 0 420 270" role="img" aria-label="파라미터 수 비교: MF_BERT 0.37B, Qwen3-1.7B 1.74B, gpt-oss-20B 20.9B">
+                <line class="base" x1="8" y1="226" x2="412" y2="226"></line>
+                <circle data-i="0" cx="44" cy="212.7" r="13.3" style="fill:var(--mf)"></circle>
+                <circle data-i="1" cx="122" cy="197.1" r="28.9" style="fill:var(--lora)"></circle>
+                <circle data-i="2" cx="292" cy="126" r="100" style="fill:var(--llm)"></circle>
+                <g data-i="0"><text class="vl" x="44" y="186" text-anchor="middle">0.37B</text><text class="nm" x="44" y="246" text-anchor="middle">MF_BERT</text></g>
+                <g data-i="1"><text class="vl" x="122" y="156" text-anchor="middle">1.74B</text><text class="nm" x="122" y="246" text-anchor="middle">Qwen3-1.7B</text><text class="nm" x="122" y="262" text-anchor="middle">+ LoRA</text></g>
+                <g data-i="2"><text class="vl" x="292" y="16" text-anchor="middle">20.9B</text><text class="nm" x="292" y="246" text-anchor="middle">gpt-oss-20B</text></g>
+              </svg>
+              <figcaption>원의 넓이 = 파라미터 수 (B = 10억 개)</figcaption>
+            </figure>
+            <div class="meters">
+              <h3>GPU 메모리 (RTX 5080 16GB 한 장 기준)</h3>
+              <div class="meter c-mf" data-gb="3.3"><span>MF_BERT</span><div class="mt"><div class="mf" style="width:20.6%"></div></div><span class="mv">3.3GB</span></div>
+              <div class="meter c-lora" data-gb="6.8"><span>Qwen3-1.7B + LoRA</span><div class="mt"><div class="mf" style="width:42.5%"></div></div><span class="mv">6.8GB</span></div>
+              <div class="meter c-llm" data-gb="12.0"><span>gpt-oss-20B</span><div class="mt"><div class="mf" style="width:75%"></div></div><span class="mv">12.0GB</span></div>
+              <div class="meter" aria-hidden="true"><span></span><div class="scale"><span>0</span><span>8GB</span><span>16GB</span></div><span></span></div>
+              <p class="disk" data-anim="disk">저장 용량은 1.37GiB · 3.28GiB · 12.85GiB입니다. gpt-oss-20B는 이 GPU에 다 올라가지 않아 일부를 CPU에서 돌렸습니다.</p>
+            </div>
+          </div>
+        </article>
+
+        <!-- 6. 정리 -->
+        <article class="scene" data-dur="7" aria-label="장면 6 정리">
+          <div class="scene-head">
+            <div class="eyebrow">6 · 정리</div>
+            <h2>정확도는 학습한 소형 LLM과 비슷하고, 수백 배 빠르고 가볍습니다</h2>
+          </div>
+          <div class="wins">
+            <div class="win" data-anim="w"><span class="big">≈</span><p><b>정확도:</b> 학습한 소형 LLM과 100건으로는 차이가 구분되지 않습니다 (77.3점 대 79.9~81.5점).</p></div>
+            <div class="win" data-anim="w"><span class="big">370~460배</span><p><b>속도:</b> 소형 LLM보다 빠릅니다. 1건에 0.015초, 크기는 4~5분의 1입니다.</p></div>
+            <div class="win" data-anim="w"><span class="big">+17~31점</span><p><b>학습 없는 큰 LLM보다</b> 확실히 정확합니다. 크기는 그 모델들의 40~57분의 1입니다.</p></div>
+          </div>
+          <div class="weak" data-anim="weak"><span class="tag">⚠ 약점</span><p>증상·손상처럼 여러 개를 골라야 하는 항목은 소형 LLM보다 7~23점 낮습니다. 가장 위급한 KTAS 1등급 20건 중 10건을 2등급으로 판정했습니다. 다음 버전에서 고칠 부분입니다.</p></div>
+          <p class="foot" data-anim="foot">시험지는 Claude Opus 5.5로 만든 합성 통화 100건(학습에 쓰지 않음)이고, 정답도 AI가 만들어 사람 검수 전입니다. 모델마다 학습은 1회입니다. 자세한 내용: docs/BENCHMARK.md</p>
+        </article>
+      </div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+
+    <div class="controls">
+      <button class="btn primary" id="play" type="button">일시 정지</button>
+      <div class="chips" id="chips" role="group" aria-label="장면 선택"></div>
+      <button class="btn" id="replay" type="button">처음부터</button>
+    </div>
+  </section>
+
+  <section class="below">
+    <p>숫자는 모두 같은 채점 코드로 낸 값입니다. 속도는 1건씩 차례로 처리한 평균에 100을 곱했고, MF_BERT는 2026-10-03, 나머지는 2026-10-01에 같은 PC에서 쟀습니다. 시험지는 Claude Opus 5.5로 만든 합성 데이터이고, 정답은 AI가 만들었으며 사람 검수 전입니다.</p>
+    <details>
+      <summary>숫자 표 보기</summary>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>모델</th><th>종류</th><th class="num">종합 점수</th><th class="num">KTAS 정답률</th><th class="num">답이 하나인 8항목</th><th class="num">1건 처리 시간</th><th class="num">파라미터</th><th class="num">GPU 메모리</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+</main>
+
+<script>
+(() => {
+  const MODELS = [
+    { name: "Qwen3-1.7B + LoRA", kind: "lora", kindLabel: "소형 LLM + 학습", score: 81.5, ktas: 78, single: 90.2, sec: "6.9초", params: "1.74B", gpu: "6.8GB" },
+    { name: "Qwen2.5-1.5B + LoRA", kind: "lora", kindLabel: "소형 LLM + 학습", score: 79.9, ktas: 67, single: 88.1, sec: "5.5초", params: "1.56B", gpu: "6.3GB" },
+    { name: "MF_BERT (현재 공개 모델)", kind: "mf", kindLabel: "우리 모델", score: 77.3, ktas: 71, single: 91.0, sec: "0.015초", params: "0.37B", gpu: "3.3GB" },
+    { name: "gpt-oss-20B (생각 중간)", kind: "llm", kindLabel: "큰 LLM, 학습 없음", score: 60.3, ktas: 54, single: 76.1, sec: "35.6초", params: "20.9B", gpu: "12.0GB" },
+    { name: "Qwen3-14B (생각 켬)", kind: "llm", kindLabel: "큰 LLM, 학습 없음", score: 59.8, ktas: 66, single: 69.8, sec: "26.0초", params: "14.8B", gpu: "13.1GB" },
+    { name: "gpt-oss-20B (생각 적게)", kind: "llm", kindLabel: "큰 LLM, 학습 없음", score: 46.1, ktas: 53, single: 68.8, sec: "8.1초", params: "20.9B", gpu: "12.0GB" },
+  ];
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const ease = (x) => 1 - Math.pow(1 - x, 3);
+  const seg = (t, start, dur) => ease(clamp((t - start) / dur));
+  const fade = (el, p, dy = 8) => { el.style.opacity = p; el.style.transform = p >= 1 ? "" : `translateY(${((1 - p) * dy).toFixed(2)}px)`; };
+  const fmtTime = (s) => s < 60 ? `${s.toFixed(1)}초` : `${Math.floor(s / 60)}분 ${String(Math.floor(s % 60)).padStart(2, "0")}초`;
+
+  // ---------- 화면 만들기 (표, 막대, 칸, 점) ----------
+  $("#tbody").innerHTML = MODELS.map((m) => `<tr><td>${m.name}</td><td>${m.kindLabel}</td><td class="num">${m.score.toFixed(1)}</td><td class="num">${m.ktas}%</td><td class="num">${m.single.toFixed(1)}%</td><td class="num">${m.sec}</td><td class="num">${m.params}</td><td class="num">${m.gpu}</td></tr>`).join("");
+
+  const bars = $("#bars");
+  MODELS.forEach((m, i) => {
+    const row = i + 1;
+    bars.insertAdjacentHTML("beforeend",
+      `<span class="lbl c-${m.kind}${m.kind === "mf" ? " me" : ""}" style="grid-row:${row}">${m.name}</span>` +
+      `<div class="btrack c-${m.kind}" style="grid-row:${row}"><div class="bar" style="width:${m.score}%"></div><span class="val" style="left:${m.score}%">${m.score.toFixed(1)}</span></div>` +
+      `<div class="row-hit" tabindex="0" style="grid-row:${row}" data-i="${i}" aria-label="${m.name}: 종합 ${m.score}점, KTAS ${m.ktas}%, 1건 ${m.sec}"></div>`);
+  });
+  bars.insertAdjacentHTML("beforeend", `<div class="axis" style="grid-row:${MODELS.length + 1}">${[0, 25, 50, 75, 100].map((v) => `<span style="left:${v}%">${v}</span>`).join("")}</div>`);
+
+  $$("#ktasGrid .cells").forEach((c) => { c.innerHTML = '<span class="cell"></span>'.repeat(20); });
+  $$(".dots").forEach((d) => { d.innerHTML = '<span class="dot"></span>'.repeat(+d.dataset.n); });
+
+  // 막대 위에 올리면 자세한 숫자
+  const tip = $("#tip"), stage = $("#stage");
+  const showTip = (i, x, y) => {
+    const m = MODELS[i];
+    tip.innerHTML = `<b>${m.name}</b><br>종합 ${m.score.toFixed(1)}점 · KTAS ${m.ktas}%<br>답이 하나인 8항목 ${m.single.toFixed(1)}% · 1건 ${m.sec}`;
+    tip.hidden = false;
+    const r = stage.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    tip.style.left = `${clamp(x - r.left + 14, 8, r.width - w - 8)}px`;
+    tip.style.top = `${y - r.top + 16}px`;
+  };
+  $$(".row-hit").forEach((el) => {
+    el.addEventListener("pointermove", (e) => showTip(+el.dataset.i, e.clientX, e.clientY));
+    el.addEventListener("pointerleave", () => { tip.hidden = true; });
+    el.addEventListener("focus", () => { const b = el.getBoundingClientRect(); showTip(+el.dataset.i, b.left + b.width * 0.55, b.top); });
+    el.addEventListener("blur", () => { tip.hidden = true; });
+  });
+
+  // ---------- 장면별 그리기: t(장면 안의 초) -> 화면 ----------
+  const scenes = $$(".scene");
+  const S = scenes.map((el) => ({ el, dur: +el.dataset.dur }));
+
+  const s1 = scenes[0];
+  const s1Fields = $$(".field", s1);
+  S[0].render = (t) => {
+    s1Fields.forEach((f, i) => {
+      const p = seg(t, 0.8 + i * 0.5, 0.45);
+      fade(f, p);
+      if (f.dataset.k) $$(`mark[data-k="${f.dataset.k}"]`, s1).forEach((mk) => mk.classList.toggle("on", p > 0.4));
+    });
+    fade($('[data-anim="foot"]', s1), seg(t, 5.4, 0.5));
+  };
+
+  const s2 = scenes[1];
+  const cellsByCol = $$(".cells", s2).map((c) => $$(".cell", c));
+  const dots = $$(".dot", s2), facts = $$(".facts li", s2);
+  S[1].render = (t) => {
+    cellsByCol.forEach((col, c) => col.forEach((cell, r) => {
+      const p = seg(t, 0.2 + (c * 20 + r) * 0.017, 0.25);
+      cell.style.opacity = p; cell.style.transform = p >= 1 ? "" : `scale(${(0.4 + 0.6 * p).toFixed(3)})`;
+    }));
+    dots.forEach((d, j) => { const p = seg(t, 2.2 + j * 0.05, 0.3); d.style.opacity = p; d.style.transform = p >= 1 ? "" : `scale(${p.toFixed(3)})`; });
+    facts.forEach((f, i) => fade(f, seg(t, 3.5 + i * 0.35, 0.4)));
+  };
+
+  // 속도: 흐른 시간 s 를 점점 빨리 감는다. MF_BERT 는 r=1.0초, 가장 느린 모델은 r=6.0초에 끝나게 맞춘다
+  const s3 = scenes[2];
+  const lanes = $$(".lane", s3).map((el) => ({ el, lat: +el.dataset.lat, fill: $(".fill", el), count: $(".count", el) }));
+  const SMAX = 100 * Math.max(...lanes.map((l) => l.lat)), SMF = 100 * lanes[0].lat;
+  const R_MF = 1.0, R_END = 6.0, START = 0.6;
+  let lo = 0.1, hi = 5;
+  for (let i = 0; i < 60; i++) { const k = (lo + hi) / 2; ((Math.exp(k * R_END) - 1) / (Math.exp(k * R_MF) - 1) > SMAX / SMF) ? (hi = k) : (lo = k); }
+  const K = (lo + hi) / 2, A = SMF / (Math.exp(K * R_MF) - 1);
+  const raceClock = $("#raceClock"), raceNote = $("#raceNote");
+  const others = lanes.slice(1);
+  S[2].render = (t) => {
+    const r = Math.max(0, t - START);
+    const s = Math.min(SMAX, A * (Math.exp(K * r) - 1));
+    lanes.forEach((l) => {
+      const n = Math.min(100, Math.floor(s / l.lat + 1e-9));
+      l.fill.style.width = `${n}%`;
+      l.count.textContent = n >= 100 ? fmtTime(100 * l.lat) : `${n} / 100건`;
+      l.el.classList.toggle("done", n >= 100);
+    });
+    raceClock.textContent = fmtTime(s);
+    raceNote.textContent = s >= SMAX ? "MF_BERT는 소형 LLM보다 약 370~460배 빠릅니다."
+      : s >= SMF ? `MF_BERT는 100건을 ${fmtTime(SMF)}에 끝냈습니다. ${others.every((l) => s < l.lat) ? "다른 모델은 아직 1건도 끝내지 못했습니다." : "다른 모델은 아직 처리 중입니다."}`
+      : "";
+  };
+
+  const s4 = scenes[3];
+  const barEls = $$(".bar", s4), valEls = $$(".val", s4);
+  S[3].render = (t) => {
+    MODELS.forEach((m, i) => {
+      const p = seg(t, 0.3 + i * 0.18, 0.9);
+      const w = m.score * p;
+      barEls[i].style.width = `${w}%`;
+      valEls[i].style.left = `${w}%`;
+      valEls[i].textContent = w.toFixed(1);
+      valEls[i].style.opacity = p > 0.02 ? 1 : 0;
+    });
+    $('[data-anim="band"]', s4).style.opacity = seg(t, 2.6, 0.5);
+    fade($('[data-anim="n1"]', s4), seg(t, 2.8, 0.5));
+    fade($('[data-anim="c2"]', s4), seg(t, 4.2, 0.5));
+    fade($('[data-anim="c3"]', s4), seg(t, 5.6, 0.5));
+  };
+
+  const s5 = scenes[4];
+  const circles = $$("circle", s5), circLabels = $$("svg g", s5), meters = $$(".meter", s5);
+  S[4].render = (t) => {
+    circles.forEach((c, i) => { const p = seg(t, 0.3 + i * 0.45, 0.7); c.style.transform = p >= 1 ? "" : `scale(${p.toFixed(3)})`; });
+    circLabels.forEach((g, i) => { g.style.opacity = seg(t, 0.6 + i * 0.45, 0.5); });
+    meters.forEach((m, i) => { const fill = $(".mf", m); if (!fill) return; const p = seg(t, 1.9 + i * 0.3, 0.8); fill.style.width = `${(+m.dataset.gb / 16) * 100 * p}%`; });
+    fade($('[data-anim="disk"]', s5), seg(t, 3.6, 0.5));
+  };
+
+  const s6 = scenes[5];
+  S[5].render = (t) => {
+    $$('[data-anim="w"]', s6).forEach((w, i) => fade(w, seg(t, 0.3 + i * 0.6, 0.5)));
+    fade($('[data-anim="weak"]', s6), seg(t, 2.4, 0.5));
+    fade($('[data-anim="foot"]', s6), seg(t, 3.4, 0.5));
+  };
+
+  // ---------- 재생 ----------
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const starts = S.map((_, i) => S.slice(0, i).reduce((a, s) => a + s.dur, 0));
+  const chipNames = ["과제", "시험지", "속도", "정확도", "크기", "정리"];
+  const chips = $("#chips");
+  chips.innerHTML = chipNames.map((n, i) => `<button class="chip" type="button" data-i="${i}">${i + 1} ${n}<span class="prog"></span></button>`).join("");
+  const chipEls = $$(".chip", chips);
+  const playBtn = $("#play"), sceneNo = $("#sceneNo"), clockAll = $("#clockAll");
+  let idx = 0, t = 0, playing = false, last = null, ended = false;
+
+  const draw = () => {
+    S[idx].render(reduce.matches ? S[idx].dur : t);
+    const all = starts[idx] + Math.min(t, S[idx].dur);
+    clockAll.textContent = `0:${String(Math.floor(all)).padStart(2, "0")}`;
+    chipEls.forEach((c, i) => { $(".prog", c).style.width = i < idx ? "100%" : i === idx ? `${(Math.min(t, S[i].dur) / S[i].dur) * 100}%` : "0"; });
+  };
+  const show = (i, tt = 0) => {
+    idx = i; t = tt; ended = false;
+    scenes.forEach((s, k) => s.classList.toggle("is-active", k === i));
+    chipEls.forEach((c, k) => (k === i ? c.setAttribute("aria-current", "step") : c.removeAttribute("aria-current")));
+    sceneNo.textContent = i + 1;
+    tip.hidden = true;
+    if (!playing) playBtn.textContent = "재생";
+    draw();
+  };
+  const setPlaying = (v) => {
+    playing = v; last = null;
+    playBtn.textContent = v ? "일시 정지" : ended ? "다시 재생" : "재생";
+    if (v) requestAnimationFrame(tick);
+  };
+  const tick = (now) => {
+    if (!playing) return;
+    const dt = last == null ? 0 : Math.min(0.1, (now - last) / 1000);
+    last = now; t += dt;
+    if (t >= S[idx].dur) {
+      if (idx < S.length - 1) show(idx + 1, 0);
+      else { t = S[idx].dur; draw(); ended = true; setPlaying(false); return; }
+    } else draw();
+    requestAnimationFrame(tick);
+  };
+
+  playBtn.addEventListener("click", () => {
+    if (playing) return setPlaying(false);
+    if (ended) show(0, 0);
+    setPlaying(true);
+  });
+  $("#replay").addEventListener("click", () => { show(0, 0); setPlaying(true); });
+  chips.addEventListener("click", (e) => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    show(+b.dataset.i, 0);
+    if (!playing) draw();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest("input, textarea, select")) return;
+    if (e.key === "ArrowRight") { show(Math.min(S.length - 1, idx + 1), 0); }
+    else if (e.key === "ArrowLeft") { show(Math.max(0, idx - 1), 0); }
+  });
+
+  show(0, 0);
+  if (reduce.matches) { playBtn.textContent = "재생"; }
+  else setPlaying(true);
+})();
+</script>
+</body>
+</html>

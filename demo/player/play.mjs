@@ -31,6 +31,45 @@ const REASON_LABEL = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── 작동 원리 설명(--explain, 합본 영상용) ──
+// 설명 모드는 진행을 PACE배로 빠르게(기다림·자막 속도) 하고, 설명 상자는 읽을 만큼만(EXPLAIN_MIN_MS) 보장한다 —
+// 장면이 원래 길면(통화 등) 더 기다리지 않는다. 설명이 없는 장면은 상자를 내린다.
+const EXPLAIN = process.argv.includes("--explain");
+// 차분한 모드(--calm, 설명 모드는 자동): 썸네일 없음 · 관제 지도로 넘어가지 않음 · 자막 한 줄 — 합본 영상용
+const CALM = EXPLAIN || process.argv.includes("--calm");
+const SUFFIX = EXPLAIN ? "_explain" : CALM ? "_calm" : "";
+const PACE = EXPLAIN ? 0.55 : 1;
+const EXPLAIN_MIN_MS = 5200;
+const pace = (ms) => sleep(ms * PACE);
+const EX = {
+  arrive: { title: "AI 첫 통화 추천", lines: [
+    "<b>빈 병상 · 병상 정보 신뢰도(AI) · 도착 시간</b>을 함께 따져 한 곳을 추천",
+    "틀려도 괜찮다 — 통화 내용은 모든 후보에게 간다",
+  ] },
+  call: { title: "통화가 곧 자막", lines: [
+    "말이 끊길 때마다 그 문장을 바로 음성 인식(<b>Qwen3-ASR</b>)",
+    "시연은 음성 대신 대본을 같은 속도로 재생",
+  ] },
+  structuring: { title: "AI 구조화 — MF_BERT", lines: [
+    "통화 전문에서 <b>17개 항목</b>(KTAS·활력징후·의식…)을 고른다",
+    "<b>생성형이 아니다</b> — 없는 말을 지어내지 않는다",
+  ] },
+  broadcast: { title: "동시 전달 · 규칙 순위", lines: [
+    "5km 존 안 후보 병원 <b>전부에 한 번에</b>",
+    "순위 = 진료과 일치 + 이동 시간 + 병상(<b>공개된 규칙</b>)",
+  ] },
+  reject: { title: "거절 사유가 바로 보인다", lines: [
+    "사유는 4축으로 기록 — 일시적 사정으로 병원을 영구히 밀어내지 않는다",
+    "거절이 <b>40%</b>를 넘으면 존 자동 확장",
+  ] },
+  approve: { title: "병원 승인 = 후보 등록", lines: ["최종 확정은 <b>구급대원</b>"] },
+  zone: { title: "존 자동 확장", lines: ["시간이 아니라 <b>거절 비율</b>로 넓힌다"] },
+  confirm: { title: "최종 결정은 사람", lines: ["이송 승인은 <b>구급대원만</b> — AI는 판단을 대체하지 않는다"] },
+  refuse: { title: "도착 후 수용 불가", lines: ["확정 해제 · 그때 상황을 <b>정답 데이터</b>로 기록"] },
+  reselect: { title: "재선택", lines: ["이미 승인한 병원으로 — <b>다시 전화하지 않는다</b>"] },
+  arrival: { title: "의사결정 블랙박스", lines: ["모든 결정이 <b>시각 + 해시 체인</b>으로 기록 — 위변조 검증"] },
+};
+
 function loadScenario(arg) {
   const file = fs.existsSync(arg) ? arg : path.join(DEMO, "scenarios", `${String(arg).padStart(2, "0")}.json`);
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -48,10 +87,15 @@ class Director {
   // 장면: 포커스·자막을 바꾸고 body를 실행한 뒤 holdMs만큼 보여 준다. 다른 장면은 이게 끝날 때까지 기다린다.
   scene(focus, caption, body = async () => {}, holdMs = 2500) {
     const run = async () => {
+      const ex = EXPLAIN && caption.ex ? EX[caption.ex] : null;
       await this.stage("focus", focus);
-      await this.stage("caption", caption.step, caption.text, caption.sub || "", caption.tone || "");
+      await this.stage("caption", caption.step, caption.text, CALM ? "" : caption.sub || "", caption.tone || "");
+      await this.stage("explain", ex ? ex.title : null, ex ? ex.lines : []);
+      const t0 = Date.now();
       await body();
-      await sleep(holdMs);
+      // 원래 보여 주던 시간(PACE배), 설명이 있으면 읽을 만큼은 보장
+      const left = ex ? EXPLAIN_MIN_MS - (Date.now() - t0) : 0;
+      await sleep(Math.max(holdMs * PACE, left));
     };
     const p = this.chain.then(run, run);
     this.chain = p.catch(() => {});
@@ -82,10 +126,11 @@ function summaryLine(summary) {
 }
 
 // 매칭 결과에서 응답할 병원 고르기 — "top": 아직 응답 안 한 상위 병원(승인이면 병상 없음·이미 거절 제외),
-// {rank:n}: n번째, "called": 휴대폰으로 전화한 병원
-function pickHospital(match, rule, responded, forApprove, calledId) {
+// {rank:n}: n번째, "called": 휴대폰으로 전화한 병원, "taken": 같은 시나리오의 다른 구급차가 이미 이송을 확정한 병원
+function pickHospital(match, rule, responded, forApprove, calledId, taken) {
   const list = match.hospitals;
   const ok = (h) => !responded.has(h.hospitalId) && h.status === "pending" && (!forApprove || h.unavailableReason !== "beds_full");
+  if (rule === "taken") return list.find((x) => taken.has(x.hospitalId) && ok(x)) || null;
   if (rule === "called") {
     const h = list.find((x) => x.hospitalId === calledId);
     if (h && ok(h)) return h;
@@ -109,7 +154,8 @@ async function runAmbulance(ctx, spec, idx) {
   await sleep((spec.startDelaySec || 0) * 1000);
 
   // 1. 출동
-  await dir.scene(["map"], { step: `${ambName} · 출동`, text: `${spec.incident.label} — ${ambName} 출동`, sub: spec.incident.note || "" }, async () => {
+  const overview = CALM ? [amb] : ["map"];
+  await dir.scene(overview, { step: `${ambName} · 출동`, ex: "dispatch", text: `${spec.incident.label} — ${ambName} 출동`, sub: spec.incident.note || "" }, async () => {
     link.dispatch(caseId, { lat: spec.incident.lat, lng: spec.incident.lng });
   }, 1500);
   await link.waitFor(() => link.phase?.caseId === caseId && link.phase.phase === "on_scene", 90000, "현장 도착");
@@ -123,11 +169,11 @@ async function runAmbulance(ctx, spec, idx) {
     scene.hospitals[0];
   await dir.stage("setVisible", phone, true);
   await dir.scene([phone, amb], {
-    step: `${ambName} · 현장 도착`,
+    step: `${ambName} · 현장 도착`, ex: "arrive",
     text: `대원 휴대폰 — 가까운 병원 ${scene.hospitals.length}곳 중 ${target.name}에 전화`,
     sub: target.firstCallRecommended ? "첫 통화 추천: 빈 병상 확인 + 도착 시점 유효 확률(AI) 최고" : "도착 시간순(규칙 기반)",
   }, async () => {
-    await sleep(1800);
+    await pace(1800);
     await frame(phone).locator("li button", { hasText: target.name }).first().dispatchEvent("click");
   }, 500);
 
@@ -136,30 +182,32 @@ async function runAmbulance(ctx, spec, idx) {
   const lines = [];
   let t = 0.6;
   await dir.scene([phone, amb], {
-    step: `${ambName} · 통화 중`,
+    step: `${ambName} · 통화 중`, ex: "call",
     text: `${target.name} 응급실과 통화 — 실시간 자막`,
     sub: "시연용 대본을 자막으로 재생(음성 인식 대신) · 통화가 끝나면 이 내용이 실제 AI 구조화로 들어갑니다",
   }, async () => {
+    ctx.mark("callStart");
     for (const text of spec.script) {
-      const dur = Math.max(1.8, text.length / 8);
+      const dur = EXPLAIN ? Math.max(1.3, text.length / 12) : Math.max(1.8, text.length / 8);
       await sleep(dur * 1000);
       lines.push({ start: +t.toFixed(1), end: +(t + dur).toFixed(1), text });
       await link.utterance(caseId, t, t + dur, text);
       t += dur + 0.5;
-      await sleep(500);
+      await pace(500);
     }
-    await sleep(800);
+    await pace(800);
     await frame(phone).getByRole("button", { name: "통화 종료" }).first().dispatchEvent("click");
+    ctx.mark("callEnd");
     await link.waitFor(() => link.call[caseId]?.state === "ended", 15000, "통화 종료 반영");
   }, 600);
 
   // 4. 실제 MF_BERT 구조화 — 걸린 시간을 그대로 보여 준다
   let structured;
-  await dir.scene([amb], { step: `${ambName} · AI 구조화`, text: "통화 내용 구조화 중 — MF_BERT(KLUE RoBERTa-large)", sub: "KTAS·주 호소·활력징후·의식·처치 등 17개 항목", tone: "ai" }, async () => {
+  await dir.scene([amb], { step: `${ambName} · AI 구조화`, ex: "structuring", text: "통화 내용 구조화 중 — MF_BERT(KLUE RoBERTa-large)", sub: "KTAS·주 호소·활력징후·의식·처치 등 17개 항목", tone: "ai" }, async () => {
     structured = await structure(caseId, lines, t);
   }, 300);
   await dir.scene([amb], {
-    step: `${ambName} · AI 구조화 완료 (${structured.extractSec.toFixed(2)}초)`,
+    step: `${ambName} · AI 구조화 완료 (${structured.extractSec.toFixed(2)}초)`, ex: "structured",
     text: summaryLine(structured.message.summary) || "구조화 완료",
     sub: "AI는 정보 구조화만 — 병원 매칭·순위는 규칙 기반 엔진",
     tone: "ai",
@@ -171,7 +219,7 @@ async function runAmbulance(ctx, spec, idx) {
   // 5. 후보 병원 동시 전달
   const match = await link.waitFor(() => link.match[caseId], 60000, "매칭 결과");
   await dir.scene([amb], {
-    step: `${ambName} · 병원 동시 전달`,
+    step: `${ambName} · 병원 동시 전달`, ex: "broadcast",
     text: `존 안 후보 병원 ${match.hospitals.length}곳에 환자 정보를 한 번에 전달`,
     sub: "순차 전화(뺑뺑이) 대신 동시 전달 — 순위: 이동 시간·진료과·병상(규칙 기반)",
   }, async () => {}, 3000);
@@ -179,30 +227,39 @@ async function runAmbulance(ctx, spec, idx) {
   // 6. 병원 응답들
   const responded = new Set();
   let approved = null;
+  const approvedAll = [];
   const respond = async (list) => {
     for (const r of list) {
+      if (r.onlyIfNeeded && approved) continue; // 앞에서 이미 승인 병원이 나왔으면 건너뛴다
+      if (r.who === "taken") {
+        // 앞 구급차가 병원을 확정할 때까지 기다린다(대량사고: "앞 차가 마지막 병상을 가져갔다")
+        await link.waitFor(() => ctx.confirmed.size > 0, 240000, "다른 구급차의 이송 확정");
+      }
       const m = link.match[caseId];
-      const h = pickHospital(m, r.who || "top", responded, r.action === "approve", target.hospitalId);
+      const h = pickHospital(m, r.who || "top", responded, r.action === "approve", target.hospitalId, ctx.confirmed);
       if (!h) continue;
       responded.add(h.hospitalId);
       const hp = `h-${h.hospitalId}`;
       await dir.stage("addPane", hp, { url: `${DASH}/hospital?id=${encodeURIComponent(h.hospitalId)}`, label: `병원 · ${h.name}` });
-      await sleep(1800);
+      await pace(1800);
       const reject = r.action === "reject";
       await dir.scene([hp], {
-        step: `${h.name} · ${reject ? "수용 불가" : "수용 가능"}`,
+        step: `${h.name} · ${reject ? "수용 불가" : "수용 가능"}`, ex: reject ? "reject" : "approve",
         text: reject ? `${h.name}: 수용 불가 — ${REASON_LABEL[r.reason] || r.reason || "사유 미기재"}` : `${h.name}: 수용 가능 (승인)`,
         sub: reject ? "거절 사유가 구급대 화면에 바로 표시 · 거절이 쌓이면 존 확장" : "병원 승인은 후보 등록 — 최종 확정은 구급대원",
         tone: reject ? "reject" : "",
       }, async () => {
-        await sleep(r.delaySec != null ? r.delaySec * 1000 : 2200);
+        await pace(r.delaySec != null ? r.delaySec * 1000 : 2200);
         link.action(caseId, reject ? "hospital_reject" : "hospital_approve", h.hospitalId, "hospital", reject ? r.reason : undefined);
         await link.waitFor(() => link.match[caseId]?.hospitals.find((x) => x.hospitalId === h.hospitalId)?.status !== "pending", 15000, "병원 응답 반영");
       }, 2500);
-      if (!reject && !approved) approved = h;
+      if (!reject) {
+        approvedAll.push(h);
+        if (!approved) approved = h;
+      }
       const zones = link.match[caseId].zoneActive?.length || 1;
       if (zones > (m.zoneActive?.length || 1)) {
-        await dir.scene([amb], { step: `${ambName} · 존 확장`, text: `거절이 쌓여 요청 범위를 ${zones * 5}km까지 넓혔습니다`, sub: "거절 비율 40% 이상이면 다음 존으로 자동 확장(규칙 기반)", tone: "reject" }, async () => {}, 3000);
+        await dir.scene([amb], { step: `${ambName} · 존 확장`, ex: "zone", text: `거절이 쌓여 요청 범위를 ${zones * 5}km까지 넓혔습니다`, sub: "거절 비율 40% 이상이면 다음 존으로 자동 확장(규칙 기반)", tone: "reject" }, async () => {}, 3000);
       }
     }
   };
@@ -211,12 +268,13 @@ async function runAmbulance(ctx, spec, idx) {
 
   // 7. 이송 승인 → 이송 → 도착
   const confirmAndGo = async (h) => {
-    await dir.scene([amb], { step: `${ambName} · 이송 승인`, text: `구급대원 최종 선택: ${h.name}`, sub: "AI는 판단을 대체하지 않습니다 — 이송 결정은 구급대원" }, async () => {
-      await sleep(1500);
+    await dir.scene([amb], { step: `${ambName} · 이송 승인`, ex: "confirm", text: `구급대원 최종 선택: ${h.name}`, sub: "AI는 판단을 대체하지 않습니다 — 이송 결정은 구급대원" }, async () => {
+      await pace(1500);
       link.action(caseId, "final_approval", h.hospitalId, "paramedic");
       await link.waitFor(() => link.match[caseId]?.hospitals.find((x) => x.hospitalId === h.hospitalId)?.status === "confirmed", 15000, "이송 확정");
+      ctx.confirmed.add(h.hospitalId);
     }, 2000);
-    await dir.scene(["map"], { step: `${ambName} · 이송 중`, text: `${h.name}(으)로 이송 중`, sub: "관제 지도: 구급차 위치·요청 현황 실시간" }, async () => {}, 1500);
+    await dir.scene(overview, { step: `${ambName} · 이송 중`, ex: "transport", text: `${h.name}(으)로 이송 중`, sub: "관제 지도: 구급차 위치·요청 현황 실시간" }, async () => {}, 1500);
     await link.waitFor(() => link.phase?.caseId === caseId && link.phase.phase === "at_hospital", 90000, "병원 도착");
   };
   await confirmAndGo(approved);
@@ -225,23 +283,29 @@ async function runAmbulance(ctx, spec, idx) {
   let dest = approved;
   if (spec.arrival && spec.arrival.refuse) {
     await dir.scene([`h-${dest.hospitalId}`], {
-      step: `${dest.name} · 도착 후 수용 불가`,
+      step: `${dest.name} · 도착 후 수용 불가`, ex: "refuse",
       text: `${dest.name}: 도착했지만 수용 불가 — ${REASON_LABEL[spec.arrival.refuse] || spec.arrival.refuse}`,
       sub: "확정 해제 → 같은 환자 정보로 그 자리에서 재선택(재통화 없음)",
       tone: "reject",
     }, async () => {
-      await sleep(2000);
+      await pace(2000);
       link.action(caseId, "arrival_refused", dest.hospitalId, "hospital", spec.arrival.refuse);
       await link.waitFor(() => link.phase?.phase === "rerouting", 20000, "재선택 대기");
     }, 2500);
-    approved = null;
-    await respond(spec.arrival.then || [{ action: "approve" }]);
+    // 이미 승인한 다른 병원이 있으면 그 병원으로 재선택(재통화 없음), 없으면 남은 병원들에 다시 응답을 받는다
+    const refusedId = dest.hospitalId;
+    const other = approvedAll.find(
+      (h) => h.hospitalId !== refusedId && link.match[caseId]?.hospitals.find((x) => x.hospitalId === h.hospitalId)?.status === "approved",
+    );
+    approved = other || null;
+    if (!approved) await respond(spec.arrival.then || [{ action: "approve" }]);
     if (!approved) throw new Error(`[${spec.apid}] 재선택할 승인 병원이 없습니다`);
     dest = approved;
+    await dir.scene([amb], { step: `${ambName} · 재선택`, ex: "reselect", text: `그 자리에서 ${dest.name}(으)로 재선택`, sub: other ? "이미 수용 가능이라고 답한 다른 병원 — 다시 전화 돌리지 않는다" : "남은 후보 병원의 응답으로 재선택" }, async () => {}, 2000);
     await confirmAndGo(dest);
   }
-  await dir.scene([`h-${dest.hospitalId}`], { step: `${dest.name} · 환자 도착`, text: `${dest.name}: 환자 수용 완료`, sub: "모든 의사결정은 시각·해시로 기록(의사결정 블랙박스)" }, async () => {
-    await sleep(1800);
+  await dir.scene([`h-${dest.hospitalId}`], { step: `${dest.name} · 환자 도착`, ex: "arrival", text: `${dest.name}: 환자 수용 완료`, sub: "모든 의사결정은 시각·해시로 기록(의사결정 블랙박스)" }, async () => {
+    await pace(1800);
     link.action(caseId, "arrival_accepted", dest.hospitalId, "hospital");
     await link.waitFor(() => link.phase?.caseId !== caseId || link.phase.phase === "returning", 20000, "수용 반영");
   }, 2500);
@@ -268,9 +332,11 @@ async function main() {
     ...(record ? { recordVideo: { dir: outDir, size: { width: 1920, height: 1080 } } } : {}),
   });
   const page = await context.newPage();
+  const videoT0 = Date.now(); // 녹화는 페이지가 생길 때 시작된다 — 구간 시각의 기준
   await page.goto(`${DASH}/demo-stage.html`);
   const dir = new Director(page);
-  const ctx = { page, dir, scenario };
+  const marks = {};
+  const ctx = { page, dir, scenario, confirmed: new Set(), mark: (k) => { if (!(k in marks)) marks[k] = +((Date.now() - videoT0) / 1000).toFixed(2); } };
 
   // 창 준비(소개 카드가 떠 있는 동안 뒤에서 대시보드를 띄운다)
   await dir.stage("setScenario", scenario.id, scenario.title);
@@ -281,21 +347,24 @@ async function main() {
     loads.push(dir.stage("addPane", `phone-${a.apid}`, { url: `${DASH}/phone?id=${a.apid}`, kind: "phone", label: `대원 휴대폰 · ${a.name || a.apid}`, visible: false }));
   }
   await Promise.all(loads);
-  await dir.stage("focus", ["map"]);
-  await sleep(Math.max(0, (scenario.introSec || 8) * 1000 - 1000));
+  const home = CALM ? [`amb-${scenario.ambulances[0].apid}`] : ["map"];
+  if (CALM) await dir.stage("configure", { thumbs: false, wide: !EXPLAIN });
+  await dir.stage("focus", home);
+  await sleep(Math.max(0, (scenario.introSec || (EXPLAIN ? 5 : 8)) * 1000 - 1000));
   await dir.stage("intro", {}, false);
-  await sleep(800);
+  await pace(800);
 
   const results = await Promise.all(scenario.ambulances.map((a, i) => runAmbulance(ctx, a, i)));
-  await dir.scene(["map"], { step: "시나리오 완료", text: results.map((r) => `${r.apid} → ${r.dest}`).join(" · "), sub: scenario.outro || "" }, async () => {}, 4000);
+  await dir.scene(home, { step: "시나리오 완료", text: results.map((r) => `${r.apid} → ${r.dest}`).join(" · "), sub: scenario.outro || "" }, async () => {}, 4000);
 
   const video = page.video();
   await context.close();
   await browser.close();
   if (video) {
     const raw = await video.path();
-    const out = path.join(outDir, `scenario_${scenario.id}.webm`);
+    const out = path.join(outDir, `scenario_${scenario.id}${SUFFIX}.webm`);
     fs.renameSync(raw, out);
+    fs.writeFileSync(out.replace(/\.webm$/, ".marks.json"), JSON.stringify(marks, null, 2));
     console.log(`녹화: ${out}`);
   }
 }

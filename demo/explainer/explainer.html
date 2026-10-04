@@ -1,0 +1,277 @@
+<!doctype html>
+<!--
+  [demo 브랜치 전용] 합본 영상용 설명 화면 — 아키텍처 흐름(#arch)과 시나리오 설명 카드(#card=01 등).
+  demo/player/compose.mjs가 이 페이지를 녹화해 시나리오 영상 앞뒤에 붙인다. ⚠ develop에 병합하지 않는다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>골든링크 설명</title>
+<style>
+  /* 브로셔 톤(2026-10-04): 베이지 종이 · 짙은 남색 판 · 황동색 포인트 · 고딕 + 고정폭 라벨 */
+  :root { --paper:#F2EEE6; --paper2:#E9E3D7; --line:#D6CFC1; --ink:#2A3038; --ink2:#5E6670; --ink3:#8C929A;
+    --navy:#2C3644; --navy2:#36414F; --brass:#B8874A; --brassL:#D9B27A; --cream:#F8F5EF; --coral:#C0524A; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; color: var(--ink); background: var(--paper); word-break: keep-all;
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif; }
+  .mono { font-family: "D2Coding", "Consolas", "SF Mono", "Menlo", monospace; }
+  .scene { position: absolute; inset: 0; opacity: 0; transition: opacity .7s ease; pointer-events: none; }
+  .scene.on { opacity: 1; }
+  .brand { position: absolute; left: 60px; top: 34px; display: flex; align-items: center; gap: 12px;
+    font-family: "Consolas", "SF Mono", monospace; font-size: 18px; font-weight: 700; letter-spacing: .22em; color: var(--ink); z-index: 5; }
+  .brand i { width: 18px; height: 18px; border-radius: 50%; background: var(--brass); box-shadow: inset 0 0 0 4px var(--paper); border: 2px solid var(--brass); }
+  .disc { position: absolute; right: 60px; top: 28px; font-size: 16px; font-weight: 700; color: var(--coral); z-index: 5;
+    border: 1.5px solid var(--coral); border-radius: 999px; padding: 6px 16px; background: var(--cream); }
+
+  /* 흐름도 */
+  .kicker { position: absolute; left: 60px; top: 96px; display: flex; align-items: center; gap: 14px;
+    font-size: 17px; font-weight: 700; color: var(--ink2); letter-spacing: .02em; }
+  .kicker::before { content: ""; width: 44px; height: 3px; background: var(--brass); }
+  .title { position: absolute; left: 60px; top: 128px; font-size: 44px; font-weight: 800; letter-spacing: -0.03em; color: var(--ink); }
+  .node { position: absolute; width: 300px; min-height: 120px; border-radius: 16px; padding: 18px 22px; background: var(--cream);
+    border: 1.5px solid var(--line); transition: all .5s ease; opacity: .45; }
+  .node.on { opacity: 1; background: var(--navy); border-color: var(--navy); box-shadow: 0 14px 36px rgba(44,54,68,.28); }
+  .node.seen { opacity: .9; }
+  .node .k { font-family: "Consolas", "SF Mono", monospace; font-size: 14px; font-weight: 700; color: var(--ink3); letter-spacing: .08em; }
+  .node .n { font-size: 26px; font-weight: 800; margin: 6px 0 6px; color: var(--ink); letter-spacing: -0.02em; }
+  .node .d { font-size: 17px; color: var(--ink2); line-height: 1.5; }
+  .node.on .k { color: var(--brassL); } .node.on .n { color: #fff; } .node.on .d { color: #D3D8DE; }
+  .tag { display: inline-block; font-size: 13px; font-weight: 800; padding: 3px 11px; border-radius: 999px; margin-top: 10px;
+    background: var(--paper2); color: var(--ink2); }
+  .node.on .tag { background: var(--brass); color: var(--navy); }
+  svg.links { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  svg.links path { fill: none; stroke: #C9C1B2; stroke-width: 3; transition: stroke .5s ease; marker-end: url(#arr); }
+  svg.links path.on { stroke: var(--brass); stroke-width: 4; stroke-dasharray: 12 9; animation: flow 1s linear infinite; marker-end: url(#arrOn); }
+  svg.links marker path { stroke: none; stroke-dasharray: none; animation: none; marker-end: none; }
+  svg.links #arr path { fill: #C9C1B2; } svg.links #arrOn path { fill: #B8874A; }
+  @keyframes flow { to { stroke-dashoffset: -21; } }
+  .cap { position: absolute; left: 60px; right: 60px; bottom: 40px; height: 140px; display: flex; align-items: center; gap: 26px;
+    border-top: 1.5px solid var(--line); padding-top: 18px; }
+  .cap .num { flex: 0 0 auto; width: 64px; height: 64px; border-radius: 50%; background: var(--navy); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; }
+  .cap .s { font-size: 18px; font-weight: 800; color: var(--brass); letter-spacing: .02em; }
+  .cap .t { font-size: 36px; font-weight: 800; margin-top: 4px; letter-spacing: -0.02em; color: var(--ink); }
+  .cap .u { font-size: 20px; color: var(--ink2); margin-top: 6px; }
+
+  /* 모델 성능(2부) — 베이지 바탕 막대 그래프 */
+  .perf .grid { position: absolute; left: 60px; right: 60px; top: 250px; display: grid; grid-template-columns: 1.25fr 1fr; gap: 70px; }
+  .perf h3 { font-size: 24px; font-weight: 800; color: var(--ink); margin-bottom: 6px; }
+  .perf .hint { font-size: 17px; color: var(--ink2); margin-bottom: 26px; line-height: 1.5; }
+  .bars { display: flex; flex-direction: column; gap: 26px; }
+  .bargrp .lab { font-family: "Consolas", monospace; font-size: 16px; font-weight: 700; color: var(--ink3); letter-spacing: .06em; margin-bottom: 8px; }
+  .bar { display: flex; align-items: center; gap: 14px; height: 34px; margin-bottom: 8px; }
+  .bar .who { width: 170px; flex: 0 0 auto; font-size: 17px; color: var(--ink2); }
+  .bar .track { flex: 1; height: 100%; background: var(--paper2); border-radius: 6px; position: relative; overflow: hidden; }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 6px; transition: width 1.4s cubic-bezier(.2,.8,.2,1); }
+  .bar .fill.model { background: var(--navy); } .bar .fill.base { background: #CDBFA6; }
+  .bar .val { width: 70px; flex: 0 0 auto; font-family: "Consolas", monospace; font-size: 22px; font-weight: 700; color: var(--ink); text-align: right; }
+  .bar .val.dim { color: var(--ink3); font-weight: 400; }
+  .ece { display: flex; flex-direction: column; gap: 18px; }
+  .ece .bar .who { width: 120px; }
+  .ece .fill.before { background: #CDBFA6; } .ece .fill.after { background: var(--brass); }
+  .facts { margin-top: 40px; border-top: 1.5px solid var(--line); padding-top: 22px; display: flex; flex-direction: column; gap: 14px; }
+  .facts div { font-size: 20px; color: var(--ink); line-height: 1.45; padding-left: 22px; position: relative; }
+  .facts div::before { content: ""; position: absolute; left: 0; top: 11px; width: 9px; height: 9px; border-radius: 50%; background: var(--brass); }
+  .facts b { color: var(--navy); }
+  .src { position: absolute; left: 60px; bottom: 40px; font-size: 15px; color: var(--ink3); }
+
+  /* 시나리오·연결 카드 — 브로셔 오른쪽 면처럼 짙은 남색 판 */
+  .card { display: flex; flex-direction: column; justify-content: center; padding: 0 180px; background: var(--navy); color: #fff; }
+  .card .no { display: flex; align-items: center; gap: 14px; font-size: 22px; font-weight: 700; color: var(--brassL); }
+  .card .no::before { content: ""; width: 44px; height: 3px; background: var(--brass); }
+  .card h1 { font-size: 66px; font-weight: 800; letter-spacing: -0.03em; margin: 18px 0 40px; line-height: 1.2; }
+  .card .two { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; border-top: 1px solid rgba(255,255,255,.18); padding-top: 34px; }
+  .card h2 { font-family: "Consolas", "SF Mono", monospace; font-size: 17px; letter-spacing: .14em; color: var(--brassL); margin-bottom: 18px; }
+  .card ul { list-style: none; display: flex; flex-direction: column; gap: 16px; }
+  .card li { font-size: 26px; line-height: 1.5; color: #E4E8EC; padding-left: 26px; position: relative; }
+  .card li::before { content: ""; position: absolute; left: 0; top: 15px; width: 9px; height: 9px; border-radius: 50%; background: var(--brass); }
+  .card .watch li::before { border-radius: 0; transform: rotate(45deg); }
+  body.dark { background: var(--navy); }
+  body.dark .brand { color: #fff; } body.dark .brand i { box-shadow: inset 0 0 0 4px var(--navy); }
+  body.dark .disc { background: transparent; color: #F2B8B3; border-color: #E38C84; }
+</style>
+</head>
+<body>
+<div class="brand"><i></i>GOLDENLINK</div>
+<div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다</div>
+<div id="root"></div>
+<script>
+(() => {
+  const root = document.getElementById("root");
+  const params = new URLSearchParams(location.hash.slice(1));
+
+  // ── 아키텍처 흐름 ──
+  const NODES = {
+    amb:   { x: 70,   y: 200, k: "현장", n: "구급대 출동", d: "사고 발생 → 출동<br>관제 지도에 위치 실시간", tag: ["human", "구급대원"] },
+    phone: { x: 70,   y: 460, k: "대원 휴대폰", n: "AI 추천 병원에 전화", d: "빈 병상 · 병상 신뢰도<br>· 도착 시간까지 따져 추천", tag: ["ai", "AI 첫 통화 추천"] },
+    voice: { x: 520,  y: 610, k: "중앙 voice", n: "음성 → 구조화", d: "STT Qwen3-ASR<br>구조화 MF_BERT · 17개 항목", tag: ["ai", "AI"] },
+    hub:   { x: 810,  y: 300, k: "hub", n: "매칭 엔진", d: "이동시간(카카오)·진료과·병상<br>존(5km) · 순위", tag: ["rule", "규칙 기반"] },
+    data:  { x: 810,  y: 610, k: "공공 데이터", n: "E-Gen · 심평원", d: "실시간 병상·중증질환 수용 신고<br>전문의 수 · 전문병원 지정", tag: ["rule", "실제 데이터"] },
+    hosp:  { x: 1300, y: 200, k: "병원 대시보드", n: "존 안 병원 동시 전달", d: "환자 정보 한 번에<br>수용 가능 / 불가 + 사유", tag: ["human", "의료진 판단"] },
+    approve:{ x: 1300, y: 460, k: "구급차 대시보드", n: "이송 승인", d: "수용 가능 병원 중<br>구급대원이 최종 선택", tag: ["human", "구급대원 판단"] },
+    box:   { x: 1300, y: 690, k: "기록", n: "의사결정 블랙박스", d: "모든 결정 시각 + 해시 체인<br>사후 위변조 검증", tag: ["rule", "자동 기록"] },
+  };
+  const LINKS = {
+    "amb-phone": "M220,320 L220,460",
+    "phone-hub": "M370,520 C560,520 600,380 810,380",
+    "hub-voice": "M900,420 C900,540 760,570 760,610",
+    "voice-hub": "M680,610 C680,500 760,465 820,430",
+    "data-hub": "M960,610 L960,430",
+    "hub-hosp": "M1110,350 C1200,320 1220,280 1300,270",
+    "hosp-hub": "M1300,320 C1220,360 1180,380 1110,390",
+    "hub-approve": "M1110,410 C1200,440 1220,500 1300,520",
+    "approve-box": "M1450,580 L1450,690",
+  };
+  const STEPS = [
+    { on: ["amb"], links: [], s: "1 · 출동", t: "사고가 나면 구급대가 출동합니다", u: "관제 지도에서 모든 구급차의 위치와 요청 현황을 실시간으로 봅니다" },
+    { on: ["phone"], links: ["amb-phone"], s: "2 · AI 첫 통화 추천", t: "AI가 추천한 병원 한 곳에만 전화합니다", u: "빈 병상 · 병상 숫자가 도착 때까지 유효할 확률(AI 신뢰도) · 도착 시간(거리)을 함께 따져 가장 유력한 한 곳을 추천" },
+    { on: ["hub", "voice"], links: ["phone-hub", "hub-voice", "voice-hub"], s: "3 · AI 구조화", t: "통화 음성이 텍스트로, 다시 17개 항목으로 정리됩니다", u: "Qwen3-ASR(음성 인식) + MF_BERT(KTAS·주 호소·활력징후·의식·처치…) — 생성형이 아니라 고르기만 하는 모델" },
+    { on: ["hub", "data"], links: ["data-hub"], s: "4 · 규칙 기반 매칭", t: "hub가 E-Gen 실시간 병상과 맞춰 후보 병원 순위를 냅니다", u: "이동 시간(카카오 내비) · 진료과 · 병상 · 존 — 순위는 AI가 아니라 설명 가능한 규칙" },
+    { on: ["hosp"], links: ["hub-hosp"], s: "5 · 동시 전달", t: "존 안 모든 후보 병원에 환자 정보를 한 번에 보냅니다", u: "순차 전화(뺑뺑이) 대신 동시 전달 — 첫 통화 병원이 거절해도 다른 병원이 이미 보고 있다" },
+    { on: ["hosp", "hub"], links: ["hosp-hub"], s: "6 · 병원 응답", t: "병원은 수용 가능 / 불가와 사유를 누릅니다", u: "사유는 구급대 화면에 바로 · 거절이 40% 넘게 쌓이면 요청 범위(존)를 자동으로 넓힌다" },
+    { on: ["approve"], links: ["hub-approve"], s: "7 · 이송 승인", t: "최종 이송 병원은 구급대원이 고릅니다", u: "AI는 판단을 대체하지 않는다 — 도착 후 수용 불가면 같은 정보로 그 자리에서 재선택" },
+    { on: ["box"], links: ["approve-box"], s: "8 · 기록", t: "모든 결정이 시각과 해시로 남습니다", u: "누가 언제 무엇을 했는지 — 위변조를 검증할 수 있는 의사결정 블랙박스" },
+  ];
+
+  function arch(stepMs) {
+    const sc = document.createElement("div");
+    sc.className = "scene";
+    sc.innerHTML = `<div class="kicker">아키텍처 · 어떻게 동작하나</div><div class="title">골든링크는 이렇게 동작합니다</div>
+      <svg class="links"><defs>
+        <marker id="arr" markerUnits="userSpaceOnUse" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto"><path d="M0,2 L16,9 L0,16 z" fill="#2A4058"/></marker>
+        <marker id="arrOn" markerUnits="userSpaceOnUse" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto"><path d="M0,2 L16,9 L0,16 z" fill="#0E9F6E"/></marker>
+      </defs>${Object.entries(LINKS).map(([id, d]) => `<path id="l-${id}" d="${d}"/>`).join("")}</svg>
+      ${Object.entries(NODES).map(([id, n]) => `<div class="node" id="n-${id}" style="left:${n.x}px;top:${n.y}px">
+        <div class="k">${n.k}</div><div class="n">${n.n}</div><div class="d">${n.d}</div><span class="tag ${n.tag[0]}">${n.tag[1]}</span></div>`).join("")}
+      <div class="cap"><div class="num"></div><div><div class="s"></div><div class="t"></div><div class="u"></div></div></div>`;
+    root.append(sc);
+    const seen = new Set();
+    const show = (i) => {
+      const st = STEPS[i];
+      sc.querySelectorAll(".node").forEach((el) => {
+        const id = el.id.slice(2);
+        el.classList.toggle("on", st.on.includes(id));
+        el.classList.toggle("seen", seen.has(id) && !st.on.includes(id));
+      });
+      sc.querySelectorAll("svg.links path[id]").forEach((p) => p.classList.toggle("on", st.links.includes(p.id.slice(2))));
+      st.on.forEach((id) => seen.add(id));
+      const [no, label] = st.s.split(" · ");
+      sc.querySelector(".cap .num").textContent = no;
+      sc.querySelector(".cap .s").textContent = label || st.s;
+      sc.querySelector(".cap .t").textContent = st.t;
+      sc.querySelector(".cap .u").textContent = st.u;
+    };
+    return { el: sc, steps: STEPS.length, show, stepMs };
+  }
+
+  function cover() {
+    const sc = document.createElement("div");
+    sc.className = "scene cover";
+    sc.innerHTML = `<div class="kicker">2026 AI ROOKIE · 골든링크 v2.0</div>
+      <h1>응급이송, 순차 전화 대신<br>동시 전달로</h1>
+      <p>구급대원이 병원마다 차례로 전화를 돌리는 "뺑뺑이" — 그 사이 골든타임이 흘러갑니다.<br>골든링크는 첫 통화 한 번의 내용을 AI로 정리해, 주변 모든 후보 병원에 한 번에 보냅니다.</p>
+      <div class="vs"><div class="bad"><b>지금</b>병원 1 전화 → 거절 → 병원 2 전화 → 거절 → 병원 3 …<br>같은 설명을 병원마다 다시</div>
+      <div class="good"><b>골든링크</b>첫 병원에 한 번 전화 → 통화 내용이 존 안 모든 병원에 동시에<br>병원들이 화면에서 바로 수용 가능 / 불가</div></div>`;
+    root.append(sc);
+    return sc;
+  }
+
+  function aiRule() {
+    const sc = document.createElement("div");
+    sc.className = "scene";
+    sc.innerHTML = `<div class="title">AI가 하는 일과 규칙이 하는 일</div>
+      <div class="grid2">
+        <div class="col ai"><h2>AI — 정보를 정리하고 예측</h2><ul>
+          <li>음성 인식<small>Qwen3-ASR-0.6B + LoRA (119 신고 음성 학습)</small></li>
+          <li>통화 내용 구조화 17개 항목<small>MF_BERT · KLUE RoBERTa-large 다중과제 (생성형 아님)</small></li>
+          <li>예상 병명 ↔ 진료과 매칭<small>경량 임베딩 유사도 (점수 공개)</small></li>
+          <li>병상 정보가 도착 때까지 유효할 확률<small>XGBoost AFT 생존모델 (설명용, 순위에 미관여)</small></li></ul></div>
+        <div class="col rule"><h2>규칙 — 설명 가능한 결정</h2><ul>
+          <li>후보 병원 순위<small>이동 시간 · 진료과 · 병상 · 센터 등급 (공식 공개)</small></li>
+          <li>존 확장<small>거절이 후보의 40% 이상이면 다음 5km로</small></li>
+          <li>병상 판정<small>E-Gen 실시간 값 · 미상과 만실을 구분</small></li>
+          <li>승인 흐름 · 기록<small>병원 승인 → 구급대원 이송 승인 · 해시 체인 로그</small></li></ul></div>
+      </div>
+      <div class="foot">AI는 의료진의 판단을 대체하지 않습니다 — 최종 결정은 사람이</div>`;
+    root.append(sc);
+    return sc;
+  }
+
+  function dashes() {
+    const sc = document.createElement("div");
+    sc.className = "scene";
+    sc.innerHTML = `<div class="title">화면은 네 가지</div>
+      <div class="dash4">
+        <div><div class="ic">🗺️</div><h3>관제 지도</h3><p>모든 구급차 위치, 사건별 요청 범위(존), 병원별 응답 상태를 한눈에</p><code>/map</code></div>
+        <div><div class="ic">📱</div><h3>대원 휴대폰</h3><p>현장 도착 후 병원을 골라 전화. 통화만 한다 — 출동·승인은 구급차 화면에서</p><code>P-구급차ID</code></div>
+        <div><div class="ic">🚑</div><h3>구급차 대시보드</h3><p>AI가 정리한 환자 정보 확인·수정, 후보 병원 순위와 응답, 최종 이송 승인</p><code>A-구급차ID</code></div>
+        <div><div class="ic">🏥</div><h3>병원 대시보드</h3><p>들어온 환자 정보를 보고 수용 가능 / 불가(사유), 도착 후 수용 결과</p><code>H-병원ID</code></div>
+      </div>
+      <div class="foot">이제 가상 시나리오로 실제 화면이 어떻게 움직이는지 봅니다</div>`;
+    root.append(sc);
+    return sc;
+  }
+
+  function card(c) {
+    const sc = document.createElement("div");
+    sc.className = "scene card";
+    document.body.classList.add("dark");
+    sc.innerHTML = `<div class="no">${c.kicker || "시나리오 " + c.no}</div><h1>${c.title}</h1>
+      <div class="two"><div><h2>SITUATION · 상황</h2><ul>${c.situation.map((x) => `<li>${x}</li>`).join("")}</ul></div>
+      <div class="watch"><h2>WATCH · 이 장면에서 볼 것</h2><ul>${c.watch.map((x) => `<li>${x}</li>`).join("")}</ul></div></div>`;
+    root.append(sc);
+    return sc;
+  }
+
+  // 2부 · 모델 성능 — 수치는 AIROOKIE-EGEN.md §4(C-index)·reliability/README.md(ECE)·§6-1(신규 병원) 실측
+  function perf() {
+    const sc = document.createElement("div");
+    sc.className = "scene perf";
+    const C = [["θ = 2석", 0.691, 0.646], ["θ = 3석", 0.764, 0.701], ["θ = 5석", 0.829, 0.740]];
+    const pct = (v) => ((v - 0.5) / 0.4) * 100; // 0.5(무작위)~0.9 구간을 막대 전체로
+    sc.innerHTML = `<div class="kicker">모델 성능 · 얼마나 잘 맞히나</div>
+      <div class="title">병상 숫자가 언제 틀려질지, 기준선보다 잘 맞힙니다</div>
+      <div class="grid">
+        <div><h3>먼저 틀려질 병원을 먼저 짚는가 (C-index)</h3>
+          <div class="hint">θ = 병상이 몇 석 이상 바뀌면 '틀림'으로 볼지 · 0.5는 무작위, 1은 완벽</div>
+          <div class="bars">${C.map(([lab, m, b]) => `<div class="bargrp"><div class="lab">${lab}</div>
+            <div class="bar"><span class="who">골든링크 모델</span><span class="track"><span class="fill model" data-w="${pct(m)}"></span></span><span class="val">${m.toFixed(3)}</span></div>
+            <div class="bar"><span class="who">갱신 리듬만</span><span class="track"><span class="fill base" data-w="${pct(b)}"></span></span><span class="val dim">${b.toFixed(3)}</span></div></div>`).join("")}</div></div>
+        <div><h3>"유효 확률 87%"가 실제로 87%인가</h3>
+          <div class="hint">확률 보정 오차(ECE, 30분 뒤 기준) · 낮을수록 정직한 확률</div>
+          <div class="ece">
+            <div class="bar"><span class="who">보정 전</span><span class="track"><span class="fill before" data-w="${0.272 / 0.3 * 100}"></span></span><span class="val dim">0.272</span></div>
+            <div class="bar"><span class="who">보정 후</span><span class="track"><span class="fill after" data-w="${0.114 / 0.3 * 100}"></span></span><span class="val">0.114</span></div>
+          </div>
+          <div class="facts">
+            <div>심각하게 어긋날수록 더 잘 맞힌다 — 5석 기준 <b>0.829</b></div>
+            <div>학습에 없던 신규 병원 88곳에도 그대로 적용해 성능 <b>99%</b> 유지</div>
+            <div>병상 숫자 자체가 아니라 <b>병원의 갱신 행동</b>만 본다 — XGBoost 생존모델, CPU로 몇 분이면 학습</div>
+          </div></div>
+      </div>
+      <div class="src">출처: 저장소 실측(AIROOKIE-EGEN.md · reliability/README.md) · 전국 E-Gen 스냅샷</div>`;
+    root.append(sc);
+    return sc;
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  window.play = async (mode, data) => {
+    // 실제 데이터 장면(2부)은 "가상 시나리오" 표시를 내린다 — 가상이 아니므로 틀린 말이 된다
+    if (data?.noDisc) document.querySelector(".disc").style.display = "none";
+    if (mode === "arch") {
+      const a = arch(); a.el.classList.add("on");
+      for (let i = 0; i < a.steps; i++) { a.show(i); await sleep(4500); }
+      await sleep(800);
+    } else if (mode === "perf") {
+      const c = perf(); c.classList.add("on"); await sleep(700);
+      c.querySelectorAll(".fill").forEach((f, i) => setTimeout(() => (f.style.width = f.dataset.w + "%"), i * 220));
+      await sleep(data?.holdMs || 15000);
+    } else if (mode === "card") {
+      const c = card(data); await sleep(300); c.classList.add("on"); await sleep(data.holdMs || 12000);
+    }
+    window.done = true;
+  };
+})();
+</script>
+</body>
+</html>

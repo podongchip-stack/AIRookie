@@ -43,17 +43,35 @@
   #caption.reject { border-left-color: var(--coral); } #caption.reject .step { color: #FFB1B3; }
   #caption.ai { border-left-color: #6FB3FF; } #caption.ai .step { color: #A9D1FF; }
 
+  /* 작동 원리 설명 상자(합본 영상용) — 오른쪽 썸네일 칸을 덮는다 */
+  /* 눈에 띄게: 노란 강조색·큰 글씨·오른쪽에서 밀려 들어옴, 떠 있는 동안 썸네일은 어둡게 */
+  #explain { position: absolute; z-index: 30; display: none; border-radius: 18px; padding: 26px 28px;
+    background: #1A2B3D; border: 3px solid var(--amber); box-shadow: 0 0 0 6px rgba(245,185,74,.18), 0 16px 48px rgba(0,0,0,.6);
+    transform: translateX(40px); opacity: 0; transition: transform .45s ease, opacity .45s ease; }
+  #explain.show { transform: none; opacity: 1; }
+  #explain .k { display: inline-block; font-size: 16px; font-weight: 800; color: #1A2B3D; background: var(--amber); padding: 3px 12px; border-radius: 999px; }
+  #explain .h { font-size: 32px; font-weight: 800; margin: 14px 0 16px; line-height: 1.25; letter-spacing: -0.01em; }
+  #explain ul { list-style: none; display: flex; flex-direction: column; gap: 14px; }
+  #explain li { font-size: 22px; line-height: 1.45; color: #DCE6EF; padding-left: 20px; position: relative; }
+  #explain li::before { content: ""; position: absolute; left: 0; top: 12px; width: 9px; height: 9px; border-radius: 50%; background: var(--amber); }
+  #explain li b { color: #FFE2A8; }
+  body.explaining .pane.thumb:not(.hidden), body.explaining .plabel.thumb:not(.hidden) { opacity: .25; }
+  /* 시나리오 소개 카드 — 브로셔 톤(짙은 남색 판 · 황동색 포인트, 2026-10-04) */
   #intro { position: absolute; inset: 0; z-index: 50; display: none; flex-direction: column; justify-content: center; padding: 0 180px;
-    background: radial-gradient(circle at 30% 20%, #1B3550 0%, #0E1A26 60%); opacity: 0; transition: opacity .6s ease; }
+    background: #2C3644; opacity: 0; transition: opacity .6s ease; }
   #intro.show { opacity: 1; }
-  #intro .no { font-size: 26px; font-weight: 800; color: #7FE0B8; letter-spacing: .04em; }
-  #intro h1 { font-size: 64px; font-weight: 800; letter-spacing: -0.02em; margin: 12px 0 28px; line-height: 1.2; }
-  #intro ul { list-style: none; display: flex; flex-direction: column; gap: 14px; }
-  #intro li { font-size: 28px; color: #D5E0EA; line-height: 1.4; }
-  #intro li::before { content: "•"; color: var(--mint); margin-right: 14px; }
+  #intro .no { display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 700; color: #D9B27A; }
+  #intro .no::before { content: ""; width: 44px; height: 3px; background: #B8874A; }
+  #intro h1 { font-size: 66px; font-weight: 800; letter-spacing: -0.03em; margin: 18px 0 34px; line-height: 1.2; color: #fff; }
+  #intro ul { list-style: none; display: flex; flex-direction: column; gap: 16px; border-top: 1px solid rgba(255,255,255,.18); padding-top: 30px; }
+  #intro li { font-size: 28px; color: #E4E8EC; line-height: 1.45; padding-left: 26px; position: relative; }
+  #intro li::before { content: ""; position: absolute; left: 0; top: 16px; width: 9px; height: 9px; border-radius: 50%; background: #B8874A; }
   #intro .tags { display: flex; gap: 10px; margin-top: 36px; }
-  #intro .tags span { font-size: 20px; font-weight: 700; padding: 6px 16px; border-radius: 999px; background: rgba(255,255,255,.08); color: var(--ink); }
-  #intro .disc { position: absolute; left: 180px; bottom: 60px; font-size: 20px; font-weight: 700; color: #FFD5D6; }
+  #intro .tags span { font-size: 19px; font-weight: 700; padding: 6px 16px; border-radius: 999px; border: 1.5px solid #B8874A; color: #D9B27A; }
+  #intro .brand2 { position: absolute; left: 60px; top: 40px; display: flex; align-items: center; gap: 12px;
+    font-family: "Consolas", "SF Mono", monospace; font-size: 18px; font-weight: 700; letter-spacing: .22em; color: #fff; }
+  #intro .brand2 i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #B8874A; background: #B8874A; box-shadow: inset 0 0 0 4px #2C3644; }
+  #intro .disc { position: absolute; left: 180px; bottom: 60px; font-size: 19px; font-weight: 700; color: #F2B8B3; }
 </style>
 </head>
 <body>
@@ -64,13 +82,16 @@
   <div id="clock"></div>
 </div>
 <div id="caption"><div class="step"></div><div class="text"></div><div class="sub"></div></div>
-<div id="intro"><div class="no"></div><h1></h1><ul></ul><div class="tags"></div><div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다 · 병원 정보는 E-Gen 실제 데이터</div></div>
+<div id="explain"><div class="k">작동 원리</div><div class="h"></div><ul></ul></div>
+<div id="intro"><div class="brand2"><i></i>GOLDENLINK</div><div class="no"></div><h1></h1><ul></ul><div class="tags"></div><div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다 · 병원 정보는 E-Gen 실제 데이터</div></div>
 <script>
 (() => {
   const W = 1920, H = 1080, PAD = 16, TOP = 72, CAP = 116, LAB = 24;
   const SIDE_W = 430;
   // 아래 CAP 높이는 자막 띠 — 창은 그 위까지만(자막이 창 안의 버튼을 가리지 않게)
-  const MAIN = { x: PAD, y: TOP, w: W - PAD * 3 - SIDE_W, h: H - TOP - CAP };
+  let MAIN = { x: PAD, y: TOP, w: W - PAD * 3 - SIDE_W, h: H - TOP - CAP };
+  // 차분한 모드(합본 영상용): 썸네일을 숨기고(thumbs=false), 설명 상자가 없으면 큰 화면을 가로 전체로(wide)
+  let THUMBS = true;
   const SIDE = { x: W - PAD - SIDE_W, y: TOP, w: SIDE_W, h: H - TOP - CAP };
   // 창 종류별 가상 크기(이 크기로 렌더링한 뒤 축소·확대해 넣는다)
   const VIRTUAL = { dash: { w: 1440, h: 900 }, phone: { w: 390, h: 844 } };
@@ -98,7 +119,7 @@
 
   function layout() {
     const main = focused.map((id) => panes.get(id)).filter(Boolean);
-    const rest = [...panes.values()].filter((p) => p.visible && !main.includes(p));
+    const rest = THUMBS ? [...panes.values()].filter((p) => p.visible && !main.includes(p)) : [];
     // 크게: 하나면 주 영역 전체, 휴대폰+대시보드면 휴대폰 왼쪽 좁게, 대시보드 둘이면 좌우 반반
     if (main.length === 1) {
       const p = main[0];
@@ -132,12 +153,18 @@
       const isMain = main.includes(p);
       p.el.classList.toggle("focus", isMain);
       p.el.classList.toggle("thumb", !isMain);
-      p.el.classList.toggle("hidden", !p.visible && !isMain);
-      p.lab.className = "plabel " + (isMain ? "focus" : "thumb") + (!p.visible && !isMain ? " hidden" : "");
+      const hide = !isMain && (!p.visible || !THUMBS);
+      p.el.classList.toggle("hidden", hide);
+      p.lab.className = "plabel " + (isMain ? "focus" : "thumb") + (hide ? " hidden" : "");
     }
   }
 
   const stage = {
+    configure({ thumbs = true, wide = false } = {}) {
+      THUMBS = thumbs;
+      MAIN = { x: PAD, y: TOP, w: wide ? W - PAD * 2 : W - PAD * 3 - SIDE_W, h: H - TOP - CAP };
+      layout();
+    },
     setScenario(no, title) {
       document.getElementById("scenario").innerHTML = `<span class="no">${no}</span>${title}`;
     },
@@ -183,6 +210,17 @@
       c.querySelector(".text").textContent = text;
       c.querySelector(".sub").textContent = sub || "";
       c.style.display = "block";
+    },
+    // 작동 원리 상자 — 오른쪽 칸(썸네일 자리)에 띄운다. title이 없으면 숨긴다
+    explain(title, lines = []) {
+      const e = document.getElementById("explain");
+      if (!title) { e.classList.remove("show"); document.body.classList.remove("explaining"); setTimeout(() => { if (!e.classList.contains("show")) e.style.display = "none"; }, 450); return; }
+      Object.assign(e.style, { left: SIDE.x + "px", top: SIDE.y + "px", width: SIDE.w + "px", maxHeight: SIDE.h + "px" });
+      e.querySelector(".h").textContent = title;
+      e.querySelector("ul").innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
+      e.style.display = "block";
+      document.body.classList.add("explaining");
+      e.classList.remove("show"); void e.offsetWidth; e.classList.add("show");
     },
     intro({ no, title, lines = [], tags = [] }, show = true) {
       const el = document.getElementById("intro");

@@ -7,6 +7,8 @@
 #   ./demo/record.sh 01 05 12      여러 개
 #   ./demo/record.sh all           demo/scenarios/*.json 전부
 #   ./demo/record.sh --play 01     녹화 없이 화면으로만 재생(확인용)
+#   ./demo/record.sh --explain 01  장면마다 "작동 원리" 설명 상자를 띄워 녹화 → scenario_01_explain.mp4(합본 영상용)
+#   ./demo/record.sh --calm 03     차분한 화면(썸네일 없음·화면 전환 최소)으로 녹화 → scenario_03_calm.mp4(합본 영상용)
 #
 # 먼저 떠 있어야 하는 것: voice(대본 구조화 — ./voice/start-voice.sh, demo 브랜치 코드). 나머지는 이 스크립트가 띄운다:
 #   시연용 hub(포트 DEMO_HUB_PORT=5101, 기록은 임시 폴더) · 시연용 대시보드(DEMO_DASH_PORT=3100, next dev)
@@ -30,11 +32,14 @@ mkdir -p "$LOG_DIR" "$DEMO/out"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) OS=windows; export PYTHONUTF8=1 ;; Darwin) OS=mac ;; *) OS=linux ;; esac
 
 PLAY_ONLY=0
+EXPLAIN_ARG=""; SUFFIX=""
 IDS=()
 for a in "$@"; do
   case "$a" in
     --play) PLAY_ONLY=1 ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    --explain) EXPLAIN_ARG="--explain"; SUFFIX="_explain" ;;
+    --calm) [ -z "$EXPLAIN_ARG" ] && { EXPLAIN_ARG="--calm"; SUFFIX="_calm"; } ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     all) for f in "$DEMO"/scenarios/*.json; do IDS+=("$(basename "$f" .json)"); done ;;
     *) IDS+=("$a") ;;
   esac
@@ -53,7 +58,11 @@ fi
 
 port_busy(){ if [ "$OS" = windows ]; then netstat -ano | grep -q ":$1 .*LISTENING"; else lsof -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; fi; }
 wait_http(){ for _ in $(seq 1 "${3:-90}"); do curl -s -o /dev/null --max-time 3 "$1" && return 0; sleep 2; done; echo "❌ $2 응답 없음"; return 1; }
-kill_tree(){ if [ "$OS" = windows ]; then taskkill //F //T //PID "$1" >/dev/null 2>&1; else kill "$1" 2>/dev/null; fi; }
+# Git Bash의 $!는 MSYS 번호라 taskkill이 못 알아본다 — /proc/<번호>/winpid로 Windows 번호를 얻어 자식까지 끈다(start-all.sh와 같다)
+kill_tree(){
+  if [ "$OS" = windows ] && [ -r "/proc/$1/winpid" ]; then taskkill //F //T //PID "$(cat "/proc/$1/winpid")" >/dev/null 2>&1
+  else kill "$1" 2>/dev/null; fi
+}
 
 # voice 확인 — demo 브랜치 코드라야 대본 입구(/demo/structure)가 있다
 code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -X POST -H "Content-Type: application/json" -d '{}' "$DEMO_VOICE/demo/structure")
@@ -88,11 +97,12 @@ for id in "${IDS[@]}"; do
   wait_http "$DEMO_HUB/identity?role=hospital&id=_" "시연용 hub" 120 || exit 1
   "$HUB_PY" "$DEMO/snapshot.py" load "$DEMO_HUB" | tail -1
   if [ "$PLAY_ONLY" = 1 ]; then
-    node "$DEMO/player/play.mjs" "$id" || echo "⚠ 시나리오 $id 재생 실패(로그: $LOG_DIR/hub_$id.log)"
+    node "$DEMO/player/play.mjs" "$id" $EXPLAIN_ARG || echo "⚠ 시나리오 $id 재생 실패(로그: $LOG_DIR/hub_$id.log)"
   else
-    if node "$DEMO/player/play.mjs" "$id" --record --out "$DEMO/out"; then
-      "$FFMPEG" -v error -y -i "$DEMO/out/scenario_$id.webm" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart "$DEMO/out/scenario_$id.mp4" \
-        && rm -f "$DEMO/out/scenario_$id.webm" && echo "✅ $DEMO/out/scenario_$id.mp4"
+    if node "$DEMO/player/play.mjs" "$id" --record --out "$DEMO/out" $EXPLAIN_ARG; then
+      name="scenario_$id$SUFFIX"
+      "$FFMPEG" -v error -y -i "$DEMO/out/$name.webm" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart "$DEMO/out/$name.mp4" \
+        && rm -f "$DEMO/out/$name.webm" && echo "✅ $DEMO/out/$name.mp4"
     else
       echo "⚠ 시나리오 $id 녹화 실패(로그: $LOG_DIR/hub_$id.log)"
     fi
