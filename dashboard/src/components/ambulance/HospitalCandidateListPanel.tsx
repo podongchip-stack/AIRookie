@@ -118,6 +118,21 @@ const bedChipEmptyStyle = css({
   borderRadius: "chip",
 });
 
+// 이송 중 부하 칩 — 이 병원으로 확정돼 아직 도착 전(TTL 15분)인 환자 수. 규칙 기반.
+// 만실(coral)도 미상(ink2)도 아닌 "지금 몰리는 중"이라는 중간 경고라 amber를 쓴다.
+// 이 숫자만큼 hub가 이동시간에 분을 더해 순위를 뒤로 민다(분산 장치 작동 중 표시).
+const loadChipStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "semibold",
+  color: "severity.medium",
+  backgroundColor: "severity.medium.subtle",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+});
+
 // "확인된 만실"(coral)과는 색을 다르게 둔다 — 미상은 병원에 자리가 없다고 확정된
 // 게 아니라 데이터가 아직 없는 것뿐이라, 만실과 같은 경고색으로 보이면 구급대원이
 // 실제로는 받아줄 수도 있는 병원을 스스로 후보에서 빼게 된다(CLAUDE.md 참고).
@@ -400,6 +415,12 @@ export function HospitalCandidateListPanel({
 
   const focusConfirmed = confirmedHospitalId != null && data.hospitals.some((h) => h.hospitalId === confirmedHospitalId);
   const hiddenCount = focusConfirmed ? data.hospitals.length - 1 : 0;
+  // 병원 승인이 오면 승인 병원 중 최상위(hub 순위)를 "추천"으로 표시한다(2026-10-04).
+  // 선착순 자동 확정이 아니라 추천 + 탭 한 번 — "최종 결정은 사람" 원칙. hub가 승인
+  // 병원을 위로 올려 보내므로(rank_key) 목록에서 처음 만나는 approved가 곧 추천이다.
+  const recommendedId = confirmedHospitalId == null
+    ? data.hospitals.find((h) => h.status === "approved")?.hospitalId ?? null
+    : null;
   const hospitals = data.hospitals
     .filter((hospital) => !focusConfirmed || showOthers || hospital.hospitalId === confirmedHospitalId)
     .map((hospital) => ({
@@ -451,6 +472,23 @@ export function HospitalCandidateListPanel({
               <div className={css({ display: "flex", flexDirection: "column", gap: "0.5", minWidth: "0" })}>
                 <span className={css({ fontWeight: "semibold", fontSize: "sm", color: "ink" })}>
                   {hospital.name}
+                  {hospital.hospitalId === recommendedId && (
+                    <span
+                      className={css({
+                        marginLeft: "1.5",
+                        fontSize: "xs",
+                        fontWeight: "bold",
+                        color: "mint",
+                        backgroundColor: "mintSoft",
+                        paddingX: "2",
+                        paddingY: "0.5",
+                        borderRadius: "chip",
+                      })}
+                      title="병원이 승인한 곳 중 순위 최상위 — 이송 승인은 구급대원의 판단입니다"
+                    >
+                      추천
+                    </span>
+                  )}
                 </span>
                 <span className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })} title={distanceTitle(hospital)}>
                   {distanceLabel(hospital)}
@@ -485,6 +523,15 @@ export function HospitalCandidateListPanel({
                         ? `병상 ${hospital.availableBedCount}석`
                         : "병상 없음"}
                   </span>
+                  {(hospital.inFlightCount ?? 0) > 0 && (
+                    <span
+                      className={loadChipStyle}
+                      title={hospital.loadReason ?? "이 병원으로 확정돼 이송 중인 다른 환자 — 그만큼 순위가 뒤로 밀린다"}
+                    >
+                      이송 중 {hospital.inFlightCount}건
+                      {hospital.loadPenaltyMin ? ` · 순위 +${hospital.loadPenaltyMin}분` : ""}
+                    </span>
+                  )}
                   {/* 순위(specialtyMatch·distanceKm)와는 별개의 설명용 정보 —
                       info-v2가 심평원 대조로 판단한 신뢰도. 이 병원에 해당
                       데이터가 없으면(구 feature/info 데이터 등) 칩 자체를 숨긴다. */}

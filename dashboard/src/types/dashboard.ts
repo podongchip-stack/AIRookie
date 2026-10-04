@@ -182,6 +182,12 @@ export interface HospitalCandidate {
   emergencyLevel?: string | null;
   travelBonusMin?: number;
   bonusReasons?: string[];
+  // hub 2026-10-03~: 이송 중 부하(이 병원으로 확정돼 아직 TTL 안인 환자 수)와 그만큼
+  // 이동시간에 더해진 분. 규칙 기반 — 대량사고처럼 확정이 한 병원에 몰릴 때만 0이
+  // 아니며, 그때 이 병원이 왜 순위에서 밀렸는지(분산 장치 작동 중)를 설명한다.
+  inFlightCount?: number;
+  loadPenaltyMin?: number;
+  loadReason?: string | null;
 }
 
 // 확정 병원 도착 뒤 병원이 기록한 수용 결과(hub 2026-10-01~). 수용만 남는다(수용 불가는 그 병원이 rejected로 바뀜).
@@ -373,6 +379,67 @@ export interface DashboardState {
   callStatus: Record<string, CallStatus>;
   // 관제 지도의 "병원 응답" 기록(2026-10-03) — 사건 요약이 바뀔 때 병원 상태가 달라진 것을 쌓는다(최근 것이 앞).
   monitorEvents: MonitorEvent[];
+  // caseId -> 이송 중 활력징후 판정 이력(2026-10-04, 시간순). 구급차 탭은 전부 받고,
+  // 병원 탭은 자기 확정 사건의 notify 이상만 받는다(hub가 역할별로 거른다).
+  transportAssessments: Record<string, TransportAssessment[]>;
+}
+
+// ── 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04) ─────────────────────────
+// 입력 구멍: 출처(음성·수기·모니터·데모)가 무엇이든 같은 형식으로 hub에 보낸다.
+// 판정은 hub의 규칙 엔진(NEWS2 + 규칙표, hub/transport_triage.py — source: "rule").
+
+export type VitalSource = "voice" | "manual" | "monitor" | "demo";
+
+export interface VitalObservationIn {
+  measuredAt: string;
+  source: VitalSource;
+  rr?: number | null;
+  spo2?: number | null;
+  sbp?: number | null;
+  dbp?: number | null;
+  hr?: number | null;
+  bt?: number | null;
+  avpu?: "A" | "V" | "P" | "U" | null;
+}
+
+// dashboard → hub (WS). 데모 시나리오·수기 입력이 쓴다. demo=true면 hub 로그에도 가상 표시가 남는다.
+export interface TransportVitalsMessage {
+  type: "transport_vitals";
+  caseId: string;
+  apid?: string;
+  demo?: boolean;
+  scenario?: string | null;
+  observation: VitalObservationIn;
+}
+
+// record=기록만 · hold=초과 1회째(오경보 필터) · notify=확정 병원에 전달 ·
+// review=대체 병원 제안(결정은 사람) · heli_advisory=헬기 대기 권고(결정은 관제)
+export type TransportTier = "record" | "hold" | "notify" | "review" | "heli_advisory";
+
+export interface TransportAlternative {
+  hospitalId: string;
+  name: string;
+  status: string;
+  travelMin?: number | null;
+  availableBedCount: number;
+  bedCountUnknown: boolean;
+  rArrive?: number | null;
+}
+
+export interface TransportAssessment {
+  type: "transport_assessment";
+  caseId: string;
+  tier: TransportTier;
+  news2: number;
+  news2Missing: string[];
+  si?: number | null;
+  reasons: string[];
+  observation: VitalObservationIn;
+  demo: boolean;
+  scenario?: string | null;
+  alternatives: TransportAlternative[];
+  source: "rule";
+  timestamp: string;
 }
 
 // hub → dashboard: 연결(재연결) 직후 따라잡기 끝에 오는 "지금 진행 중인 사건 목록"(2026-10-03). 탭은 hub가
@@ -410,6 +477,9 @@ export interface MapHospital {
   name: string;
   gps: { lat: number; lng: number };
   emergencyLevel?: string | null;
+  // 이송 중 부하(TTL 오버레이 건수, hub 2026-10-03~) — 관제 지도에서 환자가 몰리는
+  // 병원을 표시해 분산 장치가 작동 중임을 보여준다. 구버전 hub면 필드 자체가 없다.
+  inFlightCount?: number;
 }
 
 export interface MapAmbulance {
@@ -567,4 +637,5 @@ export type InboundMessage =
   | MonitorCase
   | CallTranscriptLine
   | CallStatus
-  | CaseSync;
+  | CaseSync
+  | TransportAssessment;

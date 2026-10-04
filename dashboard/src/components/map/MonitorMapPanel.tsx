@@ -65,11 +65,15 @@ function callBadgeElement(calls: CallStatus[]): HTMLElement {
 }
 
 // 병원 이름표 — 이름과 병원 대시보드 접근 코드(H-<hpid>)를 같이 보여준다(2026-10-03). 모양은 createLabelOverlay와 같다.
-function hospitalLabel(name: string, hospitalId: string): string {
+// 이송 중(이 병원으로 확정돼 아직 도착 전인 환자, TTL 오버레이)이 있으면 함께 표시 — hub가 이 수만큼 순위를
+// 뒤로 밀어 다음 환자를 다른 병원으로 분산시키는 중이라는 뜻이다(쏠림 방지 장치의 작동 표시).
+function hospitalLabel(name: string, hospitalId: string, inFlight = 0): string {
+  const load =
+    inFlight > 0 ? ` <span style="color:#B87514;font-weight:700;">🚑 이송 중 ${inFlight}건</span>` : "";
   return (
     `<div style="transform:translateY(14px);font-size:11px;font-weight:600;white-space:nowrap;` +
     `background:#FFFFFF;border:1px solid #E2E8EF;padding:1px 6px;border-radius:6px;color:#16222E;">` +
-    `${escapeHtml(name)} <span style="color:#1E5FA8;font-weight:700;">H-${escapeHtml(hospitalId)}</span></div>`
+    `${escapeHtml(name)} <span style="color:#1E5FA8;font-weight:700;">H-${escapeHtml(hospitalId)}</span>${load}</div>`
   );
 }
 
@@ -108,15 +112,22 @@ export function MonitorMapPanel({
   const requestsRef = useRef(requests);
   // 축소 상태에서 눌러서 이름을 띄운 병원
   const pickedRef = useRef<string | null>(null);
+  // 병원별 이송 중 건수(map_overview) — 라벨 상시 표시 판정에 쓴다
+  const inFlightRef = useRef(new Map<string, number>());
   useEffect(() => {
     requestsRef.current = requests;
   }, [requests]);
 
-  // 병원 이름은 확대했을 때만(환자 요청이 온 병원·눌러서 띄운 병원은 항상) 보인다.
+  // 병원 이름은 확대했을 때만(환자 요청이 온 병원·이송 중인 병원·눌러서 띄운 병원은 항상) 보인다.
   function isLabelShown(id: string): boolean {
     const map = mapRef.current;
     if (!map) return false;
-    return map.getLevel() <= LABEL_MAX_LEVEL || requestsRef.current.has(id) || pickedRef.current === id;
+    return (
+      map.getLevel() <= LABEL_MAX_LEVEL ||
+      requestsRef.current.has(id) ||
+      (inFlightRef.current.get(id) ?? 0) > 0 ||
+      pickedRef.current === id
+    );
   }
 
   function applyLabelVisibility() {
@@ -157,10 +168,18 @@ export function MonitorMapPanel({
         layer.marker.setMap(null);
         layer.label.setMap(null);
         layers.delete(id);
+        inFlightRef.current.delete(id);
       }
     });
     for (const hospital of overview.hospitals) {
-      if (layers.has(hospital.hospitalId)) continue;
+      // 이송 중 건수는 병원 목록이 같아도 확정·도착마다 바뀐다(hub가 그때마다 overview 재전송) —
+      // 기존 라벨이면 내용만 갈아끼운다.
+      inFlightRef.current.set(hospital.hospitalId, hospital.inFlightCount ?? 0);
+      const existing = layers.get(hospital.hospitalId);
+      if (existing) {
+        existing.label.setContent(hospitalLabel(hospital.name, hospital.hospitalId, hospital.inFlightCount ?? 0));
+        continue;
+      }
       const pos = new kakao.maps.LatLng(hospital.gps.lat, hospital.gps.lng);
       const marker = new kakao.maps.Marker({
         position: pos,
@@ -177,7 +196,7 @@ export function MonitorMapPanel({
       });
       const label = new kakao.maps.CustomOverlay({
         position: pos,
-        content: hospitalLabel(hospital.name, hospital.hospitalId),
+        content: hospitalLabel(hospital.name, hospital.hospitalId, hospital.inFlightCount ?? 0),
         yAnchor: 0,
       });
       layers.set(hospital.hospitalId, { marker, label });

@@ -10,6 +10,53 @@ import { CaseMatchPanel } from "@/components/hospital/CaseMatchPanel";
 import { MapPanel } from "@/components/hospital/MapPanel";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
+import type { TransportAssessment } from "@/types/dashboard";
+
+// 이송 중 상태 변화 배너(2.5단계, 2026-10-04). hub가 이 병원으로 확정된 사건의
+// notify 이상 판정만 보내준다(기록·보류는 안 옴 — 오경보보다 침묵). 도착 전에
+// 환자 상태 변화를 미리 아는 게 목적이므로 최신 판정 하나만 띄운다. 규칙 기반.
+function TransportAlertBanner({ assessments }: { assessments: TransportAssessment[] }) {
+  const latest = assessments[assessments.length - 1];
+  if (!latest) return null;
+  const vitals = [
+    latest.observation.sbp != null ? `혈압 ${latest.observation.sbp}${latest.observation.dbp != null ? `/${latest.observation.dbp}` : ""}` : null,
+    latest.observation.hr != null ? `맥박 ${latest.observation.hr}` : null,
+    latest.observation.rr != null ? `호흡 ${latest.observation.rr}` : null,
+    latest.observation.spo2 != null ? `SpO2 ${latest.observation.spo2}%` : null,
+    latest.observation.avpu != null ? `의식 ${latest.observation.avpu}` : null,
+  ].filter(Boolean);
+  const critical = latest.tier !== "notify";
+  return (
+    <div
+      className={css({
+        marginBottom: "1.5",
+        paddingX: "3",
+        paddingY: "2",
+        borderRadius: "field",
+        borderWidth: "1px",
+        borderColor: critical ? "coral" : "severity.medium",
+        backgroundColor: critical ? "coralSoft" : "severity.medium.subtle",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.5",
+      })}
+    >
+      <p className={css({ fontSize: "xs", fontWeight: "bold", color: critical ? "coral" : "severity.medium" })}>
+        🚑 이송 중 상태 변화 · NEWS2 {latest.news2}
+        {latest.si != null ? ` · 쇼크지수 ${latest.si}` : ""}
+        {latest.demo ? " · 가상 시나리오" : ""}
+      </p>
+      {vitals.length > 0 && (
+        <p className={css({ fontSize: "xs", color: "ink" })}>
+          {vitals.join(" · ")} ({latest.observation.measuredAt.slice(11, 19)} 측정)
+        </p>
+      )}
+      {latest.reasons.length > 0 && (
+        <p className={css({ fontSize: "xs", color: "ink2" })}>{latest.reasons[0]}</p>
+      )}
+    </div>
+  );
+}
 
 // 병원 대시보드는 병원 1곳 전용 화면이라 자신의 병원 ID(hpid)가 고정된다. 첫 페이지에서 병원 접근 코드(H-<hpid>)로
 // 들어온 /hospital?id= 페이지가 이 컴포넌트를 그린다(2026-10-03 회의로 관제 지도와 분리). onClose를 주면 상단바에
@@ -176,6 +223,7 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
                     borderColor: isSelected ? "navy" : "transparent",
                   })}
                 >
+                  <TransportAlertBanner assessments={state.transportAssessments[result.caseId] ?? []} />
                   <CaseMatchPanel
                     patientInfo={result.patientInfo}
                     hospital={hospital}

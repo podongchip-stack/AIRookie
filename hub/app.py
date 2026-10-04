@@ -53,10 +53,14 @@ from schema import (
     MonitorCaseHospital,
     SceneEnd,
     SimControl,
+    TransportAlternative,
+    TransportAssessmentMessage,
+    TransportVitals,
     VoiceCallSummaryMessage,
     VoiceRegistration,
     VoiceUtterance,
 )
+from transport_triage import TransportTriage, VitalObservation
 
 app = Flask(__name__)
 app.json.ensure_ascii = False  # 한글 필드를 유니코드 이스케이프 없이 그대로 응답
@@ -1084,6 +1088,8 @@ def _close_case(case_id: str, reason: str) -> bool:
         _case_call.pop(case_id, None)
         _case_recommended.pop(case_id, None)
         _case_scene.pop(case_id, None)
+    with _triage_lock:
+        _transport_triage.pop(case_id, None)
     decision_log.log_decision("case_closed", {"caseId": case_id, "reason": reason})
     _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": reason})
     print(f"  [정리] caseId={case_id} 사건 종료({reason}) — 캐시에서 제거, 대시보드에 알림")
@@ -1203,6 +1209,123 @@ def _handle_info_confirm(confirm: HospitalInfoConfirm) -> None:
     _match_executor.submit(_refresh_cases_for_hospital, confirm.hospitalId)
     # 병원 자신의 화면(귀원 정보 현황)에도 ✓·확률 리셋이 즉시 뜨게 한다.
     _send_self_info_to_hospital(confirm.hospitalId)
+
+
+# ── 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04) ──────────────────────────
+# 입력 구멍: POST /vitals(향후 119구급스마트시스템·구급차 모니터 어댑터용)와 dashboard
+# WS transport_vitals(지금은 데모 시나리오·수기)가 같은 처리로 모인다. 판정은
+# transport_triage.py 규칙 엔진(NEWS2 + 규칙표, source: "rule")이 하고, hub는 결과를
+# 역할별로 보낸다 — 구급차 탭은 전부(자기 환자), 확정 병원 탭은 notify 이상만
+# (오경보보다 침묵), 관제 지도는 heli_advisory만(환자 상세 없이).
+
+#: 사건별 판정 상태 — 사건이 닫힐 때(_close_case) 같이 지운다.
+_transport_triage: dict[str, TransportTriage] = {}
+_triage_lock = threading.Lock()
+
+#: 재검토 제안에 동봉할 대체 후보의 이동시간 상한(분). 이 안에 아무도 없으면 헬기 권고.
+#: 질환별 골든타임 규칙이 정해지기 전의 단일 초기값 — TRANSPORT_TRIAGE.md 참고.
+TRANSPORT_ALT_MAX_MIN = float(os.environ.get("HUB_TRANSPORT_ALT_MAX_MIN", "30"))
+
+
+def _transport_alternatives(result, confirmed_id: str | None) -> list[TransportAlternative]:
+    """재검토 티어에 동봉할 대체 병원 후보(최대 3곳, hub 순위 순). 결정은 사람이 한다."""
+    if result is None:
+        return []
+    out: list[TransportAlternative] = []
+    for h in result.hospitals:
+        if h.hospitalId == confirmed_id or h.status not in ("approved", "pending"):
+            continue
+        if h.demoteReasons:
+            continue  # 수용 불가 신고·확인된 만실·거절 병원은 대체 후보로 내밀지 않는다
+        if h.travelMin is None or h.travelMin > TRANSPORT_ALT_MAX_MIN:
+            continue
+        out.append(TransportAlternative(
+            hospitalId=h.hospitalId, name=h.name, status=h.status, travelMin=h.travelMin,
+            availableBedCount=h.availableBedCount, bedCountUnknown=h.bedCountUnknown,
+            rArrive=h.bedReliability.rArrive if h.bedReliability else None,
+        ))
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _handle_transport_vitals(msg: TransportVitals) -> dict:
+    """측정 1회 수신 → 규칙 엔진 판정 → 역할별 전송. 판정 payload를 돌려준다(HTTP 응답용)."""
+    obs = VitalObservation(
+        measured_at=msg.observation.measuredAt, source=msg.observation.source,
+        rr=msg.observation.rr, spo2=msg.observation.spo2, sbp=msg.observation.sbp,
+        hr=msg.observation.hr, bt=msg.observation.bt, avpu=msg.observation.avpu,
+    )
+    with _triage_lock:
+        triage = _transport_triage.setdefault(msg.caseId, TransportTriage())
+        assessment = triage.evaluate(obs)
+
+    result = engine.get_case_result(msg.caseId)
+    confirmed_id = (
+        next((h.hospitalId for h in result.hospitals if h.status == "confirmed"), None) if result else None
+    )
+    tier, alternatives, reasons = assessment.tier, [], list(assessment.reasons)
+    if tier == "review":
+        alternatives = _transport_alternatives(result, confirmed_id)
+        if not alternatives:
+            # 엔진은 "대체가 필요하다"까지만 말한다 — 시간 안에 갈 병원이 없으면 여기서 권고로 올린다.
+            tier = "heli_advisory"
+            reasons.append(
+                f"{TRANSPORT_ALT_MAX_MIN:g}분 안에 갈 수 있는 대체 병원 없음 — 헬기 대기 권고(결정은 관제)"
+            )
+
+    payload = TransportAssessmentMessage(
+        caseId=msg.caseId, tier=tier, news2=assessment.news2,
+        news2Missing=assessment.news2_missing, si=assessment.si, reasons=reasons,
+        observation=msg.observation, demo=msg.demo, scenario=msg.scenario,
+        alternatives=alternatives,
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    ).model_dump()
+
+    apid = msg.apid or engine.get_case_apid(msg.caseId)
+    notify_hospital = confirmed_id if tier in ("notify", "review", "heli_advisory") else None
+    message = json.dumps(payload, ensure_ascii=False)
+    with _sockets_lock:
+        dead = set()
+        for ws in _dashboard_sockets:
+            role, id_ = _socket_identity.get(ws, (None, None))
+            if (role == "ambulance" and id_ == apid) or (
+                role == "hospital" and notify_hospital and id_ == notify_hospital
+            ):
+                try:
+                    ws.send(message)
+                except Exception as e:  # noqa: BLE001
+                    print(f"  [통신] transport_assessment 전송 실패, 연결 제거: {e}")
+                    dead.add(ws)
+        _dashboard_sockets.difference_update(dead)
+        if tier == "heli_advisory":
+            # 관제 지도엔 활력징후 상세 없이 권고 사실만 — 환자 상세는 병원 대시보드만 받는 원칙
+            _send_to_monitors_locked({
+                "type": "transport_assessment", "caseId": msg.caseId, "tier": tier,
+                "reasons": reasons, "demo": msg.demo, "source": "rule",
+                "timestamp": payload["timestamp"],
+            })
+    if tier in ("notify", "review", "heli_advisory"):
+        decision_log.log_decision("transport_assessment", {
+            "caseId": msg.caseId, "tier": tier, "news2": assessment.news2, "si": assessment.si,
+            "reasons": reasons, "observation": msg.observation.model_dump(),
+            "alternatives": [a.hospitalId for a in alternatives],
+            "demo": msg.demo, "scenario": msg.scenario,
+        })
+        label = {"notify": "상태 변화 전달", "review": "대체 병원 제안", "heli_advisory": "헬기 대기 권고"}[tier]
+        print(f"  [이송중] caseId={msg.caseId} NEWS2 {assessment.news2} — {label}")
+    return payload
+
+
+@app.post("/vitals")
+def receive_vitals():
+    """활력징후 입력 구멍(2.5단계)의 공식 HTTP 수신구 — 향후 119구급스마트시스템·
+    구급차 모니터 어댑터가 여기로 보낸다. dashboard WS와 같은 처리로 모인다."""
+    try:
+        msg = TransportVitals.model_validate(request.get_json(force=True, silent=True) or {})
+    except ValidationError as exc:
+        return jsonify({"error": exc.errors()}), 400
+    return jsonify(_handle_transport_vitals(msg)), 202
 
 
 def _build_self_info(hospital_id: str) -> HospitalSelfInfo | None:
@@ -1363,6 +1486,13 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 HospitalInfoConfirm 수신: {exc.errors()}")
                     continue
                 _handle_info_confirm(confirm)
+            elif payload.get("type") == "transport_vitals":
+                try:
+                    vitals = TransportVitals.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 TransportVitals 수신: {exc.errors()}")
+                    continue
+                _handle_transport_vitals(vitals)
             elif payload.get("type") in ("dispatch", "scene_end", "sim_pause", "sim_resume"):
                 _handle_sim_command(payload)
             elif "action" in payload:
