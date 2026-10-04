@@ -295,6 +295,26 @@ true면 추적 시작부터 그 값이었다는 뜻이라 "최소 X시간 전"�
   ✓로 표시(`BedReliabilityMatch.confirmedAgeSec`), 관련 사건은 즉시 재계산·
   재브로드캐스트된다. 수식 등가성은 info의 selftest 3번(조건부 항목)이 검증.
 
+### 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04 신설 — 규칙 기반)
+
+이송 확정 뒤 환자 상태 변화를 받아 판정하고 역할별로 알린다. 규칙표·기준값 출처·
+초안 한계는 **`hub/TRANSPORT_TRIAGE.md`**, 엔진은 `transport_triage.py`(순수 함수,
+NEWS2 공개 표준 + 쇼크지수), 검증은 `python test_transport_triage.py`(시연 시나리오
+5종이 픽스처).
+
+- **입력 구멍**: `POST /vitals`(HTTP — 향후 119구급스마트시스템·구급차 모니터 어댑터)와
+  dashboard WS `transport_vitals`(지금은 가상 시나리오·수기)가 같은 처리로 모인다.
+  형식 `VitalObservationIn` — 종류·값·측정시각·출처(voice/manual/monitor/demo).
+  장비는 사지 않고 자리만 만든다는 원칙.
+- **판정 티어**: record(기록) / hold(초과 1회째 — 오경보 필터) / notify(연속 2회 또는
+  NEWS2 ≥ 7 → 확정 병원에 전달) / review(+ 치료 변화 신호 → 대체 병원 최대 3곳 제안,
+  결정은 사람) / heli_advisory(대체 후보 0곳 → 헬기 대기 권고, 결정은 관제).
+- **전송 범위**(`transport_assessment`): 구급차 탭 전부 · 확정 병원 탭 notify 이상만 ·
+  관제 지도 heli_advisory만(활력징후 상세 없이 — 환자 상세는 병원 대시보드만 받는 원칙).
+  notify 이상은 의사결정 로그에 남는다. 사건이 닫히면 판정 상태도 같이 지운다.
+- 대체 후보는 캐시된 매칭 결과에서 승인/대기 병원 중 `HUB_TRANSPORT_ALT_MAX_MIN`
+  (기본 30분) 안쪽만 — 수용 불가 신고·확인된 만실·거절 병원은 내밀지 않는다.
+
 ## 개발 환경 / 언어
 
 - 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)

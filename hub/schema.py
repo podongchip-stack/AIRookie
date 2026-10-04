@@ -684,3 +684,69 @@ class SimControl(BaseModel):
     apid: str
     caseId: Optional[str] = None
     timestamp: str
+
+
+# ── 활력징후 입력 구멍 (2.5단계 이송 중 모니터링, 2026-10-04) ─────────────────
+# 출처가 무엇이든(음성 추출·수기·구급차 모니터·데모 시나리오) 같은 형식으로 받는다.
+# 장비는 사지 않는다 — 이미 측정된 값을 받아 쓸 자리만 만든다. 종류·값·측정 시각·
+# 출처를 반드시 남기는 이유: 활력징후도 병상 정보처럼 출처마다 신뢰가 다르고
+# 시간이 지나면 낡는 정보라서다(정보 유통기한 철학의 환자 정보 확장).
+# 필드 의미는 HL7 FHIR Vital Signs 프로파일의 관측 항목에 대응하되, 필드명은
+# voice v2 `summary.vitals`와 같은 축약(rr/spo2/sbp/…)을 유지한다 — 내부 일관성
+# 우선, 표준 명칭 변환은 외부 어댑터(스마트시스템·모니터 연동) 몫이다.
+
+VitalSource = Literal["voice", "manual", "monitor", "demo"]
+
+
+class VitalObservationIn(BaseModel):
+    """이송 중 활력징후 1회 측정. 없는 항목은 None — 음성 추출은 필드가 빠질 수 있다."""
+    measuredAt: str                      # ISO 8601
+    source: VitalSource
+    rr: Optional[int] = None             # 호흡수 (/분)
+    spo2: Optional[int] = None           # 산소포화도 (%)
+    sbp: Optional[int] = None            # 수축기혈압 (mmHg)
+    dbp: Optional[int] = None            # 이완기혈압 — NEWS2엔 안 쓰지만 기록은 남긴다
+    hr: Optional[int] = None             # 맥박 (/분)
+    bt: Optional[float] = None           # 체온 (℃)
+    avpu: Optional[Literal["A", "V", "P", "U"]] = None
+
+
+class TransportVitals(BaseModel):
+    """입력 구멍으로 들어오는 메시지 — dashboard WS(type 필드)와 POST /vitals(HTTP) 공용."""
+    type: Literal["transport_vitals"] = "transport_vitals"
+    caseId: str
+    apid: Optional[str] = None           # 없으면 hub가 사건에서 찾는다
+    demo: bool = False                   # 가상 시나리오 여부 — 화면·로그에 그대로 표시
+    scenario: Optional[str] = None       # 데모 시나리오 이름(로그용)
+    observation: VitalObservationIn
+
+
+class TransportAlternative(BaseModel):
+    """재검토 제안에 동봉하는 대체 병원 후보 — 결정은 사람(구급대원·관제)이 한다."""
+    hospitalId: str
+    name: str
+    status: str                          # approved | pending
+    travelMin: Optional[float] = None
+    availableBedCount: int = 0
+    bedCountUnknown: bool = False
+    rArrive: Optional[float] = None      # 도착 시점 병상 정보 유효 확률 (설명용, AI)
+
+
+class TransportAssessmentMessage(BaseModel):
+    """hub → dashboard: 측정 1회에 대한 판정(transport_triage 규칙 엔진, source: "rule").
+
+    수신 범위가 티어마다 다르다 — 구급차 탭은 전부(자기 환자), 확정 병원 탭은
+    notify 이상만(오경보보다 침묵), 관제 지도는 heli_advisory만(환자 상세 없이)."""
+    type: Literal["transport_assessment"] = "transport_assessment"
+    caseId: str
+    tier: Literal["record", "hold", "notify", "review", "heli_advisory"]
+    news2: int
+    news2Missing: list[str] = Field(default_factory=list)
+    si: Optional[float] = None
+    reasons: list[str] = Field(default_factory=list)
+    observation: VitalObservationIn
+    demo: bool = False
+    scenario: Optional[str] = None
+    alternatives: list[TransportAlternative] = Field(default_factory=list)
+    source: Literal["rule"] = "rule"
+    timestamp: str

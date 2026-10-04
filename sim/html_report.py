@@ -14,7 +14,7 @@ ARM_LABEL = {"nearest": "최근접 집중", "sequential": "순차 전화", "gold
 ARM_DESC = {
     "nearest": "정보 없이 전원 최근접 응급실로 — 만실은 도착해서야 안다 (이태원 당시)",
     "sequential": "가까운 순 전화, 자리 있는 곳 예약 후 출발 (평시 뺑뺑이)",
-    "goldenlink": "존 전체 동시 요청 + 배정 공유 — 같은 병상을 두 번 세지 않는다",
+    "goldenlink": "존 전체 동시 요청 + 배정 공유 — 같은 병상을 두 번 세지 않고, 중증은 센터로·경증은 센터를 아낀다",
 }
 
 _TEMPLATE = r"""<!DOCTYPE html>
@@ -188,12 +188,20 @@ for (const arm of ARMS) {
     : arm === "sequential"
       ? `<span>거절 전화 <b>${a.rejectedCallsMean}</b>통</span><span>쏠림 <b>${a.maxLoadRatio.mean}</b>배</span>`
       : `<span>거절 전화 <b>0</b>통</span><span>쏠림 <b>${a.maxLoadRatio.mean}</b>배</span>`;
+  // 중증도-병원 수준 매칭 지표 — 등급 데이터가 없는 스냅샷이면 줄 자체를 그리지 않는다.
+  // 경증→센터는 낮을수록(센터 보존), 중증→센터는 높을수록(최종치료 직행) 좋다.
+  const pct = v => Math.round(v * 100) + "%";
+  const centerRow = a.mildCenterShareMean == null ? "" :
+    `<div class="row"><span>경증→센터 <b>${pct(a.mildCenterShareMean)}</b></span>` +
+    (a.severeCenterShareMean == null ? "" : `<span>중증→센터 <b>${pct(a.severeCenterShareMean)}</b></span>`) +
+    `</div>`;
   tiles.insertAdjacentHTML("beforeend", `
     <div class="card tile">
       <h3><span class="dot" style="background:var(${ARM_VAR[arm]})"></span>${ARM_LABEL[arm]}</h3>
       <p class="desc">${ARM_DESC[arm]}</p>
       <div class="hero">${a.medianTransportMin.mean}<small>분 · 수용까지 중앙값</small></div>
       <div class="row"><span>p90 <b>${a.p90TransportMin.mean}분</b></span>${extra}</div>
+      ${centerRow}
     </div>`);
 }
 
@@ -450,6 +458,7 @@ for (const arm of ARMS) {
     `중증도 분포(가정): immediate/urgent/delayed = ${p.severityMix.join("/")} — 이송 순서에만 사용`,
     `최근접·순차 전화 방식에도 구급차별 "직접 겪은 만실 기억"을 반영 — 베이스라인을 불리하게 과장하지 않기 위한 보정`,
     `병원 수용 능력은 E-Gen 가용 병상(hvec) 하나로 단순화 — 인력·수술실은 미반영. 신고 값이 처음부터 틀렸을 가능성(정보 무효)은 0으로 둔 보수적 설정(v2에서 infosurv 확률로 대체 예정)`,
+    `골든링크의 중증도 배정 보정은 hub와 같은 상수(중증: 권역 −5분·지역센터 −2분, 경증: 센터 +3분) — 제외가 아니라 순위 조정이라 주변에 센터뿐이면 경증도 센터로 간다. 등급은 E-Gen 목록 실측(dutyEmclsName)`,
     `사상자 수·중증도는 가정이며 실제 사건의 재현이 아님 — 병원 위치·병상만 실측`,
   ];
   document.getElementById("assume").innerHTML = items.map(s => `<li>${s}</li>`).join("");

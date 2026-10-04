@@ -12,6 +12,7 @@ import { CallStatusPanel } from "@/components/ambulance/CallStatusPanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
+import { TransportMonitorPanel } from "@/components/ambulance/TransportMonitorPanel";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import type { CallSignalType, DispatchTarget } from "@/types/dashboard";
 
@@ -52,9 +53,8 @@ function alertNotSent() {
 function AmbulanceDashboardContent() {
   const searchParams = useSearchParams();
   const apid = searchParams.get("id");
-  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand } = useDashboardSocket(
-    apid ? { role: "ambulance", id: apid } : null,
-  );
+  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand, sendTransportVitals } =
+    useDashboardSocket(apid ? { role: "ambulance", id: apid } : null);
   // 이송 승인을 눌렀지만 hub 응답(confirmed)을 아직 못 받은 병원. 화면의 "확정"은 hub 기준으로만
   // 띄운다(2026-10-01) — 예전엔 누르는 즉시 로컬에서 확정으로 바꿔서, hub가 거부해도(병원 미승인 등)
   // 화면엔 확정으로 남았다. mock 모드는 hub가 없으니 누른 값을 그대로 확정으로 본다.
@@ -279,6 +279,19 @@ function AmbulanceDashboardContent() {
           <div className={css({ flex: "0 0 auto" })}>
             <CallSummaryEditablePanel data={myResult} />
           </div>
+          {/* 이송 중 모니터링(2.5단계, 2026-10-04) — 이송이 확정된 사건에만 뜬다. 활력징후
+              입력 구멍의 데모 어댑터(가상 시나리오)와 hub 규칙 엔진 판정 표시. */}
+          {confirmedHospitalId != null && activeCaseId && apid && (
+            <div className={css({ flex: "0 0 auto" })}>
+              <TransportMonitorPanel
+                caseId={activeCaseId}
+                apid={apid}
+                assessments={state.transportAssessments[activeCaseId] ?? []}
+                live={connectionMode === "live"}
+                onSendVitals={sendTransportVitals}
+              />
+            </div>
+          )}
           <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
             {/* 통화는 기본적으로 휴대폰 전화 앱으로만(2026-10-03). hub를 --dashboard-call로 띄웠을 때만 이 화면에도
                 [통화 시작]이 있고, 아니면 보기 전용 통화 현황(상태·실시간 자막)만 보인다. mock 모드는 버튼을 둔다. */}
