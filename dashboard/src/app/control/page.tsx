@@ -97,6 +97,35 @@ const PATIENT_TEMPLATES = [
 ] as const;
 
 type Template = (typeof PATIENT_TEMPLATES)[number];
+
+// 이송 중 목적지 병원과의 추가 통화 — 정해진 상황(2026-10-05). 현장에서 확인한 환자(카드)에 이송 중 상태 변화를 얹어
+// 2차 통화 요약으로 보낸다. hub가 환자 정보에 덧붙인다(앞선 요약은 previousCalls로 남음). 가상 환자 표시는 그대로.
+const FOLLOWUPS = [
+  {
+    key: "shock", label: "쇼크 진행 — 혈압 저하", sev: "중증" as const, symText: "혈압·산소포화도 하락, 빈맥",
+    apply: (base: Template) => ({
+      mechanism: `${base.summary.mechanism} — 이송 중 쇼크 진행`, severity_tag: "high", ktas_level: 1, consciousness: "V",
+      symptoms: [...base.summary.symptoms, "혈압 저하", "빈맥"], vitals: [{ sequence: 2, sbp: 82, dbp: 50, hr: 132, rr: 26, spo2: 90 }],
+      transcript: "이송 중 상태 변화 알려드립니다. 혈압 82에 50, 맥박 132, 산소포화도 90으로 떨어졌고 반응이 처집니다.",
+    }),
+  },
+  {
+    key: "consciousness", label: "의식 저하", sev: "중증" as const, symText: "통증에만 반응, 호흡 빨라짐",
+    apply: (base: Template) => ({
+      mechanism: `${base.summary.mechanism} — 이송 중 의식 저하`, severity_tag: "high", ktas_level: 1, consciousness: "P",
+      symptoms: [...base.summary.symptoms, "의식 저하"], vitals: [{ sequence: 2, sbp: 108, dbp: 70, hr: 118, rr: 24, spo2: 92 }],
+      transcript: "이송 중인데 의식이 떨어졌습니다. 통증에만 반응하고 호흡이 24회로 빨라졌습니다.",
+    }),
+  },
+  {
+    key: "stable", label: "호전 · 안정", sev: null, symText: "활력징후 안정, 통증 감소",
+    apply: (base: Template) => ({
+      mechanism: `${base.summary.mechanism} — 이송 중 안정`, severity_tag: base.summary.severity_tag, ktas_level: base.summary.ktas_level,
+      consciousness: "A", symptoms: [...base.summary.symptoms], vitals: [{ sequence: 2, sbp: 124, dbp: 78, hr: 88, rr: 18, spo2: 97 }],
+      transcript: "이송 중 재측정 결과 혈압 124에 78, 맥박 88, 산소포화도 97로 안정적입니다. 통증도 줄었다고 합니다.",
+    }),
+  },
+] as const;
 type SevLabel = Template["severity"];
 const templateOf = (key: string | null | undefined): Template | null =>
   PATIENT_TEMPLATES.find((t) => t.key === key) ?? null;
@@ -214,6 +243,10 @@ export default function ControlPage() {
   const g = (fn: () => void) => pauseToast.guard(locked, fn);
   // 불가 사유 선택 모달(2026-10-05) — 병원 대시보드와 같은 4축 사유. 이송 중 수용 철회·도착 후 수용 불가도 같은 모달
   type RejectAction = "hospital_reject" | "transport_withdraw" | "arrival_refused";
+  // ④ 목적지 병원과의 추가 통화(2026-10-05) — 음성(대원 휴대폰 전화 앱) / 정해진 상황(가상 상태 변화)
+  const [followupMode, setFollowupMode] = useState<"voice" | "template">("template");
+  const [followupKey, setFollowupKey] = useState<string>("shock");
+  const [followupSent, setFollowupSent] = useState<Record<string, string[]>>({});
   const [rejectTarget, setRejectTarget] = useState<{ caseId: string; hospitalId: string; name: string; action: RejectAction } | null>(null);
   function sendReject(reason: RejectionReason) {
     if (!rejectTarget) return;
@@ -341,6 +374,41 @@ export default function ControlPage() {
       }
     } finally {
       if (signal) sendCallSignal("call_ended", targetApid, targetCaseId);
+    }
+  }
+
+  // 이송 중 목적지 병원과 2차 통화(정해진 상황) — 2차 통화 요약을 보내면 hub가 환자 정보에 덧붙인다(병원 목록·확정은 그대로)
+  async function handleFollowup(key: string) {
+    if (!caseId || sending) return;
+    const followup = FOLLOWUPS.find((f) => f.key === key);
+    const base = caseTemplate ?? templateOf(dispatchInfo?.reportedKey ?? reportedKey) ?? PATIENT_TEMPLATES[0];
+    if (!followup) return;
+    const change = followup.apply(base);
+    setSending(true);
+    try {
+      const response = await fetch("/api/demo/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          caseId,
+          transcript: { raw_text: change.transcript, filtered_text: change.transcript },
+          summary: {
+            ...base.summary,
+            mechanism: change.mechanism, severity_tag: change.severity_tag, ktas_level: change.ktas_level,
+            consciousness: change.consciousness, symptoms: change.symptoms, vitals: change.vitals,
+          },
+          source: "ai",
+          model_used: { stt: "scenario-template", llm: "scenario-template" },
+        }),
+      });
+      if (response.ok) {
+        setFollowupSent((prev) => ({ ...prev, [caseId]: [...(prev[caseId] ?? []), followup.label] }));
+        note(`이송 중 추가 통화(정해진 상황) — ${followup.label} · ${confirmedHospital?.name ?? "목적지 병원"}에 덧붙여 전달`);
+      } else {
+        note(`추가 통화 전송 실패 (${response.status})`);
+      }
+    } finally {
+      setSending(false);
     }
   }
 
@@ -1272,6 +1340,101 @@ export default function ControlPage() {
                         })}
                       </div>
                     </div>
+
+                    {/* 목적지 병원과 통화(2026-10-05) — 이송 중 환자 상태가 바뀌면 다시 통화해 환자 정보를 덧붙인다. 병원이 못 받게
+                        되면 병원 대시보드(또는 위 [목적지 병원 수용 철회])로 확정이 풀려 다른 병원으로 재선택한다. */}
+                    {confirmedHospital && caseId && (() => {
+                      const call = state.callStatus[caseId];
+                      const phoneCalling = call?.state === "calling" && call.followup;
+                      const sentList = followupSent[caseId] ?? [];
+                      return (
+                        <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 10px" }}>
+                            <span style={{ fontSize: 15, fontWeight: 700 }}>목적지 병원과 통화 — {confirmedHospital.name}</span>
+                            <span style={{ fontSize: 12, color: C.ink3 }}>환자 상태가 바뀌면 다시 통화합니다. 새 내용은 기존 환자 정보에 덧붙어 병원 화면에 반영됩니다.</span>
+                          </div>
+                          <div role="tablist" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                            {([
+                              ["voice", "mic", "음성으로 통화", "대원 휴대폰 전화 앱 [목적지 병원과 통화]"],
+                              ["template", "card", "정해진 상황 선택", "가상 상태 변화 · 음성 없이 바로 전달"],
+                            ] as const).map(([mode, icon, label, sub]) => {
+                              const selected = (phoneCalling ? "voice" : followupMode) === mode;
+                              return (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={selected}
+                                  onClick={() => setFollowupMode(mode)}
+                                  style={{
+                                    textAlign: "left", display: "flex", flexDirection: "column", gap: 2, padding: "8px 12px", borderRadius: 10, cursor: "pointer",
+                                    color: C.ink, background: selected ? C.blueSoft : "#ffffff", border: selected ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
+                                  }}
+                                >
+                                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700 }}><Icon name={icon} size={14} color={C.ink} />{label}</span>
+                                  <span style={{ fontSize: 11, color: C.ink3 }}>{sub}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {phoneCalling || followupMode === "voice" ? (
+                            phoneCalling ? (
+                              <div style={{ ...softBox, display: "flex", alignItems: "center", gap: 10 }}>
+                                <Pulse color={C.green} />
+                                <span><b>{call?.hospitalName ?? confirmedHospital.name}</b>과 추가 통화 중 — 대원이 [전송]을 누르면 인식·구조화해 환자 정보에 덧붙입니다.</span>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                <div style={softBox}>대원 휴대폰 전화 앱(이송 중 화면)에서 <b>[목적지 병원과 통화]</b>를 누르세요. 통화 음성이 2차 통화 요약이 됩니다.</div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: C.ink3 }}>
+                                  <Pulse color="#7ba0cc" />
+                                  {call?.followup && call.state === "ended"
+                                    ? call.cancelled ? "대원이 통화를 취소했습니다 — 전달된 내용 없음" : "통화 종료 — 환자 정보를 정리해 덧붙이는 중…"
+                                    : "휴대폰 추가 통화를 기다리는 중…"}
+                                </div>
+                              </div>
+                            )
+                          ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
+                                {FOLLOWUPS.map((f) => {
+                                  const sel = followupKey === f.key;
+                                  return (
+                                    <button
+                                      key={f.key}
+                                      type="button"
+                                      onClick={() => setFollowupKey(f.key)}
+                                      style={{
+                                        textAlign: "left", display: "flex", flexDirection: "column", gap: 4, padding: "9px 12px", borderRadius: 10, cursor: "pointer",
+                                        background: sel ? C.blueSoft : "#ffffff", border: sel ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
+                                      }}
+                                    >
+                                      <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: C.ink }}>
+                                        {f.sev && <SevChip sev={f.sev} />}{f.label}
+                                      </span>
+                                      <span style={{ fontSize: 12, color: C.ink3 }}>{f.symText}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <button
+                                type="button"
+                                disabled={sending}
+                                onClick={g(() => void handleFollowup(followupKey))}
+                                style={{ minHeight: 42, background: C.blue, border: "none", borderRadius: 10, color: "#ffffff", fontSize: 14, fontWeight: 700, cursor: sending ? "wait" : "pointer", opacity: sending ? 0.6 : 1 }}
+                              >
+                                {sending ? "전달 중…" : `${confirmedHospital.name}에 추가 통화 내용 전달 — ${FOLLOWUPS.find((f) => f.key === followupKey)?.label}`}
+                              </button>
+                            </div>
+                          )}
+                          {sentList.length > 0 && (
+                            <div style={{ fontSize: 12, color: C.greenInk }}>
+                              전달한 추가 통화: {sentList.map((label, i) => `${i + 2}차 ${label}`).join(" · ")}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </ScreenCard>
               )}
 
