@@ -1,0 +1,2 @@
+# 완성 영상(수십 MB)은 Git LFS로 — git 기록에는 작은 포인터만 남는다(2026-10-04)
+out/*.mp4 filter=lfs diff=lfs merge=lfs -text
