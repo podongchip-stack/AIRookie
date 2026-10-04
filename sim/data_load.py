@@ -55,6 +55,7 @@ SCENES: dict[str, dict] = {
 }
 
 BED_OPERATION = "getEmrrmRltmUsefulSckbdInfoInqire"
+LIST_OPERATION = "getEgytListInfoInqire"   # 하루 1회 수집 — 응급의료기관 등급(dutyEmclsName)이 여기 있다
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -72,6 +73,7 @@ class Hospital:
     lng: float
     capacity: int          # 스냅샷 시점 가용 병상(hvec, 음수는 0으로)
     distance_km: float     # 현장에서 직선거리
+    level: str | None = None  # 응급의료기관 등급(dutyEmclsName) — 없으면 미상(보정 없음)
 
 
 def load_coords(coords_dir: Path = COORDS_DIR) -> dict[str, tuple[str, float, float]]:
@@ -131,6 +133,36 @@ def load_beds(snapshot_date: str, target_hhmm: str, snapshot_dir: Path = SNAPSHO
     return best_ts, beds
 
 
+def load_levels(snapshot_date: str, snapshot_dir: Path = SNAPSHOT_DIR) -> dict[str, str]:
+    """E-Gen 목록 오퍼레이션에서 hpid → 응급의료기관 등급(권역/지역응급의료센터 등).
+
+    등급은 사실상 불변이라 장면 날짜 파일에 목록 기록이 없으면(수집기는 하루 1회,
+    00시에만 목록을 찍는다) 최신 스냅샷부터 거슬러 찾는다. 어디에도 없으면 빈 dict —
+    등급 미상 병원은 중증도 보정 없이 기존과 똑같이 동작한다(fail-soft).
+    """
+    candidates = [snapshot_dir / f"{snapshot_date}.jsonl"]
+    candidates += sorted(
+        (p for p in snapshot_dir.glob("*.jsonl") if p != candidates[0]), reverse=True
+    )
+    for path in candidates:
+        if not path.exists():
+            continue
+        levels: dict[str, str] = {}
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                if f'"{LIST_OPERATION}"' not in line:  # json.loads 전 싼 선별 — 파일이 크다
+                    continue
+                rec = json.loads(line)
+                if rec.get("operation") != LIST_OPERATION:
+                    continue
+                for item in rec.get("items") or []:
+                    if item.get("hpid") and item.get("dutyEmclsName"):
+                        levels[item["hpid"]] = item["dutyEmclsName"]
+        if levels:
+            return levels
+    return {}
+
+
 def build_world(
     snapshot_date: str = "2026-10-02",
     target_hhmm: str = "22:15",
@@ -141,6 +173,7 @@ def build_world(
     """현장 반경 안의, 좌표와 병상이 모두 확인된 병원 목록(거리순)."""
     coords = load_coords()
     snapshot_ts, beds = load_beds(snapshot_date, target_hhmm)
+    levels = load_levels(snapshot_date)
     hospitals: list[Hospital] = []
     for hpid, (name, lat, lng) in coords.items():
         if hpid not in beds:
@@ -148,7 +181,8 @@ def build_world(
         distance = haversine_km(scene_lat, scene_lng, lat, lng)
         if distance > radius_km:
             continue
-        hospitals.append(Hospital(hpid, name, lat, lng, beds[hpid], round(distance, 2)))
+        hospitals.append(Hospital(hpid, name, lat, lng, beds[hpid], round(distance, 2),
+                                  level=levels.get(hpid)))
     hospitals.sort(key=lambda h: h.distance_km)
     if not hospitals:
         raise SystemExit("반경 안에 병원이 없다 — radius_km 또는 스냅샷 날짜를 확인")

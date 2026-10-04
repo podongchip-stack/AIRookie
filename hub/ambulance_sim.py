@@ -278,6 +278,15 @@ class DispatchSim:
             if unit.phase == "idle":
                 unit.gps = base
 
+    def remove_unit(self, apid: str) -> bool:
+        """구급차 목록 동기화(2026-10-04)에서 빠진 구급차를 지운다. 출동 중이면 안 지운다(False)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None or unit.phase != "idle":
+                return False
+            del self._units[apid]
+            return True
+
     def gps_for(self, apid: str) -> Optional[GpsPoint]:
         with self._lock:
             unit = self._units.get(apid)
@@ -333,6 +342,19 @@ class DispatchSim:
             unit.phase, unit.case_id, unit.incident, unit.trip = "dispatching", case_id, incident, trip
             unit.hospital_id = unit.hospital_gps = None
         return True, "ok"
+
+    def reset(self, apid: str) -> Optional[str]:
+        """[시연 초기화](2026-10-04): 어떤 단계에 있든 즉시 기지 대기(idle)로 되돌린다.
+        일시정지와 달리 상태를 지우는 리셋 — 돌려주는 값은 끊긴 사건 id(hub가 닫는 데 쓴다)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None:
+                return None
+            old_case = unit.case_id
+            unit.phase, unit.trip, unit.gps = "idle", None, unit.base
+            unit.case_id = unit.incident = unit.hospital_id = None
+            unit.paused = False
+            return old_case
 
     def scene_end(self, apid: str, case_id: str) -> bool:
         """[현장 종료]: 현장(또는 도착 후 수용 불가로 재선택 대기 중)에서 이송 없이 끝낸다 → 바로 기지로."""

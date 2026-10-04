@@ -309,6 +309,9 @@ voice가 보내는 "필요역량"과 여기서 올리는 "보유역량"이 같�
 프로젝트**(`ambulances` 테이블)에서 읽어 `POST /info/ambulances`로 보낸다.
 `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY` 환경변수가 없으면 이 부분만
 조용히 건너뛰고 병원 정보 동기화는 그대로 진행한다.
+2026-10-04부터는 한 대씩이 아니라 `POST /info/ambulances/batch`로 묶어 보내고
+`POST /info/ambulances/roster`로 전체 apid 목록을 알린다(hub가 목록에 없는 구급차를 뺀다).
+테이블 내용은 서울 119 구급차 162대다 — `ambulance_registry/README.md` 참고.
 
 ```json
 {

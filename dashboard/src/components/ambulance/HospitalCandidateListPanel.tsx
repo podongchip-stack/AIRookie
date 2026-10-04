@@ -118,6 +118,21 @@ const bedChipEmptyStyle = css({
   borderRadius: "chip",
 });
 
+// 이송 중 부하 칩 — 이 병원으로 확정돼 아직 도착 전(TTL 15분)인 환자 수. 규칙 기반.
+// 만실(coral)도 미상(ink2)도 아닌 "지금 몰리는 중"이라는 중간 경고라 amber를 쓴다.
+// 이 숫자만큼 hub가 이동시간에 분을 더해 순위를 뒤로 민다(분산 장치 작동 중 표시).
+const loadChipStyle = css({
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: "xs",
+  fontWeight: "semibold",
+  color: "severity.medium",
+  backgroundColor: "severity.medium.subtle",
+  paddingX: "2",
+  paddingY: "0.5",
+  borderRadius: "chip",
+});
+
 // "확인된 만실"(coral)과는 색을 다르게 둔다 — 미상은 병원에 자리가 없다고 확정된
 // 게 아니라 데이터가 아직 없는 것뿐이라, 만실과 같은 경고색으로 보이면 구급대원이
 // 실제로는 받아줄 수도 있는 병원을 스스로 후보에서 빼게 된다(CLAUDE.md 참고).
@@ -324,7 +339,9 @@ export function HospitalCandidateListPanel({
     return (
       <ListPanelShell subtitle={`Zone ${scene.zoneActive.join(", ")} · 환자 정보 전 도착 시간순`}>
         <p className={css({ color: "ink3", fontSize: "xs", marginBottom: "2" })}>
-          통화가 끝나면 진료과·이동시간 기준 순위와 병원 응답으로 바뀝니다.
+          {scene.reportedSymptom
+            ? `1차 신고(${scene.reportedSymptom}${scene.reportedSeverity === "high" ? " · 중증 의심" : scene.reportedSeverity === "low" ? " · 경증" : ""}) 기반 가추천 — 현장 통화(2차 정보)가 끝나면 진료과 적합도까지 반영한 확정 순위로 바뀝니다.`
+            : "통화가 끝나면 진료과·이동시간 기준 순위와 병원 응답으로 바뀝니다."}
         </p>
         <ul
           className={cx(
@@ -371,8 +388,19 @@ export function HospitalCandidateListPanel({
                     {h.etaMin != null ? ` · ${h.etaMin}분` : ""} · 병상 {h.bedCountUnknown ? "미상" : h.availableBedCount}
                   </span>
                 </div>
-                {rel && h.bedReliability && (
-                  <div className={css({ display: "flex" })}>
+                {/* 매칭 전에도 고르는 데 필요한 정보는 다 띄운다(2026-10-04): 등급·진료과·신뢰도.
+                    적합도(진료과 매칭 점수)만은 환자 정보가 확정되는 통화 후에 계산된다. */}
+                <div className={css({ display: "flex", gap: "1", flexWrap: "wrap" })}>
+                  {h.emergencyLevel && h.emergencyLevel.endsWith("센터") && (
+                    <span className={deptChipStyle}>{h.emergencyLevel}</span>
+                  )}
+                  {h.specialties && h.specialties.length > 0 && (
+                    <span className={deptChipStyle}>
+                      {h.specialties.slice(0, 3).map((s) => s.department).join("·")}
+                      {h.specialties.length > 3 ? ` 외 ${h.specialties.length - 3}과` : ""}
+                    </span>
+                  )}
+                  {rel && h.bedReliability && (
                     <span
                       className={bedReliabilityChipStyle(rel.rArrive)}
                       title={`지금 유효 ${Math.round(rel.authority * 100)}%${h.bedReliability.confirmedAgeSec != null ? " · 병원이 직접 확인한 값" : ""} · ${h.bedReliability.modelTag}`}
@@ -380,8 +408,8 @@ export function HospitalCandidateListPanel({
                       AI · 도착 시 유효 {Math.round(rel.rArrive * 100)}%
                       {h.bedReliability.confirmedAgeSec != null ? " ✓" : ""}
                     </span>
-                  </div>
-                )}
+                  )}
+                </div>
               </li>
             );
           })}
@@ -400,6 +428,12 @@ export function HospitalCandidateListPanel({
 
   const focusConfirmed = confirmedHospitalId != null && data.hospitals.some((h) => h.hospitalId === confirmedHospitalId);
   const hiddenCount = focusConfirmed ? data.hospitals.length - 1 : 0;
+  // 병원 승인이 오면 승인 병원 중 최상위(hub 순위)를 "추천"으로 표시한다(2026-10-04).
+  // 선착순 자동 확정이 아니라 추천 + 탭 한 번 — "최종 결정은 사람" 원칙. hub가 승인
+  // 병원을 위로 올려 보내므로(rank_key) 목록에서 처음 만나는 approved가 곧 추천이다.
+  const recommendedId = confirmedHospitalId == null
+    ? data.hospitals.find((h) => h.status === "approved")?.hospitalId ?? null
+    : null;
   const hospitals = data.hospitals
     .filter((hospital) => !focusConfirmed || showOthers || hospital.hospitalId === confirmedHospitalId)
     .map((hospital) => ({
@@ -407,6 +441,24 @@ export function HospitalCandidateListPanel({
       confirmed: hospital.hospitalId === confirmedHospitalId,
       requesting: hospital.hospitalId === pendingHospitalId && hospital.hospitalId !== confirmedHospitalId,
     }));
+
+  // 존별 블록(2026-10-04) — Zone 1·2·3을 **독립 블록**으로 완전히 분리한다(머리글 줄이 아니라
+  // 각 존이 테두리·배경을 가진 박스). 거절로 존이 확장되면 보라색 블록이 새로 생기는 게
+  // 한눈에 보인다. 블록 안 순서는 hub 순위 그대로, 확정 집중 모드는 블록 없이 한 장.
+  const zoneBlocks: { zone: number | null; items: typeof hospitals }[] = [];
+  if (focusConfirmed) {
+    zoneBlocks.push({ zone: null, items: hospitals });
+  } else {
+    const byZone = new Map<number, typeof hospitals>();
+    for (const entry of hospitals) {
+      const zone = entry.hospital.zone ?? Math.max(1, Math.ceil(entry.hospital.distanceKm / 5));
+      if (!byZone.has(zone)) byZone.set(zone, []);
+      byZone.get(zone)!.push(entry);
+    }
+    for (const [zone, items] of [...byZone.entries()].sort((a, b) => a[0] - b[0])) {
+      zoneBlocks.push({ zone, items });
+    }
+  }
 
   return (
     <ListPanelShell
@@ -416,12 +468,12 @@ export function HospitalCandidateListPanel({
           않고 이 목록 안에서만 스크롤되게 한다 — ListPanelShell이 셀 높이를 정확히
           지키므로(minHeight:0 + overflow:hidden), 여기는 남는 공간을 그대로
           차지하다가(flex:1) 넘칠 때만 스스로 스크롤하면 된다(고정 maxHeight 불필요). */}
-      <ul
+      <div
         className={cx(
           css({
             display: "flex",
             flexDirection: "column",
-            gap: "2",
+            gap: "2.5",
             flex: "1",
             minHeight: "0",
             overflowY: "auto",
@@ -429,8 +481,28 @@ export function HospitalCandidateListPanel({
           thinScrollbarStyle,
         )}
       >
-        {hospitals.map(({ hospital, confirmed, requesting }) => {
-          const approvable = hospital.status === "approved" || hospital.status === "confirmed";
+        {zoneBlocks.map(({ zone, items }) => (
+          <section
+            key={zone ?? "all"}
+            className={
+              zone == null
+                ? undefined
+                : zone === 1
+                  ? css({ display: "flex", flexDirection: "column", gap: "2", borderWidth: "1px", borderColor: "line", borderRadius: "field", padding: "2.5", backgroundColor: "bg" })
+                  // 확장 존은 관제 지도 존 원과 같은 보라 계열로 — "거절로 넓힌 범위"가 한눈에
+                  : css({ display: "flex", flexDirection: "column", gap: "2", borderWidth: "1px", borderColor: "#C9BBF5", borderRadius: "field", padding: "2.5", backgroundColor: "#F7F4FE" })
+            }
+          >
+            {zone != null && (
+              <header className={css({ display: "flex", alignItems: "center", gap: "1.5", fontSize: "xs", fontWeight: "bold", color: "ink2" })}>
+                <span style={{ color: zone === 1 ? "#1E5FA8" : "#7048E8" }}>Zone {zone}</span>
+                {zone === 1 ? "현장 반경 5km" : `${(zone - 1) * 5}~${zone * 5}km · 거절로 확장`}
+                <span className={css({ color: "ink3", fontWeight: "medium" })}>· {items.length}곳</span>
+              </header>
+            )}
+            <ul className={css({ display: "flex", flexDirection: "column", gap: "2" })}>
+              {items.map(({ hospital, confirmed, requesting }) => {
+                const approvable = hospital.status === "approved" || hospital.status === "confirmed";
 
           return (
             <li
@@ -449,24 +521,72 @@ export function HospitalCandidateListPanel({
               })}
             >
               <div className={css({ display: "flex", flexDirection: "column", gap: "0.5", minWidth: "0" })}>
-                <span className={css({ fontWeight: "semibold", fontSize: "sm", color: "ink" })}>
+                <span
+                  className={css({ fontWeight: "semibold", fontSize: "sm", color: "ink" })}
+                  // 순위 점수(finalScore) 설명 — 그동안 안 보이던 내부 값의 투명화(2026-10-04)
+                  title={
+                    hospital.finalScore != null
+                      ? `순위 점수 ${hospital.finalScore.toFixed(3)} — 진료과 적합도 0.6 + 이동시간 0.4 (전문성·등급 가산, 이송 중 부하 반영)`
+                      : undefined
+                  }
+                >
                   {hospital.name}
+                  {hospital.hospitalId === recommendedId && (
+                    <span
+                      className={css({
+                        marginLeft: "1.5",
+                        fontSize: "xs",
+                        fontWeight: "bold",
+                        color: "mint",
+                        backgroundColor: "mintSoft",
+                        paddingX: "2",
+                        paddingY: "0.5",
+                        borderRadius: "chip",
+                      })}
+                      title="병원이 승인한 곳 중 순위 최상위 — 이송 승인은 구급대원의 판단입니다"
+                    >
+                      추천
+                    </span>
+                  )}
                 </span>
                 <span className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })} title={distanceTitle(hospital)}>
                   {distanceLabel(hospital)}
-                  {hospital.etaMin != null ? ` · ETA ${hospital.etaMin}분` : ""}
+                  {hospital.etaMin != null
+                    ? ` · ETA ${hospital.etaMin}분`
+                    : hospital.travelMin != null
+                      ? ` · 약 ${Math.round(hospital.travelMin)}분(직선 추정)` // travelBasis=estimate — ETA 못 받은 병원(2026-10-04 표기)
+                      : ""}
                 </span>
                 <div className={css({ display: "flex", gap: "1", flexWrap: "wrap" })}>
-                  <span
-                    className={deptChipStyle}
-                    title={hospital.bonusReasons?.length ? `순위 가산: ${hospital.bonusReasons.join(" · ")}` : undefined}
-                  >
-                    {hospital.specialtyMatch.department} ·{" "}
-                    {hospital.specialtyMatch.basis === "exact"
-                      ? "필요 진료과 일치"
-                      : `적합도 ${Math.round(hospital.specialtyMatch.score * 100)}%`}
-                    {hospital.specialtyMatch.doctorCount ? ` · 전문의 ${hospital.specialtyMatch.doctorCount}명` : ""}
-                  </span>
+                  {/* 적합도 표기(2026-10-04 구분): "정보 미상"(병원 진료과 데이터 없음)과 "낮음"을
+                      나눠 회색으로 가라앉힌다. 어느 쪽이든 후보에서 빼지는 않는다 — 잘못
+                      걸러내는 게 더 위험하다는 뺑뺑이 방지 원칙(순위는 이미 뒤로 밀려 있음). */}
+                  {hospital.specialtyMatch.department == null ? (
+                    <span
+                      className={bedChipUnknownStyle}
+                      title="병원 진료과 데이터가 없어 적합도를 계산하지 못했습니다 — 거리 기준으로만 순위에 남습니다(제외하지 않음)"
+                    >
+                      진료과 정보 미상
+                    </span>
+                  ) : hospital.specialtyMatch.basis !== "exact" && hospital.specialtyMatch.score < 0.3 ? (
+                    <span
+                      className={bedChipUnknownStyle}
+                      title={`적합도가 낮지만 후보에서 제외하지 않습니다(뺑뺑이 방지) — 순위는 이미 뒤로 밀려 있습니다${hospital.bonusReasons?.length ? ` · 순위 가산: ${hospital.bonusReasons.join(" · ")}` : ""}`}
+                    >
+                      {hospital.specialtyMatch.department} · 적합도 낮음 {Math.round(hospital.specialtyMatch.score * 100)}%
+                    </span>
+                  ) : (
+                    <span
+                      className={deptChipStyle}
+                      title={hospital.bonusReasons?.length ? `순위 가산: ${hospital.bonusReasons.join(" · ")}` : undefined}
+                    >
+                      {hospital.specialtyMatch.department} ·{" "}
+                      {hospital.specialtyMatch.basis === "exact"
+                        ? "필요 진료과 일치"
+                        : `적합도 ${Math.round(hospital.specialtyMatch.score * 100)}%`}
+                      {hospital.specialtyMatch.doctorCount ? ` · 전문의 ${hospital.specialtyMatch.doctorCount}명` : ""}
+                    </span>
+                  )}
                   {hospital.emergencyLevel && hospital.emergencyLevel.endsWith("센터") && (
                     <span className={deptChipStyle}>{hospital.emergencyLevel}</span>
                   )}
@@ -484,7 +604,26 @@ export function HospitalCandidateListPanel({
                       : hospital.availableBedCount > 0
                         ? `병상 ${hospital.availableBedCount}석`
                         : "병상 없음"}
+                    {hospital.bedDataStale ? " · 1일↑ 묵은 값" : ""}
                   </span>
+                  {/* 수용 불가 신고(declared_no 강등) — 제외하지 않고 순위만 내리는 원칙의 가시화(2026-10-04) */}
+                  {hospital.demoteReasons?.includes("declared_no") && (
+                    <span
+                      className={bedChipEmptyStyle}
+                      title="이 질환군은 수용 불가라고 병원이 E-Gen에 신고한 상태 — 후보에서 빼지 않고 순위만 뒤로 내립니다(제거 대신 강등 원칙)"
+                    >
+                      수용 불가 신고
+                    </span>
+                  )}
+                  {(hospital.inFlightCount ?? 0) > 0 && (
+                    <span
+                      className={loadChipStyle}
+                      title={hospital.loadReason ?? "이 병원으로 확정돼 이송 중인 다른 환자 — 그만큼 순위가 뒤로 밀린다"}
+                    >
+                      이송 중 {hospital.inFlightCount}건
+                      {hospital.loadPenaltyMin ? ` · 순위 +${hospital.loadPenaltyMin}분` : ""}
+                    </span>
+                  )}
                   {/* 순위(specialtyMatch·distanceKm)와는 별개의 설명용 정보 —
                       info-v2가 심평원 대조로 판단한 신뢰도. 이 병원에 해당
                       데이터가 없으면(구 feature/info 데이터 등) 칩 자체를 숨긴다. */}
@@ -568,8 +707,11 @@ export function HospitalCandidateListPanel({
               </div>
             </li>
           );
-        })}
-      </ul>
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
       {hiddenCount > 0 && (
         <button
           type="button"

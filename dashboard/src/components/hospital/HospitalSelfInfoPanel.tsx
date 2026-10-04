@@ -99,12 +99,30 @@ export function HospitalSelfInfoPanel({
             {selfInfo.name} <Tag source="rule">E-Gen 신고 기준</Tag>
           </span>
         </div>
+        {/* 본원 지정 등급(2026-10-04) — "무슨 병원으로 지정되어 있는가" */}
+        {selfInfo.emergencyLevel && (
+          <div className={itemStyle}>
+            <span className={itemLabelStyle}>본원 지정</span>
+            <span className={itemValueStyle}>{selfInfo.emergencyLevel}</span>
+          </div>
+        )}
         <div className={itemStyle}>
           <span className={itemLabelStyle}>응급실 병상</span>
           <span className={itemValueStyle}>
             {selfInfo.bedCountUnknown ? "미상" : `${selfInfo.availableBedCount}석`}
+            {(selfInfo.inFlightCount ?? 0) > 0 ? ` · 이송 중 ${selfInfo.inFlightCount}건` : ""}
           </span>
         </div>
+        {/* 수용 분야(진료과) — "어떤 분야를 받을 수 있는가". 많으면 앞 4개 + 수 */}
+        {selfInfo.specialties && selfInfo.specialties.length > 0 && (
+          <div className={itemStyle}>
+            <span className={itemLabelStyle}>수용 분야 (진료과 {selfInfo.specialties.length}개)</span>
+            <span className={itemValueStyle}>
+              {selfInfo.specialties.slice(0, 4).map((s) => s.department).join(" · ")}
+              {selfInfo.specialties.length > 4 ? ` 외 ${selfInfo.specialties.length - 4}` : ""}
+            </span>
+          </div>
+        )}
         {live && (
           <div className={itemStyle}>
             <span className={itemLabelStyle}>병상 정보 신뢰도 (AI)</span>

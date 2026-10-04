@@ -4,9 +4,13 @@
 
 - nearest    : 병상 정보 없이 전원 최근접 응급실로. 만실은 도착해서야 알고 재이송.
 - sequential : 가까운 순으로 전화(통화당 t_call 분). 자리 있는 곳에 예약 후 출발.
-- goldenlink : 존 후보 전체 동시 요청(t_broadcast 분). 가용 병원 중 최단 이동 병원
-               배정 + 예약 — hub가 자기 배정을 전부 보므로(TTL 오버레이에 해당)
-               구급차끼리 같은 병상을 두 번 세지 않는다.
+- goldenlink : 존 후보 전체 동시 요청(t_broadcast 분). 가용 병원 중 **중증도 보정
+               이동시간**이 최단인 병원 배정 + 예약 — hub가 자기 배정을 전부 보므로
+               (TTL 오버레이에 해당) 구급차끼리 같은 병상을 두 번 세지 않는다.
+               중증도 보정은 hub/scoring.py와 같은 상수·방향이다: 중증(immediate)은
+               권역 −5분/지역센터 −2분 가산, 경증(delayed)은 센터 +3분(센터 보존 —
+               "경증은 멀리" 원칙). 제외가 아니라 순위 조정이라 주변에 센터뿐이면
+               여전히 센터로 간다.
 
 sequential/goldenlink는 예약이 성립해 도착 거절이 없다(병원이 자기 수용+예약
 상태를 알고 승인한다는 가정). nearest만 도착 후 만실을 알게 되어 재이송이 생긴다.
@@ -24,6 +28,24 @@ from data_load import Hospital
 ARMS = ("nearest", "sequential", "goldenlink")
 
 SEVERITIES = ("immediate", "urgent", "delayed")
+
+# 중증도-병원 수준 매칭 상수 — hub/scoring.py의 LEVEL_BONUS_MIN·MILD_CENTER_PENALTY_MIN과
+# 같은 값·같은 '분' 통화. 값을 바꿀 땐 hub 쪽과 함께 바꾼다(시뮬레이션은 hub 규칙의 재현).
+# 전문의 수 가산(DEPTH_BONUS)은 시뮬레이션 세계에 전문의 데이터가 없어 생략한다.
+CENTER_BONUS_MIN = {"권역응급의료센터": 5.0, "지역응급의료센터": 2.0}
+MILD_CENTER_PENALTY_MIN = 3.0
+
+
+def severity_adjust_min(level: str | None, severity: str) -> float:
+    """goldenlink 배정에서 이동시간(분)에 더할 보정. 음수 = 가산(중증을 센터로),
+    양수 = 페널티(경증은 센터를 아껴라). 등급 미상이면 0 — 불리하게 두지 않는다."""
+    if level not in CENTER_BONUS_MIN:
+        return 0.0
+    if severity == "immediate":
+        return -CENTER_BONUS_MIN[level]
+    if severity == "delayed":
+        return MILD_CENTER_PENALTY_MIN
+    return 0.0
 
 
 @dataclass
@@ -120,9 +142,10 @@ def simulate(arm: str, hospitals: list[Hospital], params: SimParams, seed: int) 
         raise ValueError(f"모르는 arm: {arm}")
     rng = random.Random(seed)
     states = [HospitalState(h) for h in hospitals]
-    by_travel_from_scene = sorted(
-        range(len(states)), key=lambda i: travel_min(0, 0, states[i].hospital, params, states[i].hospital.distance_km)
-    )
+    scene_travel = [
+        travel_min(0, 0, s.hospital, params, s.hospital.distance_km) for s in states
+    ]
+    by_travel_from_scene = sorted(range(len(states)), key=lambda i: scene_travel[i])
     severities = _assign_severities(params.n_patients, params.severity_mix, rng)
     patients: list[PatientResult] = []
     trips: list[Trip] = []
@@ -141,8 +164,12 @@ def simulate(arm: str, hospitals: list[Hospital], params: SimParams, seed: int) 
     # 베이스라인을 불리하게 과장하지 않기 위한 보정 (비교는 보수적으로).
     known_full: list[set[int]] = [set() for _ in range(params.n_ambulances)]
 
-    def choose(t: float, amb: int) -> tuple[int | None, float, int]:
-        """팔별 병원 선택. 반환: (병원 index 또는 None, 결정에 쓴 분, 전화 수)."""
+    def choose(t: float, amb: int, severity: str) -> tuple[int | None, float, int]:
+        """팔별 병원 선택. 반환: (병원 index 또는 None, 결정에 쓴 분, 전화 수).
+
+        severity는 goldenlink만 쓴다 — nearest(정보 없음)·sequential(가까운 순 전화)은
+        중증도로 행선지를 바꿀 정보 체계 자체가 없다는 게 두 베이스라인의 정의다.
+        """
         if arm == "nearest":
             for i in by_travel_from_scene:
                 if i not in known_full[amb]:
@@ -158,11 +185,16 @@ def simulate(arm: str, hospitals: list[Hospital], params: SimParams, seed: int) 
                     return i, calls * params.t_call_min, calls
                 known_full[amb].add(i)
             return None, calls * params.t_call_min, calls
-        # goldenlink: 동시 요청 — 가용(수용+예약 반영) 병원 중 최단 이동
+        # goldenlink: 동시 요청 — 가용(수용+예약 반영) 병원 중 중증도 보정 이동시간 최단.
+        # 보정 동률이면 by_travel_from_scene 순회 순서(실제 이동시간 짧은 쪽)가 남는다.
         candidates = [i for i in by_travel_from_scene if states[i].free_for_promise > 0]
         if not candidates:
             return None, params.t_broadcast_min, 0
-        return candidates[0], params.t_broadcast_min, 0
+        best = min(
+            candidates,
+            key=lambda i: scene_travel[i] + severity_adjust_min(states[i].hospital.level, severity),
+        )
+        return best, params.t_broadcast_min, 0
 
     while queue:
         t, _, amb = heapq.heappop(queue)
@@ -174,7 +206,7 @@ def simulate(arm: str, hospitals: list[Hospital], params: SimParams, seed: int) 
 
         t_pickup = t
         t = t + params.t_load_min
-        target, decision_min, calls = choose(t, amb)
+        target, decision_min, calls = choose(t, amb, severity)
         t += decision_min
         if target is None:
             # 반경 안 전 병원 만실 — 가장 여유가 덜 나쁜 곳(최근접)으로 보내고 과밀로 기록.
@@ -265,6 +297,18 @@ def summarize(run: RunResult) -> dict:
     ]
     with_capacity = [s for s in run.hospitals if s.hospital.capacity > 0]
     max_load = max((s.arrivals / s.hospital.capacity for s in with_capacity), default=0.0)
+    # 중증도-병원 수준 매칭 지표 — 등급 데이터가 아예 없으면 None(미상은 지표로 안 만든다)
+    center_hpids = {
+        s.hospital.hpid for s in run.hospitals if s.hospital.level in CENTER_BONUS_MIN
+    }
+    has_levels = any(s.hospital.level for s in run.hospitals)
+
+    def center_share(severity: str) -> float | None:
+        group = [p for p in run.patients if p.severity == severity]
+        if not has_levels or not group:
+            return None
+        return round(sum(1 for p in group if p.hospital in center_hpids) / len(group), 3)
+
     return {
         "arm": run.arm,
         "seed": run.seed,
@@ -275,5 +319,10 @@ def summarize(run: RunResult) -> dict:
         "maxLoadRatio": round(max_load, 2),
         "transfers": sum(p.hops for p in run.patients),
         "rejectedCalls": sum(max(p.calls - 1, 0) for p in run.patients),
+        # 센터 보존: 경증(delayed)이 권역·지역응급의료센터를 차지한 비율 — 낮을수록
+        # 뒤에 올 중증을 위한 최종치료 자리가 남는다. 직행: 중증(immediate)이 센터에
+        # 수용된 비율 — 높을수록 좋다.
+        "mildCenterShare": center_share("delayed"),
+        "severeCenterShare": center_share("immediate"),
         "hospitals": loads,
     }

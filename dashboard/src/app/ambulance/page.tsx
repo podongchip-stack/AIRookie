@@ -12,7 +12,8 @@ import { CallStatusPanel } from "@/components/ambulance/CallStatusPanel";
 import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandidateListPanel";
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
-import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
+import { TransportMonitorPanel } from "@/components/ambulance/TransportMonitorPanel";
+import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import type { CallSignalType, DispatchTarget } from "@/types/dashboard";
 
 // 이 프로세스(voice)는 구급차 1대 전용이라 사건도 한 번에 하나만 진행된다 —
@@ -49,12 +50,9 @@ function alertNotSent() {
   );
 }
 
-function AmbulanceDashboardContent() {
-  const searchParams = useSearchParams();
-  const apid = searchParams.get("id");
-  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand } = useDashboardSocket(
-    apid ? { role: "ambulance", id: apid } : null,
-  );
+function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
+  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand, sendTransportVitals } =
+    useDashboardSocket(apid ? { role: "ambulance", id: apid } : null);
   // 이송 승인을 눌렀지만 hub 응답(confirmed)을 아직 못 받은 병원. 화면의 "확정"은 hub 기준으로만
   // 띄운다(2026-10-01) — 예전엔 누르는 즉시 로컬에서 확정으로 바꿔서, hub가 거부해도(병원 미승인 등)
   // 화면엔 확정으로 남았다. mock 모드는 hub가 없으니 누른 값을 그대로 확정으로 본다.
@@ -110,7 +108,9 @@ function AmbulanceDashboardContent() {
   // [이동]·[현장 종료] 때 올려서 출동 조작부(검색어·결과)와 통화 시연(인식 텍스트)을 새로 그린다 — 지난 사건의
   // 내용이 다음 출동 화면에 남지 않게(2026-10-01). 통화 시연은 내려갈 때 마이크·인식을 스스로 멈춘다.
   const [resetSeq, setResetSeq] = useState(0);
-  const canPickTarget = simOn && ["idle", "returning"].includes(mySim?.phase ?? "idle");
+  // 출동 위치 지정은 구급차 화면에서 제거(2026-10-04) — 위치는 상황실(시연 콘솔) 지령 소관.
+  // 지도 클릭 선택도 같이 끈다. [이동]은 무작위 출동 폴백으로만 남는다.
+  const canPickTarget = false;
   const onSceneForMyCase = mySim?.phase === "on_scene" && mySim.caseId === currentCaseId;
   const startBlockedReason = phoneCalling
     ? `휴대폰으로 ${myCallStatus?.hospitalName ?? "병원"}과 통화 중입니다`
@@ -279,6 +279,19 @@ function AmbulanceDashboardContent() {
           <div className={css({ flex: "0 0 auto" })}>
             <CallSummaryEditablePanel data={myResult} />
           </div>
+          {/* 이송 중 모니터링(2.5단계, 2026-10-04) — 이송이 확정된 사건에만 뜬다. 활력징후
+              입력 구멍의 데모 어댑터(가상 시나리오)와 hub 규칙 엔진 판정 표시. */}
+          {confirmedHospitalId != null && activeCaseId && apid && (
+            <div className={css({ flex: "0 0 auto" })}>
+              <TransportMonitorPanel
+                caseId={activeCaseId}
+                apid={apid}
+                assessments={state.transportAssessments[activeCaseId] ?? []}
+                live={connectionMode === "live"}
+                onSendVitals={sendTransportVitals}
+              />
+            </div>
+          )}
           <div className={css({ flex: "1 0 auto", minHeight: "320px" })}>
             {/* 통화는 기본적으로 휴대폰 전화 앱으로만(2026-10-03). hub를 --dashboard-call로 띄웠을 때만 이 화면에도
                 [통화 시작]이 있고, 아니면 보기 전용 통화 현황(상태·실시간 자막)만 보인다. mock 모드는 버튼을 둔다. */}
@@ -352,10 +365,52 @@ function AmbulanceDashboardContent() {
   );
 }
 
+// 시연용 자동 전환(2026-10-04): /ambulance?id=auto 로 열면 특정 구급대에 고정하지 않고,
+// 상황이 발생해(콘솔 ① 출동) 어떤 구급대든 움직이기 시작하면 **그 구급대 화면으로 자동
+// 로그인**된다 — 실무에선 발생 지점마다 출동 구급대가 달라서, 시연 중 탭을 바꿔 들어갈
+// 필요가 없게 한다. 감시는 monitor 소켓으로 하고, 전환되면 그 apid의 정식 구급차
+// 대시보드(자기 소켓)를 띄운다. 다른 구급대에서 새 출동이 생기면 그쪽으로 넘어간다.
+function AmbulanceAutoFollow() {
+  const { state, connectionMode } = useDashboardSocket({ role: "monitor", id: "ambulance-auto" });
+  const [apid, setApid] = useState<string | null>(null);
+  const active = Object.values(state.ambulanceSim).find(
+    (sim) => !["idle", "returning"].includes(sim.phase),
+  );
+  useEffect(() => {
+    if (active && active.apid !== apid) setApid(active.apid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.apid]);
+  if (apid) return <AmbulanceDashboardContent key={apid} apid={apid} />;
+  return (
+    <div
+      className={css({
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: "3", minHeight: "100vh", backgroundColor: "bg", padding: "8", textAlign: "center",
+      })}
+    >
+      <p className={css({ fontSize: "2xl" })}>🚑</p>
+      <h1 className={css({ fontSize: "lg", fontWeight: "bold", color: "ink" })}>출동 대기 중</h1>
+      <p className={css({ fontSize: "sm", color: "ink2" })}>
+        상황이 발생하면 출동하는 구급대의 대시보드로 자동 전환됩니다. (시연용 자동 로그인)
+      </p>
+      <p className={css({ fontSize: "xs", color: CONNECTION_LABEL[connectionMode].color })}>
+        {CONNECTION_LABEL[connectionMode].text}
+      </p>
+    </div>
+  );
+}
+
+function AmbulancePageBody() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
+  if (id === "auto") return <AmbulanceAutoFollow />;
+  return <AmbulanceDashboardContent apid={id} />;
+}
+
 export default function AmbulanceDashboardPage() {
   return (
     <Suspense fallback={null}>
-      <AmbulanceDashboardContent />
+      <AmbulancePageBody />
     </Suspense>
   );
 }

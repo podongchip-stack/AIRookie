@@ -10,6 +10,111 @@ import { CaseMatchPanel } from "@/components/hospital/CaseMatchPanel";
 import { MapPanel } from "@/components/hospital/MapPanel";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
+import type { PreAlert, TransportAssessment } from "@/types/dashboard";
+
+// 예비 고지 모달(2026-10-04) — 구급대가 출동한 순간 hub가 현장 존 안 후보 병원에 먼저
+// 보내는 선(先) 경고. 실제 수용 요청이 오기 전에 "올 수 있다"를 알려 준비 시간을 벌어 준다.
+// 실제 요청(match_result)이 도착하면 소켓 훅이 자동으로 지우므로, 여기선 표시와 [확인]만 한다.
+function PreAlertModal({ alerts, onDismiss }: { alerts: PreAlert[]; onDismiss: (caseId: string) => void }) {
+  if (alerts.length === 0) return null;
+  return (
+    <div
+      className={css({
+        position: "fixed", inset: "0", zIndex: "100",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        backgroundColor: "rgba(22, 34, 46, 0.45)",
+      })}
+    >
+      <div
+        className={css({
+          display: "flex", flexDirection: "column", gap: "3",
+          width: "min(440px, 90vw)", backgroundColor: "surface",
+          borderRadius: "panel", borderWidth: "2px", borderColor: "severity.medium",
+          padding: "5", boxShadow: "0 12px 40px rgba(22,34,46,.35)",
+        })}
+      >
+        <h2 className={css({ fontSize: "md", fontWeight: "bold", color: "severity.medium" })}>
+          ⚠️ 인근 사고 발생 — 구급대 출동 중
+        </h2>
+        {alerts.map((alert) => (
+          <div key={alert.caseId} className={css({ display: "flex", flexDirection: "column", gap: "1" })}>
+            <p className={css({ fontSize: "sm", color: "ink" })}>
+              <b>{alert.ambulanceName ?? alert.apid}</b>가 본원에서{" "}
+              {alert.distanceKm != null ? <b>약 {alert.distanceKm}km</b> : "인근"} 지점으로 출동했습니다.
+            </p>
+            {alert.reportedSymptom && (
+              // 신고 전화에서 파악한 1차 증상 — 확정 정보가 아니라 '신고 내용'이다(현장 평가와 다를 수 있음)
+              <p className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
+                신고 증상: {alert.reportedSymptom}
+                {alert.reportedSeverity === "high" ? " · 중증 의심" : alert.reportedSeverity === "medium" ? " · 중등증 의심" : ""}
+                <span className={css({ fontSize: "2xs", color: "ink3", fontWeight: "normal" })}> (신고 내용 — 현장 평가와 다를 수 있음)</span>
+              </p>
+            )}
+            <p className={css({ fontSize: "xs", color: "ink2" })}>
+              현장 통화가 끝나면 환자 수용 요청이 올 수 있습니다 — 수용 가능 여부를 미리 확인해 주세요.
+            </p>
+          </div>
+        ))}
+        <button
+          type="button"
+          className={css({
+            alignSelf: "flex-end", fontSize: "sm", fontWeight: "bold", color: "white",
+            backgroundColor: "navy", borderRadius: "field", paddingX: "4", paddingY: "2", cursor: "pointer",
+          })}
+          onClick={() => alerts.forEach((alert) => onDismiss(alert.caseId))}
+        >
+          확인
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// 이송 중 상태 변화 배너(2.5단계, 2026-10-04). hub가 이 병원으로 확정된 사건의
+// notify 이상 판정만 보내준다(기록·보류는 안 옴 — 오경보보다 침묵). 도착 전에
+// 환자 상태 변화를 미리 아는 게 목적이므로 최신 판정 하나만 띄운다. 규칙 기반.
+function TransportAlertBanner({ assessments }: { assessments: TransportAssessment[] }) {
+  const latest = assessments[assessments.length - 1];
+  if (!latest) return null;
+  const vitals = [
+    latest.observation.sbp != null ? `혈압 ${latest.observation.sbp}${latest.observation.dbp != null ? `/${latest.observation.dbp}` : ""}` : null,
+    latest.observation.hr != null ? `맥박 ${latest.observation.hr}` : null,
+    latest.observation.rr != null ? `호흡 ${latest.observation.rr}` : null,
+    latest.observation.spo2 != null ? `SpO2 ${latest.observation.spo2}%` : null,
+    latest.observation.avpu != null ? `의식 ${latest.observation.avpu}` : null,
+  ].filter(Boolean);
+  const critical = latest.tier !== "notify";
+  return (
+    <div
+      className={css({
+        marginBottom: "1.5",
+        paddingX: "3",
+        paddingY: "2",
+        borderRadius: "field",
+        borderWidth: "1px",
+        borderColor: critical ? "coral" : "severity.medium",
+        backgroundColor: critical ? "coralSoft" : "severity.medium.subtle",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.5",
+      })}
+    >
+      <p className={css({ fontSize: "xs", fontWeight: "bold", color: critical ? "coral" : "severity.medium" })}>
+        🚑 이송 중 상태 변화 · NEWS2 {latest.news2}
+        {latest.si != null ? ` · 쇼크지수 ${latest.si}` : ""}
+        {latest.demo ? " · 가상 시나리오" : ""}
+      </p>
+      {vitals.length > 0 && (
+        <p className={css({ fontSize: "xs", color: "ink" })}>
+          {vitals.join(" · ")} ({latest.observation.measuredAt.slice(11, 19)} 측정)
+        </p>
+      )}
+      {latest.reasons.length > 0 && (
+        <p className={css({ fontSize: "xs", color: "ink2" })}>{latest.reasons[0]}</p>
+      )}
+    </div>
+  );
+}
 
 // 병원 대시보드는 병원 1곳 전용 화면이라 자신의 병원 ID(hpid)가 고정된다. 첫 페이지에서 병원 접근 코드(H-<hpid>)로
 // 들어온 /hospital?id= 페이지가 이 컴포넌트를 그린다(2026-10-03 회의로 관제 지도와 분리). onClose를 주면 상단바에
@@ -20,6 +125,9 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
     MY_HOSPITAL_ID ? { role: "hospital", id: MY_HOSPITAL_ID } : null,
   );
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  // 예비 고지에서 [확인]을 누른 사건 — 모달만 닫고, 실제 요청·사건 종료 시 훅이 데이터를 지운다.
+  const [dismissedPreAlerts, setDismissedPreAlerts] = useState<Set<string>>(new Set());
+  const activePreAlerts = Object.values(state.preAlerts).filter((alert) => !dismissedPreAlerts.has(alert.caseId));
 
   // 본원이 후보로 들어있는 사건만 걸러 카드로 나열한다 — 하나의 병원이 여러
   // 구급차의 후보 목록에 동시에 들어갈 수 있어서, 사건 하나만 보던 예전
@@ -89,6 +197,12 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
       />
       <Legend />
 
+      {/* 예비 고지(2026-10-04) — 구급대 출동 순간 오는 선 경고. 실제 요청이 오면 자동으로 사라진다. */}
+      <PreAlertModal
+        alerts={activePreAlerts}
+        onDismiss={(caseId) => setDismissedPreAlerts((prev) => new Set(prev).add(caseId))}
+      />
+
       {/* 구급대가 이 병원을 골라 건 통화(📞, 2026-10-03) */}
       <CallStatusBanner
         statuses={Object.values(state.callStatus).filter((s) => s.hospitalId === MY_HOSPITAL_ID)}
@@ -147,8 +261,14 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
           )}
         >
           {myCases.length === 0 ? (
-            <div className={css({ gridColumn: "1 / -1" })}>
+            <div className={css({ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: "2" })}>
               <CaseMatchPanel patientInfo={null} hospital={null} hospitalId={MY_HOSPITAL_ID} caseId="" onAction={sendAction} />
+              {/* 왜 비어 있는지 안내(2026-10-04) — 요청은 본원이 사건의 존(현장 반경) 안 후보일 때만 온다 */}
+              <p className={css({ fontSize: "xs", color: "ink3", paddingX: "1" })}>
+                수용 요청은 본원이 사건 현장의 존(반경) 안 후보에 들 때 자동으로 도착합니다 — 사건이 어느 병원에
+                요청 중인지는 관제 지도(/map)의 요청 표시(병원 이름 옆 H-코드)에서 확인할 수 있습니다. 인근에서
+                구급대가 출동하면 수용 요청 전에 예비 고지 알림이 먼저 뜹니다.
+              </p>
             </div>
           ) : (
             myCases.map(({ result, hospital }) => {
@@ -176,6 +296,7 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
                     borderColor: isSelected ? "navy" : "transparent",
                   })}
                 >
+                  <TransportAlertBanner assessments={state.transportAssessments[result.caseId] ?? []} />
                   <CaseMatchPanel
                     patientInfo={result.patientInfo}
                     hospital={hospital}
@@ -203,6 +324,8 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
           hospital={selected?.hospital ?? null}
           caseId={selected?.result.caseId ?? null}
           ambulanceGps={selected?.result.ambulanceGps ?? null}
+          selfGps={state.identity.gps ?? null}
+          selfName={state.identity.name}
           sim={
             selected?.result.apid &&
             state.ambulanceSim[selected.result.apid]?.hospitalId === MY_HOSPITAL_ID &&

@@ -29,8 +29,12 @@ import type {
   MapOverview,
   MonitorCase,
   MonitorEvent,
+  PreAlert,
   SceneCandidates,
   SocketRole,
+  TransportAssessment,
+  TransportVitalsMessage,
+  VitalObservationIn,
 } from "@/types/dashboard";
 
 // hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
@@ -64,6 +68,8 @@ const INITIAL_STATE: DashboardState = {
   monitorEvents: [],
   callTranscripts: {},
   callStatus: {},
+  transportAssessments: {},
+  preAlerts: {},
 };
 
 // 관제 지도 "병원 응답" 기록에 남길 최대 개수
@@ -90,11 +96,17 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
   const socketRef = useRef<WebSocket | null>(null);
 
   const applyMatchResult = useCallback((matchResult: HubMatchResult) => {
-    setState((prev) => ({
-      ...prev,
-      matchResults: { ...prev.matchResults, [matchResult.caseId]: matchResult },
-      receivedAt: prev.receivedAt ?? new Date().toISOString(),
-    }));
+    setState((prev) => {
+      // 실제 요청이 도착했으니 그 사건의 예비 고지는 역할을 다했다 — 지운다.
+      const preAlerts = { ...prev.preAlerts };
+      delete preAlerts[matchResult.caseId];
+      return {
+        ...prev,
+        matchResults: { ...prev.matchResults, [matchResult.caseId]: matchResult },
+        preAlerts,
+        receivedAt: prev.receivedAt ?? new Date().toISOString(),
+      };
+    });
   }, []);
 
   const applyCaseClosed = useCallback((caseId: string) => {
@@ -112,12 +124,16 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       const monitorCases = { ...prev.monitorCases };
       const callTranscripts = { ...prev.callTranscripts };
       const callStatus = { ...prev.callStatus };
+      const transportAssessments = { ...prev.transportAssessments };
+      const preAlerts = { ...prev.preAlerts };
       delete matchResults[caseId];
       delete sceneCandidates[caseId];
       delete monitorCases[caseId];
       delete callTranscripts[caseId];
       delete callStatus[caseId];
-      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts, callStatus };
+      delete transportAssessments[caseId];
+      delete preAlerts[caseId];
+      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts, callStatus, transportAssessments, preAlerts };
     });
   }, []);
 
@@ -133,6 +149,28 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       monitorCases: pick(prev.monitorCases),
       callTranscripts: pick(prev.callTranscripts),
       callStatus: pick(prev.callStatus),
+      transportAssessments: pick(prev.transportAssessments),
+      preAlerts: pick(prev.preAlerts),
+    }));
+  }, []);
+
+  // 예비 고지(2026-10-04) — 출동 순간 오는 선(先) 경고. 실제 요청이 오면 applyMatchResult가 지운다.
+  const applyPreAlert = useCallback((alert: PreAlert) => {
+    setState((prev) =>
+      prev.matchResults[alert.caseId]
+        ? prev // 이미 실제 요청이 와 있으면 뒷북 — 무시
+        : { ...prev, preAlerts: { ...prev.preAlerts, [alert.caseId]: alert } },
+    );
+  }, []);
+
+  // 이송 중 활력징후 판정(2026-10-04) — 사건별 이력으로 쌓는다(시간순, 추세 표시용).
+  const applyTransportAssessment = useCallback((assessment: TransportAssessment) => {
+    setState((prev) => ({
+      ...prev,
+      transportAssessments: {
+        ...prev.transportAssessments,
+        [assessment.caseId]: [...(prev.transportAssessments[assessment.caseId] ?? []), assessment],
+      },
     }));
   }, []);
 
@@ -196,6 +234,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
         known: info.known,
         simDispatch: info.simDispatch ?? false,
         dashboardCall: info.dashboardCall ?? true, // 필드가 없는 구버전 hub = 예전처럼 대시보드 통화
+        gps: info.gps ?? null,
       },
     }));
   }, []);
@@ -326,6 +365,12 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "case_sync":
               applyCaseSync(parsed.caseIds);
               break;
+            case "transport_assessment":
+              applyTransportAssessment(parsed);
+              break;
+            case "pre_alert":
+              applyPreAlert(parsed);
+              break;
             case "match_result":
             case undefined:
               applyMatchResult(parsed);
@@ -347,7 +392,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, applyCallTranscript, applyCallStatus, applyCaseSync, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, applyCallTranscript, applyCallStatus, applyCaseSync, applyTransportAssessment, applyPreAlert, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
@@ -466,9 +511,44 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return false;
   }, []);
 
+  // 이송 중 활력징후 1회 측정을 입력 구멍으로 보낸다(2026-10-04). 판정(transport_assessment)은
+  // hub의 규칙 엔진이 돌려준다 — mock 모드에는 엔진이 없으므로 보낸 척만 하고 true를
+  // 돌려준다(패널이 "판정은 hub 연결 시" 안내를 띄운다).
+  const sendTransportVitals = useCallback(
+    (caseId: string, apid: string, observation: VitalObservationIn, extra?: { demo?: boolean; scenario?: string }): boolean => {
+      const payload: TransportVitalsMessage = {
+        type: "transport_vitals",
+        caseId,
+        apid,
+        demo: extra?.demo ?? false,
+        scenario: extra?.scenario ?? null,
+        observation,
+      };
+      const socket = socketRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(payload));
+        return true;
+      }
+      if (!process.env.NEXT_PUBLIC_DASHBOARD_WS_URL) {
+        console.info("[mock] 활력징후 전송(WS 미연결):", payload);
+        return true;
+      }
+      console.warn("[골든링크] hub 연결이 끊겨 활력징후를 보내지 못했습니다:", payload);
+      return false;
+    },
+    [],
+  );
+
   // [이동] · [현장 종료] · [정지] · [상황 재개] (출동 시뮬레이션). 끊겨 있으면 보내지 않고 false.
+  // report(2026-10-04): 신고 접수 때 파악한 1차 증상 — hub가 예비 고지에 실어 보낸다.
   const sendSimCommand = useCallback(
-    (type: DispatchCommand["type"], apid: string, caseId: string, target?: DispatchTarget | null): boolean => {
+    (
+      type: DispatchCommand["type"],
+      apid: string,
+      caseId: string,
+      target?: DispatchTarget | null,
+      report?: { symptom: string; severity: DispatchCommand["reportedSeverity"] } | null,
+    ): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     const payload: DispatchCommand = {
@@ -477,6 +557,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       caseId,
       timestamp: new Date().toISOString(),
       ...(target ? { target: { lat: target.lat, lng: target.lng }, targetMode: target.mode } : {}),
+      ...(report ? { reportedSymptom: report.symptom, reportedSeverity: report.severity } : {}),
     };
     socket.send(JSON.stringify(payload));
     return true;
@@ -484,7 +565,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     [],
   );
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand };
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.

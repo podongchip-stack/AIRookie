@@ -53,10 +53,15 @@ from schema import (
     MonitorCaseHospital,
     SceneEnd,
     SimControl,
+    SimReset,
+    TransportAlternative,
+    TransportAssessmentMessage,
+    TransportVitals,
     VoiceCallSummaryMessage,
     VoiceRegistration,
     VoiceUtterance,
 )
+from transport_triage import TransportTriage, VitalObservation
 
 app = Flask(__name__)
 app.json.ensure_ascii = False  # 한글 필드를 유니코드 이스케이프 없이 그대로 응답
@@ -203,6 +208,59 @@ def receive_ambulance_info():
         sim.ensure_unit(info.apid, info.gps)
     _send_map_overview()
     return jsonify({"status": "ok", "apid": info.apid}), 200
+
+
+@app.post("/info/ambulances/batch")
+def receive_ambulance_batch():
+    """구급차 여러 대를 한 번에 받는다(2026-10-04). 서울 119 구급차(160여 대)로 바꾸면서 한 대씩 받으면
+    주기마다 관제 지도 전송이 대수만큼 나가서, 묶어 받고 관제 지도는 끝에 한 번만 보낸다.
+    형식이 틀린 한 대는 건너뛰고(rejected에 이유) 나머지는 그대로 반영한다."""
+    body = request.get_json(force=True, silent=True) or {}
+    items = body.get("ambulances")
+    if not isinstance(items, list):
+        return jsonify({"error": "ambulances(list[AmbulanceInfo])가 필요합니다"}), 400
+    accepted, rejected = [], []
+    for item in items:
+        try:
+            info = AmbulanceInfo.model_validate(item)
+        except ValidationError as exc:
+            rejected.append({"apid": (item or {}).get("apid") if isinstance(item, dict) else None,
+                             "detail": exc.errors(include_url=False, include_context=False)})
+            continue
+        engine.update_ambulance_info(info)
+        if sim is not None:
+            sim.ensure_unit(info.apid, info.gps)
+        accepted.append(info.apid)
+    _send_map_overview()
+    return jsonify({"status": "ok", "accepted": len(accepted), "rejected": rejected}), 200
+
+
+@app.post("/info/ambulances/roster")
+def receive_ambulance_roster():
+    """feature/info가 한 주기에 보낸 구급차 전체 목록(2026-10-04). 여기 없는 구급차를 레지스트리에서 뺀다 —
+    병원 목록 동기화와 같은 규칙(진행 중 사건·출동 중 구급차는 남기고, 목록이 급감하면 안 뺀다)."""
+    body = request.get_json(force=True, silent=True) or {}
+    ids = body.get("apids")
+    if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+        return jsonify({"error": "apids(list[str])가 필요합니다"}), 400
+    busy: set[str] = set()
+    if sim is not None:
+        busy = {a.apid for a in engine.list_ambulances() if sim.phase_of(a.apid) not in (None, "idle")}
+    removed, kept = engine.apply_ambulance_roster(ids, busy=busy)
+    if sim is not None:
+        for apid in removed:
+            sim.remove_unit(apid)
+    if removed:
+        with _voice_addresses_lock:
+            for apid in removed:
+                _voice_addresses.pop(apid, None)
+        _mark_voice_addresses_dirty()
+    if removed or kept:
+        decision_log.log_decision("ambulance_roster_applied", {"removed": removed, "kept": kept, "rosterSize": len(ids)})
+        print(f"  [통신] 구급차 목록 반영 — 빠진 구급차 {len(removed)}대 제거, {len(kept)}대 보류(진행 중 사건·출동 중이거나 목록 급감)")
+    if removed:
+        _send_map_overview()
+    return jsonify({"status": "ok", "removed": removed, "kept": kept}), 200
 
 
 @app.post("/voice/register")
@@ -570,7 +628,9 @@ def _build_map_overview() -> dict:
     return MapOverview(
         hospitals=[
             MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel,
-                        inFlightCount=engine.in_flight_count(h.hospitalId))
+                        inFlightCount=engine.in_flight_count(h.hospitalId),
+                        availableBedCount=engine.effective_bed_count(h),
+                        bedCountUnknown=_is_bed_count_unknown(h))
             for h in engine.list_hospitals()
         ],
         ambulances=ambulances,
@@ -608,14 +668,24 @@ def _send_to_socket(ws, payload: dict, label: str) -> None:
             print(f"  [통신] {label} 전송 실패: {e}")
 
 
-def _send_scene_candidates(case_id: str, apid: str) -> None:
-    """환자 정보가 오기 전, 구급차 위치 기준 거리순 후보를 그 구급차 탭에만 보낸다
-    (2026-10-01, 통화 시작 시·출동 시뮬레이션의 현장 도착 시). 예전엔 통화가 끝나 매칭 결과가
-    올 때까지 병원 목록이 비어 있었다. 규칙 기반(거리)이고 진료과 매칭·승인은 아직 없어서,
-    병원 탭에는 보내지 않는다 — 환자 정보 없는 요청이 병원 화면에 쌓이지 않게."""
-    gps, fallback = _resolve_ambulance_gps(case_id)
+def _send_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None = None) -> None:
+    """환자 정보가 오기 전, 후보를 그 구급차 탭에만 보낸다(2026-10-01). 규칙 기반(거리 +
+    신고 중증도 가산)이고 진료과 매칭·승인은 아직 없어서, 병원 탭에는 보내지 않는다.
+
+    2026-10-04: **출동 지령 즉시**에도 보낸다(scene_gps = 사고 현장 좌표) — 1차 신고에서
+    증상·중증도를 이미 아는데 가추천이 현장 도착까지 기다릴 이유가 없다. 기준점은 구급차
+    현재 위치가 아니라 **현장**(이송 출발지)이다. 현장 통화(2차)가 끝나면 확정 매칭이
+    이 가추천을 대체한다."""
+    if scene_gps is not None:
+        gps, fallback = scene_gps, False
+    else:
+        gps, fallback = _resolve_ambulance_gps(case_id)
     zone = engine.resolve_start_zone(gps)
-    hospitals = engine.build_zone_candidates(gps, max_zone=zone)
+    # 신고 접수 1차 증상(2026-10-04)이 있으면 첫 통화 순위에 중증도 가산(권역/지역센터 분)을
+    # 반영하고, 전화 앱 머리에 "신고: 흉통(중증)"을 띄울 재료로 같이 보낸다.
+    pre = _pre_alerts.get(case_id) or {}
+    reported_severity = pre.get("reportedSeverity")
+    hospitals = engine.build_zone_candidates(gps, max_zone=zone, reported_severity=reported_severity)
     payload = {
         "type": "scene_candidates",
         "caseId": case_id,
@@ -624,6 +694,8 @@ def _send_scene_candidates(case_id: str, apid: str) -> None:
         "ambulanceGpsFallback": fallback,
         "zoneActive": list(range(1, zone + 1)),
         "hospitals": hospitals,
+        "reportedSymptom": pre.get("reportedSymptom"),
+        "reportedSeverity": reported_severity,
         "source": "rule",
     }
     # 첫 연락 추천(2026-10-03)을 의사결정 로그에 남긴다 — 추천 병원이 실제 첫 통화·수용으로
@@ -911,9 +983,17 @@ def _send_identity_info(ws, identify: DashboardIdentify) -> None:
     페이지에서 미리 걸러지므로(GET /identity), 이 소켓 경로는 직접 URL로
     들어온 경우의 이름 표시용으로만 주로 쓰인다."""
     name, known = _resolve_identity(identify.role, identify.id)
+    # 자기 위치(2026-10-04) — 병원 대시보드가 사건 없이도 본원 지도를 그리게 한다
+    gps = None
+    if identify.role == "hospital":
+        hospital = engine.get_hospital(identify.id)
+        gps = hospital.gps if hospital else None
+    elif identify.role == "ambulance":
+        ambulance = engine.get_ambulance(identify.id)
+        gps = ambulance.gps if ambulance else None
     info = DashboardIdentityInfo(
         role=identify.role, id=identify.id, name=name, known=known, simDispatch=sim is not None,
-        dashboardCall=DASHBOARD_CALL,
+        dashboardCall=DASHBOARD_CALL, gps=gps,
     )
     print(f"  [통신] {identify.role} {identify.id} 신원 확인 응답 — known={known}, name={name}")
     _send_to_socket(ws, info.model_dump(), "identity_info")
@@ -1084,6 +1164,9 @@ def _close_case(case_id: str, reason: str) -> bool:
         _case_call.pop(case_id, None)
         _case_recommended.pop(case_id, None)
         _case_scene.pop(case_id, None)
+    with _triage_lock:
+        _transport_triage.pop(case_id, None)
+    _pre_alerts.pop(case_id, None)
     decision_log.log_decision("case_closed", {"caseId": case_id, "reason": reason})
     _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": reason})
     print(f"  [정리] caseId={case_id} 사건 종료({reason}) — 캐시에서 제거, 대시보드에 알림")
@@ -1205,6 +1288,127 @@ def _handle_info_confirm(confirm: HospitalInfoConfirm) -> None:
     _send_self_info_to_hospital(confirm.hospitalId)
 
 
+# ── 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04) ──────────────────────────
+# 입력 구멍: POST /vitals(향후 119구급스마트시스템·구급차 모니터 어댑터용)와 dashboard
+# WS transport_vitals(지금은 데모 시나리오·수기)가 같은 처리로 모인다. 판정은
+# transport_triage.py 규칙 엔진(NEWS2 + 규칙표, source: "rule")이 하고, hub는 결과를
+# 역할별로 보낸다 — 구급차 탭은 전부(자기 환자), 확정 병원 탭은 notify 이상만
+# (오경보보다 침묵), 관제 지도는 heli_advisory만(환자 상세 없이).
+
+#: 사건별 판정 상태 — 사건이 닫힐 때(_close_case) 같이 지운다.
+_transport_triage: dict[str, TransportTriage] = {}
+_triage_lock = threading.Lock()
+
+#: 재검토 제안에 동봉할 대체 후보의 이동시간 상한(분). 이 안에 아무도 없으면 헬기 권고.
+#: 질환별 골든타임 규칙이 정해지기 전의 단일 초기값 — TRANSPORT_TRIAGE.md 참고.
+TRANSPORT_ALT_MAX_MIN = float(os.environ.get("HUB_TRANSPORT_ALT_MAX_MIN", "30"))
+
+
+def _transport_alternatives(result, confirmed_id: str | None) -> list[TransportAlternative]:
+    """재검토 티어에 동봉할 대체 병원 후보(최대 3곳, hub 순위 순). 결정은 사람이 한다."""
+    if result is None:
+        return []
+    out: list[TransportAlternative] = []
+    for h in result.hospitals:
+        if h.hospitalId == confirmed_id or h.status not in ("approved", "pending"):
+            continue
+        if h.demoteReasons:
+            continue  # 수용 불가 신고·확인된 만실·거절 병원은 대체 후보로 내밀지 않는다
+        if h.travelMin is None or h.travelMin > TRANSPORT_ALT_MAX_MIN:
+            continue
+        out.append(TransportAlternative(
+            hospitalId=h.hospitalId, name=h.name, status=h.status, travelMin=h.travelMin,
+            availableBedCount=h.availableBedCount, bedCountUnknown=h.bedCountUnknown,
+            rArrive=h.bedReliability.rArrive if h.bedReliability else None,
+        ))
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _handle_transport_vitals(msg: TransportVitals) -> dict:
+    """측정 1회 수신 → 규칙 엔진 판정 → 역할별 전송. 판정 payload를 돌려준다(HTTP 응답용)."""
+    obs = VitalObservation(
+        measured_at=msg.observation.measuredAt, source=msg.observation.source,
+        rr=msg.observation.rr, spo2=msg.observation.spo2, sbp=msg.observation.sbp,
+        hr=msg.observation.hr, bt=msg.observation.bt, avpu=msg.observation.avpu,
+    )
+    with _triage_lock:
+        triage = _transport_triage.setdefault(msg.caseId, TransportTriage())
+        assessment = triage.evaluate(obs)
+
+    result = engine.get_case_result(msg.caseId)
+    confirmed_id = (
+        next((h.hospitalId for h in result.hospitals if h.status == "confirmed"), None) if result else None
+    )
+    tier, alternatives, reasons = assessment.tier, [], list(assessment.reasons)
+    if tier == "review":
+        alternatives = _transport_alternatives(result, confirmed_id)
+        if not alternatives:
+            # 엔진은 "대체가 필요하다"까지만 말한다 — 시간 안에 갈 병원이 없으면 여기서 권고로 올린다.
+            tier = "heli_advisory"
+            reasons.append(
+                f"{TRANSPORT_ALT_MAX_MIN:g}분 안에 갈 수 있는 대체 병원 없음 — 헬기 대기 권고(결정은 관제)"
+            )
+
+    payload = TransportAssessmentMessage(
+        caseId=msg.caseId, tier=tier, news2=assessment.news2,
+        news2Missing=assessment.news2_missing, si=assessment.si, reasons=reasons,
+        observation=msg.observation, demo=msg.demo, scenario=msg.scenario,
+        alternatives=alternatives,
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    ).model_dump()
+
+    apid = msg.apid or engine.get_case_apid(msg.caseId)
+    notify_hospital = confirmed_id if tier in ("notify", "review", "heli_advisory") else None
+    message = json.dumps(payload, ensure_ascii=False)
+    with _sockets_lock:
+        dead = set()
+        for ws in _dashboard_sockets:
+            role, id_ = _socket_identity.get(ws, (None, None))
+            if (role == "ambulance" and id_ == apid) or (
+                role == "hospital" and notify_hospital and id_ == notify_hospital
+            ):
+                try:
+                    ws.send(message)
+                except Exception as e:  # noqa: BLE001
+                    print(f"  [통신] transport_assessment 전송 실패, 연결 제거: {e}")
+                    dead.add(ws)
+        _dashboard_sockets.difference_update(dead)
+        if msg.demo:
+            # 가상 시나리오 판정은 시연 통제 콘솔(role=monitor, /control)에도 그대로 에코한다(2026-10-04) —
+            # 합성 데이터라 "관제는 환자 상세를 받지 않는다" 원칙과 충돌하지 않는다. 실데이터는 아래 경로만.
+            _send_to_monitors_locked(payload)
+        elif tier == "heli_advisory":
+            # 실데이터의 관제 전달은 활력징후 상세 없이 권고 사실만 — 환자 상세는 병원 대시보드만 받는 원칙
+            _send_to_monitors_locked({
+                "type": "transport_assessment", "caseId": msg.caseId, "tier": tier,
+                "reasons": reasons, "demo": msg.demo, "source": "rule",
+                "timestamp": payload["timestamp"],
+            })
+    if tier in ("notify", "review", "heli_advisory"):
+        decision_log.log_decision("transport_assessment", {
+            "caseId": msg.caseId, "tier": tier, "news2": assessment.news2, "si": assessment.si,
+            "reasons": reasons, "observation": msg.observation.model_dump(),
+            "alternatives": [a.hospitalId for a in alternatives],
+            "demo": msg.demo, "scenario": msg.scenario,
+        })
+        label = {"notify": "상태 변화 전달", "review": "대체 병원 제안", "heli_advisory": "헬기 대기 권고"}[tier]
+        print(f"  [이송중] caseId={msg.caseId} NEWS2 {assessment.news2} — {label}")
+    return payload
+
+
+@app.post("/vitals")
+def receive_vitals():
+    """활력징후 입력 구멍(2.5단계)의 공식 HTTP 수신구 — 향후 119구급스마트시스템·
+    구급차 모니터 어댑터가 여기로 보낸다. dashboard WS와 같은 처리로 모인다."""
+    try:
+        msg = TransportVitals.model_validate(request.get_json(force=True, silent=True) or {})
+    except ValidationError as exc:
+        return jsonify({"error": exc.errors()}), 400
+    return jsonify(_handle_transport_vitals(msg)), 202
+
+
 def _build_self_info(hospital_id: str) -> HospitalSelfInfo | None:
     """병원 대시보드용 "귀원 정보 현황"(2026-09-29). 신뢰도는 horizon 0으로
     환산한다 — 자기 화면엔 이송(도착 시점) 개념이 없으므로 rArrive==authority."""
@@ -1233,6 +1437,11 @@ def _build_self_info(hospital_id: str) -> HospitalSelfInfo | None:
             else None
         ),
         severeDeclarations=info.severeDeclarations,
+        # 본원 지정 등급·진료과·이송 중 부하(2026-10-04) — "지금 얼마나/어떤 분야를 받을 수
+        # 있는 병원인가"를 자기 화면에서 바로 보게 한다
+        emergencyLevel=info.emergencyLevel,
+        specialties=info.specialties,
+        inFlightCount=engine.in_flight_count(hospital_id),
     )
 
 
@@ -1274,6 +1483,11 @@ def _handle_identify(ws, identify: DashboardIdentify) -> None:
     _send_identity_info(ws, identify)
     if identify.role == "monitor":
         _send_to_socket(ws, _build_map_overview(), "관제 지도 목록")
+        # 매칭 전(통화 전) 사건도 신고 단계부터 보이게 — 예비 고지 요약 따라잡기(2026-10-04).
+        # 이미 매칭된 사건은 바로 아래 _send_catchup의 case_overview가 담당한다.
+        for case_id, summary in list(_pre_alerts.items()):
+            if engine.get_case_result(case_id) is None:
+                _send_to_socket(ws, summary, "예비 고지 따라잡기")
     active = _send_catchup(ws, identify)
     if identify.role == "ambulance":  # 결과 전(출동·통화 중) 사건의 현장 후보·실시간 자막도 지우지 않게
         active = sorted(set(active) | set(engine.get_case_ids_for_apid(identify.id)))
@@ -1363,7 +1577,14 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 HospitalInfoConfirm 수신: {exc.errors()}")
                     continue
                 _handle_info_confirm(confirm)
-            elif payload.get("type") in ("dispatch", "scene_end", "sim_pause", "sim_resume"):
+            elif payload.get("type") == "transport_vitals":
+                try:
+                    vitals = TransportVitals.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 TransportVitals 수신: {exc.errors()}")
+                    continue
+                _handle_transport_vitals(vitals)
+            elif payload.get("type") in ("dispatch", "scene_end", "sim_pause", "sim_resume", "sim_reset"):
                 _handle_sim_command(payload)
             elif "action" in payload:
                 _handle_dashboard_action(payload)
@@ -1413,11 +1634,26 @@ def _handle_sim_command(payload: dict) -> None:
         print("  [시뮬레이션] 꺼져 있어 출동·현장 종료 명령을 무시 (HUB_SIM_DISPATCH=1로 켬)")
         return
     try:
-        model = {"dispatch": DispatchRequest, "sim_pause": SimControl, "sim_resume": SimControl}.get(
-            payload.get("type"), SceneEnd)
+        model = {"dispatch": DispatchRequest, "sim_pause": SimControl, "sim_resume": SimControl,
+                 "sim_reset": SimReset}.get(payload.get("type"), SceneEnd)
         cmd = model.model_validate(payload)
     except ValidationError as exc:
         print(f"  [통신] 잘못된 시뮬레이션 명령: {exc.errors()}")
+        return
+    if isinstance(cmd, SimReset):
+        # [시연 초기화](2026-10-04) — 모든 사건 종료(case_closed 전파) + 전 구급차 기지 복귀 +
+        # 이송 중 병상 차감 해제. "시연 정지(일시정지)가 사건을 안 지운다"는 혼동을 분리한 리셋.
+        closed: list[str] = []
+        for info in engine.list_ambulances():
+            old_case = sim.reset(info.apid)
+            _broadcast_sim_state(info.apid)
+            if old_case:
+                closed.append(old_case)
+                _close_case(old_case, "sim_reset")
+        engine.clear_bed_overlay()
+        decision_log.log_decision("sim_reset", {"closedCases": closed, "simulated": True})
+        _send_map_overview()
+        print(f"  [시뮬레이션] 시연 초기화 — 사건 {len(closed)}건 종료, 전 구급차 기지 복귀")
         return
     if isinstance(cmd, SimControl):
         pausing = cmd.type == "sim_pause"
@@ -1439,6 +1675,13 @@ def _handle_sim_command(payload: dict) -> None:
         if ok:
             engine.register_case(cmd.caseId, cmd.apid)
             print(f"  [시뮬레이션] {cmd.apid} 출동 — caseId={cmd.caseId}")
+            _send_pre_alert(cmd.apid, cmd.caseId, cmd.reportedSymptom, cmd.reportedSeverity)
+            # 1차 신고 기반 가추천(2026-10-04) — 출동 즉시, 현장 좌표 기준으로 후보를 띄운다.
+            # 현장 통화(2차 정보)가 끝나면 확정 매칭이 대체한다.
+            state = sim.state(cmd.apid) or {}
+            scene = state.get("incident")
+            if scene:
+                _send_scene_candidates(cmd.caseId, cmd.apid, scene_gps=GpsPoint(**scene))
         else:
             print(f"  [시뮬레이션] {cmd.apid} 출동 거부 ({reason})")
     else:
@@ -1450,6 +1693,86 @@ def _handle_sim_command(payload: dict) -> None:
         else:
             print(f"  [시뮬레이션] {cmd.apid} 현장 종료 거부 — 현장에 있지 않거나 다른 사건")
     _broadcast_sim_state(cmd.apid)
+
+
+#: 매칭 전(통화 전) 사건의 예비 고지 요약(caseId -> payload). 관제가 신고 접수 단계부터
+#: 전 과정을 팔로잉할 수 있게, 늦게 연 관제 탭의 따라잡기 재료로 쓴다(2026-10-04).
+#: 사건이 닫힐 때 지운다 — 매칭된 뒤에는 case_overview가 역할을 이어받는다.
+_pre_alerts: dict[str, dict] = {}
+
+
+def _send_pre_alert(
+    apid: str, case_id: str, reported_symptom: str | None = None, reported_severity: str | None = None
+) -> None:
+    """출동 직후, 현장 존 안 후보 병원에 예비 고지(2026-10-04) — v2 계획 '예비 고지'의 경량판.
+
+    신고 접수 때 파악한 1차 증상(reportedSymptom)이 있으면 같이 보낸다 — 상황실은 신고
+    전화에서 이미 증상 개요를 아는 게 실무라서다. 단 '신고 내용'일 뿐 확정 정보가 아니고
+    (현장 평가 = 통화 요약과 다를 수 있음), **경증(low) 신고는 예비 고지를 생략한다** —
+    v2 계획의 "중증 의심이거나 특정 진료과가 필요한 경우에만 예비 고지" 그대로.
+    존은 scene_candidates와 같은 발상으로 첫 비어있지 않은 밴드까지 넓힌다.
+    병원에는 자기까지의 거리만 주고 현장 좌표는 주지 않는다(지정 위치는 집 주소일 수 있음 —
+    로그를 1km 단위로 뭉개는 기존 원칙과 같은 방향). 관제(콘솔)에는 발송 병원 수만 요약해 준다.
+    출동 시뮬레이션 모드 전용 — 실운영에선 119 신고 접수 이벤트에 물릴 자리다."""
+    state = sim.state(apid) if sim is not None else None
+    scene = (state or {}).get("incident")
+    if not scene:
+        return
+    ambulance = engine.get_ambulance(apid)
+    ambulance_name = ambulance.name if ambulance else None
+    # 경증(low) 신고는 병원 예비 고지를 생략한다(v2 계획) — 관제는 전 과정을 팔로잉해야
+    # 하므로 요약은 중증도와 무관하게 항상 보낸다(hospitalCount=0으로 "고지 안 함" 표시).
+    skip_hospitals = reported_severity == "low"
+    targets: list[tuple[str, float]] = []
+    if not skip_hospitals:
+        for band in (1, 2, 3):
+            targets = [
+                (h.hospitalId, distance)
+                for h in engine.list_hospitals()
+                if (distance := haversine_km(scene["lat"], scene["lng"], h.gps.lat, h.gps.lng)) <= ZONE_BAND_KM * band
+            ]
+            if targets:
+                break
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    by_hospital = {hid: round(distance, 2) for hid, distance in targets}
+    reported = {"reportedSymptom": reported_symptom, "reportedSeverity": reported_severity}
+    summary = {
+        "type": "pre_alert", "caseId": case_id, "apid": apid, "ambulanceName": ambulance_name,
+        "hospitalCount": len(targets), **reported, "source": "rule", "timestamp": timestamp,
+    }
+    # 매칭 전 사건의 관제 따라잡기 재료(2026-10-04) — 늦게 연 관제 탭도 신고 단계부터 보이게.
+    _pre_alerts[case_id] = summary
+    summary_json = json.dumps(summary, ensure_ascii=False)
+    with _sockets_lock:
+        for ws, (role, id_) in list(_socket_identity.items()):
+            try:
+                if role == "hospital" and id_ in by_hospital:
+                    ws.send(json.dumps({
+                        "type": "pre_alert", "caseId": case_id, "apid": apid,
+                        "ambulanceName": ambulance_name, "distanceKm": by_hospital[id_],
+                        **reported, "source": "rule", "timestamp": timestamp,
+                    }, ensure_ascii=False))
+                elif role == "monitor":
+                    ws.send(summary_json)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [통신] 예비 고지 전송 실패: {e}")
+    if skip_hospitals:
+        print("  [시뮬레이션] 경증 신고 — 병원 예비 고지 생략(관제 요약만)")
+        decision_log.log_decision("pre_alert", {
+            "caseId": case_id, "apid": apid, "hospitals": 0,
+            "reportedSymptom": reported_symptom, "reportedSeverity": reported_severity,
+            "simulated": True,
+        })
+        return
+    if not targets:
+        return
+    decision_log.log_decision("pre_alert", {
+        "caseId": case_id, "apid": apid, "hospitals": len(targets),
+        "sceneCoarse": {"lat": round(scene["lat"], 2), "lng": round(scene["lng"], 2)},
+        "reportedSymptom": reported_symptom, "reportedSeverity": reported_severity,
+        "simulated": True,
+    })
+    print(f"  [시뮬레이션] 예비 고지 — 현장 인근 병원 {len(targets)}곳")
 
 
 def _sim_tick() -> None:
