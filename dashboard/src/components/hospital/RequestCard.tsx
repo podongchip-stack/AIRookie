@@ -122,7 +122,8 @@ export function RequestCard({
   return (
     <article
       style={{
-        background: "#FFFFFF", borderRadius: 14, border: selected ? `2px solid ${HD.navy}` : `1px solid ${HD.line}`,
+        // 선택 표시는 연한 파랑 테두리 1px(2026-10-04) — 진한 남색 2px은 목록에서 너무 도드라졌다
+        background: "#FFFFFF", borderRadius: 14, border: selected ? "1px solid #B9C9E2" : `1px solid ${HD.line}`,
         overflow: "hidden", display: "flex", opacity: closed ? 0.72 : 1,
       }}
     >
@@ -223,7 +224,7 @@ export function RequestCard({
               onClick={onSelect}
               aria-label={`${result.ambulanceName ?? "구급차"} 경로를 지도에 표시, 도착 예상 ${etaMain}`}
               style={{
-                width: "100%", minHeight: 40, borderRadius: 10, border: selected ? `2px solid ${HD.navy}` : "1px solid #C9D2DC",
+                width: "100%", minHeight: 40, borderRadius: 10, border: selected ? "1px solid #B9C9E2" : `1px solid ${HD.line}`,
                 background: selected ? HD.blueSoft : "#FFFFFF", color: HD.ink, display: "flex", alignItems: "center", justifyContent: "center",
                 gap: 7, padding: "4px 10px", boxSizing: "border-box", fontFamily: "inherit", cursor: "pointer",
               }}

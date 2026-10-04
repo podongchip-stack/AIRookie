@@ -431,12 +431,13 @@ class DispatchSim:
             return True, "ok"
 
     def fast_forward(self, apid: str) -> tuple[bool, str]:
-        """[빨리감기](2026-10-04): 병원으로 이송 중일 때만 — 남은 이동을 FAST_FORWARD_SEC 안에 마친다(정지 중이면 풀고)."""
+        """[빨리감기](2026-10-04): 병원으로 이송 중(2026-10-05부터 현장 출동 중도)일 때 — 남은 이동을 FAST_FORWARD_SEC 안에
+        마친다(정지 중이면 풀고). 기지 복귀는 시연 흐름과 무관해 그대로 둔다."""
         with self._lock:
             unit = self._units.get(apid)
             if unit is None:
                 return False, "unknown_ambulance"
-            if unit.phase != "transporting" or unit.trip is None:
+            if unit.phase not in ("transporting", "dispatching") or unit.trip is None:
                 return False, f"phase_{unit.phase}"
             unit.paused = False
             unit.trip.fast_forward(self._clock(), FAST_FORWARD_SEC)
