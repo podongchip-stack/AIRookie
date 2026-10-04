@@ -132,7 +132,7 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
   }
 
   // 시연 일시정지 중엔 이 화면의 조작(이송 승인·현장 종료·이송 중 시나리오)을 막고 위쪽에 안내를 잠깐 띄운다(2026-10-05)
-  const simPaused = simOn && mySim?.paused === true;
+  const simPaused = simOn && mySim?.paused === true && mySim.pauseReason !== "call";
   const pauseToast = usePauseToast(state.actionRefused);
 
   function handleSceneEnd() {

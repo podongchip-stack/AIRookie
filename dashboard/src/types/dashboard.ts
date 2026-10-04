@@ -738,6 +738,8 @@ export interface AmbulanceSimState {
   hospitalId: string | null;
   // [정지] 중(2026-10-03). 위치·남은 시간이 그대로 멈춰 있다. 구버전 hub면 없음.
   paused?: boolean;
+  // 왜 멈췄나(2026-10-05): "manual" 시연 일시정지(조작 잠금) | "call" 이송 중 추가 통화 동안만 이동 멈춤(잠금 없음)
+  pauseReason?: "manual" | "call" | string | null;
   simulated: true;
 }
 

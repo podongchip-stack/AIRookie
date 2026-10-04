@@ -171,7 +171,8 @@ export function HospitalCandidateListPanel({
             : "통화가 끝나면 진료과·이동시간 기준 순위와 병원 응답으로 바뀝니다."
         }
       >
-        {scene.hospitals.map((h) => {
+        {/* 첫 연락 추천을 맨 앞에(2026-10-05 요청), 나머지는 hub가 보낸 도착 시간순 그대로 */}
+        {[...scene.hospitals.filter((h) => h.firstCallRecommended), ...scene.hospitals.filter((h) => !h.firstCallRecommended)].map((h) => {
           // 병상 신뢰도(AI) — 매칭 결과 카드와 같은 실시간 감쇠. 없는 병원은 '—'(fail-soft, Optional 패턴).
           const rel = h.bedReliability ? liveBedReliability(h.bedReliability, nowMs) : null;
           const tone = rel ? validTone(rel.rArrive) : { bg: AD.chip, fg: AD.ink3 };

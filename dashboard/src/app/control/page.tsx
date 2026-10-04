@@ -238,7 +238,7 @@ export default function ControlPage() {
   const now = () => new Date().toISOString();
   const note = (text: string) => setLastNote({ t: new Date().toISOString(), text });
   // 시연 일시정지 중엔 [재개]·[시연 초기화] 말고는 모든 조작을 막고, 누르면 위쪽에 안내를 잠깐 띄운다(2026-10-05)
-  const locked = simOn && sim?.paused === true;
+  const locked = simOn && sim?.paused === true && sim.pauseReason !== "call";
   const pauseToast = usePauseToast(state.actionRefused);
   const g = (fn: () => void) => pauseToast.guard(locked, fn);
   // 불가 사유 선택 모달(2026-10-05) — 병원 대시보드와 같은 4축 사유. 이송 중 수용 철회·도착 후 수용 불가도 같은 모달
@@ -914,15 +914,15 @@ export default function ControlPage() {
                 }
                 note(`대량사고 — 도착한 ${n}명 환자 수용 완료`);
               }}
-              onCaseApprove={(c) => (c.unit?.paused ? pauseToast.notify() : c.monitorCase && bulkRespond(c.monitorCase, "hospital_approve"))}
+              onCaseApprove={(c) => (c.unit?.paused && c.unit.pauseReason !== "call" ? pauseToast.notify() : c.monitorCase && bulkRespond(c.monitorCase, "hospital_approve"))}
               onCaseConfirm={(c) => {
-                if (c.unit?.paused) return pauseToast.notify();
+                if (c.unit?.paused && c.unit.pauseReason !== "call") return pauseToast.notify();
                 const first = c.monitorCase?.hospitals.find((h) => h.status === "approved");
                 if (first) sendAction({ caseId: c.caseId, action: "final_approval", hospital_id: first.hospitalId, actor: "paramedic", timestamp: now() });
               }}
-              onCaseFast={(c) => (c.unit?.paused ? pauseToast.notify() : sendSimCommand("sim_fast_forward", c.apid, c.caseId))}
+              onCaseFast={(c) => (c.unit?.paused && c.unit.pauseReason !== "call" ? pauseToast.notify() : sendSimCommand("sim_fast_forward", c.apid, c.caseId))}
               onCaseArrival={(c, accepted) => {
-                if (c.unit?.paused) return pauseToast.notify();
+                if (c.unit?.paused && c.unit.pauseReason !== "call") return pauseToast.notify();
                 if (!c.confirmed) return;
                 sendAction({ caseId: c.caseId, action: accepted ? "arrival_accepted" : "arrival_refused", hospital_id: c.confirmed.hospitalId, actor: "hospital", timestamp: now() });
                 note(`사상자 ${c.no} — ${accepted ? "환자 수용 완료" : "도착 후 수용 불가(재선택 대기)"}`);
@@ -1282,7 +1282,10 @@ export default function ControlPage() {
                             </div>
                             <ProgressTrack p={simTrip.p} start={`현장 · ${dispatchInfo?.spot ?? ""}`} end={confirmedHospital?.name ?? "병원"} endIcon="hospital" />
                             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px", fontSize: 13, color: C.ink3 }}>
-                              <span>{sim?.paused ? "일시정지 중 — " : ""}도착하면 도착 결과 화면으로 넘어갑니다.</span>
+                              <span>
+                                {sim?.paused ? (sim.pauseReason === "call" ? "추가 통화 중 — 통화 내용이 반영될 때까지 이송 잠시 멈춤 · " : "일시정지 중 — ") : ""}
+                                도착하면 도착 결과 화면으로 넘어갑니다.
+                              </span>
                               {/* 빨리감기(2026-10-04) — 이송 30초 동안 상황을 다 골랐으면 3초 안에 병원 도착 */}
                               {phase === "transporting" && apid && caseId && (simTrip.left == null || simTrip.left > 3) && (
                                 <FastButton onClick={g(() => sendSimCommand("sim_fast_forward", apid, caseId) && note("빨리감기 — 3초 안에 병원에 도착합니다"))} />

@@ -380,7 +380,7 @@ export function PhoneCallView({
     if (!caseId || myCall) return;
     setError(null);
     // 시연 일시정지 중엔 통화를 시작하지 않는다(2026-10-05, hub도 거부한다)
-    if (sim?.paused) {
+    if (sim?.paused && sim.pauseReason !== "call") {
       setError("현재 시연 일시정지 중입니다.");
       return;
     }

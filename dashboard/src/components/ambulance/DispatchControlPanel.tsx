@@ -111,7 +111,9 @@ export function DispatchControlPanel({
 
   // 시안(2026-10-05): "현장 도착 / 통화로 환자 정보를 병원에 전송" + 빨간 테두리 [현장 종료] 한 장짜리 카드
   const hint = paused
-    ? "상황실에서 시연을 멈췄습니다"
+    ? sim?.pauseReason === "call"
+      ? "목적지 병원과 통화 중 — 통화 내용이 환자 정보에 반영되면 다시 출발합니다"
+      : "상황실에서 시연을 멈췄습니다"
     : etaMin != null
       ? `도착까지 약 ${etaMin}분 (실제 도로 기준)`
       : phase === "at_hospital"
@@ -136,7 +138,9 @@ export function DispatchControlPanel({
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: AD.navy }}>{PHASE_LABEL[phase]}</span>
-            {paused && <span style={pill(AD.redSoft, AD.red, 700)}>일시정지됨</span>}
+            {paused && (sim?.pauseReason === "call"
+              ? <span style={pill(AD.blueSoft, AD.blue, 700)}>추가 통화 중 — 이송 잠시 멈춤</span>
+              : <span style={pill(AD.redSoft, AD.red, 700)}>일시정지됨</span>)}
             {sim?.speedup != null && sim.speedup > 1 && (
               <span style={pill(AD.chip, AD.ink3)}>시뮬레이션 {Math.round(sim.speedup)}배속</span>
             )}
