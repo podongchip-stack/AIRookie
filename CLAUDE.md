@@ -374,6 +374,18 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   E-Gen은 과거 이력을 주지 않으므로 시계열이 필요하면 직접 찍어 쌓는 수밖에 없다.
   가공 전 원본을 저장하는 이유는 매핑 해석이 바뀌어도 과거 데이터를 다시 해석할 수 있어야
   해서다(가공본만 남기면 매핑을 고칠 때마다 지난 데이터가 죽는다)
+- **스냅샷 수집기가 클라우드로 이관됐다(2026-10-04).** 수집 장비(노트북)를 들고 이동하게
+  되면서, Supabase Edge Function(`supabase/functions/egen-snapshot`, 프로젝트
+  goldenlink-egen · 서울 리전 · pg_cron 20분)이 E-Gen 응답을 **원본 XML 그대로** Storage
+  버킷 `egen-snapshots`(공개 읽기)에 쌓는다. 해석(XML→items)은 로컬
+  `info/.../snapshot_cloud.py --sync`가 기존 파서(`HttpEgenClient._parse`)로 해서
+  `snapshots_nationwide/` JSONL로 복원한다 — live_board 등 소비 코드는 무수정. 과거 1.4GB
+  아카이브는 `--seed`로 버킷 `days/`에 업로드돼 있어 어느 장비든 sync만으로 전체 이력을
+  받는다. env는 `SNAPSHOT_SUPABASE_URL`(+sync는 ANON_KEY, seed는 SERVICE_KEY),
+  E-Gen 키는 함수 secret. `start-all.sh`는 이제 로컬 수집기 대신 이 동기화를 20분 주기로
+  띄운다(SERVICE_KEY 있는 장비는 완결 날짜를 `--seed`로 먼저 올림 — 과거 로컬 수집분이
+  클라우드 아카이브로 흘러드는 경로). ⚠ 일일 트래픽 한도는 키 기준 합산 —
+  `snapshot_nationwide.bat`(작업 스케줄러) 같은 별도 로컬 수집이 남아 있으면 끌 것
 
 ### 병상 정보 신뢰도 서빙 (`reliability/`, 2026-09-24 신설)
 
@@ -435,7 +447,7 @@ Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-
 - **진료과를 심평원 전문의 수로 채운다.** `egen/mapper.build_specialties()`가 E-Gen 역량 4개 과에 `data/hira/specialists.json`의 전문과목별 전문의 수를 합친다(응급 수용 과만 — `ACUTE_HIRA_DEPARTMENTS`, 영상의학과·마취통증의학과·진단검사의학과·치과·한방 등 제외). `doctorCount`에 실제 인원, 분과(순환기내과)는 대분류(내과) 인원을 빌린다. 캐시가 없거나 조인 안 된 병원은 기존 4개 과 그대로(fail-soft). 실측: 415곳 중 403곳 반영. 예전엔 438곳 중 186곳(42%)이 진료과 0개였다
 - `HospitalInfo.emergencyLevel`: E-Gen 목록의 `dutyEmclsName`(권역/지역응급의료센터 등). hub가 중증 환자 가산에 쓴다
 - `send_to_hub.py`가 한 주기 병원을 다 보낸 뒤 `POST /info/hospitals/roster`로 전체 hpid 목록을 보낸다 — hub가 피드에서 빠진 병원을 지운다
-- **스냅샷 수집은 이제 `start-all.sh`가 info와 함께 20분 주기로 띄운다**(`--no-snapshot`으로 끔). Windows 작업 스케줄러(`snapshot_nationwide.bat`)로만 돌아서 이 맥에선 8월 13일 이후 멈춰 있었다
+- ~~**스냅샷 수집은 이제 `start-all.sh`가 info와 함께 20분 주기로 띄운다**(`--no-snapshot`으로 끔). Windows 작업 스케줄러(`snapshot_nationwide.bat`)로만 돌아서 이 맥에선 8월 13일 이후 멈춰 있었다~~ → **2026-10-04 수집이 클라우드로 이관되면서 start-all은 수집 대신 동기화(`snapshot_cloud.py --sync`, 20분 주기)를 띄운다** — 아래 "스냅샷 수집기가 클라우드로 이관됐다" 참고
 - **응급실 `hvec`의 `-1`은 미상이 아니라 과밀 1명(만실 0)으로 읽는다(2026-10-01).** 다른 병상 필드의 -1은 그대로 미입력. 전국 스냅샷에서 hvec -1의 앞뒤 값 77%가 -3~1(0 → -1 → -2처럼 이어짐)이라 미입력일 수 없다. 예전엔 서울아산처럼 꽉 찬 응급실이 "미상"으로 떠서 만실 표시·승인 차단이 안 걸렸다. 신뢰도 모델은 이미 이렇게 읽고 있었다(`egen/mapper.py`의 `MINUS_ONE_IS_VALUE_FIELDS`, `hospital_score/scoring.py`도 같게). 폐기 판정·리포트 재현 스크립트는 기록된 수치를 바꾸지 않도록 그대로 둠. 검사 `python -m egen.test_hvec_minus_one`
 - ⚠️ `info/requirements.txt`의 `xgboost==3.4.1`·`numpy==2.5.1`·`scipy==1.18.0`은 Python 3.12 이상용이라 파일 머리의 "3.11" 환경엔 안 깔린다. 3.11 환경은 호환 버전(xgboost 3.2 등)을 깔면 되고, 모델 로드·selftest 통과를 확인했다(2026-10-01). 이게 빠지면 `[reliability] 엔진 초기화 실패` 한 줄만 남기고 `bedReliability` 없이 조용히 보내진다
 
