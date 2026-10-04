@@ -101,7 +101,10 @@ final class PhoneModel {
     var onScene: Bool { simOn && phase == .on_scene && caseId != nil }
     /// 이송 중·재선택 대기 — 목적지(또는 다른) 병원과 추가 통화를 할 수 있는 단계
     var inTransport: Bool { simOn && caseId != nil && (phase == .transporting || phase == .rerouting) }
-    var paused: Bool { mySim?.paused == true }
+    /// 운영자의 시연 일시정지(조작 잠금). 추가 통화로 이동만 멈춘 경우("call")는 통화·전송을 막지 않는다
+    var paused: Bool { mySim?.paused == true && mySim?.pauseReason != "call" }
+    /// 이송 중 추가 통화 동안 구급차 이동이 멈춰 있다(통화 내용이 반영되면 hub가 다시 출발시킨다)
+    var transportHeld: Bool { mySim?.paused == true && mySim?.pauseReason == "call" }
     var sent: Bool { caseId.flatMap { sentCount[$0] } != nil }
     var destination: MatchResult.Hospital? {
         guard let caseId else { return nil }

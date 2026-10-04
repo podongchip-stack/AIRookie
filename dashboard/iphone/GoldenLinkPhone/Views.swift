@@ -405,6 +405,10 @@ struct InCallView: View {
 
                     Text(call.hospitalName).font(.system(size: 22, weight: .black)).foregroundStyle(AD.navy)
                         .multilineTextAlignment(.center)
+                    if m.transportHeld {
+                        // 이송 중 추가 통화 — 통화 내용을 듣고 정보가 반영될 때까지 이동이 잠시 멈춘다(2026-10-05)
+                        Pill(text: "이송 잠시 멈춤 · 통화 내용 반영 뒤 다시 출발", fg: AD.blue, bg: AD.blueSoft, bold: true)
+                    }
                     TimelineView(.periodic(from: .now, by: 1)) { ctx in
                         Text(connecting ? "응급실 연결 중" : mmss(ctx.date.timeIntervalSince(call.startedAt)))
                             .font(.system(size: 30, weight: .bold).monospacedDigit())
@@ -449,28 +453,29 @@ struct InCallView: View {
             // [취소]는 아무것도 보내지 않고, [전송]을 눌러야만 음성을 처리해 병원에 보낸다(2026-10-05)
             HStack(spacing: 10) {
                 Button { m.cancelCall() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "xmark").font(.system(size: 17, weight: .bold))
-                        Text("취소").font(.system(size: 16, weight: .bold))
+                    HStack(spacing: 10) {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 26, weight: .bold))
+                        Text("취소").font(.system(size: 19, weight: .bold))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .frame(maxWidth: .infinity, minHeight: 72)
+                    .contentShape(Rectangle())
                     .foregroundStyle(AD.red)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(AD.red, lineWidth: 2))
+                    .background(AD.redSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(AD.red, lineWidth: 2))
                 }
                 .buttonStyle(.plain)
                 Button { m.sendCall() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "paperplane.fill").font(.system(size: 17, weight: .bold))
-                        Text("전송").font(.system(size: 16, weight: .bold))
+                    HStack(spacing: 10) {
+                        Image(systemName: "paperplane.fill").font(.system(size: 24, weight: .bold))
+                        Text("전송").font(.system(size: 19, weight: .bold))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .frame(maxWidth: .infinity, minHeight: 72)
+                    .contentShape(Rectangle())
                     .foregroundStyle(.white)
-                    .background(connecting ? AD.control : AD.blue, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .background(connecting ? AD.control : AD.blue, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .disabled(connecting)
-                .layoutPriority(1)
             }
             Text("취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다")
                 .font(.system(size: 10.5)).foregroundStyle(AD.muted).multilineTextAlignment(.center)
@@ -674,7 +679,11 @@ struct TransportCallView: View {
                     HStack(spacing: 8) {
                         Pill(text: rerouting ? "재선택 대기" : "병원 이송 중", fg: rerouting ? AD.red : AD.blue,
                              bg: rerouting ? AD.redSoft : AD.blueSoft, bold: true)
-                        if !rerouting, let eta { Text("도착까지 약 \(eta)분").font(.system(size: 12)).foregroundStyle(AD.sub) }
+                        if m.transportHeld {
+                            Text("통화 내용 반영 중 — 이송 잠시 멈춤").font(.system(size: 12, weight: .bold)).foregroundStyle(AD.blue)
+                        } else if !rerouting, let eta {
+                            Text("도착까지 약 \(eta)분").font(.system(size: 12)).foregroundStyle(AD.sub)
+                        }
                     }
                     if rerouting {
                         Text("목적지 병원이 수용할 수 없게 됐습니다").font(.system(size: 18, weight: .bold)).foregroundStyle(AD.navy)

@@ -86,6 +86,8 @@ public struct AmbulanceSim: Decodable, Equatable {
     public let etaSec: Double?
     public let incident: GPS?
     public let paused: Bool?
+    /// 왜 멈췄나(2026-10-05): "manual" 시연 일시정지(조작 잠금) | "call" 이송 중 추가 통화 동안만 이동 멈춤
+    public let pauseReason: String?
     /// 이송 중·도착한 병원(이송 확정 병원)
     public let hospitalId: String?
 }
