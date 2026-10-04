@@ -731,8 +731,16 @@ export function PhoneCallView({
           어느 병원에 먼저 전화할까요?
         </p>
         <p className={css({ fontSize: "xs", color: "ink2", marginTop: "1", lineHeight: "1.5" })}>
-          도착 시간순(규칙 기반) · 첫 통화 내용이 존 안 모든 후보 병원에 함께 전달됩니다
+          {scene?.reportedSeverity
+            ? "이동시간 + 신고 중증도(센터 가산) 순위 · 첫 통화 내용이 존 안 모든 후보 병원에 함께 전달됩니다"
+            : "도착 시간순(규칙 기반) · 첫 통화 내용이 존 안 모든 후보 병원에 함께 전달됩니다"}
         </p>
+        {scene?.reportedSymptom && (
+          <p className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink", marginTop: "1.5" })}>
+            📞 신고: {scene.reportedSymptom}
+            {scene.reportedSeverity === "high" ? " · 중증 의심" : scene.reportedSeverity === "low" ? " · 경증" : ""}
+          </p>
+        )}
         {error && (
           <p className={css({ marginTop: "2", padding: "2.5", borderRadius: "field", fontSize: "sm", color: "coral", backgroundColor: "coralSoft" })}>
             {error}
@@ -802,6 +810,16 @@ export function PhoneCallView({
                         {h.etaMin != null ? ` · ${Math.round(h.etaMin)}분` : ""}
                       </span>
                       <span className={bed.className}>{bed.text}</span>
+                      {/* 등급·진료과(2026-10-04) — 전화 상대를 고르는 자리에서 바로 보이게 */}
+                      {h.emergencyLevel && h.emergencyLevel.endsWith("센터") && (
+                        <span className={chipNeutral}>{h.emergencyLevel.replace("응급의료", "")}</span>
+                      )}
+                      {h.specialties && h.specialties.length > 0 && (
+                        <span className={chipNeutral}>
+                          {h.specialties.slice(0, 2).map((s) => s.department).join("·")}
+                          {h.specialties.length > 2 ? ` 외 ${h.specialties.length - 2}과` : ""}
+                        </span>
+                      )}
                       {h.bedReliability && (
                         <span className={chipAi}>AI 도착 시 유효 {Math.round(h.bedReliability.rArrive * 100)}%</span>
                       )}

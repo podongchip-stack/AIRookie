@@ -19,7 +19,9 @@ import type { TransportAssessment, TransportTier, VitalObservationIn } from "@/t
 
 type ScenarioStep = Omit<VitalObservationIn, "measuredAt" | "source">;
 
-const SCENARIOS: { key: string; label: string; expects: string; steps: ScenarioStep[] }[] = [
+// 시연 통제 콘솔(/control)도 같은 시나리오를 재생하므로 export — 수치를 바꿀 땐
+// hub/test_transport_triage.py 픽스처와 함께 바꾼다.
+export const SCENARIOS: { key: string; label: string; expects: string; steps: ScenarioStep[] }[] = [
   {
     key: "stable",
     label: "① 안정적인 경증",
@@ -71,9 +73,9 @@ const SCENARIOS: { key: string; label: string; expects: string; steps: ScenarioS
 ];
 
 //: 시나리오 걸음 간격(ms) — 시연에서 측정이 들어오는 리듬
-const STEP_INTERVAL_MS = 4000;
+export const STEP_INTERVAL_MS = 4000;
 
-const TIER_LABEL: Record<TransportTier, string> = {
+export const TIER_LABEL: Record<TransportTier, string> = {
   record: "기록",
   hold: "보류 · 지속 확인 중",
   notify: "상태 변화 전달됨",

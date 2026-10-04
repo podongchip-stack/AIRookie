@@ -365,6 +365,9 @@ class HospitalMatch(BaseModel):
     name: str
     gps: GpsPoint
     distanceKm: float
+    # 이 병원이 속한 존(직선거리 밴드, 2026-10-04) — 구급차 후보 리스트가 Zone 1·2·3
+    # 섹션으로 나눠 그리는 데 쓴다(존 확장이 눈에 보이게)
+    zone: int = 1
     specialtyMatch: SpecialtyMatch
     availableBedCount: int
     # availableBedCount가 0일 때 그게 "확인된 만실"인지 "미상"인지 구분한다.
@@ -576,6 +579,11 @@ class HospitalSelfInfo(BaseModel):
     bedReliability: Optional[BedReliabilityMatch] = None
     bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
     severeDeclarations: Optional[SevereDeclarations] = None
+    # 본원이 무슨 병원으로 지정돼 있는지(2026-10-04) — 응급의료기관 등급(E-Gen dutyEmclsName)
+    emergencyLevel: Optional[str] = None
+    # 지금 받을 수 있는 분야(진료과)와 이송 중 부하 — "얼마나 수용 가능한가"의 나머지 절반
+    specialties: list[Specialty] = Field(default_factory=list)
+    inFlightCount: int = 0
 
 
 # ── feature/hub → feature/dashboard (출력, 자기소개에 대한 즉시 응답) ───────
@@ -596,13 +604,18 @@ class DashboardIdentityInfo(BaseModel):
     # 구급차 대시보드에서도 통화를 시작할 수 있는지(2026-10-03, start-all.sh --dashboard-call). 기본은 꺼서
     # 통화는 대원 휴대폰 전화 앱(/phone)으로만 하고, 구급차 대시보드엔 보기 전용 통화 현황만 띄운다.
     dashboardCall: bool = False
+    # 자기 위치(2026-10-04) — 병원은 E-Gen 좌표, 구급차는 기지. 병원 대시보드가 사건이
+    # 없을 때도 본원 위치 지도를 그릴 수 있게 한다. hub가 모르는 코드면 None.
+    gps: Optional[GpsPoint] = None
 
 
 # ── feature/hub → 관제 지도(role=monitor, 2026-10-03) ────────────────────────
 
 
 class MapHospital(BaseModel):
-    """관제 지도의 병원 마커 하나(규칙 기반 — E-Gen 목록 좌표)."""
+    """관제 지도의 병원 마커 하나(규칙 기반 — E-Gen 목록 좌표). 관제는 사건과 무관하게
+    **모든 병원의 현재 상태**(등급·병상)를 본다(2026-10-04) — 마커 색은 등급,
+    만실·미상은 병상 필드로 구분한다."""
     hospitalId: str
     name: str
     gps: GpsPoint
@@ -610,6 +623,10 @@ class MapHospital(BaseModel):
     # 이 병원으로 지금 이송 중(확정, TTL 오버레이)인 건수(2026-10-03) — 관제 지도가
     # "이 병원에 N건 몰리는 중"을 보여주는 재료. 확정·도착 결과 때마다 overview가 다시 간다.
     inFlightCount: int = 0
+    # 응급실 가용 병상(오버레이 차감 후)과 미상 여부(2026-10-04) — 만실(0 확인)·미상 구분은
+    # 후보 목록과 같은 원칙(미상을 만실처럼 보이게 하지 않는다)
+    availableBedCount: int = 0
+    bedCountUnknown: bool = True
 
 
 class MapAmbulance(BaseModel):
@@ -667,6 +684,11 @@ class DispatchRequest(BaseModel):
     # 주소 검색·지도 클릭으로 고른 출동 위치(2026-10-01). 없으면 기지 근처 무작위. 주소 글자는 받지 않는다(개인정보).
     target: Optional[GpsPoint] = None
     targetMode: Optional[Literal["address", "map"]] = None
+    # 신고 접수 1차 증상(2026-10-04, 시연 콘솔) — 상황실이 신고 전화에서 들은 수준의 개요.
+    # 예비 고지에 실려 병원이 "무슨 환자가 올 수 있는지"까지 미리 안다. 확정 정보가 아니라
+    # '신고 내용'이다(현장 평가 = 통화 요약과 다를 수 있음). 경증 신고는 예비 고지를 생략한다.
+    reportedSymptom: Optional[str] = None
+    reportedSeverity: Optional[Literal["high", "medium", "low"]] = None
 
 
 class SceneEnd(BaseModel):
@@ -678,12 +700,22 @@ class SceneEnd(BaseModel):
 
 
 class SimControl(BaseModel):
-    """dashboard → hub: [정지]·[상황 재개](2026-10-03) — 출동 중·현장·이송 중인 시연 상황을 멈추고 이어 간다.
+    """dashboard → hub: [일시정지]·[상황 재개](2026-10-03) — 출동 중·현장·이송 중인 시연 상황을 멈추고 이어 간다.
     구급차는 apid로 가린다(한 대는 한 번에 한 사건). caseId는 로그용."""
     type: Literal["sim_pause", "sim_resume"]
     apid: str
     caseId: Optional[str] = None
     timestamp: str
+
+
+class SimReset(BaseModel):
+    """dashboard(콘솔) → hub: [시연 초기화](2026-10-04) — 모든 사건을 닫고(각 대시보드에
+    case_closed) 전 구급차를 기지 대기로, 이송 중 병상 차감(TTL 오버레이)도 비운다.
+    일시정지(sim_pause)는 멈춤이고 이것은 리셋이다 — 시연 정지가 사건을 지우지 않아
+    헷갈린다는 피드백으로 분리했다. 시연 전용."""
+    type: Literal["sim_reset"] = "sim_reset"
+    timestamp: str
+    apid: Optional[str] = None  # 콘솔은 "*"(전체)만 보낸다
 
 
 # ── 활력징후 입력 구멍 (2.5단계 이송 중 모니터링, 2026-10-04) ─────────────────

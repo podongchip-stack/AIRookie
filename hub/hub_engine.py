@@ -470,6 +470,13 @@ class HubEngine:
                 self._dirty = True
             return removed, kept
 
+    def clear_bed_overlay(self) -> None:
+        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감(TTL 오버레이)을 비운다.
+        실운영 경로에서는 부르지 않는다(차감은 TTL로만 풀리는 게 원칙)."""
+        with self._lock:
+            self._bed_overlay.clear()
+            self._dirty = True
+
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
         with self._lock:
             return self._hospitals.get(hospital_id)
@@ -926,7 +933,9 @@ class HubEngine:
                     candidates.append((info, distance))
             return candidates
 
-    def build_zone_candidates(self, ambulance_gps: GpsPoint, max_zone: int = 1) -> list[dict]:
+    def build_zone_candidates(
+        self, ambulance_gps: GpsPoint, max_zone: int = 1, reported_severity: str | None = None
+    ) -> list[dict]:
         """1단계: voice 정보가 도착하기 전, GPS+병원 정보만으로 존 기반 후보 리스트를
         만들어 보관해둔다. 진료과 매칭 없이 거리만으로 정렬한 중간 상태를 반환한다.
 
@@ -955,7 +964,16 @@ class HubEngine:
             eta = etas.get(info.hospitalId)
             return eta[0] / 60.0 if eta is not None else distance * min_per_km
 
-        candidates.sort(key=travel_min_of)
+        # 신고 접수 1차 중증도가 있으면(2026-10-04, 시연 콘솔의 reportedSeverity) 정렬에
+        # 매칭과 같은 '분' 가산을 적용한다 — 중증 의심이면 권역 −5분·지역센터 −2분, 경증은
+        # 센터 +3분(센터 보존). 환자 정보(통화) 전이지만 신고 중증도는 상황실이 이미 아는
+        # 값이라, "이동시간만 보던" 첫 통화 순위를 반 발짝 당긴다. 없으면 기존 그대로.
+        def order_min_of(pair: tuple) -> float:
+            info, _ = pair
+            bonus, _reasons = expertise_bonus_min(None, info.emergencyLevel, reported_severity)
+            return travel_min_of(pair) - bonus
+
+        candidates.sort(key=order_min_of if reported_severity else travel_min_of)
         rows: list[dict] = []
         best_index: int | None = None
         best_r_arrive = 0.0
@@ -984,6 +1002,11 @@ class HubEngine:
                     "bedCountUnknown": unknown,
                     "bedReliability": rel.model_dump() if rel is not None else None,
                     "firstCallRecommended": False,
+                    # 구급대가 전화 상대를 고를 때 바로 보는 정보(2026-10-04) — 등급·진료과
+                    "emergencyLevel": info.emergencyLevel,
+                    "specialties": [
+                        {"department": s.department, "doctorCount": s.doctorCount} for s in info.specialties
+                    ],
                 }
             )
             if rel is not None and beds >= 1 and not unknown and not _is_bed_data_stale(info, now):
@@ -1062,6 +1085,7 @@ class HubEngine:
                         name=info.name,
                         gps=info.gps,
                         distanceKm=round(distance, 2),
+                        zone=zone_of(distance),
                         specialtyMatch=SpecialtyMatch(
                             department=best_dept, score=round(similarity, 4), basis=basis, doctorCount=doctor_count
                         ),

@@ -38,6 +38,8 @@ export function MapPanel({
   caseId,
   ambulanceGps,
   sim = null,
+  selfGps = null,
+  selfName = null,
 }: {
   hospital: HospitalCandidate | null;
   caseId: string | null;
@@ -45,6 +47,9 @@ export function MapPanel({
   // 이 병원으로 이송 중인 구급차의 출동 시뮬레이션 상태(2026-10-01). 있으면 구급차 마커는 1초마다
   // 따로 옮기고, 경로는 hub가 보낸 시뮬레이션 경로를 그린다.
   sim?: AmbulanceSimState | null;
+  // 본원 위치(identity_info.gps, 2026-10-04) — 사건이 없어도 본원 중심 지도를 그린다.
+  selfGps?: { lat: number; lng: number } | null;
+  selfName?: string | null;
 }) {
   const confirmed = hospital?.status === "confirmed";
   const { ready, error } = useKakaoMapScript();
@@ -75,6 +80,22 @@ export function MapPanel({
       ambulanceLabelRef.current = null;
       polylineRef.current?.setMap(null);
       polylineRef.current = null;
+      // 사건이 없어도 본원 위치 지도는 띄운다(2026-10-04) — "표시할 사건이 없습니다"
+      // 회색 화면 대신, 병원 입장의 평시 화면(본원 마커)이 기본이다.
+      if (selfGps) {
+        const { kakao } = window;
+        const selfPos = new kakao.maps.LatLng(selfGps.lat, selfGps.lng);
+        if (!mapRef.current) {
+          mapRef.current = new kakao.maps.Map(containerRef.current, { center: selfPos, level: 5 });
+        }
+        hospitalMarkerRef.current = new kakao.maps.Marker({
+          position: selfPos, map: mapRef.current, title: selfName ?? "본원",
+          image: createColoredMarkerImage("#1E5FA8"),
+        });
+        hospitalLabelRef.current = createLabelOverlay(selfPos, selfName ?? "본원");
+        hospitalLabelRef.current.setMap(mapRef.current);
+        mapRef.current.setCenter(selfPos);
+      }
       return;
     }
 
@@ -176,7 +197,7 @@ export function MapPanel({
     };
     // ambulanceGps는 매 렌더 새 객체일 수 있어 참조 대신 좌표 값으로 변경을 감지한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, hospital, confirmed, caseId, ambulanceGps?.lat, ambulanceGps?.lng, sim?.phase, sim?.path?.length]);
+  }, [ready, hospital, confirmed, caseId, ambulanceGps?.lat, ambulanceGps?.lng, sim?.phase, sim?.path?.length, selfGps?.lat, selfGps?.lng, selfName]);
 
   // 출동 시뮬레이션: 1초마다 구급차 마커만 옮긴다.
   const simMarkerRef = useRef<kakao.maps.Marker | null>(null);
@@ -248,7 +269,7 @@ export function MapPanel({
             // 안 지워지던 문제의 원인 중 하나 — 정리 로직 누락과 별개로 겪음).
             className={css({ position: "absolute", inset: "0", zIndex: "0" })}
           />
-          {(!ready || error || !hospital) && (
+          {(!ready || error || (!hospital && !selfGps)) && (
             <div
               className={css({
                 position: "absolute",
@@ -264,7 +285,7 @@ export function MapPanel({
                 backgroundColor: "#EDF2F7",
               })}
             >
-              {error ?? (!hospital ? "표시할 사건이 없습니다" : "지도를 불러오는 중...")}
+              {error ?? (!hospital && !selfGps ? "표시할 사건이 없습니다" : "지도를 불러오는 중...")}
             </div>
           )}
         </div>

@@ -73,6 +73,7 @@ export function DispatchControlPanel({
   callActive,
   target,
   onTargetChange,
+  allowTargetPick = false,
   onDispatch,
   onSceneEnd,
   onPause,
@@ -84,6 +85,8 @@ export function DispatchControlPanel({
   callActive: boolean;
   target: DispatchTarget | null;
   onTargetChange: (target: DispatchTarget | null) => void;
+  // 출동 위치 지정 UI 표시 여부(2026-10-04 기본 끔) — 위치는 상황실(시연 콘솔) 소관
+  allowTargetPick?: boolean;
   onDispatch: () => void;
   onSceneEnd: () => void;
   onPause: () => void;
@@ -132,17 +135,19 @@ export function DispatchControlPanel({
     >
       <div className={css({ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "3" })}>
         <div className={css({ display: "flex", flexDirection: "column", gap: "1", minWidth: "0" })}>
+          {/* 2026-10-04: 구급차 화면은 **지령 수신·수행** 화면이다 — 출동([이동])·일시정지는
+              상황실(시연 콘솔) 소관으로 옮겨 여기서 전부 뺐다. 남는 조작은 현장에서 대원이
+              실제로 내리는 판단인 [현장 종료](이송 불필요) 하나다. */}
           <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
             <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink" })}>{PHASE_LABEL[phase]}</span>
-            <span className={simBadgeStyle}>시뮬레이션 위치</span>
-            {paused && <span className={simBadgeStyle}>정지됨</span>}
+            {paused && <span className={simBadgeStyle}>일시정지됨</span>}
             {sim?.speedup != null && sim.speedup > 1 && (
-              <span className={simBadgeStyle}>{Math.round(sim.speedup)}배속</span>
+              <span className={simBadgeStyle}>시뮬레이션 {Math.round(sim.speedup)}배속</span>
             )}
           </div>
           <span className={css({ fontSize: "xs", color: "ink3" })}>
             {paused
-              ? "시연을 멈췄습니다 — [상황 재개]를 누르면 멈춘 자리에서 이어 갑니다"
+              ? "상황실에서 시연을 멈췄습니다"
               : etaMin != null
               ? `도착까지 약 ${etaMin}분 (실제 도로 기준)`
               : phase === "at_hospital"
@@ -153,7 +158,7 @@ export function DispatchControlPanel({
                     ? callActive
                       ? "통화를 끝내야 현장 종료할 수 있습니다"
                       : "통화를 시작해 병원에 환자 정보를 보내세요"
-                    : "위치를 고르지 않으면 기지 근처(약 10분 거리) 무작위 위치로 출동합니다"}
+                    : "출동 지령 대기 중 — 신고가 접수되면 상황실이 출동시킵니다"}
           </span>
         </div>
         <div className={css({ display: "flex", gap: "2", flexShrink: "0" })}>
@@ -162,24 +167,13 @@ export function DispatchControlPanel({
               현장 종료
             </button>
           )}
-          {canPause && (
-            <button type="button" className={secondaryButtonStyle} onClick={onPause}>
-              정지
-            </button>
-          )}
-          {paused ? (
-            <button type="button" className={primaryButtonStyle} onClick={onResume}>
-              상황 재개
-            </button>
-          ) : (
-            <button type="button" className={primaryButtonStyle} onClick={onDispatch} disabled={!canDispatch}>
-              이동
-            </button>
-          )}
         </div>
       </div>
 
-      {canDispatch && (
+      {/* 출동 위치 지정(주소 검색·지도 클릭)은 구급차 화면에서 뺐다(2026-10-04) — 실무에서
+          출동 위치는 상황실 지령이지 대원이 고르는 값이 아니다. 지점 지정과 출동은 시연
+          시나리오 콘솔(/control)이 담당하고, 이 화면의 [이동]은 무작위 출동 폴백으로만 남는다. */}
+      {canDispatch && allowTargetPick && (
         <div className={css({ display: "flex", flexDirection: "column", gap: "1.5" })}>
           <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
             <span className={css({ fontSize: "xs", fontWeight: "semibold", color: "ink2" })}>출동 위치</span>
