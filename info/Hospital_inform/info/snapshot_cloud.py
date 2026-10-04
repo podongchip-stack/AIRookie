@@ -13,7 +13,9 @@ sync가 복원한 날짜 파일은 snapshot.py가 쓰던 JSONL 형식과 동일�
 live_board·reliability features 등 기존 소비자는 아무 수정이 필요 없다.
 
 Storage 레이아웃: raw/<KST날짜>/<HHMMSS>_<op>_p<page>.xml.gz (+ .err.json),
-days/<KST날짜>.jsonl.gz (노트북 아카이브 시드 — 완결 날짜는 이걸 그대로 쓴다).
+days/<KST날짜>.jsonl.gz (노트북 아카이브 시드 — 완결 날짜는 이걸 그대로 쓴다),
+partial/<KST날짜>.jsonl.gz (아직 자라는 중인 오늘 파일의 중간본 — seed가 매번 덮어쓰고,
+sync는 raw와 (ts, operation)으로 합쳐 쓴다. 완결되면 days/로 승격되고 partial은 지운다).
 
 env (info/.env): SNAPSHOT_SUPABASE_URL(필수),
 SNAPSHOT_SUPABASE_ANON_KEY(sync — 공개 버킷이라 읽기 전용),
@@ -107,32 +109,52 @@ def _save_state(state: dict) -> None:
 
 # ── seed: 기존 로컬 아카이브 → days/ ─────────────────────────────────────────
 
+def _gzip_bytes(raw: bytes) -> bytes:
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
+        gz.write(raw)
+    return buf.getvalue()
+
+
+def _delete(url: str, service_key: str, path: str) -> None:
+    requests.delete(
+        f"{url}/storage/v1/object/{BUCKET}/{path}",
+        headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"},
+        timeout=30,
+    )
+
+
 def seed(url: str, service_key: str) -> None:
     existing = {o["name"] for o in _list_all(url, service_key, "days")}
     files = sorted(SNAPSHOT_DIR.glob("*.jsonl"))
     today = datetime.now(KST).date().isoformat()
     done = skipped = 0
     for path in files:
+        raw = path.read_bytes()
         if path.stem == today:
-            print(f"  {path.name}: 오늘 파일(아직 자람) — 건너뜀, 내일 다시 --seed")
+            # 자라는 중인 오늘 파일은 partial/로 매번 덮어쓴다 — 클라우드 수집(raw/)이
+            # 시작되기 전의 앞반쪽(이 장비에만 있는 관측)을 당일에도 다른 장비가 받게.
+            gz_body = _gzip_bytes(raw)
+            _upload(url, service_key, f"partial/{path.stem}.jsonl.gz", gz_body, "application/gzip")
+            print(f"  {path.name}: 오늘 중간본 → partial/ ({len(raw) / 1e6:.1f}MB → {len(gz_body) / 1e6:.1f}MB)")
             continue
         if f"{path.stem}.jsonl.gz" in existing:
             skipped += 1
             continue
-        raw = path.read_bytes()
-        buf = io.BytesIO()
-        with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
-            gz.write(raw)
-        _upload(url, service_key, f"days/{path.stem}.jsonl.gz", buf.getvalue(), "application/gzip")
+        gz_body = _gzip_bytes(raw)
+        _upload(url, service_key, f"days/{path.stem}.jsonl.gz", gz_body, "application/gzip")
+        _delete(url, service_key, f"partial/{path.stem}.jsonl.gz")  # 완결 승격 — 중간본 정리
         done += 1
-        print(f"  {path.name}: {len(raw) / 1e6:.1f}MB → {buf.tell() / 1e6:.1f}MB 업로드")
+        print(f"  {path.name}: {len(raw) / 1e6:.1f}MB → {len(gz_body) / 1e6:.1f}MB 업로드")
     print(f"시드 완료 — 업로드 {done}개, 이미 있음 {skipped}개")
 
 
 # ── sync: days/ + raw/ → 로컬 날짜 파일 ──────────────────────────────────────
 
-def _rebuild_day(url: str, anon: str, date: str, objects: list[dict]) -> str:
-    """raw/<date>/ 객체들로 스냅샷 JSONL 하루치를 만든다 (snapshot.py fetch_one과 같은 줄)."""
+def _rebuild_day(url: str, anon: str, date: str, objects: list[dict], has_partial: bool) -> str:
+    """raw/<date>/ 객체들(+ 있으면 partial/ 중간본)로 스냅샷 JSONL 하루치를 만든다
+    (snapshot.py fetch_one과 같은 줄). partial은 수집 장비가 올린 로컬 수집분이라
+    클라우드 수집 시작 전 시간대를 메꾼다 — (ts, operation)으로 합쳐 중복만 거른다."""
     # (HHMMSS, op) -> 페이지 목록 / 오류
     groups: dict[tuple[str, str], dict] = {}
     for obj in objects:
@@ -148,7 +170,16 @@ def _rebuild_day(url: str, anon: str, date: str, objects: list[dict]) -> str:
             groups.setdefault((hms, op), {}).setdefault("pages", [])
             groups[(hms, op)]["error_obj"] = name
 
-    lines: list[str] = []
+    records: dict[tuple[str, str], dict] = {}
+    if has_partial:
+        try:
+            text = gzip.decompress(_download(url, f"partial/{date}.jsonl.gz")).decode("utf-8")
+            for line in text.splitlines():
+                rec = json.loads(line)
+                records[(rec.get("ts", ""), rec.get("operation", ""))] = rec
+        except Exception as exc:  # noqa: BLE001 — 중간본이 깨져도 raw만으로 진행
+            print(f"  {date}: partial 읽기 실패({type(exc).__name__}) — raw만으로 복원")
+
     for (hms, op) in sorted(groups):
         entry = groups[(hms, op)]
         ts = f"{date}T{hms[:2]}:{hms[2:4]}:{hms[4:6]}+09:00"
@@ -167,7 +198,9 @@ def _rebuild_day(url: str, anon: str, date: str, objects: list[dict]) -> str:
                 record["items"] = items
             except Exception as exc:  # noqa: BLE001 — 깨진 객체도 실패 줄로 보존
                 record["error"] = f"{type(exc).__name__}: {exc}"
-        lines.append(json.dumps(record, ensure_ascii=False))
+        records.setdefault((ts, op), record)
+
+    lines = [json.dumps(records[key], ensure_ascii=False) for key in sorted(records)]
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -185,8 +218,14 @@ def sync(url: str, anon: str) -> None:
         local.write_bytes(gzip.decompress(_download(url, f"days/{name}")))
         print(f"  {date}: days/에서 복원 ({local.stat().st_size / 1e6:.1f}MB)")
 
-    # 2) 클라우드 수집 날짜(raw/) — days/에 없는 날짜만, 객체 수가 변한 날만 다시 만든다
-    dates = [o["name"] for o in _list_all(url, anon, "raw") if "." not in o["name"]]
+    # 2) 클라우드 수집(raw/)·중간본(partial/) 날짜 — days/에 없는 날짜만,
+    #    내용이 변한 날(raw 객체 수 또는 partial 갱신 시각)만 다시 만든다
+    partials = {
+        o["name"][: -len(".jsonl.gz")]: (o.get("updated_at") or o.get("created_at") or "")
+        for o in _list_all(url, anon, "partial")
+        if o["name"].endswith(".jsonl.gz")
+    }
+    dates = {o["name"] for o in _list_all(url, anon, "raw") if "." not in o["name"]} | set(partials)
     for date in sorted(dates):
         if f"{date}.jsonl.gz" in day_objects:
             continue
@@ -196,14 +235,16 @@ def sync(url: str, anon: str) -> None:
                   f"(이관 끝나면 그쪽 수집을 끄고, 이 날짜는 --seed로 올릴 것)")
             continue
         objects = _list_all(url, anon, f"raw/{date}")
-        if state["managedDays"].get(date) == len(objects) and local.exists():
+        fingerprint = f"{len(objects)}|{partials.get(date, '')}"
+        if state["managedDays"].get(date) == fingerprint and local.exists():
             continue
-        body = _rebuild_day(url, anon, date, objects)
+        body = _rebuild_day(url, anon, date, objects, has_partial=date in partials)
         tmp = local.with_suffix(".jsonl.tmp")
         tmp.write_text(body, encoding="utf-8")
         tmp.replace(local)
-        state["managedDays"][date] = len(objects)
-        print(f"  {date}: raw {len(objects)}객체 → {len(body.splitlines())}줄 복원")
+        state["managedDays"][date] = fingerprint
+        print(f"  {date}: raw {len(objects)}객체{' + partial' if date in partials else ''} "
+              f"→ {len(body.splitlines())}줄 복원")
     _save_state(state)
     print("동기화 완료")
 
