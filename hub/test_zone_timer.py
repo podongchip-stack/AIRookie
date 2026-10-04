@@ -13,6 +13,7 @@ import os
 import random
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 _TMP = tempfile.TemporaryDirectory()
@@ -89,8 +90,7 @@ def main() -> None:
 
     print("=== 승인 병원이 생기면 자동 확장은 멈춘다 ===")
     with app._zone_timer_lock:
-        zone, since, _ = app._zone_timer[case_id]
-        app._zone_timer[case_id] = (zone, since, True)  # 다시 넓힐 수 있는 상태로 되돌려 승인 효과만 본다
+        app._zone_timer[case_id]["ok"] = True  # 다시 넓힐 수 있는 상태로 되돌려 승인 효과만 본다
     app._handle_dashboard_action({"caseId": case_id, "action": "hospital_approve", "hospital_id": near.hospitalId,
                                   "actor": "hospital", "timestamp": "2026-10-04T00:00:00Z"})
     case = _last(monitor, "case_overview")
@@ -98,6 +98,44 @@ def main() -> None:
     app._zone_timer_tick(time.time() + 999)
     assert max(_last(monitor, "case_overview")["zoneActive"]) == 3, "승인 병원이 있으면 시간이 지나도 안 넓힌다"
     print("  [확인] 승인 후 자동 확장 멈춤")
+
+    print("=== [정지] 중엔 존 확장 시간도 멈추고, [상황 재개]하면 남은 시간부터 ===")
+    clock = [9000.0]
+    app.sim = DispatchSim(None, random.Random(2), lambda: clock[0], Path(_TMP.name) / "sim-pause")
+    from schema import AmbulanceInfo
+    app.app.test_client().post("/info/ambulances", json=AmbulanceInfo(
+        apid="A_P", name="[테스트] 정지 구급차", gps=GpsPoint(lat=37.5665, lng=126.9780), voicePort=6000,
+        updatedAt="2026-10-04T00:00:00Z").model_dump())
+    pause_case = "case-pause"
+    app._handle_sim_command({"type": "dispatch", "apid": "A_P", "caseId": pause_case, "timestamp": "t",
+                             "target": {"lat": 37.5670, "lng": 126.9785}, "targetMode": "map"})
+    clock[0] += 10
+    app._sim_tick()
+    assert app.sim.phase_of("A_P") == "on_scene"
+    result = app.engine.process_voice_summary(
+        VoiceCallSummaryMessage(caseId=pause_case, transcript=VoiceTranscript(raw_text="t", filtered_text="t"),
+                                summary=VoiceSummary(patient="50대", mechanism="흉통", symptoms=[], treatment=[],
+                                                     severity_tag="high"), source="ai"),
+        GpsPoint(lat=37.5670, lng=126.9785))
+    app._send_to_dashboard(result.model_dump())
+    with app._zone_timer_lock:
+        app._zone_timer[pause_case]["since"] -= 20  # 이미 20초 흘렀다고 치자 → 남은 10초
+    app._handle_sim_command({"type": "sim_pause", "apid": "A_P", "caseId": pause_case, "timestamp": "t"})
+    case = [m for m in monitor.sent if m.get("type") == "case_overview" and m["caseId"] == pause_case][-1]
+    assert case["zoneExpandAt"] is None and case["zonePausedLeftSec"] == 10, case
+    zone_before = max(case["zoneActive"])
+    app._zone_timer_tick(time.time() + 600)  # 정지 중엔 10분이 지나도
+    case = [m for m in monitor.sent if m.get("type") == "case_overview" and m["caseId"] == pause_case][-1]
+    assert max(case["zoneActive"]) == zone_before, "정지 중엔 시간이 흐르지 않아 확장되지 않는다"
+    app._handle_sim_command({"type": "sim_resume", "apid": "A_P", "caseId": pause_case, "timestamp": "t"})
+    case = [m for m in monitor.sent if m.get("type") == "case_overview" and m["caseId"] == pause_case][-1]
+    left = (datetime.fromisoformat(case["zoneExpandAt"]).timestamp() - time.time())
+    assert case["zonePausedLeftSec"] is None and 8 <= left <= 11, (case, left)
+    app._zone_timer_tick(time.time() + 11)
+    case = [m for m in monitor.sent if m.get("type") == "case_overview" and m["caseId"] == pause_case][-1]
+    assert max(case["zoneActive"]) > zone_before, "재개 뒤 남은 10초가 지나면 확장"
+    print(f"  [확인] 정지 중 남은 10초 유지 → 재개 후 {left:.0f}초 뒤 확장")
+    app.sim = None
 
     print("=== 이송 30초 · [빨리감기]는 남은 이동을 3초 안에 ===")
     trip = Trip([(37.5, 127.0), (37.6, 127.0)], duration_sec=600, started_at=1000.0, speedup=600 / TRANSPORT_SEC)

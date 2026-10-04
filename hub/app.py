@@ -611,6 +611,7 @@ def _monitor_case(payload: dict) -> dict:
         num=meta.get("num"), startedAt=meta.get("startedAt"), symptom=meta.get("symptom"),
         events=case_tracker.events(payload["caseId"]),
         zoneExpandAt=_zone_expand_at(payload),
+        zonePausedLeftSec=_zone_paused_left(payload),
         caseId=payload["caseId"],
         apid=payload.get("apid"),
         ambulanceName=payload.get("ambulanceName"),
@@ -1697,6 +1698,7 @@ def _handle_sim_command(payload: dict) -> None:
                                   {"apid": cmd.apid, "caseId": cmd.caseId, "command": cmd.type, "reason": reason, "simulated": True})
         print(f"  [시뮬레이션] {cmd.apid} 빨리감기" + ("" if ok else f" 거부 ({reason})"))
         if ok:
+            _pause_zone_timers(cmd.apid, False)  # 빨리감기는 정지도 푼다
             _broadcast_sim_state(cmd.apid)
         return
     if isinstance(cmd, SimControl):
@@ -1706,6 +1708,8 @@ def _handle_sim_command(payload: dict) -> None:
         decision_log.log_decision(event, {"apid": cmd.apid, "caseId": cmd.caseId, "command": cmd.type,
                                           "reason": reason, "simulated": True})
         print(f"  [시뮬레이션] {cmd.apid} {'정지' if pausing else '상황 재개'}" + ("" if ok else f" 거부 ({reason})"))
+        if ok:
+            _pause_zone_timers(cmd.apid, pausing)
     elif isinstance(cmd, DispatchRequest):
         base = engine.get_ambulance_base(cmd.apid)
         if base is not None:
@@ -1754,8 +1758,9 @@ case_tracker = CaseTracker()
 # [건너뛰기]는 기다리지 않고 바로 넓힌다. 넓힐 수 없으면(상한) 타이머를 멈춘다. 규칙 기반.
 ZONE_EXPAND_SEC = float(os.environ.get("HUB_ZONE_EXPAND_SEC", "30"))
 ZONE_TIMER_TICK_SEC = 1.0
-#: caseId -> (지금 존, 그 존이 시작된 시각 epoch, 더 넓힐 수 있는지)
-_zone_timer: dict[str, tuple[int, float, bool]] = {}
+#: caseId -> {"zone": 지금 존, "since": 그 존이 시작된 시각(epoch), "ok": 더 넓힐 수 있는지,
+#:            "paused": [정지]를 누른 시각(epoch, 2026-10-04) — 정지 중엔 시간이 흐르지 않는다}
+_zone_timer: dict[str, dict] = {}
 _zone_timer_lock = threading.Lock()
 
 
@@ -1764,24 +1769,75 @@ def _zone_waiting(payload: dict) -> bool:
     return not any(h.get("status") in ("approved", "confirmed") for h in payload.get("hospitals") or [])
 
 
+def _case_paused(case_id: str) -> bool:
+    apid = engine.get_case_apid(case_id)
+    return bool(sim is not None and apid and (sim.state(apid) or {}).get("paused"))
+
+
 def _touch_zone_timer(payload: dict) -> None:
-    """매칭 결과가 나갈 때마다: 처음 보는 사건이거나 존이 바뀌었으면 타이머를 지금부터 다시 잰다."""
+    """매칭 결과가 나갈 때마다: 처음 보는 사건이거나 존이 바뀌었으면 타이머를 지금부터 다시 잰다
+    (구급차가 [정지] 중이면 멈춘 채로 시작)."""
     case_id = payload["caseId"]
     zone = max(payload.get("zoneActive") or [1])
+    now = time.time()
+    paused = now if _case_paused(case_id) else None
     with _zone_timer_lock:
         current = _zone_timer.get(case_id)
-        if current is None or current[0] != zone:
-            _zone_timer[case_id] = (zone, time.time(), True)
+        if current is None or current["zone"] != zone:
+            _zone_timer[case_id] = {"zone": zone, "since": now, "ok": True, "paused": paused}
+
+
+def _zone_left_sec(timer: dict, now: float) -> float:
+    """남은 시간(초). 정지 중이면 정지한 순간의 남은 시간 그대로."""
+    at = timer["paused"] if timer["paused"] is not None else now
+    return ZONE_EXPAND_SEC - (at - timer["since"])
 
 
 def _zone_expand_at(payload: dict) -> str | None:
+    """다음 자동 확장 시각. 정지 중이면 None(화면은 _zone_paused_left로 남은 시간을 멈춘 채 보여준다)."""
     if ZONE_EXPAND_SEC <= 0 or not _zone_waiting(payload):
         return None
     with _zone_timer_lock:
-        timer = _zone_timer.get(payload["caseId"])
-    if timer is None or not timer[2]:
+        timer = dict(_zone_timer.get(payload["caseId"]) or {})
+    if not timer or not timer["ok"] or timer["paused"] is not None:
         return None
-    return datetime.fromtimestamp(timer[1] + ZONE_EXPAND_SEC, timezone.utc).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(timer["since"] + ZONE_EXPAND_SEC, timezone.utc).isoformat(timespec="seconds")
+
+
+def _zone_paused_left(payload: dict) -> int | None:
+    """[정지] 중이면 멈춰 있는 남은 시간(초), 아니면 None."""
+    if ZONE_EXPAND_SEC <= 0 or not _zone_waiting(payload):
+        return None
+    with _zone_timer_lock:
+        timer = dict(_zone_timer.get(payload["caseId"]) or {})
+    if not timer or not timer["ok"] or timer["paused"] is None:
+        return None
+    return max(0, int(round(_zone_left_sec(timer, time.time()))))
+
+
+def _pause_zone_timers(apid: str, pausing: bool) -> None:
+    """[정지]·[상황 재개](2026-10-04): 그 구급차 사건의 존 확장 시간도 멈추고, 재개하면 남은 시간부터 다시 센다.
+    관제 지도·콘솔의 카운트다운이 바로 바뀌도록 사건 요약을 다시 보낸다."""
+    now = time.time()
+    changed = []
+    for case_id in engine.get_case_ids_for_apid(apid):
+        with _zone_timer_lock:
+            timer = _zone_timer.get(case_id)
+            if timer is None:
+                continue
+            if pausing and timer["paused"] is None:
+                timer["paused"] = now
+            elif not pausing and timer["paused"] is not None:
+                timer["since"] += now - timer["paused"]
+                timer["paused"] = None
+            else:
+                continue
+        changed.append(case_id)
+    for case_id in changed:
+        result = engine.get_case_result(case_id)
+        if result is not None:
+            with _sockets_lock:
+                _send_to_monitors_locked(_monitor_case(result.model_dump()))
 
 
 def _expand_case_zone(case_id: str, cause: str) -> None:
@@ -1798,8 +1854,8 @@ def _expand_case_zone(case_id: str, cause: str) -> None:
     if expanded is None:
         # 더 넓힐 수 없다(상한) — 타이머를 멈추고 화면의 카운트다운도 지운다
         with _zone_timer_lock:
-            zone, since, _ = _zone_timer.get(case_id, (0, time.time(), True))
-            _zone_timer[case_id] = (zone, since, False)
+            timer = _zone_timer.setdefault(case_id, {"zone": current, "since": time.time(), "ok": True, "paused": None})
+            timer["ok"] = False
         case_tracker.note_expand_cause(case_id, "")
         _send_to_dashboard(result.model_dump())
         print(f"  [존 확장] case={case_id} 더 넓힐 수 없음 — 시간 확장 멈춤")
@@ -1817,10 +1873,11 @@ def _zone_timer_loop() -> None:
 
 
 def _zone_timer_tick(now: float | None = None) -> None:
-    """시간이 된 사건의 존을 넓힌다(작업 스레드로). 테스트가 now를 넘겨 한 번만 돌린다."""
+    """시간이 된 사건의 존을 넓힌다(작업 스레드로). 테스트가 now를 넘겨 한 번만 돌린다. 정지 중인 사건은 건너뛴다."""
     now = time.time() if now is None else now
     with _zone_timer_lock:
-        due = [cid for cid, (_, since, ok) in _zone_timer.items() if ok and now - since >= ZONE_EXPAND_SEC]
+        due = [cid for cid, t in _zone_timer.items()
+               if t["ok"] and t["paused"] is None and _zone_left_sec(t, now) <= 0]
         # 닫힌 사건은 지운다
         for cid in [c for c in _zone_timer if engine.get_case_result(c) is None]:
             _zone_timer.pop(cid, None)
@@ -1828,22 +1885,15 @@ def _zone_timer_tick(now: float | None = None) -> None:
         result = engine.get_case_result(case_id)
         if result is None:
             continue
-        apid = engine.get_case_apid(case_id)
-        if sim is not None and apid and (sim.state(apid) or {}).get("paused"):
-            # [정지] 중엔 시간도 멈춘다 — 재개하면 남은 시간부터
-            with _zone_timer_lock:
-                zone, since, ok = _zone_timer[case_id]
-                _zone_timer[case_id] = (zone, since + ZONE_TIMER_TICK_SEC, ok)
-            continue
-        if not _zone_waiting(result.model_dump()):
-            with _zone_timer_lock:  # 승인 병원이 생겼다 — 다시 대기로 돌아오면 그때부터 잰다
-                zone, _, ok = _zone_timer[case_id]
-                _zone_timer[case_id] = (zone, now, ok)
-            continue
-        with _zone_timer_lock:  # 중복 실행 방지 — 결과가 오면 _touch_zone_timer가 새로 잰다
-            zone, _, ok = _zone_timer[case_id]
-            _zone_timer[case_id] = (zone, now, ok)
-        _match_executor.submit(_expand_case_zone, case_id, "timeout")
+        with _zone_timer_lock:
+            timer = _zone_timer.get(case_id)
+            if timer is None:
+                continue
+            # 승인 병원이 생겼으면 쉬었다가, 다시 대기로 돌아오면 그때부터 잰다. 확장할 때도 중복 실행을 막으려
+            # 지금으로 당겨 둔다(결과가 오면 _touch_zone_timer가 새 존 기준으로 다시 잰다).
+            timer["since"] = now
+        if _zone_waiting(result.model_dump()):
+            _match_executor.submit(_expand_case_zone, case_id, "timeout")
 
 
 def _send_case_meta(case_id: str, ws=None) -> None:

@@ -109,6 +109,8 @@ export interface Incident {
   events: CaseEvent[];
   // 다음 자동 존 확장 시각(epoch ms) — 없으면 멈춤
   zoneExpandAt: number | null;
+  // [정지] 중 멈춰 있는 남은 시간(초)
+  zonePausedLeft: number | null;
 }
 
 // 화면용 짧은 이름(2026-10-04) — 실제 이름이 길어("회현119안전센터 구급 1", "학교법인 고려중앙학원 고려대학교…")
@@ -178,6 +180,7 @@ export function buildIncidents(input: {
       zoneBandKm: mc.zoneBandKm,
       events: mc.events ?? [],
       zoneExpandAt: mc.zoneExpandAt ? Date.parse(mc.zoneExpandAt) : null,
+      zonePausedLeft: mc.zonePausedLeftSec ?? null,
     });
   }
   // 매칭 전: 출동한(사건이 배정된) 구급차 중 아직 사건 요약이 없는 것
@@ -202,6 +205,7 @@ export function buildIncidents(input: {
       zoneBandKm: 5,
       events: meta?.events ?? [],
       zoneExpandAt: null,
+      zonePausedLeft: null,
     });
   }
   const sevRank = (s: Sev | null) => (s ? SEV_RANK[s] : 3);

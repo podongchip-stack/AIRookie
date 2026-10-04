@@ -682,6 +682,8 @@ class MonitorCase(BaseModel):
     events: list[dict] = []
     # 시간 기반 존 확장(2026-10-04): 다음 자동 확장 예정 시각. 승인·확정 병원이 있거나 더 넓힐 수 없으면 None
     zoneExpandAt: Optional[str] = None
+    # [정지] 중이면 멈춰 있는 남은 시간(초) — 이때 zoneExpandAt은 None(시간이 흐르지 않는다)
+    zonePausedLeftSec: Optional[int] = None
     source: Literal["rule"] = "rule"
 
 

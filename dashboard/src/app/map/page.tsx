@@ -275,6 +275,9 @@ export default function MonitorMapPage() {
                               {" "}· 확장 {Math.max(0, Math.ceil((selected.zoneExpandAt - now) / 1000))}초
                             </span>
                           )}
+                          {selected.zoneExpandAt == null && selected.zonePausedLeft != null && (
+                            <span style={{ color: C.muted, fontWeight: 700 }}> · 확장 ⏸ {selected.zonePausedLeft}초</span>
+                          )}
                         </span>
                       </div>
                     </div>

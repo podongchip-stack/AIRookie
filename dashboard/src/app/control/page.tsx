@@ -756,6 +756,7 @@ export default function ControlPage() {
             <SourceBadge source={caseSource} label={caseId ? templateCases[caseId] : undefined} />
             <ZoneCountdown
               expandAt={myCase.zoneExpandAt ?? null}
+              pausedLeft={myCase.zonePausedLeftSec ?? null}
               zone={Math.max(1, ...myCase.zoneActive)}
               onSkip={() => sendZoneExpand(myCase.caseId) && note("건너뛰기 — 요청 범위를 지금 한 단계 넓힙니다")}
             />
@@ -899,19 +900,30 @@ function SourceBadge({ source, label }: { source: "voice" | "template" | null; l
 
 // 시간 기반 존 확장 카운트다운(2026-10-04) — 승인·확정 병원이 없으면 hub가 30초마다 요청 범위를 한 단계 넓힌다.
 // [건너뛰기]는 기다리지 않고 바로 넓힌다. expandAt이 없으면(승인 병원 있음·더 넓힐 수 없음) 멈춤 안내만.
-function ZoneCountdown({ expandAt, zone, onSkip }: { expandAt: string | null; zone: number; onSkip: () => void }) {
+function ZoneCountdown({ expandAt, pausedLeft, zone, onSkip }: {
+  expandAt: string | null;
+  // [정지] 중이면 멈춰 있는 남은 시간(초) — 일시정지하면 존 확장 시간도 흐르지 않는다(2026-10-04)
+  pausedLeft: number | null;
+  zone: number;
+  onSkip: () => void;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(timer);
   }, []);
-  const left = expandAt ? Math.max(0, Math.ceil((Date.parse(expandAt) - now) / 1000)) : null;
+  const left = expandAt ? Math.max(0, Math.ceil((Date.parse(expandAt) - now) / 1000)) : pausedLeft;
+  const paused = !expandAt && pausedLeft != null;
   return (
     <div className={css({ display: "flex", alignItems: "center", gap: "2.5", flexWrap: "wrap", fontSize: "sm", color: "ink", backgroundColor: "surfaceSub", paddingX: "3.5", paddingY: "2.5", borderRadius: "field" })}>
       <span>
         요청 범위 <b>{zone > 1 ? `존 1~${zone}` : "존 1"}</b> ·{" "}
         {left == null ? (
           <span className={css({ color: "ink3" })}>자동 확장 멈춤(수용 승인 병원이 있거나 더 넓힐 곳이 없음)</span>
+        ) : paused ? (
+          <>
+            ⏸ 일시정지 — 다음 존까지 <b className={css({ fontVariantNumeric: "tabular-nums" })}>{left}초</b> 남은 채로 멈춤
+          </>
         ) : (
           <>
             응답 없으면 <b className={css({ color: "severity.medium", fontVariantNumeric: "tabular-nums" })}>{left}초</b> 뒤 다음 존으로 자동 확장
