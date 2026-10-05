@@ -204,11 +204,18 @@ def _central_start(payload: dict):
     return jsonify({"status": "recording", "session": session.name}), 200
 
 
-def _central_end(case_id: str, reason: str) -> bool:
+def _central_end(case_id: str, reason: str, cancelled: bool = False) -> bool:
     with _lock:
         session = _sessions.pop(case_id, None)
     if session is None:
         return False
+    if cancelled:
+        # 통화 취소(2026-10-05) — 구급대원이 [취소]를 눌렀다. 음성은 원본 보존 원칙대로 이 장비에만 남기고,
+        # 남은 인식·구조화·hub 전송은 하지 않는다(병원에 아무것도 가지 않는다).
+        session.recorder.save_wav(ORIGIN_DATA_DIR / f"{session.name}_cancelled.wav")
+        session.live.cancel()
+        print(f"[통화 취소] {session.apid} caseId={case_id} — 전달하지 않음")
+        return True
     session.recorder.save_wav(ORIGIN_DATA_DIR / f"{session.name}.wav")
     duration_sec = len(session.recorder.snapshot()) / session.recorder.sample_rate
     print(f"[통화 종료] {session.apid} caseId={case_id} ({duration_sec:.1f}초, {reason}) — 남은 발화 인식·구조화 시작")
@@ -302,8 +309,9 @@ def call_end():
     녹음 파일은 인식에 쓰지 않지만 사후 검증(원본 보존)용으로 남긴다."""
     global _recorder, _live, _session, _case_id
     if VOICE_MODE == "central":
-        case_id = (request.get_json(silent=True) or {}).get("caseId")
-        if not case_id or not _central_end(case_id, "통화 종료 신호"):
+        body = request.get_json(silent=True) or {}
+        case_id = body.get("caseId")
+        if not case_id or not _central_end(case_id, "통화 종료 신호", cancelled=bool(body.get("cancelled"))):
             return jsonify({"error": "not recording", "caseId": case_id}), 400
         return jsonify({"status": "processing_started", "caseId": case_id}), 200
     with _lock:

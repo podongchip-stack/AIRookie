@@ -31,6 +31,19 @@ export function hospitalLevelColor(level?: string | null): string {
   return (level && LEVEL_COLORS[level]) || MAP_COLORS.hospital;
 }
 
+// 구급차 마커 색(2026-10-04) — 서울 119 구급차 160여 대가 지도에 다 올라오면서 이름은 움직이는 구급차만
+// 띄우고, 지금 어느 단계인지는 마커 색으로 구분한다. 기지 대기 회색 · 출동 중 주황 · 현장 도착 빨강 ·
+// 병원 이송 중 파랑 · 병원 도착(재선택 대기 포함) 초록 · 기지 복귀 중 청회색.
+export const AMBULANCE_PHASE_COLORS: Record<AmbulancePhase, string> = {
+  idle: "#9AA5B1",
+  dispatching: "#E8590C",
+  on_scene: "#D93F35",
+  transporting: "#1C7ED6",
+  at_hospital: "#0E9F6E",
+  rerouting: "#0E9F6E",
+  returning: "#5C7A99",
+};
+
 export const PHASE_SHORT: Record<AmbulancePhase, string> = {
   idle: "기지 대기",
   dispatching: "현장 출동 중",

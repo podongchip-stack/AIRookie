@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { css } from "styled-system/css";
-import { Tag } from "@/components/hospital/Tag";
-import { mintButtonStyle } from "@/components/ui/button-styles";
 import { liveBedReliability, formatDeclarationAge } from "@/lib/bedReliability";
+import { HD } from "@/components/hospital/hospital-design";
 import type { HospitalSelfInfo } from "@/types/dashboard";
 
 // hub가 identify 직후·info 30분 갱신·정보 확인 직후에 보내주는 "귀원 정보
@@ -14,6 +12,7 @@ import type { HospitalSelfInfo } from "@/types/dashboard";
 // 자기 신선도를 보고 "현재 정보가 맞습니다"를 누르면, 그 확인이 hub의 조건부
 // 생존 갱신(S(a)/S(u))으로 이어져 구급대 화면의 신뢰도가 즉시 되올라간다 —
 // 값이 그대로여도 "방금 사람이 확인한 값"임을 시스템이 알게 되는 유일한 경로.
+// 2026-10-04: 디자인 시안대로 두 줄(현황 / 신뢰도·신고·확인 버튼)로 정리.
 
 const BED_FIELD_LABEL: Record<string, string> = {
   hvoc: "수술실",
@@ -22,20 +21,17 @@ const BED_FIELD_LABEL: Record<string, string> = {
   hv28: "소아",
 };
 
-const itemStyle = css({
-  display: "flex",
-  flexDirection: "column",
-  gap: "0.5",
-  minWidth: "0",
-});
+function Item({ label, children, grow }: { label: string; children: React.ReactNode; grow?: boolean }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0, ...(grow ? { flex: "1 1 240px" } : {}) }}>
+      <span style={{ fontSize: 11.5, color: HD.sub }}>{label}</span>
+      {children}
+    </div>
+  );
+}
 
-const itemLabelStyle = css({ fontSize: "xs", color: "ink3" });
-const itemValueStyle = css({
-  fontSize: "sm",
-  fontWeight: "semibold",
-  color: "ink",
-  fontVariantNumeric: "tabular-nums",
-});
+const valueStyle: React.CSSProperties = { fontSize: 13.5, fontWeight: 700, color: HD.navy };
+const bigStyle: React.CSSProperties = { fontSize: 15, fontWeight: 700, color: HD.navy, lineHeight: 1.3 };
 
 export function HospitalSelfInfoPanel({
   selfInfo,
@@ -57,113 +53,90 @@ export function HospitalSelfInfoPanel({
   // 확인 시각 = 값 탄생 + 확인 시점 나이 → "N분 전 확인" 표시용.
   const confirmedAgoMin =
     confirmed && br?.bornAt
-      ? Math.max(
-          Math.round(
-            (nowMs - (Date.parse(br.bornAt) + (br.confirmedAgeSec ?? 0) * 1000)) / 60000,
-          ),
-          0,
-        )
+      ? Math.max(Math.round((nowMs - (Date.parse(br.bornAt) + (br.confirmedAgeSec ?? 0) * 1000)) / 60000), 0)
       : null;
 
-  const declarations = selfInfo.severeDeclarations?.groups ?? {};
-  const declaredGroups = Object.entries(declarations);
-  const oldest = declaredGroups.reduce<{ ageSec: number; ageIsMin: boolean } | null>(
-    (acc, [, d]) => {
-      const ageSec = Math.max((nowMs - Date.parse(d.bornAt)) / 1000, 0);
-      return acc === null || ageSec > acc.ageSec ? { ageSec, ageIsMin: d.ageIsMin } : acc;
-    },
-    null,
-  );
+  const declaredGroups = Object.entries(selfInfo.severeDeclarations?.groups ?? {});
+  const oldest = declaredGroups.reduce<{ ageSec: number; ageIsMin: boolean } | null>((acc, [, d]) => {
+    const ageSec = Math.max((nowMs - Date.parse(d.bornAt)) / 1000, 0);
+    return acc === null || ageSec > acc.ageSec ? { ageSec, ageIsMin: d.ageIsMin } : acc;
+  }, null);
+  const authorityPct = live ? Math.round(live.authority * 100) : null;
+  const typeEntries = Object.entries(selfInfo.bedReliabilityByType ?? {});
+  const specialties = selfInfo.specialties ?? [];
 
   return (
     <section
-      className={css({
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-        gap: "4",
-        borderWidth: "1px",
-        borderColor: "line",
-        borderRadius: "panel",
-        backgroundColor: "surface",
-        paddingX: "4",
-        paddingY: "3",
-        marginBottom: "3.5",
-      })}
+      style={{
+        flex: "none", background: "#FFFFFF", borderRadius: 14, border: `1px solid ${HD.line}`, padding: "8px 16px",
+        display: "flex", flexDirection: "column", gap: 6,
+      }}
     >
-      <div className={css({ display: "flex", alignItems: "center", gap: "5", flexWrap: "wrap" })}>
-        <div className={itemStyle}>
-          <span className={itemLabelStyle}>본원 정보 현황</span>
-          <span className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink" })}>
-            {selfInfo.name} <Tag source="rule">E-Gen 신고 기준</Tag>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 30px", alignItems: "flex-end" }}>
+        <Item label="본원 정보 현황">
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, ...valueStyle }}>
+            {selfInfo.name}
+            <span style={{ fontSize: 10.5, fontWeight: 500, color: HD.ink3, background: HD.chip, borderRadius: 999, padding: "2px 8px" }}>E-Gen 신고 기준</span>
           </span>
-        </div>
-        {/* 본원 지정 등급(2026-10-04) — "무슨 병원으로 지정되어 있는가" */}
+        </Item>
         {selfInfo.emergencyLevel && (
-          <div className={itemStyle}>
-            <span className={itemLabelStyle}>본원 지정</span>
-            <span className={itemValueStyle}>{selfInfo.emergencyLevel}</span>
-          </div>
+          <Item label="본원 지정">
+            <span style={valueStyle}>{selfInfo.emergencyLevel}</span>
+          </Item>
         )}
-        <div className={itemStyle}>
-          <span className={itemLabelStyle}>응급실 병상</span>
-          <span className={itemValueStyle}>
+        <Item label="응급실 병상">
+          <span style={bigStyle}>
             {selfInfo.bedCountUnknown ? "미상" : `${selfInfo.availableBedCount}석`}
             {(selfInfo.inFlightCount ?? 0) > 0 ? ` · 이송 중 ${selfInfo.inFlightCount}건` : ""}
           </span>
-        </div>
-        {/* 수용 분야(진료과) — "어떤 분야를 받을 수 있는가". 많으면 앞 4개 + 수 */}
-        {selfInfo.specialties && selfInfo.specialties.length > 0 && (
-          <div className={itemStyle}>
-            <span className={itemLabelStyle}>수용 분야 (진료과 {selfInfo.specialties.length}개)</span>
-            <span className={itemValueStyle}>
-              {selfInfo.specialties.slice(0, 4).map((s) => s.department).join(" · ")}
-              {selfInfo.specialties.length > 4 ? ` 외 ${selfInfo.specialties.length - 4}` : ""}
+        </Item>
+        {authorityPct != null && (
+          <Item label="병상 정보 신뢰도 (AI)">
+            <span style={{ ...bigStyle, color: authorityPct >= 80 ? HD.green : authorityPct >= 50 ? HD.orange : HD.red }}>
+              {authorityPct}%
+              {confirmed ? <span style={{ fontSize: 11.5, fontWeight: 500, color: HD.green }}> ✓ {confirmedAgoMin}분 전 확인</span> : null}
             </span>
-          </div>
+          </Item>
         )}
-        {live && (
-          <div className={itemStyle}>
-            <span className={itemLabelStyle}>병상 정보 신뢰도 (AI)</span>
-            <span className={itemValueStyle}>
-              {Math.round(live.authority * 100)}%
-              {confirmed ? ` ✓ ${confirmedAgoMin}분 전 확인` : ""}
+        {specialties.length > 0 && (
+          <Item label={`수용 분야 (진료과 ${specialties.length}개)`} grow>
+            <span style={{ ...valueStyle, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {specialties.slice(0, 4).map((s) => s.department).join(" · ")}
+              {specialties.length > 4 ? ` 외 ${specialties.length - 4}` : ""}
             </span>
-          </div>
-        )}
-        {selfInfo.bedReliabilityByType &&
-          Object.keys(selfInfo.bedReliabilityByType).length > 0 && (
-            <div className={itemStyle}>
-              <span className={itemLabelStyle}>수술실·입원실 신뢰도 (AI)</span>
-              <span className={itemValueStyle}>
-                {Object.entries(selfInfo.bedReliabilityByType)
-                  .map(([field, typeBr]) => {
-                    const typeLive = liveBedReliability(typeBr, nowMs);
-                    return `${BED_FIELD_LABEL[field] ?? field} ${Math.round(typeLive.authority * 100)}%`;
-                  })
-                  .join(" · ")}
-              </span>
-            </div>
-          )}
-        {declaredGroups.length > 0 && oldest && (
-          <div className={itemStyle}>
-            <span className={itemLabelStyle}>중증질환 수용 신고</span>
-            <span className={itemValueStyle}>
-              {declaredGroups.length}개 질환군 · 가장 오래된 것{" "}
-              {formatDeclarationAge(oldest.ageSec, oldest.ageIsMin)}
-            </span>
-          </div>
+          </Item>
         )}
       </div>
-
-      <div className={css({ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "1" })}>
-        <button type="button" onClick={onConfirm} className={mintButtonStyle}>
-          현재 정보가 맞습니다
-        </button>
-        <span className={css({ fontSize: "xs", color: "ink3" })}>
-          확인하면 구급대 화면의 신뢰도에 즉시 반영됩니다
-        </span>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 30px", alignItems: "flex-end", borderTop: `1px solid ${HD.line}`, paddingTop: 6 }}>
+        {typeEntries.length > 0 && (
+          <Item label="수술실·입원실 신뢰도 (AI)">
+            <span style={valueStyle}>
+              {typeEntries
+                .map(([field, typeBr]) => `${BED_FIELD_LABEL[field] ?? field} ${Math.round(liveBedReliability(typeBr, nowMs).authority * 100)}%`)
+                .join(" · ")}
+            </span>
+          </Item>
+        )}
+        {declaredGroups.length > 0 && oldest && (
+          <Item label="중증질환 수용 신고">
+            <span style={valueStyle}>
+              {declaredGroups.length}개 질환군 · 가장 오래된 것 {formatDeclarationAge(oldest.ageSec, oldest.ageIsMin)}
+            </span>
+          </Item>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px", marginLeft: "auto" }}>
+          <span style={{ fontSize: 11.5, color: HD.muted }}>확인하면 구급대 화면의 신뢰도에 즉시 반영됩니다</span>
+          <button
+            type="button"
+            onClick={onConfirm}
+            style={{
+              minHeight: 36, padding: "0 15px", borderRadius: 999, border: `1.5px solid ${HD.green}`, background: "#FFFFFF",
+              color: HD.green, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+            }}
+          >
+            현재 정보가 맞습니다
+          </button>
+        </div>
       </div>
     </section>
   );

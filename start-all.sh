@@ -18,8 +18,8 @@
 #   ./start-all.sh                    공개 모드 (도메인 주소로 접속)
 #   ./start-all.sh --local            터널 없이 로컬 주소로만 (같은 Wi-Fi 시연·개발용)
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
-#   ./start-all.sh --no-info          info(병원 정보 주기 전송)·E-Gen 스냅샷 수집·거절 로그 수신구 생략
-#   ./start-all.sh --no-snapshot      E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델의 관측 기록)만 생략
+#   ./start-all.sh --no-info          info(병원 정보 주기 전송)·E-Gen 스냅샷 동기화·거절 로그 수신구 생략
+#   ./start-all.sh --no-snapshot      E-Gen 스냅샷 동기화(클라우드 수집분 내려받기, 20분 주기)만 생략
 #   ./start-all.sh --no-sim-dispatch  구급차 출동 시뮬레이션(가짜 GPS) 끄기 — 기본은 켬: 실제 구급차 GPS 수신
 #                                     경로가 아직 없어 구급차 화면의 [이동] 버튼으로 위치를 만든다
 #   ./start-all.sh --dashboard-call   구급차 대시보드에도 [통화 시작] 버튼(마이크 파형) — 기본은 끔: 통화는 대원 휴대폰
@@ -253,9 +253,6 @@ if [ "$RUN_INFO" = 1 ]; then
   echo "info 시작 (병원 정보 → hub, 기본 30분 주기)..."
   "$INFO_PY" -u info/send_to_hub.py > "$LOG_DIR/info.log" 2>&1 &
   PIDS+=("$!")
-  # E-Gen은 과거 이력을 주지 않아서, 병상 신뢰도 모델(reliability/)과 중증신고 신선도가 쓰는
-  # 관측 기록은 직접 찍어 쌓아야 한다. Windows에선 작업 스케줄러(snapshot_nationwide.bat)로
-  # 돌리던 것을 여기서 같이 띄운다 — 전국 1회 호출 × 20분 = 하루 약 145회(서울만 받을 때와 같음).
   # 거절 로그 수신구(포트 5003). hub가 병원 거절·도착 후 수용 불가·무응답을 그때 화면에 보였던 병상 수·
   # 신뢰도 확률과 함께 보낸다 — 신뢰도 모델의 정답(G2 라벨) 재료라 안 띄우면 그 기간 로그는 영영 사라진다
   # (소급 생성 불가). 예전엔 따로 켜야 해서 실제로는 버려지고 있었다(2026-10-01 기본 실행).
@@ -263,11 +260,24 @@ if [ "$RUN_INFO" = 1 ]; then
   (cd info/Hospital_inform/info && PYTHONIOENCODING=utf-8 exec "$INFO_PY" -u -m hospital_score.ingest) \
       > "$LOG_DIR/rejection.log" 2>&1 &
   PIDS+=("$!")
+  # E-Gen 스냅샷은 2026-10-04부터 클라우드(Supabase Edge Function, pg_cron 20분)가 수집한다
+  # — 수집 장비(노트북)를 들고 이동해도 관측이 안 끊기게 하기 위한 이관. 여기서는 로컬 수집기
+  # (info/snapshot.py) 대신 그 수집분을 20분마다 내려받아 snapshots_nationwide/를 복원한다
+  # (snapshot_cloud.py --sync — 신뢰도 보드·live_board가 읽는 건 여전히 로컬 파일이라 소비 코드 불변).
+  # SNAPSHOT_SUPABASE_URL이 .env에 없으면 건너뛴다(fail-soft). SERVICE_KEY까지 있는 장비(과거
+  # 로컬 수집분을 가진 노트북)는 완결된 날짜를 먼저 --seed로 올려 클라우드 아카이브를 메꾼다.
   if [ "$RUN_SNAPSHOT" = 1 ]; then
-    echo "E-Gen 스냅샷 수집 시작 (전국, 20분 주기)..."
-    (cd info/Hospital_inform && PYTHONIOENCODING=utf-8 exec "$INFO_PY" -u info/snapshot.py --stage1 "" \
-        --interval 1200 --dir info/data/snapshots_nationwide) > "$LOG_DIR/snapshot.log" 2>&1 &
-    PIDS+=("$!")
+    INFO_ENV="info/Hospital_inform/.env"
+    if grep -q '^SNAPSHOT_SUPABASE_URL=' "$INFO_ENV" 2>/dev/null; then
+      echo "E-Gen 스냅샷 동기화 시작 (클라우드 → 로컬, 새 수집분이 생기면 바로 — 첫 실행은 과거분 전체라 오래 걸릴 수 있음)..."
+      # --watch(2026-10-04): 클라우드 수집기가 올리는 것을 1분마다 확인해 생기면 바로 sync — 예전 20분 고정
+      # 주기보다 그래프 반영이 빠르다. SERVICE_KEY 있는 장비의 --seed는 감시 안에서 20분마다 그대로 한다.
+      (cd info/Hospital_inform/info && export PYTHONIOENCODING=utf-8 && \
+          exec "$INFO_PY" -u snapshot_cloud.py --watch) > "$LOG_DIR/snapshot.log" 2>&1 &
+      PIDS+=("$!")
+    else
+      echo "⚠️  $INFO_ENV 에 SNAPSHOT_SUPABASE_URL이 없어 스냅샷 동기화를 건너뜁니다 — 신뢰도 보드가 이 장비의 과거 수집분만 봅니다."
+    fi
   fi
 fi
 
