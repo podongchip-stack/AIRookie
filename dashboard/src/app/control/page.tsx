@@ -406,6 +406,9 @@ const sceneOptions = (reportKey: string | null | undefined): Template[] => {
   return report ? PATIENT_TEMPLATES.filter((t) => t.report === report) : REPORT_TEMPLATES;
 };
 
+// 대량사고 사상자 수 입력의 처음 값(시연 초기화 때도 이 값으로 되돌린다)
+const MCI_DEFAULT_COUNTS = { high: 2, medium: 3, low: 4 };
+
 const PRESET_LOCATIONS = [
   { label: "서울시청 앞", lat: 37.5665, lng: 126.978 },
   { label: "이태원역", lat: 37.5345, lng: 126.9942 },
@@ -720,7 +723,7 @@ export default function ControlPage() {
   const pendingDispatchRef = useRef<Record<string, string>>({}); // apid -> 방금 보낸 caseId(중복 출동 방지)
   const [mciOn, setMciOn] = useState(false);
   const [mciRemaining, setMciRemaining] = useState(0);
-  const [mciCounts, setMciCounts] = useState({ high: 2, medium: 3, low: 4 });
+  const [mciCounts, setMciCounts] = useState(MCI_DEFAULT_COUNTS);
   // 사상자별 사건(2026-10-05, 대량사고 현황표) — 화면에 그리려고 ref와 별도로 상태로도 든다
   const [mciCasualties, setMciCasualties] = useState<MciCasualty[]>([]);
   const [mciTotal, setMciTotal] = useState(0);
@@ -839,7 +842,8 @@ export default function ControlPage() {
     return pending.length;
   }
 
-  // [시연 초기화] — hub에 sim_reset을 보내고 콘솔 로컬 상태(대기열·계획·사건 기억)도 비운다
+  // [시연 초기화] — hub에 sim_reset을 보내고 콘솔 로컬 상태도 처음 연 화면 그대로 되돌린다(2026-10-06: 예전엔 사건·대량사고
+  // 진행만 비우고 장소 검색어·결과, 고른 지점·신고 증상, 입력 방식, 추가 통화 선택, 대량사고 입력값 등이 남았다)
   function handleSimReset() {
     if (!window.confirm("모든 사건을 종료하고 전 구급대를 기지로 되돌릴까요? (시연 초기화)")) return;
     Object.values(timersRef.current).forEach(clearInterval);
@@ -860,6 +864,29 @@ export default function ControlPage() {
     setManualArrival(false);
     setDispatchInfo(null);
     setVerifyKey(null);
+    // ① 신고 접수 입력
+    setSelectedApid(null);
+    setSpot(PRESET_LOCATIONS[0]);
+    setReportedKey(null);
+    setQuery("");
+    setSearchResults([]);
+    setSearchError(null);
+    // ② 현장 확인 · ④ 이송 중
+    setInputMode("template");
+    setTemplateCases({});
+    setSending(false);
+    setFollowupMode("template");
+    setFollowupKey("shock");
+    setFollowupSent({});
+    setRejectTarget(null);
+    setTripStart({});
+    // 대량사고 입력·현장
+    mciSpotRef.current = null;
+    mciDispatchedRef.current = 0;
+    setMciCounts(MCI_DEFAULT_COUNTS);
+    setMciRefuseTarget(null);
+    setMciSpotLabel("");
+    setCaseHospital({});
     if (sendSimCommand("sim_reset", "*", "")) note("시연 초기화 — 모든 사건 종료, 전 구급대 기지 복귀");
   }
 
@@ -2672,7 +2699,7 @@ function SourceBadge({ source, label, need }: { source: "voice" | "template" | n
   );
 }
 
-// 시간 기반 존 확장 카운트다운(2026-10-04) — 승인·확정 병원이 없으면 hub가 30초마다 요청 범위를 한 단계 넓힌다.
+// 시간 기반 존 확장 카운트다운(2026-10-04) — 승인·확정 병원이 없으면 hub가 1분(HUB_ZONE_EXPAND_SEC)마다 요청 범위를 한 단계 넓힌다.
 // [건너뛰기]는 기다리지 않고 바로 넓힌다. expandAt이 없으면(승인 병원 있음·더 넓힐 수 없음) 멈춤 안내만.
 function ZoneCountdown({ expandAt, pausedLeft, zone, onSkip }: {
   expandAt: string | null;
