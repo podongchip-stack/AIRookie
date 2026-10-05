@@ -63,24 +63,42 @@
   #intro .brand2 { position: absolute; left: 60px; top: 40px; display: flex; align-items: center; gap: 12px;
     font-size: 16px; font-weight: 700; letter-spacing: .22em; color: #fff; }
   #intro .brand2 i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #fff; }
-  #intro .no { position: absolute; left: 180px; top: 170px; font-size: 20px; font-weight: 600; color: #fff; opacity: .8; }
-  #intro .big { position: absolute; left: 180px; top: 215px; font-size: 220px; font-weight: 900; letter-spacing: -0.05em; line-height: 1; color: #fff; }
-  #intro h1 { position: absolute; left: 180px; top: 470px; width: 900px; font-size: 52px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.25; color: #fff; }
+  #intro .no { position: absolute; left: 180px; top: 270px; font-size: 24px; font-weight: 700; color: #fff; opacity: .85; }
+  #intro .big { display: none; }
+  #intro h1 { position: absolute; left: 180px; top: 315px; width: 1000px; font-size: 62px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.25; color: #fff; }
   #intro h1 em { font-style: normal; color: #FF6B6F; }
-  #intro ul { position: absolute; left: 180px; top: 650px; width: 900px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  #intro ul { position: absolute; left: 180px; top: 470px; width: 900px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
   #intro li { font-size: 20px; color: #fff; opacity: .78; line-height: 1.4; padding-left: 18px; position: relative; }
   #intro li::before { content: ""; position: absolute; left: 0; top: 10px; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
-  #intro .tags { position: absolute; left: 180px; top: 830px; display: flex; gap: 8px; }
+  #intro .tags { position: absolute; left: 180px; top: 680px; display: flex; gap: 8px; }
   #intro .tags span { font-size: 15px; font-weight: 600; padding: 4px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); color: #fff; }
   #intro .disc { position: absolute; left: 180px; bottom: 50px; font-size: 15px; font-weight: 600; color: #fff; opacity: .7; }
+  /* 대본 카드(시나리오 앞): 영화 대본처럼 장면 번호 · 장소 · 지문 · 대사. 검은 판 + 흰 글자 */
+  #script { position: absolute; inset: 0; z-index: 55; display: none; background: #000; opacity: 0; transition: opacity .5s ease; color: #fff; padding: 70px 150px 0 150px; }
+  #script.show { opacity: 1; }
+  #script .tag { font-size: 16px; font-weight: 700; letter-spacing: .3em; opacity: .7; }
+  #script h2 { font-size: 46px; font-weight: 800; letter-spacing: -0.03em; margin: 14px 0 22px; line-height: 1.2; }
+  #script .rule { height: 2px; background: rgba(255,255,255,.5); margin-bottom: 8px; }
+  #script .sc { display: grid; grid-template-columns: 110px 1fr 640px; gap: 0 30px; padding: 20px 0; border-bottom: 1px solid rgba(255,255,255,.18);
+    opacity: 0; transform: translateY(14px); transition: opacity .45s ease, transform .45s ease; }
+  #script.show .sc.on { opacity: 1; transform: none; }
+  #script .sc .n { font-size: 34px; font-weight: 900; line-height: 1; }
+  #script .sc .slug { font-size: 26px; font-weight: 800; letter-spacing: -0.01em; }
+  #script .sc .act { font-size: 19px; line-height: 1.45; opacity: .75; margin-top: 6px; }
+  #script .sc .dlg { border-left: 3px solid #FF6B6F; padding-left: 20px; align-self: center; }
+  #script .sc .dlg .who { font-size: 15px; font-weight: 800; letter-spacing: .12em; color: #FF8A8E; }
+  #script .sc .dlg .say { font-size: 24px; font-weight: 600; line-height: 1.4; margin-top: 3px; }
+  #script .sc.nodlg .dlg { visibility: hidden; }
+  #script .foot { position: absolute; left: 150px; bottom: 44px; font-size: 15px; font-weight: 600; opacity: .7; }
   /* 모티프가 없는 카드(마지막 요약): 결과 줄을 크게 */
   #intro:not([data-motif="chest"]) h1 { font-size: 58px; top: 250px; width: 1600px; }
+  #intro:not([data-motif="chest"]) .no { top: 205px; }
   #intro:not([data-motif="chest"]) ul { top: 400px; gap: 18px; width: 1400px; }
   #intro:not([data-motif="chest"]) li { font-size: 38px; opacity: 1; padding-left: 28px; }
   #intro:not([data-motif="chest"]) li::before { top: 18px; width: 10px; height: 10px; }
   #intro:not([data-motif="chest"]) .tags { top: 820px; }
   /* 흉통 모티프(motif=chest): 심전도와 활력징후를 크게 */
-  #intro .motif { display: none; position: absolute; right: 130px; top: 170px; width: 620px; }
+  #intro .motif { display: none; position: absolute; right: 130px; top: 250px; width: 620px; }
   #intro[data-motif="chest"] .motif { display: block; }
   #intro .motif .ecg { width: 100%; height: 220px; border: 2px solid rgba(255,255,255,.35); border-radius: 22px; padding: 14px 20px; position: relative; }
   #intro .motif .ecg path { fill: none; stroke: #FF6B6F; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1400; stroke-dashoffset: 1400; }
@@ -107,6 +125,7 @@
 </div>
 <div id="caption"><div class="step"></div><div class="text"></div><div class="sub"></div></div>
 <div id="explain"><div class="k">작동 원리</div><div class="h"></div><ul></ul></div>
+<div id="script"><div class="tag">SCENARIO</div><h2></h2><div class="rule"></div><div class="rows"></div><div class="foot">대본은 시연을 위한 연출입니다 · 가상 시나리오 · 실제 병원의 응답이 아닙니다</div></div>
 <div id="intro"><div class="brand2"><i></i>GOLDENLINK</div><div class="no"></div><div class="big"></div><h1></h1><ul></ul><div class="tags"></div><div class="motif"><svg class="heart" viewBox="0 0 24 24"><path fill="#FF6B6F" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 2.7 4.8 6.3 4.8c2.1 0 3.9 1.1 5.7 3.3 1.8-2.2 3.6-3.3 5.7-3.3 3.6 0 5.4 3.6 3.9 7C19.5 16.4 12 21 12 21z"/></svg><div class="ecg"><svg viewBox="0 0 520 130" width="100%" height="100%" preserveAspectRatio="none"><path d="M0 70 H70 l10 -8 10 8 H130 l10 14 14 -70 16 100 12 -44 H230 l12 -12 14 12 H300 l10 14 14 -70 16 100 12 -44 H400 l12 -12 14 12 H520"/></svg></div><div class="vitals"><div><small>혈압</small><b>160/95</b><em>mmHg</em></div><div><small>맥박</small><b>100</b><em>회/분</em></div><div><small>산소포화도</small><b class="ok">95</b><em>%</em></div></div><div class="pain">가슴 가운데가 묵직하게 아픔 · 식은땀 · 숨참</div></div><div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다 · 병원 정보는 E-Gen 실제 데이터</div></div>
 <script>
 (() => {
@@ -149,6 +168,7 @@
   let lastCardsKey = "";
   function findEl(doc, f) {
     const e = findOne(doc, f);
+    if (e && f.parents) { let x = e; for (let i = 0; i < f.parents && x.parentElement; i++) x = x.parentElement; return x; } // parents: 부모로 n단계
     return e && f.up ? e.closest(f.up) : e; // up: 찾은 요소를 품은 가장 가까운 조상(예: "section")으로 넓힌다
   }
   function findOne(doc, f) {
@@ -156,7 +176,12 @@
       const els = [...doc.querySelectorAll(f.css)];
       return f.has ? els.find((e) => e.textContent.includes(f.has)) : els[f.nth || 0];
     }
-    if (f.panel) return [...doc.querySelectorAll("section")].find((e) => e.querySelector("h2")?.textContent.includes(f.panel));
+    if (f.panel) {
+      // 제목은 h2일 수도, 새 디자인(2026-10-05)처럼 일반 div일 수도 있다. 제목 글자로 시작하는 말단 요소를 품은 section 중 가장 안쪽
+      const hits = [...doc.querySelectorAll("section")].filter((sec) =>
+        [...sec.querySelectorAll("h1,h2,h3,div,span")].some((t) => t.children.length === 0 && t.textContent.trim().startsWith(f.panel)));
+      return hits.find((e) => !hits.some((o) => o !== e && e.contains(o)));
+    }
     if (f.tag) {
       const els = [...doc.querySelectorAll(f.tag)].filter((e) => !f.has || e.textContent.includes(f.has));
       return els.find((e) => !els.some((o) => o !== e && e.contains(o))); // 가장 안쪽
@@ -170,7 +195,7 @@
       const els = (p.crop.any || [p.crop]).map((f) => findEl(doc, f)).filter(Boolean);
       els.forEach((e) => e.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }));
       const rects = els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
-      if (!rects.length) return null;
+      if (!rects.length) { console.warn("[카드 못 찾음]", p.id, JSON.stringify(p.crop)); return null; }
       const x0 = Math.max(0, Math.min(...rects.map((r) => r.left)) - CARD_PAD), y0 = Math.max(0, Math.min(...rects.map((r) => r.top)) - CARD_PAD);
       const x1 = Math.max(...rects.map((r) => r.right)) + CARD_PAD, y1 = Math.max(...rects.map((r) => r.bottom)) + CARD_PAD;
       return { x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0) };
@@ -266,7 +291,7 @@
       layout();
     },
     setScenario(no, title) {
-      document.getElementById("scenario").innerHTML = `<span class="no">${no}</span>${ns(title)}`;
+      document.getElementById("scenario").textContent = `시나리오 ${parseInt(no, 10)}번 : ${ns(title)}`;
     },
     // 창을 하나 연다. 같은 id면 주소만 바꾼다. iframe이 다 뜨면 끝난다.
     addPane(id, { url, kind = "dash", label = "", visible = true }) {
@@ -341,15 +366,28 @@
       document.body.classList.add("explaining");
       e.classList.remove("show"); void e.offsetWidth; e.classList.add("show");
     },
+    // 대본 카드: scenes = [{slug, action, lines:[{who, text}]}]. 장면이 차례로 나타난다
+    script({ no, title, scenes = [], stepMs = 450 }, show = true) {
+      const el = document.getElementById("script");
+      if (!show) { el.classList.remove("show"); setTimeout(() => (el.style.display = "none"), 600); return; }
+      el.querySelector("h2").textContent = `시나리오 ${parseInt(no, 10)}번 : ${ns(title)}`;
+      el.querySelector(".rows").innerHTML = scenes.map((c, i) => {
+        const d = (c.lines || [])[0];
+        return `<div class="sc${d ? "" : " nodlg"}"><div class="n">S#${i + 1}</div><div><div class="slug">${ns(c.slug)}</div><div class="act">${ns(c.action)}</div></div>` +
+          `<div class="dlg">${d ? `<div class="who">${ns(d.who)}</div><div class="say">“${ns(d.text)}”</div>` : ""}</div></div>`;
+      }).join("");
+      el.style.display = "block";
+      requestAnimationFrame(() => {
+        el.classList.add("show");
+        el.querySelectorAll(".sc").forEach((r, i) => setTimeout(() => r.classList.add("on"), 250 + i * stepMs));
+      });
+    },
     intro({ no, title, lines = [], tags = [], motif = "" }, show = true) {
       const el = document.getElementById("intro");
       if (!show) { el.classList.remove("show"); setTimeout(() => (el.style.display = "none"), 650); return; }
-      el.querySelector(".no").textContent = `시나리오 ${no}`;
+      el.querySelector(".no").textContent = `시나리오 ${parseInt(no, 10)}번`;
       el.dataset.motif = motif || "";
-      const parts = ns(title).split(" · ");
-      const big = el.querySelector(".big"), h1 = el.querySelector("h1");
-      if (motif && parts.length > 1) { big.textContent = parts[0]; h1.textContent = parts.slice(1).join(" · "); big.style.display = ""; h1.style.top = ""; }
-      else { big.textContent = ""; big.style.display = "none"; h1.textContent = ns(title); }
+      el.querySelector("h1").textContent = ns(title);
       el.querySelector("ul").innerHTML = lines.map((l) => `<li>${ns(l)}</li>`).join("");
       el.querySelector(".tags").innerHTML = tags.map((t) => `<span>${ns(t)}</span>`).join("");
       el.style.display = "flex";
@@ -363,7 +401,8 @@
     const st = doc.createElement("style");
     st.id = "demo-pretendard";
     st.textContent = `@font-face { font-family: "Pretendard"; font-weight: 45 920; font-display: block; src: url("/demo-fonts/PretendardVariable.woff2") format("woff2-variations"); }
-      html, body, body *, button, input, select, textarea { font-family: "Pretendard", sans-serif !important; }`;
+      html, body, body *, button, input, select, textarea { font-family: "Pretendard", sans-serif !important; }
+      nextjs-portal, [data-nextjs-toast], [data-nextjs-dev-tools-button] { display: none !important; }`; // 개발 서버의 이슈 표시("1 Issue")는 영상에 안 나오게
     doc.head.append(st);
   }
   // 영상에 짙은 남색을 쓰지 않는다: 각 창(대시보드)의 짙은 남색·청색 글자/배경/테두리를 검정으로 바꾼다. 대시보드 소스는 건드리지 않는다
@@ -373,7 +412,7 @@
     const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || "");
     if (!m) return false;
     const r = +m[1], g = +m[2], b = +m[3];
-    return Math.max(r, g, b) < 165 && b - r >= 30 && b >= g;
+    return Math.max(r, g, b) < 190 && b - r >= 60 && b >= g;
   }
   function fixNavy(frame) {
     const doc = frame.contentDocument, win = frame.contentWindow;

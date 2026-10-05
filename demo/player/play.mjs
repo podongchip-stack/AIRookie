@@ -79,26 +79,26 @@ const EX = {
 // ── 카드 모드의 장면별 카드: 장면 키(caption.ex) → { 창 종류: 찾기 }. 찾기 문법은 demo-stage.html의 카드 모드 참고.
 // 창 종류: amb(구급차 대시보드) · phone(대원 휴대폰) · hosp(지금 응답하는 병원 대시보드). 카드가 아직 안 나타나면 창 전체를 보여 주다 나타나면 따라간다.
 const PHONE = { css: "html" };
-const CAND = { panel: "병원 후보", vh: 760 };
-const MAP = { panel: "지도", vh: 760 };
+const CAND = { panel: "병원 후보 리스트", vh: 760 };
+const MAP = { css: "[aria-label*='위치를 표시한 지도']", vh: 760 };
 // 지도가 안 뜨는 환경(카카오 키·도메인 미등록)에선 오류 문구가 그대로 찍히므로 출동 상태 패널(단계 문구가 바뀐다)로 대신 보여 준다
 const DISPATCH = { any: ["기지 대기", "현장으로 출동 중", "병원으로 이송 중", "병원 도착 — 수용 결과 대기", "재선택 대기 (", "기지 복귀 중"].map((t) => ({ tag: "span", has: t, up: "section" })), vh: 760 };
 const NO_MAP = { dispatch: { amb: DISPATCH }, transport: { amb: DISPATCH } };
 const SUMMARY = { panel: "통화 요약" };
-const REQUEST = { panel: "구급차 수용 요청", vh: 1000 };
+const REQUEST = { css: "article", nth: 0, vh: 1000 };
 const CARDS = {
   dispatch: { amb: MAP },
-  arrive: { phone: PHONE, amb: { tag: "li", has: "첫 연락 추천" } },
-  call: { phone: PHONE, amb: { css: "h2", has: "통화 현황", up: "section" } },
+  arrive: { phone: PHONE, amb: { tag: "span", has: "첫 연락 추천", parents: 2, vh: 760 } },
+  call: { phone: PHONE, amb: SUMMARY },
   structuring: { amb: SUMMARY },
   structured: { amb: SUMMARY },
   broadcast: { amb: CAND },
-  reject: { hosp: REQUEST, amb: CAND },
-  approve: { hosp: REQUEST, amb: CAND },
+  reject: { hosp: REQUEST },
+  approve: { hosp: REQUEST },
   zone: { amb: CAND },
   confirm: { amb: CAND },
   transport: { amb: MAP },
-  refuse: { hosp: REQUEST, amb: CAND },
+  refuse: { hosp: REQUEST },
   reselect: { amb: CAND },
   arrival: { hosp: REQUEST }, // 수용 완료로 사건이 닫혀도 카드는 직전 영역을 유지한다
 };
@@ -422,7 +422,7 @@ async function main() {
   const outDir = path.resolve(args[args.indexOf("--out") + 1] && args.includes("--out") ? args[args.indexOf("--out") + 1] : path.join(DEMO, "out"));
   fs.mkdirSync(outDir, { recursive: true });
   const TARGET_SEC = DH && scenario.durationSec ? Number(scenario.durationSec) : 0; // 영상 길이 고정(초)
-  if (TARGET_SEC) { TIGHT = true; PACE = scenario.pace ?? 0.75; }
+  if (TARGET_SEC) { TIGHT = true; PACE = scenario.pace ?? 0.7; }
 
   const browser = await chromium.launch({
     channel: "chrome",
@@ -464,6 +464,13 @@ async function main() {
   await dir.stage("focus", home);
   await sleep(Math.max(0, (scenario.introSec || (EXPLAIN || DH ? 5 : 8)) * 1000 - 1000));
   await dir.stage("intro", {}, false);
+  if (scenario.script) {
+    // 시나리오 앞의 대본 카드(영화 대본 형식): 장면 번호 · 장소 · 지문 · 대사
+    await sleep(600);
+    await dir.stage("script", { no: scenario.id, title: scenario.title, scenes: scenario.script }, true);
+    await sleep((scenario.scriptSec || 5) * 1000);
+    await dir.stage("script", {}, false);
+  }
   await pace(800);
 
   const results = await Promise.all(scenario.ambulances.map((a, i) => runAmbulance(ctx, a, i)));
