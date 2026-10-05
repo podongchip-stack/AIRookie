@@ -8,6 +8,7 @@
 #   ./demo/record.sh all           demo/scenarios/*.json 전부
 #   ./demo/record.sh --play 01     녹화 없이 화면으로만 재생(확인용)
 #   ./demo/record.sh --explain 01  장면마다 "작동 원리" 설명 상자를 띄워 녹화 → scenario_01_explain.mp4(합본 영상용)
+#   ./demo/record.sh --dh 05       카드 모드(차분한 화면 + 장면마다 중요한 카드만 확대) → scenario_05_dh.mp4
 #   ./demo/record.sh --calm 03     차분한 화면(썸네일 없음·화면 전환 최소)으로 녹화 → scenario_03_calm.mp4(합본 영상용)
 #
 # 먼저 떠 있어야 하는 것: voice(대본 구조화 — ./voice/start-voice.sh, demo 브랜치 코드). 나머지는 이 스크립트가 띄운다:
@@ -38,20 +39,21 @@ for a in "$@"; do
   case "$a" in
     --play) PLAY_ONLY=1 ;;
     --explain) EXPLAIN_ARG="--explain"; SUFFIX="_explain" ;;
+    --dh) [ -z "$EXPLAIN_ARG" ] && { EXPLAIN_ARG="--dh"; SUFFIX="_dh"; } ;;
     --calm) [ -z "$EXPLAIN_ARG" ] && { EXPLAIN_ARG="--calm"; SUFFIX="_calm"; } ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     all) for f in "$DEMO"/scenarios/*.json; do IDS+=("$(basename "$f" .json)"); done ;;
     *) IDS+=("$a") ;;
   esac
 done
-[ ${#IDS[@]} -gt 0 ] || { sed -n '2,21p' "$0"; exit 1; }
+[ ${#IDS[@]} -gt 0 ] || { sed -n '2,22p' "$0"; exit 1; }
 
 # hub 파이썬 찾기(start-all.sh와 같은 규칙, 간단히)
 if [ -z "${HUB_PY:-}" ]; then
   for base in "${CONDA_ENVS:-}" "$HOME/anaconda3/envs" "$HOME/miniconda3/envs" /opt/anaconda3/envs /opt/homebrew/anaconda3/envs \
               "$( [ "$OS" = windows ] && cygpath -u "${USERPROFILE:-}" 2>/dev/null)/anaconda3/envs"; do
     [ -n "$base" ] || continue
-    for c in "$base/rookie_hub/python.exe" "$base/rookie_hub/bin/python"; do [ -x "$c" ] && HUB_PY="$c" && break 2; done
+    for c in "$base/AIROOKIE/bin/python" "$base/rookie_hub/python.exe" "$base/rookie_hub/bin/python"; do [ -x "$c" ] && HUB_PY="$c" && break 2; done
   done
 fi
 [ -n "${HUB_PY:-}" ] && [ -x "$HUB_PY" ] || { echo "❌ hub 파이썬(rookie_hub)을 못 찾았습니다. HUB_PY=<경로> 로 지정하세요"; exit 1; }
@@ -101,8 +103,9 @@ for id in "${IDS[@]}"; do
   else
     if node "$DEMO/player/play.mjs" "$id" --record --out "$DEMO/out" $EXPLAIN_ARG; then
       name="scenario_$id$SUFFIX"
+      if [ -f "$DEMO/out/$name.mp4" ] && [ ! -f "$DEMO/out/$name.webm" ]; then echo "✅ $DEMO/out/$name.mp4"; else
       "$FFMPEG" -v error -y -i "$DEMO/out/$name.webm" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart "$DEMO/out/$name.mp4" \
-        && rm -f "$DEMO/out/$name.webm" && echo "✅ $DEMO/out/$name.mp4"
+        && rm -f "$DEMO/out/$name.webm" && echo "✅ $DEMO/out/$name.mp4"; fi
     else
       echo "⚠ 시나리오 $id 녹화 실패(로그: $LOG_DIR/hub_$id.log)"
     fi

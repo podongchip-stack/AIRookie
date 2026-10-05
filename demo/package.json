@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
-    "playwright-core": "^1.56.0"
+    "playwright-core": "^1.56.0",
+    "pretendard": "^1.3.9"
   }
 }

@@ -13,7 +13,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { chromium } from "playwright-core";
+import ffmpegStatic from "ffmpeg-static";
 import { HubLink } from "./hub.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -36,8 +39,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 장면이 원래 길면(통화 등) 더 기다리지 않는다. 설명이 없는 장면은 상자를 내린다.
 const EXPLAIN = process.argv.includes("--explain");
 // 차분한 모드(--calm, 설명 모드는 자동): 썸네일 없음 · 관제 지도로 넘어가지 않음 · 자막 한 줄 — 합본 영상용
-const CALM = EXPLAIN || process.argv.includes("--calm");
-const SUFFIX = EXPLAIN ? "_explain" : CALM ? "_calm" : "";
+// 카드 모드(--dh): 차분한 모드 + 장면마다 중요한 카드만 확대해 보여 준다(CARDS). 구급차 1대 시나리오용
+const DH = process.argv.includes("--dh");
+const CALM = EXPLAIN || DH || process.argv.includes("--calm");
+const SUFFIX = EXPLAIN ? "_explain" : DH ? "_dh" : CALM ? "_calm" : "";
 const PACE = EXPLAIN ? 0.55 : 1;
 const EXPLAIN_MIN_MS = 5200;
 const pace = (ms) => sleep(ms * PACE);
@@ -70,6 +75,72 @@ const EX = {
   arrival: { title: "의사결정 블랙박스", lines: ["모든 결정이 <b>시각 + 해시 체인</b>으로 기록 — 위변조 검증"] },
 };
 
+// ── 카드 모드의 장면별 카드: 장면 키(caption.ex) → { 창 종류: 찾기 }. 찾기 문법은 demo-stage.html의 카드 모드 참고.
+// 창 종류: amb(구급차 대시보드) · phone(대원 휴대폰) · hosp(지금 응답하는 병원 대시보드). 카드가 아직 안 나타나면 창 전체를 보여 주다 나타나면 따라간다.
+const PHONE = { css: "html" };
+const CAND = { panel: "병원 후보", vh: 760 };
+const MAP = { panel: "지도", vh: 760 };
+// 지도가 안 뜨는 환경(카카오 키·도메인 미등록)에선 오류 문구가 그대로 찍히므로 출동 상태 패널(단계 문구가 바뀐다)로 대신 보여 준다
+const DISPATCH = { any: ["기지 대기", "현장으로 출동 중", "병원으로 이송 중", "병원 도착 — 수용 결과 대기", "재선택 대기 (", "기지 복귀 중"].map((t) => ({ tag: "span", has: t, up: "section" })), vh: 760 };
+const NO_MAP = { dispatch: { amb: DISPATCH }, transport: { amb: DISPATCH } };
+const SUMMARY = { panel: "통화 요약" };
+const REQUEST = { panel: "구급차 수용 요청", vh: 1000 };
+const CARDS = {
+  dispatch: { amb: MAP },
+  arrive: { phone: PHONE, amb: { tag: "li", has: "첫 연락 추천" } },
+  call: { phone: PHONE, amb: { css: "h2", has: "통화 현황", up: "section" } },
+  structuring: { amb: SUMMARY },
+  structured: { amb: SUMMARY },
+  broadcast: { amb: CAND },
+  reject: { hosp: REQUEST, amb: CAND },
+  approve: { hosp: REQUEST, amb: CAND },
+  zone: { amb: CAND },
+  confirm: { amb: CAND },
+  transport: { amb: MAP },
+  refuse: { hosp: REQUEST, amb: CAND },
+  reselect: { amb: CAND },
+  arrival: { hosp: REQUEST }, // 수용 완료로 사건이 닫혀도 카드는 직전 영역을 유지한다
+};
+
+// ── 고프레임 녹화(--dh): Playwright 내장 녹화는 25fps 고정이라 쓰지 않고, 크롬이 보내 주는 화면 프레임을 받아 일정한 간격(fps)으로
+// ffmpeg에 넣어 mp4를 바로 만든다. 새 프레임이 없는 동안(정지 화면)에는 직전 프레임을 반복한다. 크롬이 실제로 그려 주는 프레임은
+// 환경에 따라 60fps 안팎이 한계라, fps를 그 이상 올리면 같은 장면이 반복될 뿐 더 부드러워지지는 않는다.
+async function startRecorder(page, out, fps) {
+  const cdp = await page.context().newCDPSession(page);
+  const ff = spawn(ffmpegStatic, ["-v", "error", "-y", "-f", "image2pipe", "-framerate", String(fps), "-c:v", "mjpeg", "-i", "-",
+    "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-r", String(fps), "-movflags", "+faststart", out], { stdio: ["pipe", "inherit", "inherit"] });
+  const exited = once(ff, "exit");
+  ff.stdin.on("error", () => {});
+  let last = null, stopped = false, gotFirst;
+  const first = new Promise((r) => (gotFirst = r));
+  cdp.on("Page.screencastFrame", (e) => {
+    last = Buffer.from(e.data, "base64");
+    gotFirst();
+    cdp.send("Page.screencastFrameAck", { sessionId: e.sessionId }).catch(() => {});
+  });
+  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: 1920, maxHeight: 1080, everyNthFrame: 1 });
+  await first;
+  const t0 = process.hrtime.bigint();
+  const loop = (async () => {
+    for (let n = 0; !stopped; n++) {
+      const due = t0 + BigInt(Math.round((n * 1e9) / fps));
+      const wait = Number(due - process.hrtime.bigint()) / 1e6;
+      if (wait > 2) await sleep(wait - 1);
+      if (!ff.stdin.write(last)) await once(ff.stdin, "drain");
+    }
+  })();
+  return {
+    t0Ms: Date.now(),
+    async stop() {
+      stopped = true;
+      await loop;
+      await cdp.send("Page.stopScreencast").catch(() => {});
+      ff.stdin.end();
+      await exited;
+    },
+  };
+}
+
 function loadScenario(arg) {
   const file = fs.existsSync(arg) ? arg : path.join(DEMO, "scenarios", `${String(arg).padStart(2, "0")}.json`);
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -79,7 +150,15 @@ function loadScenario(arg) {
 class Director {
   constructor(page) {
     this.page = page;
+    this.panes = {}; // 카드 모드에서 창 종류(amb·phone·hosp) → 창 id
     this.chain = Promise.resolve();
+  }
+  // 구급차 대시보드의 지도가 오류 문구로 떠 있는지(카카오 키·도메인 미등록)
+  mapBroken() {
+    return this.page.evaluate((id) => {
+      const f = document.getElementById("frame-" + id);
+      return !!f?.contentDocument?.body?.innerText.includes("KAKAO_MAP_APP_KEY");
+    }, this.panes.amb);
   }
   stage(fn, ...args) {
     return this.page.evaluate(([f, a]) => window.stage[f](...a), [fn, args]);
@@ -88,14 +167,23 @@ class Director {
   scene(focus, caption, body = async () => {}, holdMs = 2500) {
     const run = async () => {
       const ex = EXPLAIN && caption.ex ? EX[caption.ex] : null;
-      await this.stage("focus", focus);
+      const cards = DH && caption.ex && ((NO_MAP[caption.ex] && (await this.mapBroken())) ? NO_MAP[caption.ex] : CARDS[caption.ex]);
+      if (cards) {
+        const map = {};
+        for (const [kind, find] of Object.entries(cards)) if (this.panes[kind]) map[this.panes[kind]] = find;
+        await this.stage("cards", map);
+      } else {
+        if (DH) await this.stage("cards", {});
+        await this.stage("focus", focus);
+      }
       await this.stage("caption", caption.step, caption.text, CALM ? "" : caption.sub || "", caption.tone || "");
       await this.stage("explain", ex ? ex.title : null, ex ? ex.lines : []);
       const t0 = Date.now();
       await body();
       // 원래 보여 주던 시간(PACE배), 설명이 있으면 읽을 만큼은 보장
       const left = ex ? EXPLAIN_MIN_MS - (Date.now() - t0) : 0;
-      await sleep(Math.max(holdMs * PACE, left));
+      // 수용 완료 직후엔 사건이 닫혀 카드가 비므로 카드 모드에선 오래 붙잡지 않는다
+      await sleep(Math.max((DH && caption.ex === "arrival" ? Math.min(holdMs, 300) : holdMs) * PACE, left));
     };
     const p = this.chain.then(run, run);
     this.chain = p.catch(() => {});
@@ -150,6 +238,7 @@ async function runAmbulance(ctx, spec, idx) {
   const caseId = `demo-${scenario.id}-${spec.apid}-${Date.now().toString(36)}`;
   const amb = `amb-${spec.apid}`;
   const phone = `phone-${spec.apid}`;
+  Object.assign(dir.panes, { amb, phone });
   const frame = (id) => page.frameLocator(`#frame-${id}`);
   await sleep((spec.startDelaySec || 0) * 1000);
 
@@ -240,6 +329,7 @@ async function runAmbulance(ctx, spec, idx) {
       if (!h) continue;
       responded.add(h.hospitalId);
       const hp = `h-${h.hospitalId}`;
+      dir.panes.hosp = hp;
       await dir.stage("addPane", hp, { url: `${DASH}/hospital?id=${encodeURIComponent(h.hospitalId)}`, label: `병원 · ${h.name}` });
       await pace(1800);
       const reject = r.action === "reject";
@@ -267,7 +357,9 @@ async function runAmbulance(ctx, spec, idx) {
   if (!approved) throw new Error(`[${spec.apid}] 승인한 병원이 없어 이송할 수 없습니다(시나리오 응답 확인)`);
 
   // 7. 이송 승인 → 이송 → 도착
+  const trail = [];
   const confirmAndGo = async (h) => {
+    trail.push(`${h.name} 이송 확정`);
     await dir.scene([amb], { step: `${ambName} · 이송 승인`, ex: "confirm", text: `구급대원 최종 선택: ${h.name}`, sub: "AI는 판단을 대체하지 않습니다 — 이송 결정은 구급대원" }, async () => {
       await pace(1500);
       link.action(caseId, "final_approval", h.hospitalId, "paramedic");
@@ -282,6 +374,8 @@ async function runAmbulance(ctx, spec, idx) {
   // 8. 도착 → 수용(또는 도착 후 수용 불가 → 재선택)
   let dest = approved;
   if (spec.arrival && spec.arrival.refuse) {
+    dir.panes.hosp = `h-${dest.hospitalId}`;
+    trail.push(`도착 후 수용 불가(${REASON_LABEL[spec.arrival.refuse] || spec.arrival.refuse})`);
     await dir.scene([`h-${dest.hospitalId}`], {
       step: `${dest.name} · 도착 후 수용 불가`, ex: "refuse",
       text: `${dest.name}: 도착했지만 수용 불가 — ${REASON_LABEL[spec.arrival.refuse] || spec.arrival.refuse}`,
@@ -304,13 +398,15 @@ async function runAmbulance(ctx, spec, idx) {
     await dir.scene([amb], { step: `${ambName} · 재선택`, ex: "reselect", text: `그 자리에서 ${dest.name}(으)로 재선택`, sub: other ? "이미 수용 가능이라고 답한 다른 병원 — 다시 전화 돌리지 않는다" : "남은 후보 병원의 응답으로 재선택" }, async () => {}, 2000);
     await confirmAndGo(dest);
   }
+  dir.panes.hosp = `h-${dest.hospitalId}`;
   await dir.scene([`h-${dest.hospitalId}`], { step: `${dest.name} · 환자 도착`, ex: "arrival", text: `${dest.name}: 환자 수용 완료`, sub: "모든 의사결정은 시각·해시로 기록(의사결정 블랙박스)" }, async () => {
     await pace(1800);
     link.action(caseId, "arrival_accepted", dest.hospitalId, "hospital");
     await link.waitFor(() => link.phase?.caseId !== caseId || link.phase.phase === "returning", 20000, "수용 반영");
   }, 2500);
   link.close();
-  return { apid: spec.apid, dest: dest.name };
+  trail.push(`${dest.name} 수용 완료`);
+  return { apid: spec.apid, name: ambName, dest: dest.name, trail };
 }
 
 async function main() {
@@ -322,18 +418,25 @@ async function main() {
 
   const browser = await chromium.launch({
     channel: "chrome",
-    headless: process.env.DEMO_HEADLESS === "1",
+    headless: process.env.DEMO_HEADLESS === "1" || (record && DH && process.env.DEMO_HEADLESS !== "0"),
     args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=no-user-gesture-required", "--window-size=1920,1120"],
   });
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
     deviceScaleFactor: 1,
     permissions: ["microphone"],
-    ...(record ? { recordVideo: { dir: outDir, size: { width: 1920, height: 1080 } } } : {}),
+    ...(record && !DH ? { recordVideo: { dir: outDir, size: { width: 1920, height: 1080 } } } : {}),
   });
   const page = await context.newPage();
-  const videoT0 = Date.now(); // 녹화는 페이지가 생길 때 시작된다 — 구간 시각의 기준
+  let videoT0 = Date.now(); // 녹화는 페이지가 생길 때 시작된다 — 구간 시각의 기준
   await page.goto(`${DASH}/demo-stage.html`);
+  let recorder = null;
+  const outBase = path.join(outDir, `scenario_${scenario.id}${SUFFIX}`);
+  if (record && DH) {
+    const fpsArg = args.indexOf("--fps");
+    recorder = await startRecorder(page, `${outBase}.mp4`, fpsArg >= 0 ? Number(args[fpsArg + 1]) || 60 : 60);
+    videoT0 = recorder.t0Ms;
+  }
   const dir = new Director(page);
   const marks = {};
   const ctx = { page, dir, scenario, confirmed: new Set(), mark: (k) => { if (!(k in marks)) marks[k] = +((Date.now() - videoT0) / 1000).toFixed(2); } };
@@ -350,13 +453,25 @@ async function main() {
   const home = CALM ? [`amb-${scenario.ambulances[0].apid}`] : ["map"];
   if (CALM) await dir.stage("configure", { thumbs: false, wide: !EXPLAIN });
   await dir.stage("focus", home);
-  await sleep(Math.max(0, (scenario.introSec || (EXPLAIN ? 5 : 8)) * 1000 - 1000));
+  await sleep(Math.max(0, (scenario.introSec || (EXPLAIN || DH ? 5 : 8)) * 1000 - 1000));
   await dir.stage("intro", {}, false);
   await pace(800);
 
   const results = await Promise.all(scenario.ambulances.map((a, i) => runAmbulance(ctx, a, i)));
-  await dir.scene(home, { step: "시나리오 완료", text: results.map((r) => `${r.apid} → ${r.dest}`).join(" · "), sub: scenario.outro || "" }, async () => {}, 4000);
+  if (DH) {
+    await dir.stage("explain", null, []);
+    await dir.stage("caption", "", "", "", "");
+    await dir.stage("intro", { no: scenario.id, title: scenario.title, lines: results.length === 1 ? results[0].trail.map((t, i) => `${i + 1}. ${t}`) : results.map((r) => `${r.name}: ${r.trail.join(" → ")}`), tags: scenario.tags || [] }, true);
+    await sleep(5000);
+  } else {
+    await dir.scene(home, { step: "시나리오 완료", text: results.map((r) => `${r.apid} → ${r.dest}`).join(" · "), sub: scenario.outro || "" }, async () => {}, 4000);
+  }
 
+  if (recorder) {
+    await recorder.stop();
+    fs.writeFileSync(`${outBase}.marks.json`, JSON.stringify(marks, null, 2));
+    console.log(`녹화: ${outBase}.mp4`);
+  }
   const video = page.video();
   await context.close();
   await browser.close();

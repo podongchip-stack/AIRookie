@@ -10,10 +10,11 @@
 <meta charset="utf-8" />
 <title>골든링크 시연 무대</title>
 <style>
+  @font-face { font-family: "Pretendard"; font-weight: 45 920; font-display: block; src: url("/demo-fonts/PretendardVariable.woff2") format("woff2-variations"); }
   :root { --bg:#0E1A26; --panel:#16222E; --ink:#E8EEF4; --ink2:#9FB0C2; --mint:#0E9F6E; --coral:#E5484D; --navy:#1E5FA8; --amber:#F5B94A; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); color: var(--ink);
-    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif; }
+    font-family: "Pretendard", sans-serif; }
   #top { position: absolute; left: 16px; right: 16px; top: 12px; height: 52px; display: flex; align-items: center; gap: 16px; }
   #brand { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
   #brand b { color: #6FB3FF; }
@@ -69,7 +70,7 @@
   #intro .tags { display: flex; gap: 10px; margin-top: 36px; }
   #intro .tags span { font-size: 19px; font-weight: 700; padding: 6px 16px; border-radius: 999px; border: 1.5px solid #B8874A; color: #D9B27A; }
   #intro .brand2 { position: absolute; left: 60px; top: 40px; display: flex; align-items: center; gap: 12px;
-    font-family: "Consolas", "SF Mono", monospace; font-size: 18px; font-weight: 700; letter-spacing: .22em; color: #fff; }
+    font-family: "Pretendard", sans-serif; font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 700; letter-spacing: .22em; color: #fff; }
   #intro .brand2 i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #B8874A; background: #B8874A; box-shadow: inset 0 0 0 4px #2C3644; }
   #intro .disc { position: absolute; left: 180px; bottom: 60px; font-size: 19px; font-weight: 700; color: #F2B8B3; }
 </style>
@@ -117,11 +118,85 @@
     p.frame.style.transform = `scale(${s})`;
   }
 
+  // ── 카드 모드: 창 전체가 아니라 창 안의 카드(영역)만 확대해 보여 준다 ──
+  // 영역은 대시보드 문서에서 찾는다(소스 수정 없음): {panel:"제목"} = 제목이 든 패널 · {tag:"li", has:"글자"} = 글자가 든 가장 안쪽 요소 ·
+  // {css:"선택자", has?, nth?} · {any:[찾기…]} = 여러 영역의 합집합 · up:"section" = 찾은 요소를 품은 가장 가까운 조상으로 넓힘 · vh = 그 창의 가상 높이. 못 찾으면(아직 안 나타남) 창 전체를 보여 주다 나타나면 따라간다.
+  const CARD_MAX_SCALE = 2.2, CARD_PAD = 10;
+  const ZOOM_OUT_MS = 1100; // 전체 화면으로 물러나는 동안(.6초 전환) + 잠깐 머무는 시간
+  let lastCardsKey = "";
+  function findEl(doc, f) {
+    const e = findOne(doc, f);
+    return e && f.up ? e.closest(f.up) : e; // up: 찾은 요소를 품은 가장 가까운 조상(예: "section")으로 넓힌다
+  }
+  function findOne(doc, f) {
+    if (f.css) {
+      const els = [...doc.querySelectorAll(f.css)];
+      return f.has ? els.find((e) => e.textContent.includes(f.has)) : els[f.nth || 0];
+    }
+    if (f.panel) return [...doc.querySelectorAll("section")].find((e) => e.querySelector("h2")?.textContent.includes(f.panel));
+    if (f.tag) {
+      const els = [...doc.querySelectorAll(f.tag)].filter((e) => !f.has || e.textContent.includes(f.has));
+      return els.find((e) => !els.some((o) => o !== e && e.contains(o))); // 가장 안쪽
+    }
+    return null;
+  }
+  function measureCrop(p) {
+    try {
+      const doc = p.frame.contentDocument;
+      if (!doc || !p.crop) return null;
+      const els = (p.crop.any || [p.crop]).map((f) => findEl(doc, f)).filter(Boolean);
+      els.forEach((e) => e.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }));
+      const rects = els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+      if (!rects.length) return null;
+      const x0 = Math.max(0, Math.min(...rects.map((r) => r.left)) - CARD_PAD), y0 = Math.max(0, Math.min(...rects.map((r) => r.top)) - CARD_PAD);
+      const x1 = Math.max(...rects.map((r) => r.right)) + CARD_PAD, y1 = Math.max(...rects.map((r) => r.bottom)) + CARD_PAD;
+      return { x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0) };
+    } catch { return null; }
+  }
+  function cardLayout(main) {
+    const availH = MAIN.h - LAB, gap = PAD * 1.5;
+    const items = main.map((p) => {
+      const vw = p.kind === "phone" ? VIRTUAL.phone.w : 1440;
+      // 대시보드 창의 가상 높이: 찾기에 vh를 주면 그 값(카드가 길쭉해 글자가 작아지면 낮추고, 아래가 잘리면 높인다)
+      const vh = p.kind === "phone" ? VIRTUAL.phone.h : p.crop.vh || 900;
+      return { p, vw, vh, cr: p.cropRect || { x: 0, y: 0, w: vw, h: vh } };
+    });
+    let ss = items.map((i) => Math.min(availH / i.cr.h, CARD_MAX_SCALE));
+    const total = () => items.reduce((a, i, k) => a + i.cr.w * ss[k], 0) + gap * (items.length - 1);
+    const shrink = Math.min(1, MAIN.w / total());
+    ss = ss.map((s) => s * shrink);
+    let x = MAIN.x + (MAIN.w - total()) / 2;
+    items.forEach(({ p, vw, vh, cr }, k) => {
+      const s = ss[k], w = Math.round(cr.w * s), h = Math.round(cr.h * s);
+      const left = Math.round(x), top = Math.round(MAIN.y + LAB + (availH - h) / 2);
+      p.el.style.left = left + "px"; p.el.style.top = top + "px"; p.el.style.width = w + "px"; p.el.style.height = h + "px";
+      p.lab.style.left = left + "px"; p.lab.style.top = top - LAB + "px"; p.lab.style.width = w + "px";
+      p.frame.style.width = vw + "px"; p.frame.style.height = vh + "px";
+      p.frame.style.transform = `translate(${-cr.x * s}px, ${-cr.y * s}px) scale(${s})`;
+      x += w + gap;
+    });
+  }
+  // 카드는 내용에 따라 나타나고 커지므로 주기적으로 다시 잰다 — 바뀌면 부드럽게 따라간다
+  setInterval(() => {
+    let changed = false;
+    for (const p of panes.values()) {
+      if (!p.crop || !focused.includes(p.id)) continue;
+      const r = measureCrop(p), o = p.cropRect;
+      if (!r) continue; // 카드가 사라지면(사건 종료 등) 직전 영역을 유지한다 — 창 전체로 튀지 않게
+      const same = o && ["x", "y", "w", "h"].every((k) => Math.abs(r[k] - o[k]) <= 2);
+      if (!same) { p.cropRect = r; changed = true; }
+    }
+    if (changed) layout();
+  }, 200);
+
   function layout() {
     const main = focused.map((id) => panes.get(id)).filter(Boolean);
+    const cardMode = main.some((p) => p.crop);
     const rest = THUMBS ? [...panes.values()].filter((p) => p.visible && !main.includes(p)) : [];
     // 크게: 하나면 주 영역 전체, 휴대폰+대시보드면 휴대폰 왼쪽 좁게, 대시보드 둘이면 좌우 반반
-    if (main.length === 1) {
+    if (cardMode) {
+      cardLayout(main);
+    } else if (main.length === 1) {
       const p = main[0];
       const v = p.kind === "phone" ? VIRTUAL.phone : { w: 1440, h: Math.round(1440 * (MAIN.h - LAB) / MAIN.w) };
       place(p, MAIN, v.w, v.h);
@@ -183,12 +258,12 @@
           lab.className = "plabel hidden";
           el.append(frame);
           document.body.append(el, lab);
-          p = { el, frame, lab, kind, label, visible };
+          p = { id, el, frame, lab, kind, label, visible, crop: null, cropRect: null };
           panes.set(id, p);
         }
         p.kind = kind; p.visible = visible;
         p.lab.innerHTML = `<i></i>${label}`;
-        p.frame.onload = () => resolve(true);
+        p.frame.onload = () => { forcePretendard(p.frame); resolve(true); };
         p.frame.src = url;
         layout();
       });
@@ -202,6 +277,25 @@
       if (p) { p.visible = visible; layout(); }
     },
     focus(ids) { focused = Array.isArray(ids) ? ids : [ids]; layout(); },
+    // 카드 모드: { 창id: 찾기 } — 나열한 창의 해당 카드만 크게 보여 준다. 빈 객체면 카드 모드 해제.
+    // 장면이 바뀌어 카드가 달라지면 먼저 새 장면의 창을 전체 화면으로 보여 주고(포커스 아웃) 잠깐 머문 뒤 카드로 확대한다(포커스 인).
+    // 같은 카드가 이어질 땐 건너뛴다.
+    async cards(map) {
+      const ids = Object.keys(map);
+      const key = JSON.stringify(map);
+      const changed = key !== lastCardsKey;
+      lastCardsKey = key;
+      if (ids.length && changed) {
+        for (const p of panes.values()) { p.crop = null; p.cropRect = null; }
+        focused = ids;
+        layout();
+        await new Promise((r) => setTimeout(r, ZOOM_OUT_MS));
+      }
+      for (const p of panes.values()) { p.crop = map[p.id] || null; p.cropRect = null; }
+      if (ids.length) focused = ids;
+      for (const id of ids) { const p = panes.get(id); if (p) p.cropRect = measureCrop(p); }
+      layout();
+    },
     caption(step, text, sub = "", tone = "") {
       const c = document.getElementById("caption");
       if (!text) { c.style.display = "none"; return; }
@@ -233,6 +327,16 @@
       requestAnimationFrame(() => el.classList.add("show"));
     },
   };
+  // 각 창(같은 출처 iframe)의 글꼴을 Pretendard로 고정 — 대시보드 소스는 건드리지 않고 문서마다 스타일을 주입한다
+  function forcePretendard(frame) {
+    const doc = frame.contentDocument;
+    if (!doc || doc.getElementById("demo-pretendard")) return;
+    const st = doc.createElement("style");
+    st.id = "demo-pretendard";
+    st.textContent = `@font-face { font-family: "Pretendard"; font-weight: 45 920; font-display: block; src: url("/demo-fonts/PretendardVariable.woff2") format("woff2-variations"); }
+      html, body, body *, button, input, select, textarea { font-family: "Pretendard", sans-serif !important; }`;
+    doc.head.append(st);
+  }
   window.stage = stage;
   setInterval(() => {
     const s = Math.floor((Date.now() - t0) / 1000);
