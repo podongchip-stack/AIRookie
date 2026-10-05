@@ -118,6 +118,8 @@ async function startRecorder(page, out, fps) {
     gotFirst();
     cdp.send("Page.screencastFrameAck", { sessionId: e.sessionId }).catch(() => {});
   });
+  // 창 크기가 화면에 눌려 프레임 높이가 홀수·1080 미만이 되면 인코더가 거부한다(맥) — 화면 크기를 1920×1080으로 고정한다
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false });
   await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, maxWidth: 1920, maxHeight: 1080, everyNthFrame: 1 });
   await first;
   const t0 = process.hrtime.bigint();
@@ -428,6 +430,7 @@ async function main() {
     ...(record && !DH ? { recordVideo: { dir: outDir, size: { width: 1920, height: 1080 } } } : {}),
   });
   const page = await context.newPage();
+  if (process.env.DEMO_DEBUG === "1") page.on("console", (m) => console.log("[page]", m.type(), m.text().slice(0, 200)));
   let videoT0 = Date.now(); // 녹화는 페이지가 생길 때 시작된다 — 구간 시각의 기준
   await page.goto(`${DASH}/demo-stage.html`);
   let recorder = null;
@@ -443,7 +446,7 @@ async function main() {
 
   // 창 준비(소개 카드가 떠 있는 동안 뒤에서 대시보드를 띄운다)
   await dir.stage("setScenario", scenario.id, scenario.title);
-  await dir.stage("intro", { no: scenario.id, title: scenario.title, lines: scenario.intro || [], tags: scenario.tags || [] }, true);
+  await dir.stage("intro", { no: scenario.id, title: scenario.title, lines: scenario.intro || [], tags: scenario.tags || [], motif: scenario.motif || "" }, true);
   const loads = [dir.stage("addPane", "map", { url: `${DASH}/map`, label: "관제 지도" })];
   for (const a of scenario.ambulances) {
     loads.push(dir.stage("addPane", `amb-${a.apid}`, { url: `${DASH}/ambulance?id=${a.apid}`, label: `구급차 · ${a.name || a.apid}` }));

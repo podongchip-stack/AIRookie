@@ -62,7 +62,7 @@
     background: #2C3644; opacity: 0; transition: opacity .6s ease; }
   #intro.show { opacity: 1; }
   #intro .no { display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 700; color: #D9B27A; }
-  #intro .no::before { content: ""; width: 44px; height: 3px; background: #B8874A; }
+  #intro .no::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #B8874A; }
   #intro h1 { font-size: 66px; font-weight: 800; letter-spacing: -0.03em; margin: 18px 0 34px; line-height: 1.2; color: #fff; }
   #intro ul { list-style: none; display: flex; flex-direction: column; gap: 16px; border-top: 1px solid rgba(255,255,255,.18); padding-top: 30px; }
   #intro li { font-size: 28px; color: #E4E8EC; line-height: 1.45; padding-left: 26px; position: relative; }
@@ -72,6 +72,25 @@
   #intro .brand2 { position: absolute; left: 60px; top: 40px; display: flex; align-items: center; gap: 12px;
     font-family: "Pretendard", sans-serif; font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 700; letter-spacing: .22em; color: #fff; }
   #intro .brand2 i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #B8874A; background: #B8874A; box-shadow: inset 0 0 0 4px #2C3644; }
+  /* 흉통 모티프(motif=chest): 소개 카드 오른쪽에 심전도 선과 심장 · 활력징후 배지 */
+  #intro .motif { display: none; position: absolute; right: 150px; top: 50%; transform: translateY(-50%); width: 560px; }
+  #intro[data-motif="chest"] .motif { display: block; }
+  #intro[data-motif="chest"] { padding-right: 780px; }
+  #intro[data-motif="chest"] h1 { font-size: 58px; }
+  #intro .motif .ecg { width: 100%; height: 150px; background: rgba(255,255,255,.04); border: 1.5px solid rgba(217,178,122,.45); border-radius: 18px; padding: 10px 16px; box-sizing: border-box; }
+  #intro .motif .ecg path { fill: none; stroke: #FF6B6F; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1400; stroke-dashoffset: 1400; }
+  #intro.show .motif .ecg path { animation: ecgdraw 2.4s ease-out .5s forwards; }
+  @keyframes ecgdraw { to { stroke-dashoffset: 0; } }
+  #intro .motif .heart { position: absolute; right: -26px; top: -62px; width: 92px; height: 92px; filter: drop-shadow(0 0 18px rgba(255,107,111,.55)); transform-origin: 50% 60%; }
+  #intro.show .motif .heart { animation: beat 1.05s ease-in-out infinite; }
+  @keyframes beat { 0%, 100% { transform: scale(1); } 15% { transform: scale(1.16); } 30% { transform: scale(1); } 45% { transform: scale(1.1); } }
+  #intro .motif .vitals { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+  #intro .motif .vitals div { border: 1.5px solid rgba(255,255,255,.18); border-radius: 14px; padding: 12px 16px; background: rgba(255,255,255,.05); }
+  #intro .motif .vitals small { display: block; font-size: 16px; font-weight: 700; color: #D9B27A; }
+  #intro .motif .vitals b { font-size: 32px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+  #intro .motif .vitals b.hot { color: #FF8A8E; }
+  #intro .motif .vitals em { font-style: normal; font-size: 16px; font-weight: 600; color: #B9C3CE; margin-left: 4px; }
+  #intro .motif .pain { margin-top: 12px; font-size: 18px; font-weight: 700; color: #FFB1B3; border: 1.5px solid #FF6B6F; border-radius: 999px; display: inline-block; padding: 6px 16px; }
   #intro .disc { position: absolute; left: 180px; bottom: 60px; font-size: 19px; font-weight: 700; color: #F2B8B3; }
 </style>
 </head>
@@ -84,7 +103,7 @@
 </div>
 <div id="caption"><div class="step"></div><div class="text"></div><div class="sub"></div></div>
 <div id="explain"><div class="k">작동 원리</div><div class="h"></div><ul></ul></div>
-<div id="intro"><div class="brand2"><i></i>GOLDENLINK</div><div class="no"></div><h1></h1><ul></ul><div class="tags"></div><div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다 · 병원 정보는 E-Gen 실제 데이터</div></div>
+<div id="intro"><div class="brand2"><i></i>GOLDENLINK</div><div class="no"></div><h1></h1><ul></ul><div class="tags"></div><div class="motif"><svg class="heart" viewBox="0 0 24 24"><path fill="#FF6B6F" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 2.7 4.8 6.3 4.8c2.1 0 3.9 1.1 5.7 3.3 1.8-2.2 3.6-3.3 5.7-3.3 3.6 0 5.4 3.6 3.9 7C19.5 16.4 12 21 12 21z"/></svg><div class="ecg"><svg viewBox="0 0 520 130" width="100%" height="100%" preserveAspectRatio="none"><path d="M0 70 H70 l10 -8 10 8 H130 l10 14 14 -70 16 100 12 -44 H230 l12 -12 14 12 H300 l10 14 14 -70 16 100 12 -44 H400 l12 -12 14 12 H520"/></svg></div><div class="vitals"><div><small>혈압</small><b class="hot">160/95</b><em>mmHg</em></div><div><small>맥박</small><b class="hot">100</b><em>회/분</em></div><div><small>산소포화도</small><b>95</b><em>%</em></div><div><small>통증</small><b>흉부 압박감</b></div></div><div class="pain">흉통 · 식은땀 · 호흡곤란</div></div><div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다 · 병원 정보는 E-Gen 실제 데이터</div></div>
 <script>
 (() => {
   const W = 1920, H = 1080, PAD = 16, TOP = 72, CAP = 116, LAB = 24;
@@ -234,6 +253,8 @@
     }
   }
 
+  // 영상 문구에 긴 줄표(—, –, ㅡ)를 쓰지 않는다 — 가운뎃점으로 바꾼다
+  const ns = (t) => String(t ?? "").replace(/\s*[—–―ㅡ]\s*/g, " · ");
   const stage = {
     configure({ thumbs = true, wide = false } = {}) {
       THUMBS = thumbs;
@@ -241,7 +262,7 @@
       layout();
     },
     setScenario(no, title) {
-      document.getElementById("scenario").innerHTML = `<span class="no">${no}</span>${title}`;
+      document.getElementById("scenario").innerHTML = `<span class="no">${no}</span>${ns(title)}`;
     },
     // 창을 하나 연다. 같은 id면 주소만 바꾼다. iframe이 다 뜨면 끝난다.
     addPane(id, { url, kind = "dash", label = "", visible = true }) {
@@ -262,7 +283,7 @@
           panes.set(id, p);
         }
         p.kind = kind; p.visible = visible;
-        p.lab.innerHTML = `<i></i>${label}`;
+        p.lab.innerHTML = `<i></i>${ns(label)}`;
         p.frame.onload = () => { forcePretendard(p.frame); resolve(true); };
         p.frame.src = url;
         layout();
@@ -270,7 +291,7 @@
     },
     setLabel(id, label) {
       const p = panes.get(id);
-      if (p) p.lab.innerHTML = `<i></i>${label}`;
+      if (p) p.lab.innerHTML = `<i></i>${ns(label)}`;
     },
     setVisible(id, visible) {
       const p = panes.get(id);
@@ -300,9 +321,9 @@
       const c = document.getElementById("caption");
       if (!text) { c.style.display = "none"; return; }
       c.className = tone;
-      c.querySelector(".step").textContent = step || "";
-      c.querySelector(".text").textContent = text;
-      c.querySelector(".sub").textContent = sub || "";
+      c.querySelector(".step").textContent = ns(step);
+      c.querySelector(".text").textContent = ns(text);
+      c.querySelector(".sub").textContent = ns(sub);
       c.style.display = "block";
     },
     // 작동 원리 상자 — 오른쪽 칸(썸네일 자리)에 띄운다. title이 없으면 숨긴다
@@ -310,19 +331,20 @@
       const e = document.getElementById("explain");
       if (!title) { e.classList.remove("show"); document.body.classList.remove("explaining"); setTimeout(() => { if (!e.classList.contains("show")) e.style.display = "none"; }, 450); return; }
       Object.assign(e.style, { left: SIDE.x + "px", top: SIDE.y + "px", width: SIDE.w + "px", maxHeight: SIDE.h + "px" });
-      e.querySelector(".h").textContent = title;
-      e.querySelector("ul").innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
+      e.querySelector(".h").textContent = ns(title);
+      e.querySelector("ul").innerHTML = lines.map((l) => `<li>${ns(l)}</li>`).join("");
       e.style.display = "block";
       document.body.classList.add("explaining");
       e.classList.remove("show"); void e.offsetWidth; e.classList.add("show");
     },
-    intro({ no, title, lines = [], tags = [] }, show = true) {
+    intro({ no, title, lines = [], tags = [], motif = "" }, show = true) {
       const el = document.getElementById("intro");
       if (!show) { el.classList.remove("show"); setTimeout(() => (el.style.display = "none"), 650); return; }
       el.querySelector(".no").textContent = `시나리오 ${no}`;
-      el.querySelector("h1").textContent = title;
-      el.querySelector("ul").innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
-      el.querySelector(".tags").innerHTML = tags.map((t) => `<span>${t}</span>`).join("");
+      el.querySelector("h1").textContent = ns(title);
+      el.dataset.motif = motif || "";
+      el.querySelector("ul").innerHTML = lines.map((l) => `<li>${ns(l)}</li>`).join("");
+      el.querySelector(".tags").innerHTML = tags.map((t) => `<span>${ns(t)}</span>`).join("");
       el.style.display = "flex";
       requestAnimationFrame(() => el.classList.add("show"));
     },

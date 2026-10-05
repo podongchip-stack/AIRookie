@@ -12,3 +12,4 @@ info/data/output/
 info/data/fixtures/
 
 .env
+env/
