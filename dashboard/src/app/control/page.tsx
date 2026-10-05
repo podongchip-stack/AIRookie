@@ -206,35 +206,196 @@ const PATIENT_TEMPLATES = [
 
 type Template = (typeof PATIENT_TEMPLATES)[number];
 
-// 이송 중 목적지 병원과의 추가 통화 — 정해진 상황(2026-10-05). 현장에서 확인한 환자(카드)에 이송 중 상태 변화를 얹어
-// 2차 통화 요약으로 보낸다. hub가 환자 정보에 덧붙인다(앞선 요약은 previousCalls로 남음). 가상 환자 표시는 그대로.
-const FOLLOWUPS = [
-  {
-    key: "shock", label: "쇼크 진행 — 혈압 저하", sev: "중증" as const, symText: "혈압·산소포화도 하락, 빈맥",
-    apply: (base: Template) => ({
-      mechanism: `${base.summary.mechanism} — 이송 중 쇼크 진행`, severity_tag: "high", ktas_level: 1, consciousness: "V",
-      symptoms: [...base.summary.symptoms, "혈압 저하", "빈맥"], vitals: [{ sequence: 2, sbp: 82, dbp: 50, hr: 132, rr: 26, spo2: 90 }],
-      transcript: "이송 중 상태 변화 알려드립니다. 혈압 82에 50, 맥박 132, 산소포화도 90으로 떨어졌고 반응이 처집니다.",
-    }),
-  },
-  {
-    key: "consciousness", label: "의식 저하", sev: "중증" as const, symText: "통증에만 반응, 호흡 빨라짐",
-    apply: (base: Template) => ({
-      mechanism: `${base.summary.mechanism} — 이송 중 의식 저하`, severity_tag: "high", ktas_level: 1, consciousness: "P",
-      symptoms: [...base.summary.symptoms, "의식 저하"], vitals: [{ sequence: 2, sbp: 108, dbp: 70, hr: 118, rr: 24, spo2: 92 }],
-      transcript: "이송 중인데 의식이 떨어졌습니다. 통증에만 반응하고 호흡이 24회로 빨라졌습니다.",
-    }),
-  },
-  {
-    key: "stable", label: "호전 · 안정", sev: null, symText: "활력징후 안정, 통증 감소",
-    apply: (base: Template) => ({
-      mechanism: `${base.summary.mechanism} — 이송 중 안정`, severity_tag: base.summary.severity_tag, ktas_level: base.summary.ktas_level,
-      consciousness: "A", symptoms: [...base.summary.symptoms], vitals: [{ sequence: 2, sbp: 124, dbp: 78, hr: 88, rr: 18, spo2: 97 }],
-      transcript: "이송 중 재측정 결과 혈압 124에 78, 맥박 88, 산소포화도 97로 안정적입니다. 통증도 줄었다고 합니다.",
-    }),
-  },
-] as const;
 type SevLabel = Template["severity"];
+
+// ── 이송 중 상황(2026-10-06) — 현장 상황마다 따로 둔다. 예전엔 어떤 환자든 같은 상황(쇼크·의식 저하·호전, "흉통 악화")이라
+// 발목 염좌 환자에게 흉통 악화를 부여하는 식으로 앞 단계와 이어지지 않았다.
+//
+// monitor: 이송 중 활력징후 시나리오 5종(TransportMonitorPanel SCENARIOS)의 **이름만** 환자에 맞게 바꾼다. 수치·판정은
+//   hub 규칙 엔진 시연(기록·보류·전달·대체 병원 제안·헬기 권고·오경보 거름)이라 hub/test_transport_triage.py와 같은 값으로
+//   고정 — 숫자는 건드리지 않는다.
+// followups: 목적지 병원과 추가 통화(2차 통화 요약). 그 환자에게 일어날 법한 변화 3가지(악화 2 + 호전). hub가 환자 정보에
+//   덧붙인다(앞선 요약은 previousCalls로 남음). severity_tag·ktas_level이 null이면 현장 값 그대로.
+type MonitorKey = "stable" | "shock" | "mismatch" | "consciousness" | "spike";
+type Vitals = { sbp?: number; dbp?: number; hr?: number; rr?: number; spo2?: number; bt?: number };
+type Followup = {
+  key: string; label: string; sev: SevLabel | null; symText: string;
+  severity_tag: "high" | "medium" | "low" | null; ktas_level: number | null; consciousness: string;
+  mechanism: string; symptoms: string[]; vitals: Vitals; transcript: string;
+};
+type Transport = { monitor: Record<MonitorKey, string>; followups: Followup[] };
+const MONITOR_NUM: Record<MonitorKey, string> = { stable: "①", shock: "②", mismatch: "③", consciousness: "④", spike: "⑤" };
+
+const TRANSPORT: Record<string, Transport> = {
+  cardiac: {
+    monitor: { stable: "통증 조절 · 활력 안정", shock: "심인성 쇼크 진행", mismatch: "흉통 악화·부정맥 — 목적지 부적합", consciousness: "심정지 전조 — 의식 저하", spike: "측정값 일시적 튐(전극 흔들림)" },
+    followups: [
+      { key: "shock", label: "심인성 쇼크 — 혈압 저하", sev: "중증", symText: "혈압 84/52, 맥박 128, 식은땀", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "흉통(심장성) — 경색 의심, 이송 중 심인성 쇼크", symptoms: ["혈압 저하", "식은땀"], vitals: { sbp: 84, dbp: 52, hr: 128, rr: 26, spo2: 90 },
+        transcript: "이송 중 상태 변화입니다. 혈압 84에 52로 떨어졌고 맥박 128, 식은땀 흘리며 반응이 처집니다." },
+      { key: "arrhythmia", label: "부정맥 · 실신", sev: "중증", symText: "맥박 168 빈맥, 순간 의식 소실", severity_tag: "high", ktas_level: 1, consciousness: "P",
+        mechanism: "흉통(심장성) — 경색 의심, 이송 중 심실빈맥·실신", symptoms: ["부정맥", "실신"], vitals: { sbp: 96, dbp: 60, hr: 168, rr: 24, spo2: 93 },
+        transcript: "모니터상 맥박 168 빈맥이 나오고 잠깐 의식을 잃었습니다. 지금 통증에만 반응합니다." },
+      { key: "stable", label: "통증 감소 · 안정", sev: null, symText: "니트로글리세린 후 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "흉통(심장성) — 경색 의심, 이송 중 통증 감소", symptoms: [], vitals: { sbp: 128, dbp: 80, hr: 86, rr: 18, spo2: 97 },
+        transcript: "니트로글리세린 투여 후 흉통이 줄었습니다. 혈압 128에 80, 맥박 86으로 안정적입니다." },
+    ],
+  },
+  cardiac_aortic: {
+    monitor: { stable: "통증 조절 · 혈압 목표 유지", shock: "박리 진행 — 혈압 저하", mismatch: "흉통 악화·하지 맥박 약화 — 목적지 부적합", consciousness: "뇌 관류 저하 — 의식 저하", spike: "측정값 일시적 튐(커프 위치)" },
+    followups: [
+      { key: "rupture", label: "파열 의심 — 쇼크", sev: "중증", symText: "혈압 78/44, 맥박 134, 창백", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "대동맥질환 · 대동맥 박리 의심, 이송 중 파열 의심 쇼크", symptoms: ["혈압 저하", "창백"], vitals: { sbp: 78, dbp: 44, hr: 134, rr: 28, spo2: 91 },
+        transcript: "혈압이 78에 44로 급격히 떨어졌습니다. 맥박 134, 얼굴이 창백하고 반응이 둔해졌습니다." },
+      { key: "neuro", label: "편측 마비 · 의식 저하", sev: "중증", symText: "왼쪽 팔다리 힘 빠짐, 말 어눌", severity_tag: "high", ktas_level: 1, consciousness: "P",
+        mechanism: "대동맥질환 · 대동맥 박리 의심, 이송 중 편측 마비(경동맥 침범 의심)", symptoms: ["편측 마비", "의식 저하"], vitals: { sbp: 168, dbp: 96, hr: 98, rr: 20, spo2: 95 },
+        transcript: "왼쪽 팔다리에 힘이 빠지고 말이 어눌해졌습니다. 지금은 통증에만 반응합니다." },
+      { key: "stable", label: "혈압 조절 · 통증 지속", sev: null, symText: "혈압 132/80으로 조절", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "대동맥질환 · 대동맥 박리 의심, 이송 중 혈압 조절됨", symptoms: [], vitals: { sbp: 132, dbp: 80, hr: 88, rr: 18, spo2: 96 },
+        transcript: "혈압 132에 80으로 조절되고 있습니다. 등 통증은 여전하지만 활력징후는 안정적입니다." },
+    ],
+  },
+  cardiac_wall: {
+    monitor: { stable: "통증 지속 · 활력 안정", shock: "실제 심장 원인 — 혈압 저하", mismatch: "심전도 변화 동반 흉통 악화 — 목적지 부적합", consciousness: "실신 — 의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "acs", label: "심전도 ST 변화 — 관상동맥증후군 전환", sev: "중증", symText: "흉통 악화, 심전도 ST 상승", severity_tag: "high", ktas_level: 2, consciousness: "A",
+        mechanism: "흉통 재평가 — 심전도 ST 상승, 급성 관상동맥증후군 의심", symptoms: ["흉통 악화"], vitals: { sbp: 138, dbp: 86, hr: 102, rr: 22, spo2: 96 },
+        transcript: "이송 중 흉통이 심해져 심전도를 다시 봤더니 ST 상승이 보입니다. 관상동맥증후군 의심됩니다." },
+      { key: "pneumo", label: "호흡곤란 — 기흉 의심", sev: "중증", symText: "산소포화도 89, 한쪽 호흡음 감소", severity_tag: "high", ktas_level: 2, consciousness: "A",
+        mechanism: "흉통 재평가 — 갑작스러운 호흡곤란, 기흉 의심", symptoms: ["호흡곤란"], vitals: { sbp: 124, dbp: 78, hr: 112, rr: 28, spo2: 89 },
+        transcript: "갑자기 숨이 차다고 합니다. 산소포화도 89, 오른쪽 호흡음이 줄었습니다. 기흉 의심됩니다." },
+      { key: "stable", label: "통증 감소 · 안정", sev: null, symText: "자세 바꾸니 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "흉벽 통증 — 근골격성 흉통 의심, 이송 중 통증 감소", symptoms: [], vitals: { sbp: 124, dbp: 80, hr: 78, rr: 16, spo2: 98 },
+        transcript: "자세를 바꾸니 통증이 줄었다고 합니다. 활력징후 안정적이고 심전도 변화 없습니다." },
+    ],
+  },
+  trauma: {
+    monitor: { stable: "고정 후 활력 안정", shock: "출혈성 쇼크 진행", mismatch: "복강 내 출혈 악화 — 목적지 부적합", consciousness: "두부 손상 동반 — 의식 저하", spike: "측정값 일시적 튐(차량 진동)" },
+    followups: [
+      { key: "bleed", label: "복강 내 출혈 — 쇼크 진행", sev: "중증", symText: "혈압 82/50, 맥박 136, 복부 팽만", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "교통사고 — 다발성 외상, 이송 중 복강 내 출혈 쇼크 의심", symptoms: ["복부 팽만", "혈압 저하"], vitals: { sbp: 82, dbp: 50, hr: 136, rr: 28, spo2: 92 },
+        transcript: "배가 점점 부풀고 혈압이 82에 50으로 떨어졌습니다. 맥박 136, 복강 내 출혈 의심됩니다." },
+      { key: "tension", label: "긴장성 기흉 의심 — 호흡곤란", sev: "중증", symText: "산소포화도 86, 기관 편위", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "교통사고 — 다발성 외상, 이송 중 긴장성 기흉 의심", symptoms: ["호흡곤란", "기관 편위"], vitals: { sbp: 90, dbp: 56, hr: 128, rr: 32, spo2: 86 },
+        transcript: "호흡이 32회로 가쁘고 산소포화도 86입니다. 왼쪽 호흡음이 안 들리고 기관이 밀려 있습니다." },
+      { key: "stable", label: "수액 후 안정", sev: null, symText: "혈압 112/72로 회복", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "교통사고 — 다발성 외상, 이송 중 수액 후 안정", symptoms: [], vitals: { sbp: 112, dbp: 72, hr: 102, rr: 20, spo2: 96 },
+        transcript: "수액 들어가면서 혈압 112에 72로 올라왔고 의식도 명료해졌습니다." },
+    ],
+  },
+  trauma_head: {
+    monitor: { stable: "의식 유지 · 활력 안정", shock: "다발 손상 동반 — 혈압 저하", mismatch: "두개내압 상승 징후 — 목적지 부적합", consciousness: "의식 악화 — GCS 하락", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "herniation", label: "동공 부등 · 의식 악화", sev: "중증", symText: "오른쪽 동공 확대, 무반응", severity_tag: "high", ktas_level: 1, consciousness: "U",
+        mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심, 이송 중 동공 부등(뇌탈출 의심)", symptoms: ["동공 부등", "무반응"], vitals: { sbp: 182, dbp: 98, hr: 50, rr: 10, spo2: 93 },
+        transcript: "오른쪽 동공이 커졌고 자극에 반응이 없습니다. 혈압 182에 98, 맥박 50, 호흡 10회입니다." },
+      { key: "seizure", label: "경련 발생", sev: "중증", symText: "전신 경련 1분, 이후 반응 저하", severity_tag: "high", ktas_level: 1, consciousness: "U",
+        mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심, 이송 중 경련", symptoms: ["경련"], vitals: { sbp: 170, dbp: 94, hr: 112, rr: 22, spo2: 90 },
+        transcript: "이송 중 1분가량 전신 경련이 있었습니다. 멈췄는데 반응이 없고 산소포화도 90입니다." },
+      { key: "stable", label: "의식 호전", sev: null, symText: "부르면 눈 뜸, 구토 없음", severity_tag: null, ktas_level: null, consciousness: "V",
+        mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심, 이송 중 의식 호전", symptoms: [], vitals: { sbp: 148, dbp: 86, hr: 72, rr: 16, spo2: 97 },
+        transcript: "부르면 눈을 뜨고 추가 구토는 없습니다. 혈압 148에 86, 맥박 72입니다." },
+    ],
+  },
+  trauma_minor: {
+    monitor: { stable: "통증 외 특이사항 없음", shock: "숨은 내부 출혈 — 혈압 저하", mismatch: "복통 새로 발생 — 목적지 부적합", consciousness: "지연성 두부 손상 — 의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "occult", label: "복통·혈압 저하 — 비장 손상 의심", sev: "중증", symText: "왼쪽 윗배 통증, 혈압 94/60", severity_tag: "high", ktas_level: 2, consciousness: "A",
+        mechanism: "교통사고 — 이송 중 왼쪽 윗배 통증·혈압 저하, 비장 손상 의심", symptoms: ["복통", "혈압 저하"], vitals: { sbp: 94, dbp: 60, hr: 118, rr: 22, spo2: 96 },
+        transcript: "괜찮다던 환자가 왼쪽 윗배가 아프다고 합니다. 혈압 94에 60, 맥박 118로 바뀌었습니다." },
+      { key: "head", label: "두통·구토 — 지연성 두부 손상", sev: "중등증", symText: "두통 심해짐, 구토 1회", severity_tag: "medium", ktas_level: 3, consciousness: "A",
+        mechanism: "교통사고 — 이송 중 두통·구토, 지연성 두부 손상 의심", symptoms: ["두통", "구토"], vitals: { sbp: 136, dbp: 84, hr: 82, rr: 18, spo2: 98 },
+        transcript: "두통이 심해지고 한 번 토했습니다. 의식은 명료하지만 머리 손상 확인이 필요해 보입니다." },
+      { key: "stable", label: "통증 감소 · 안정", sev: null, symText: "목 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "교통사고 — 경추 염좌·찰과상, 이송 중 안정", symptoms: [], vitals: { sbp: 118, dbp: 76, hr: 80, rr: 16, spo2: 99 },
+        transcript: "목 통증이 조금 줄었고 다른 증상 없습니다. 활력징후 안정적입니다." },
+    ],
+  },
+  abdominal: {
+    monitor: { stable: "통증 지속 · 활력 안정", shock: "패혈성 쇼크 진행", mismatch: "복막염 악화 — 목적지 부적합", consciousness: "패혈증 — 의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "perforation", label: "천공 의심 — 복부 강직", sev: "중증", symText: "배가 판자처럼 단단, 고열", severity_tag: "high", ktas_level: 2, consciousness: "A",
+        mechanism: "급성 복통 — 이송 중 복부 강직, 장천공·복막염 의심", symptoms: ["복부 강직", "고열"], vitals: { sbp: 98, dbp: 60, hr: 124, rr: 24, spo2: 95, bt: 38.9 },
+        transcript: "배가 판자처럼 단단해졌고 열이 38.9도입니다. 맥박 124, 천공에 의한 복막염 의심됩니다." },
+      { key: "sepsis", label: "고열 · 혈압 저하", sev: "중증", symText: "체온 39.4, 혈압 88/54", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "급성 복통 — 장폐색·충수염 의심, 이송 중 고열·혈압 저하(패혈증 의심)", symptoms: ["고열", "혈압 저하"], vitals: { sbp: 88, dbp: 54, hr: 126, rr: 26, spo2: 94, bt: 39.4 },
+        transcript: "체온 39.4도에 혈압 88에 54로 떨어졌습니다. 반응이 처지고 패혈증이 의심됩니다." },
+      { key: "stable", label: "진통 후 안정", sev: null, symText: "통증 조금 감소, 구토 멈춤", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "급성 복통 — 복부 압통, 장폐색·충수염 의심, 이송 중 안정", symptoms: [], vitals: { sbp: 124, dbp: 78, hr: 90, rr: 18, spo2: 98, bt: 37.6 },
+        transcript: "구토는 멈췄고 통증이 조금 줄었습니다. 활력징후는 안정적입니다." },
+    ],
+  },
+  abdominal_gi: {
+    monitor: { stable: "출혈 멈춤 · 활력 안정", shock: "재출혈 — 출혈성 쇼크", mismatch: "대량 토혈 — 목적지 부적합", consciousness: "쇼크로 의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "rebleed", label: "대량 재토혈 — 쇼크", sev: "중증", symText: "선홍색 토혈, 혈압 76/40", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "위장관 출혈 — 이송 중 대량 재토혈, 출혈성 쇼크", symptoms: ["대량 토혈", "혈압 저하"], vitals: { sbp: 76, dbp: 40, hr: 138, rr: 28, spo2: 93 },
+        transcript: "선홍색 피를 다시 많이 토했습니다. 혈압 76에 40, 맥박 138입니다." },
+      { key: "airway", label: "토혈 흡인 — 산소포화도 저하", sev: "중증", symText: "기침·그르렁거림, 산소포화도 87", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "위장관 출혈 — 이송 중 토혈 흡인, 호흡 곤란", symptoms: ["흡인", "호흡곤란"], vitals: { sbp: 100, dbp: 62, hr: 124, rr: 30, spo2: 87 },
+        transcript: "토하면서 흡인한 것 같습니다. 그르렁거리고 산소포화도 87, 호흡 30회입니다." },
+      { key: "stable", label: "수액 후 혈압 회복", sev: null, symText: "혈압 108/68, 추가 토혈 없음", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "위장관 출혈 — 토혈·흑색변, 이송 중 혈압 회복", symptoms: [], vitals: { sbp: 108, dbp: 68, hr: 100, rr: 18, spo2: 97 },
+        transcript: "수액 후 혈압 108에 68로 올라왔고 추가 토혈은 없습니다." },
+    ],
+  },
+  abdominal_mild: {
+    monitor: { stable: "증상 호전 · 활력 안정", shock: "탈수 진행 — 혈압 저하", mismatch: "통증 우하복부 국한 — 목적지 부적합", consciousness: "탈수 — 어지러움·의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "appendicitis", label: "우하복부 통증 국한 — 충수염 의심", sev: "중등증", symText: "오른쪽 아랫배 압통·반발통", severity_tag: "medium", ktas_level: 3, consciousness: "A",
+        mechanism: "복통 재평가 — 우하복부 국한 압통·반발통, 충수염 의심", symptoms: ["우하복부 압통"], vitals: { sbp: 122, dbp: 78, hr: 98, rr: 18, spo2: 98, bt: 38.1 },
+        transcript: "통증이 오른쪽 아랫배로 모였고 누르다 뗄 때 더 아파합니다. 열 38.1도, 충수염 의심됩니다." },
+      { key: "dehydration", label: "구토 지속 — 탈수 진행", sev: "중등증", symText: "구토 반복, 어지러움, 혈압 102/64", severity_tag: "medium", ktas_level: 3, consciousness: "A",
+        mechanism: "급성 위장염 의심 — 이송 중 구토 지속, 탈수 진행", symptoms: ["구토", "어지러움"], vitals: { sbp: 102, dbp: 64, hr: 112, rr: 20, spo2: 98 },
+        transcript: "구토가 계속되고 어지럽다고 합니다. 혈압 102에 64, 맥박 112로 탈수 진행 중입니다." },
+      { key: "stable", label: "증상 호전", sev: null, symText: "복통 감소, 설사 멈춤", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "급성 위장염 의심 — 이송 중 증상 호전", symptoms: [], vitals: { sbp: 118, dbp: 76, hr: 84, rr: 16, spo2: 99 },
+        transcript: "복통이 줄고 설사는 멈췄습니다. 활력징후 안정적입니다." },
+    ],
+  },
+  mild: {
+    monitor: { stable: "부목 고정 후 안정", shock: "숨은 손상 — 혈압 저하·빈맥", mismatch: "통증 급증·발 저림 — 목적지 부적합", consciousness: "실신 — 의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "fracture", label: "변형 발견 — 골절 의심", sev: "중등증", symText: "부종 심해지고 발목 변형", severity_tag: "medium", ktas_level: 3, consciousness: "A",
+        mechanism: "발목 염좌 재평가 — 변형·체중 부하 불가, 골절 의심", symptoms: ["변형"], vitals: { sbp: 128, dbp: 80, hr: 96, rr: 18, spo2: 99 },
+        transcript: "부종이 심해지면서 발목 모양이 틀어져 보입니다. 골절 의심되어 부목 다시 고정했습니다." },
+      { key: "syncope", label: "실신 — 일시적 의식 소실", sev: "중등증", symText: "통증 후 잠깐 의식 잃음", severity_tag: "medium", ktas_level: 3, consciousness: "V",
+        mechanism: "발목 염좌 — 이송 중 통증 후 실신, 혈관미주신경성 의심", symptoms: ["실신"], vitals: { sbp: 92, dbp: 58, hr: 52, rr: 16, spo2: 98 },
+        transcript: "통증이 심하다더니 잠깐 의식을 잃었습니다. 지금은 부르면 반응하고 혈압 92에 58, 맥박 52입니다." },
+      { key: "stable", label: "냉찜질 후 통증 감소", sev: null, symText: "부종 그대로, 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "보행 중 접질림 — 발목 염좌 의심, 이송 중 안정", symptoms: [], vitals: { sbp: 118, dbp: 74, hr: 76, rr: 16, spo2: 99 },
+        transcript: "냉찜질 후 통증이 줄었습니다. 다른 증상 없습니다." },
+    ],
+  },
+  mild_fracture: {
+    monitor: { stable: "부목 고정 후 안정", shock: "출혈·통증 — 혈압 저하", mismatch: "발 저림·창백(혈관 손상 의심) — 목적지 부적합", consciousness: "실신 — 의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "vascular", label: "발 창백·맥박 약화 — 혈관 손상", sev: "중증", symText: "발등 맥박 약함, 발 차고 창백", severity_tag: "high", ktas_level: 2, consciousness: "A",
+        mechanism: "낙상 — 발목 골절, 이송 중 발등 맥박 약화·창백(혈관 손상 의심)", symptoms: ["발 창백", "맥박 약화"], vitals: { sbp: 134, dbp: 82, hr: 104, rr: 20, spo2: 98 },
+        transcript: "다친 쪽 발등 맥박이 약하게 잡히고 발이 차고 창백합니다. 혈관 손상 의심됩니다." },
+      { key: "compartment", label: "통증 급증·저림 — 구획증후군 의심", sev: "중증", symText: "진통에도 통증 급증, 발가락 저림", severity_tag: "high", ktas_level: 2, consciousness: "A",
+        mechanism: "낙상 — 발목 골절, 이송 중 통증 급증·저림(구획증후군 의심)", symptoms: ["통증 급증", "저림"], vitals: { sbp: 142, dbp: 88, hr: 108, rr: 20, spo2: 98 },
+        transcript: "진통제에도 통증이 계속 심해지고 발가락이 저리다고 합니다. 구획증후군 의심됩니다." },
+      { key: "stable", label: "진통 후 안정", sev: null, symText: "통증 감소, 발 색깔 정상", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "낙상 — 발목 변형, 골절 의심, 이송 중 안정", symptoms: [], vitals: { sbp: 126, dbp: 80, hr: 84, rr: 16, spo2: 99 },
+        transcript: "통증이 줄었고 발 색깔과 맥박은 정상입니다." },
+    ],
+  },
+  mild_open: {
+    monitor: { stable: "지혈 후 안정", shock: "출혈 지속 — 출혈성 쇼크", mismatch: "말단 허혈 — 목적지 부적합", consciousness: "출혈로 의식 저하", spike: "측정값 일시적 튐" },
+    followups: [
+      { key: "hemorrhage", label: "재출혈 — 쇼크 진행", sev: "중증", symText: "드레싱 흠뻑 젖음, 혈압 86/52", severity_tag: "high", ktas_level: 1, consciousness: "V",
+        mechanism: "추락 — 개방성 발목 골절, 이송 중 재출혈 출혈성 쇼크", symptoms: ["재출혈", "혈압 저하"], vitals: { sbp: 86, dbp: 52, hr: 132, rr: 26, spo2: 95 },
+        transcript: "드레싱이 다시 피로 흠뻑 젖었습니다. 혈압 86에 52, 맥박 132입니다." },
+      { key: "ischemia", label: "발 맥박 소실 — 혈관 손상", sev: "중증", symText: "발등 맥박 안 잡힘, 발 차가움", severity_tag: "high", ktas_level: 1, consciousness: "A",
+        mechanism: "추락 — 개방성 발목 골절, 이송 중 발등 맥박 소실(혈관 손상)", symptoms: ["말단 허혈"], vitals: { sbp: 112, dbp: 70, hr: 118, rr: 22, spo2: 97 },
+        transcript: "다친 발 발등 맥박이 안 잡히고 발이 차갑습니다. 혈관 손상이 의심됩니다." },
+      { key: "stable", label: "지혈 유지 · 안정", sev: null, symText: "출혈 멈춤, 혈압 118/74", severity_tag: null, ktas_level: null, consciousness: "A",
+        mechanism: "추락 — 개방성 발목 골절, 이송 중 지혈 유지", symptoms: [], vitals: { sbp: 118, dbp: 74, hr: 96, rr: 18, spo2: 98 },
+        transcript: "지혈 잘 되고 있고 혈압 118에 74로 안정적입니다." },
+    ],
+  },
+};
 const templateOf = (key: string | null | undefined): Template | null =>
   PATIENT_TEMPLATES.find((t) => t.key === key) ?? null;
 // ① 신고 접수 증상(4종) — 신고대로 현장 상황과 같은 카드
@@ -498,10 +659,10 @@ export default function ControlPage() {
   // 이송 중 목적지 병원과 2차 통화(정해진 상황) — 2차 통화 요약을 보내면 hub가 환자 정보에 덧붙인다(병원 목록·확정은 그대로)
   async function handleFollowup(key: string) {
     if (!caseId || sending) return;
-    const followup = FOLLOWUPS.find((f) => f.key === key);
-    const base = caseTemplate ?? templateOf(dispatchInfo?.reportedKey ?? reportedKey) ?? PATIENT_TEMPLATES[0];
+    const base = transportBase;
+    const followup = TRANSPORT[base.key].followups.find((f) => f.key === key);
     if (!followup) return;
-    const change = followup.apply(base);
+    const change = followup;
     setSending(true);
     try {
       const response = await fetch("/api/demo/voice", {
@@ -512,8 +673,9 @@ export default function ControlPage() {
           transcript: { raw_text: change.transcript, filtered_text: change.transcript },
           summary: {
             ...base.summary,
-            mechanism: change.mechanism, severity_tag: change.severity_tag, ktas_level: change.ktas_level,
-            consciousness: change.consciousness, symptoms: change.symptoms, vitals: change.vitals,
+            mechanism: change.mechanism, severity_tag: change.severity_tag ?? base.summary.severity_tag,
+            ktas_level: change.ktas_level ?? base.summary.ktas_level, consciousness: change.consciousness,
+            symptoms: [...base.summary.symptoms, ...change.symptoms], vitals: [{ sequence: 2, ...change.vitals }],
           },
           source: "ai",
           model_used: { stt: "scenario-template", llm: "scenario-template" },
@@ -787,6 +949,10 @@ export default function ControlPage() {
   // ── 상황 요약 띠 ──
   const reportedTemplate = templateOf(dispatchInfo?.reportedKey ?? reportedKey);
   const caseTemplate = caseId && templateCases[caseId] ? PATIENT_TEMPLATES.find((t) => t.label === templateCases[caseId]) ?? null : null;
+  // 이송 중 상황은 현장 확인한 환자(카드) 기준 — 음성으로 들어온 사건은 신고 증상의 "신고대로" 상황으로
+  const transportBase: Template = caseTemplate ?? reportedTemplate ?? PATIENT_TEMPLATES[0];
+  const transport = TRANSPORT[transportBase.key];
+  const activeFollowup = transport.followups.find((f) => f.key === followupKey) ?? transport.followups[0];
   const rank = SCREEN_STEP[screen];
   const zoneMax = myCase ? Math.max(1, ...myCase.zoneActive) : 1;
   type SummaryRow = { label: string; value: string; muted?: boolean; chip?: SevLabel | "대량" | null; sub?: string | null };
@@ -1515,7 +1681,8 @@ export default function ControlPage() {
                               }}
                             >
                               <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: C.ink }}>
-                                <Icon name={sel ? "stop" : "play"} size={10} color={C.ink} />{scenario.label}
+                                <Icon name={sel ? "stop" : "play"} size={10} color={C.ink} />
+                                {MONITOR_NUM[scenario.key as MonitorKey]} {transport.monitor[scenario.key as MonitorKey] ?? scenario.label}
                               </span>
                               <span style={{ fontSize: 13, color: C.ink3 }}>{scenario.expects}</span>
                             </button>
@@ -1580,8 +1747,8 @@ export default function ControlPage() {
                           ) : (
                             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
-                                {FOLLOWUPS.map((f) => {
-                                  const sel = followupKey === f.key;
+                                {transport.followups.map((f) => {
+                                  const sel = activeFollowup.key === f.key;
                                   return (
                                     <button
                                       key={f.key}
@@ -1603,10 +1770,10 @@ export default function ControlPage() {
                               <button
                                 type="button"
                                 disabled={sending}
-                                onClick={g(() => void handleFollowup(followupKey))}
+                                onClick={g(() => void handleFollowup(activeFollowup.key))}
                                 style={{ minHeight: 42, background: C.blue, border: "none", borderRadius: 10, color: "#ffffff", fontSize: 14, fontWeight: 700, cursor: sending ? "wait" : "pointer", opacity: sending ? 0.6 : 1 }}
                               >
-                                {sending ? "전달 중…" : `${confirmedHospital.name}에 추가 통화 내용 전달 — ${FOLLOWUPS.find((f) => f.key === followupKey)?.label}`}
+                                {sending ? "전달 중…" : `${confirmedHospital.name}에 추가 통화 내용 전달 — ${activeFollowup.label}`}
                               </button>
                             </div>
                           )}
