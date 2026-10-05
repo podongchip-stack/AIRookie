@@ -8,17 +8,33 @@ import {
   mockHubMatchResultOngoing,
 } from "@/lib/mock-data";
 import type {
+  AmbulanceSimState,
   ApprovalAction,
   ApprovalActionType,
+  CallDevice,
   CallSignal,
   CallSignalType,
+  CallStatus,
   DashboardIdentify,
   DashboardIdentityInfo,
-  DashboardRole,
   DashboardState,
+  DispatchCommand,
+  DispatchTarget,
+  HospitalInfoConfirm,
+  HospitalSelfInfo,
   HospitalStatus,
   HubMatchResult,
   InboundMessage,
+  CallTranscriptLine,
+  MapOverview,
+  MonitorCase,
+  MonitorEvent,
+  PreAlert,
+  SceneCandidates,
+  SocketRole,
+  TransportAssessment,
+  TransportVitalsMessage,
+  VitalObservationIn,
 } from "@/types/dashboard";
 
 // hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
@@ -27,13 +43,43 @@ const MOCK_ACTION_TO_STATUS: Record<ApprovalActionType, HospitalStatus> = {
   hospital_approve: "approved",
   hospital_reject: "rejected",
   final_approval: "confirmed",
+  arrival_accepted: "confirmed",
+  arrival_refused: "rejected",
+  transport_withdraw: "rejected",
 };
+
+// hub 연결 상태. "reconnecting"은 hub 주소는 설정돼 있는데 연결이 끊겨 다시 붙는 중이라는
+// 뜻이다 — 예전엔 이 경우도 "mock"으로 표시해서, 실제로는 hub가 잠깐 재시작된 것뿐인데
+// 목데이터 모드로 오인하기 쉬웠다(2026-09-24).
+export type ConnectionMode = "live" | "mock" | "reconnecting";
+
+// 끊긴 뒤 다시 붙기까지 기다리는 시간(ms). 실패할 때마다 두 배로 늘리되 최대 10초.
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 10000;
 
 const INITIAL_STATE: DashboardState = {
   matchResults: {},
+  sceneCandidates: {},
+  ambulanceSim: {},
   receivedAt: null,
   identity: { name: null, known: null },
+  selfInfo: null,
+  mapOverview: null,
+  monitorCases: {},
+  monitorEvents: [],
+  callTranscripts: {},
+  callStatus: {},
+  transportAssessments: {},
+  preAlerts: {},
+  caseMeta: {},
+  caseHistory: [],
+  actionRefused: null,
+  mciAllocated: null,
+  mciPlan: null,
 };
+
+// 관제 지도 "병원 응답" 기록에 남길 최대 개수
+const MONITOR_EVENT_LIMIT = 30;
 
 // feature/hub가 dashboard와 직접 통신하는 유일한 브랜치다 (CLAUDE.md). voice/info는
 // hub를 거쳐서만 도착하므로, dashboard가 실제로 받는 건 hub의 통합 매칭 결과 메시지
@@ -50,29 +96,182 @@ const INITIAL_STATE: DashboardState = {
 // 즉시 신원 확인(identity_info, hub README "출력 스키마 6"), (2) 관련된 진행
 // 중인 사건 따라잡기(평소 브로드캐스트와 같은 HubMatchResult). onmessage가
 // `type` 필드로 둘을 구분해 각자 다른 상태로 저장한다.
-export function useDashboardSocket(identity: { role: DashboardRole; id: string } | null) {
+export function useDashboardSocket(identity: { role: SocketRole; id: string } | null) {
   const [state, setState] = useState<DashboardState>(INITIAL_STATE);
-  const [connectionMode, setConnectionMode] = useState<"live" | "mock">(
-    "mock",
-  );
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("mock");
   const socketRef = useRef<WebSocket | null>(null);
 
   const applyMatchResult = useCallback((matchResult: HubMatchResult) => {
+    setState((prev) => {
+      // 실제 요청이 도착했으니 그 사건의 예비 고지는 역할을 다했다 — 지운다.
+      const preAlerts = { ...prev.preAlerts };
+      delete preAlerts[matchResult.caseId];
+      return {
+        ...prev,
+        matchResults: { ...prev.matchResults, [matchResult.caseId]: matchResult },
+        preAlerts,
+        receivedAt: prev.receivedAt ?? new Date().toISOString(),
+      };
+    });
+  }, []);
+
+  const applyCaseClosed = useCallback((caseId: string) => {
+    setState((prev) => {
+      if (
+        !(caseId in prev.matchResults) &&
+        !(caseId in prev.sceneCandidates) &&
+        !(caseId in prev.monitorCases) &&
+        !(caseId in prev.callStatus) &&
+        !(caseId in prev.caseMeta)
+      ) {
+        return prev;
+      }
+      const matchResults = { ...prev.matchResults };
+      const sceneCandidates = { ...prev.sceneCandidates };
+      const monitorCases = { ...prev.monitorCases };
+      const callTranscripts = { ...prev.callTranscripts };
+      const callStatus = { ...prev.callStatus };
+      const transportAssessments = { ...prev.transportAssessments };
+      const preAlerts = { ...prev.preAlerts };
+      delete matchResults[caseId];
+      delete sceneCandidates[caseId];
+      delete monitorCases[caseId];
+      delete callTranscripts[caseId];
+      delete callStatus[caseId];
+      delete transportAssessments[caseId];
+      delete preAlerts[caseId];
+      const caseMeta = { ...prev.caseMeta };
+      delete caseMeta[caseId];
+      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts, callStatus, transportAssessments, preAlerts, caseMeta };
+    });
+  }, []);
+
+  // 재연결 직후 hub가 알려주는 진행 중 사건 목록에 없는 사건은 화면에서 지운다(hub 재시작 등으로 끝난 사건).
+  const applyCaseSync = useCallback((caseIds: string[]) => {
+    const keep = new Set(caseIds);
+    const pick = <T,>(record: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(record).filter(([caseId]) => keep.has(caseId)));
     setState((prev) => ({
       ...prev,
-      matchResults: { ...prev.matchResults, [matchResult.caseId]: matchResult },
-      receivedAt: prev.receivedAt ?? new Date().toISOString(),
+      matchResults: pick(prev.matchResults),
+      sceneCandidates: pick(prev.sceneCandidates),
+      monitorCases: pick(prev.monitorCases),
+      callTranscripts: pick(prev.callTranscripts),
+      callStatus: pick(prev.callStatus),
+      transportAssessments: pick(prev.transportAssessments),
+      preAlerts: pick(prev.preAlerts),
     }));
   }, []);
 
+  // 예비 고지(2026-10-04) — 출동 순간 오는 선(先) 경고. 실제 요청이 오면 applyMatchResult가 지운다.
+  const applyPreAlert = useCallback((alert: PreAlert) => {
+    setState((prev) =>
+      prev.matchResults[alert.caseId]
+        ? prev // 이미 실제 요청이 와 있으면 뒷북 — 무시
+        : { ...prev, preAlerts: { ...prev.preAlerts, [alert.caseId]: alert } },
+    );
+  }, []);
+
+  // 이송 중 활력징후 판정(2026-10-04) — 사건별 이력으로 쌓는다(시간순, 추세 표시용).
+  const applyTransportAssessment = useCallback((assessment: TransportAssessment) => {
+    setState((prev) => ({
+      ...prev,
+      transportAssessments: {
+        ...prev.transportAssessments,
+        [assessment.caseId]: [...(prev.transportAssessments[assessment.caseId] ?? []), assessment],
+      },
+    }));
+  }, []);
+
+  const applyCallTranscript = useCallback((line: CallTranscriptLine) => {
+    if (!line.caseId) return;
+    const caseId = line.caseId;
+    setState((prev) => ({
+      ...prev,
+      callTranscripts: { ...prev.callTranscripts, [caseId]: [...(prev.callTranscripts[caseId] ?? []), line] },
+    }));
+  }, []);
+
+  const applyCallStatus = useCallback((status: CallStatus) => {
+    setState((prev) => ({ ...prev, callStatus: { ...prev.callStatus, [status.caseId]: status } }));
+  }, []);
+
+  const applyMapOverview = useCallback((overview: MapOverview) => {
+    setState((prev) => ({ ...prev, mapOverview: overview }));
+  }, []);
+
+  // 사건 요약이 오면, 직전 요약과 비교해 병원 상태가 바뀐 것(승인·거절·이송 확정)을 "병원 응답" 기록으로 쌓는다.
+  // 처음 보는 사건(연결 직후 따라잡기 포함)은 기록하지 않는다 — 이미 지난 응답을 방금 일어난 일처럼 보이게 하지 않게.
+  const applyMonitorCase = useCallback((monitorCase: MonitorCase) => {
+    setState((prev) => {
+      const before = prev.monitorCases[monitorCase.caseId];
+      const events: MonitorEvent[] = [];
+      if (before) {
+        const prevStatus = new Map(before.hospitals.map((h) => [h.hospitalId, h.status]));
+        const at = new Date().toISOString();
+        for (const hospital of monitorCase.hospitals) {
+          const was = prevStatus.get(hospital.hospitalId);
+          if (was !== undefined && was !== hospital.status && hospital.status !== "pending") {
+            events.push({
+              at,
+              caseId: monitorCase.caseId,
+              ambulanceName: monitorCase.ambulanceName ?? monitorCase.apid ?? "구급차",
+              hospitalId: hospital.hospitalId,
+              hospitalName: hospital.name,
+              status: hospital.status,
+            });
+          }
+        }
+      }
+      return {
+        ...prev,
+        monitorCases: { ...prev.monitorCases, [monitorCase.caseId]: monitorCase },
+        monitorEvents: events.length ? [...events, ...prev.monitorEvents].slice(0, MONITOR_EVENT_LIMIT) : prev.monitorEvents,
+      };
+    });
+  }, []);
+
+  const applySceneCandidates = useCallback((scene: SceneCandidates) => {
+    setState((prev) => ({ ...prev, sceneCandidates: { ...prev.sceneCandidates, [scene.caseId]: scene } }));
+  }, []);
+
   const applyIdentityInfo = useCallback((info: DashboardIdentityInfo) => {
-    setState((prev) => ({ ...prev, identity: { name: info.name, known: info.known } }));
+    setState((prev) => ({
+      ...prev,
+      identity: {
+        name: info.name,
+        known: info.known,
+        simDispatch: info.simDispatch ?? false,
+        dashboardCall: info.dashboardCall ?? true, // 필드가 없는 구버전 hub = 예전처럼 대시보드 통화
+        gps: info.gps ?? null,
+      },
+    }));
+  }, []);
+
+  const applyAmbulanceSim = useCallback((sim: AmbulanceSimState) => {
+    setState((prev) => {
+      const before = prev.ambulanceSim[sim.apid];
+      const path = sim.type === "ambulance_phase" ? sim.path ?? null : before?.path ?? null;
+      return { ...prev, ambulanceSim: { ...prev.ambulanceSim, [sim.apid]: { ...sim, path } } };
+    });
+  }, []);
+
+  const applySelfInfo = useCallback((info: HospitalSelfInfo) => {
+    setState((prev) => ({ ...prev, selfInfo: info }));
   }, []);
 
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_DASHBOARD_WS_URL;
 
     if (!wsUrl) {
+      // 화면 상단바에 "○ 목데이터 모드" 배지가 이미 뜨지만, 배포 환경에서 env를
+      // 빠뜨리면 그 배지를 놓치고 가짜 데이터를 실데이터로 오인할 수 있다 —
+      // 콘솔에도 한 번 분명히 남긴다(로컬 UI 작업은 이 경로가 정상이므로
+      // fallback 동작 자체는 그대로 둔다).
+      console.warn(
+        "[골든링크] NEXT_PUBLIC_DASHBOARD_WS_URL이 설정되지 않아 목데이터 모드로 동작합니다. " +
+          "배포 환경이라면 hub WebSocket 주소를 .env에 설정하세요.",
+      );
       // 이펙트 본문에서 setState를 동기 호출하면 안 되므로(react-hooks/set-state-in-effect),
       // mock 응답들도 전부 타이머로 미룬다. hub가 없는 mock 모드에서는
       // known=false(접근 불가) 화면이 떠서 UI 작업이 막히면 안 되므로, identity가
@@ -109,43 +308,129 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
       return () => timers.forEach(clearTimeout);
     }
 
-    const socket = new WebSocket(wsUrl);
-    socketRef.current = socket;
+    // 끊기면 자동으로 다시 붙는다(2026-09-24). 예전엔 페이지를 열 때 한 번만 연결해서,
+    // hub 재시작이나 프록시(Cloudflare 터널)의 유휴 연결 종료로 한 번 끊기면 그 페이지는
+    // 새로고침 전까지 영영 결과를 못 받았다 — 통화 신호도 조용히 버려져서, 음성 처리는
+    // 끝났는데 구급차 화면엔 아무것도 안 뜨는 일이 실제로 있었다. 다시 붙을 때마다
+    // identify를 다시 보내므로 hub가 그 사이 놓친 사건을 따라잡기로 돌려준다.
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryDelay = RECONNECT_BASE_MS;
 
-    socket.onopen = () => {
-      setConnectionMode("live");
-      if (identity) {
-        const message: DashboardIdentify = { type: "identify", role: identity.role, id: identity.id };
-        socket.send(JSON.stringify(message));
-      }
-    };
-    socket.onclose = () => setConnectionMode("mock");
-    socket.onerror = () => setConnectionMode("mock");
-    socket.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data) as InboundMessage;
-        // HubMatchResult엔 type 필드 자체가 없어서 "type" in parsed로 구분한다
-        // (parsed.type만 비교하면 두 타입 모두에 type이 있어야 좁혀지지 않는다).
-        if ("type" in parsed && parsed.type === "identity_info") {
-          applyIdentityInfo(parsed);
-        } else {
-          applyMatchResult(parsed as HubMatchResult);
+    const connect = () => {
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        retryDelay = RECONNECT_BASE_MS;
+        setConnectionMode("live");
+        if (identity) {
+          const message: DashboardIdentify = { type: "identify", role: identity.role, id: identity.id };
+          socket.send(JSON.stringify(message));
         }
-      } catch {
-        // 파싱 불가능한 메시지는 무시
-      }
+      };
+      // onerror 뒤에는 항상 onclose가 오므로 재연결 예약은 onclose 한 곳에서만 한다.
+      socket.onclose = () => {
+        if (disposed) return;
+        setConnectionMode("reconnecting");
+        retryTimer = setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, RECONNECT_MAX_MS);
+      };
+      socket.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as InboundMessage;
+          // type으로 구분한다(2026-10-01). type이 없으면 2026-09-28 이전 hub의 매칭 결과다.
+          // 모르는 type은 버린다 — 예전엔 나머지를 전부 매칭 결과로 취급해서, hub가 새 메시지
+          // 종류를 보내기 시작하면 사건 목록이 깨졌다.
+          switch (parsed.type) {
+            case "identity_info":
+              applyIdentityInfo(parsed);
+              break;
+            case "hospital_self_info":
+              applySelfInfo(parsed);
+              break;
+            case "ambulance_phase":
+            case "ambulance_position":
+              applyAmbulanceSim(parsed);
+              break;
+            case "scene_candidates":
+              applySceneCandidates(parsed);
+              break;
+            case "case_closed":
+              applyCaseClosed(parsed.caseId);
+              break;
+            case "map_overview":
+              applyMapOverview(parsed);
+              break;
+            case "case_overview":
+              applyMonitorCase(parsed);
+              break;
+            case "call_transcript":
+              applyCallTranscript(parsed);
+              break;
+            case "call_status":
+              applyCallStatus(parsed);
+              break;
+            case "case_sync":
+              applyCaseSync(parsed.caseIds);
+              break;
+            case "transport_assessment":
+              applyTransportAssessment(parsed);
+              break;
+            case "pre_alert":
+              applyPreAlert(parsed);
+              break;
+            // 관제 지도(2026-10-04): 매칭 전 사건 정보 · 오늘 종료된 사건 목록
+            case "case_meta":
+              setState((prev) => ({ ...prev, caseMeta: { ...prev.caseMeta, [parsed.caseId]: parsed } }));
+              break;
+            case "case_history":
+              setState((prev) => ({ ...prev, caseHistory: parsed.cases }));
+              break;
+            case "mci_allocated":
+              setState((prev) => ({ ...prev, mciAllocated: { at: Date.now(), results: parsed.results } }));
+              break;
+            case "mci_plan":
+              setState((prev) => ({ ...prev, mciPlan: { at: Date.now(), caseIds: parsed.caseIds, plan: parsed.plan } }));
+              break;
+            case "action_refused":
+              setState((prev) => ({ ...prev, actionRefused: { at: Date.now(), reason: parsed.reason, caseId: parsed.caseId } }));
+              break;
+            case "match_result":
+            case undefined:
+              applyMatchResult(parsed);
+              break;
+          }
+        } catch {
+          // 파싱 불가능한 메시지는 무시
+        }
+      };
     };
 
-    return () => socket.close();
+    connect();
+
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      socketRef.current?.close();
+    };
     // identity는 객체라 매 렌더 새 참조일 수 있으니, 원시값(role/id)만 의존성으로
     // 둬서 값이 실제로 바뀔 때만(사실상 마운트 시 한 번) 재연결한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyMatchResult, applyIdentityInfo, identity?.role, identity?.id]);
+  }, [applyMatchResult, applyCaseClosed, applySceneCandidates, applyAmbulanceSim, applyIdentityInfo, applySelfInfo, applyMapOverview, applyMonitorCase, applyCallTranscript, applyCallStatus, applyCaseSync, applyTransportAssessment, applyPreAlert, identity?.role, identity?.id]);
 
   const sendAction = useCallback((action: ApprovalAction) => {
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(action));
+      return;
+    }
+    // hub 주소가 설정된 실제 모드에서 잠깐 끊긴 경우엔 로컬로 흉내내면 안 된다 — 화면엔
+    // 승인된 것처럼 보이는데 hub엔 안 간 상태가 되기 때문이다. 알리고 버린다(재연결 후
+    // 다시 누르면 된다).
+    if (process.env.NEXT_PUBLIC_DASHBOARD_WS_URL) {
+      console.warn("[골든링크] hub 연결이 끊겨 승인 액션을 보내지 못했습니다:", action);
+      window.alert("hub와 연결이 끊겨 전송하지 못했습니다. 상단에 '실시간 연동'이 다시 뜨면 한 번 더 눌러주세요.");
       return;
     }
     console.info("[mock] 승인 액션 전송(WS 미연결) — 로컬에서 hub 반응을 흉내냄:", action);
@@ -168,31 +453,174 @@ export function useDashboardSocket(identity: { role: DashboardRole; id: string }
   // 통화 시연(CallDemoPanel)이 통화 시작/종료를 hub에 알리는 신호. apid로 hub가
   // 중계할 voice 인스턴스를 찾고, caseId로 이번 통화의 사건을 식별한다 —
   // call_started 시점에 구급차 대시보드가 새로 생성해 넘긴다.
-  const sendCallSignal = useCallback((signal: CallSignalType, apid: string, caseId: string) => {
+  //
+  // 실제로 hub에 보냈는지를 돌려준다. hub 주소가 설정돼 있는데 연결이 끊긴 상태면 false —
+  // 호출한 쪽이 사용자에게 알려야 한다(예전엔 콘솔에만 남기고 조용히 버려서, 통화를
+  // 마쳤는데 voice가 아무것도 못 받은 걸 알아채기 어려웠다). mock 모드는 hub가 원래
+  // 없으니 true로 두고 화면 흐름을 그대로 진행시킨다.
+  //
+  // extra(2026-10-03): 휴대폰 통화 화면이 고른 병원(hospitalId)과 기기(device). hub가 그 병원에 "통화 중"을 띄운다.
+  const sendCallSignal = useCallback(
+    (
+      signal: CallSignalType,
+      apid: string,
+      caseId: string,
+      extra?: { hospitalId?: string | null; device?: CallDevice; cancelled?: boolean },
+    ): boolean => {
     const payload: CallSignal = {
       type: "call_signal",
       signal,
       timestamp: new Date().toISOString(),
       apid,
       caseId,
+      ...(extra?.hospitalId ? { hospitalId: extra.hospitalId } : {}),
+      ...(extra?.device ? { device: extra.device } : {}),
+      ...(extra?.cancelled ? { cancelled: true } : {}),
     };
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(payload));
-    } else {
-      console.info("[mock] 통화 신호 전송(WS 미연결):", payload);
+      return true;
     }
-  }, []);
+    if (!process.env.NEXT_PUBLIC_DASHBOARD_WS_URL) {
+      console.info("[mock] 통화 신호 전송(WS 미연결):", payload);
+      return true;
+    }
+    console.warn("[골든링크] hub 연결이 끊겨 통화 신호를 보내지 못했습니다:", payload);
+    return false;
+    },
+    [],
+  );
 
   // 마이크로 캡처한 오디오 조각을 실시간으로 hub에 전달한다(바이너리 프레임).
-  // WS 미연결(mock 모드)에서는 hub로 보낼 대상이 없으니 조용히 버린다 — 화면
-  // 시각화는 CallDemoPanel이 소켓과 무관하게 로컬에서 직접 처리한다.
-  const sendAudioChunk = useCallback((chunk: Blob) => {
+  // 2026-10-03부터 16kHz 모노 16비트 PCM(lib/pcm-capture.ts) — hub가 그 사건으로 중앙 voice에 넘겨 STT 입력이 된다.
+  // WS 미연결(mock 모드)에서는 hub로 보낼 대상이 없으니 조용히 버린다.
+  const sendAudioChunk = useCallback((chunk: Blob | ArrayBuffer) => {
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(chunk);
     }
   }, []);
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk };
+  // 병원 대시보드의 "현재 정보가 맞습니다" 확인(2026-09-29). hub가 이 병원의
+  // 병상 신뢰도를 조건부 생존으로 되올리고, 갱신된 자기 정보(hospital_self_info)와
+  // 관련 사건 재계산 결과를 곧바로 되돌려준다. 실제로 보냈는지를 돌려준다.
+  const sendInfoConfirm = useCallback((hospitalId: string): boolean => {
+    const payload: HospitalInfoConfirm = {
+      type: "info_confirm",
+      hospitalId,
+      timestamp: new Date().toISOString(),
+    };
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+      return true;
+    }
+    if (!process.env.NEXT_PUBLIC_DASHBOARD_WS_URL) {
+      // mock 모드 — hub가 없으니 확인 효과(✓·확률 리셋)를 로컬로 흉내낸다.
+      console.info("[mock] 정보 확인 전송(WS 미연결):", payload);
+      setState((prev) => {
+        const br = prev.selfInfo?.bedReliability;
+        if (!prev.selfInfo || !br?.bornAt) return prev;
+        const ageSec = Math.max((Date.now() - Date.parse(br.bornAt)) / 1000, 0);
+        return {
+          ...prev,
+          selfInfo: {
+            ...prev.selfInfo,
+            bedReliability: { ...br, authority: 1, rArrive: 1, confirmedAgeSec: ageSec },
+          },
+        };
+      });
+      return true;
+    }
+    console.warn("[골든링크] hub 연결이 끊겨 정보 확인을 보내지 못했습니다:", payload);
+    return false;
+  }, []);
+
+  // 이송 중 활력징후 1회 측정을 입력 구멍으로 보낸다(2026-10-04). 판정(transport_assessment)은
+  // hub의 규칙 엔진이 돌려준다 — mock 모드에는 엔진이 없으므로 보낸 척만 하고 true를
+  // 돌려준다(패널이 "판정은 hub 연결 시" 안내를 띄운다).
+  const sendTransportVitals = useCallback(
+    (caseId: string, apid: string, observation: VitalObservationIn, extra?: { demo?: boolean; scenario?: string }): boolean => {
+      const payload: TransportVitalsMessage = {
+        type: "transport_vitals",
+        caseId,
+        apid,
+        demo: extra?.demo ?? false,
+        scenario: extra?.scenario ?? null,
+        observation,
+      };
+      const socket = socketRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(payload));
+        return true;
+      }
+      if (!process.env.NEXT_PUBLIC_DASHBOARD_WS_URL) {
+        console.info("[mock] 활력징후 전송(WS 미연결):", payload);
+        return true;
+      }
+      console.warn("[골든링크] hub 연결이 끊겨 활력징후를 보내지 못했습니다:", payload);
+      return false;
+    },
+    [],
+  );
+
+  // [이동] · [현장 종료] · [정지] · [상황 재개] (출동 시뮬레이션). 끊겨 있으면 보내지 않고 false.
+  // report(2026-10-04): 신고 접수 때 파악한 1차 증상 — hub가 예비 고지에 실어 보낸다.
+  const sendSimCommand = useCallback(
+    (
+      type: DispatchCommand["type"],
+      apid: string,
+      caseId: string,
+      target?: DispatchTarget | null,
+      report?: { symptom: string; severity: DispatchCommand["reportedSeverity"] } | null,
+    ): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    const payload: DispatchCommand = {
+      type,
+      apid,
+      caseId,
+      timestamp: new Date().toISOString(),
+      ...(target ? { target: { lat: target.lat, lng: target.lng }, targetMode: target.mode } : {}),
+      ...(report ? { reportedSymptom: report.symptom, reportedSeverity: report.severity } : {}),
+    };
+    socket.send(JSON.stringify(payload));
+    return true;
+    },
+    [],
+  );
+
+  // [건너뛰기](2026-10-04, 시연 콘솔) — 자동 존 확장 시각을 기다리지 않고 지금 한 단계 넓힌다
+  const sendZoneExpand = useCallback((caseId: string): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "zone_expand_now", caseId, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
+  // 대량사고 [분배 확정](2026-10-05) — hub가 중증부터 사건마다 승인 병원 중 순위 1위로 이송 확정한다(부하 페널티 반영)
+  const sendMciAllocate = useCallback((caseIds: string[]): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "mci_allocate", caseIds, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
+  // 대량사고 자동 분배 미리 보기(2026-10-05) — 확정하지 않고 hub의 계획만 받는다(mci_plan)
+  const sendMciPreview = useCallback((caseIds: string[]): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "mci_preview", caseIds }));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview };
 }
+
+// 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.
+export const CONNECTION_LABEL: Record<ConnectionMode, { text: string; color: string }> = {
+  live: { text: "● 실시간 연동", color: "hospitalStatus.confirmed" },
+  reconnecting: { text: "◌ hub 재연결 중…", color: "coral" },
+  mock: { text: "○ 목데이터 모드", color: "ink2" },
+};

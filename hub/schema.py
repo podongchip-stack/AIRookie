@@ -6,7 +6,9 @@ feature/voice, feature/info의 출력 JSON, feature/dashboard로 보내는 출�
 """
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from voice_v2 import is_v2, normalize as normalize_v2
 
 Severity = Literal["high", "medium", "low"]
 HospitalStatus = Literal["pending", "approved", "rejected", "confirmed"]
@@ -14,8 +16,23 @@ HospitalStatus = Literal["pending", "approved", "rejected", "confirmed"]
 
 # ── feature/voice → feature/hub (입력) ──────────────────────────────────────
 
+class Vital(BaseModel):
+    """활력징후 1회 측정(voice v2, MF_BERT가 찾은 구간을 규칙으로 읽은 숫자). 없는 값은 None."""
+
+    sequence: int = 1
+    sbp: Optional[float] = None
+    dbp: Optional[float] = None
+    hr: Optional[float] = None
+    rr: Optional[float] = None
+    bt: Optional[float] = None
+    spo2: Optional[float] = None
+    glucose: Optional[float] = None
+
+
 class VoiceSummary(BaseModel):
-    """feature/voice CallSummaryMessage.summary와 동일한 필드만 사용한다."""
+    """feature/voice CallSummaryMessage.summary. 예전 6필드 형식과 v2 스키마(MF_BERT 17필드,
+    2026-09-29~)를 둘 다 받는다 — v2면 voice_v2.normalize()가 예전 필드로 옮기고 표시용 필드
+    (KTAS·활력징후·의식·발생 시점·주 호소)를 더한다(2026-10-01)."""
 
     patient: str
     mechanism: str
@@ -23,6 +40,16 @@ class VoiceSummary(BaseModel):
     treatment: list[str]
     severity_tag: Severity
     required_department: Optional[str] = None
+    ktas_level: Optional[int] = None
+    vitals: list[Vital] = Field(default_factory=list)
+    consciousness: Optional[str] = None
+    onset: Optional[str] = None
+    chief_complaint: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_v2(cls, data):
+        return normalize_v2(data) if is_v2(data) else data
 
 
 class VoiceTranscript(BaseModel):
@@ -45,6 +72,9 @@ class VoiceCallSummaryMessage(BaseModel):
     transcript: VoiceTranscript
     summary: VoiceSummary
     source: Literal["ai"] = "ai"
+    # 어떤 모델이 만들었나(voice가 원래 보내던 필드, 2026-10-05부터 읽는다) — 콘솔의 정해진 상황은
+    # stt "scenario-template"이라 이송 중 2차 통화 활력징후를 가상(demo)으로 표시할 때 쓴다.
+    model_used: Optional[dict] = None
 
 
 # ── feature/info → feature/hub (입력) ───────────────────────────────────────
@@ -103,6 +133,48 @@ class Assessment(BaseModel):
     groups: dict[str, AssessmentGroup] = Field(default_factory=dict)
 
 
+class BedReliabilityInput(BaseModel):
+    """feature/info의 reliability/(infosurv 서빙 모듈)가 HospitalInfo에 얹어
+    보내는 병상 정보 신뢰도 예측. XGBoost AFT 생존모델이라 source는 "ai"다.
+
+    hub가 실제로 쓰는 건 predictedSurvivalSec(예측 생존시간)과 bornAt(현재
+    claim-version 탄생 시각) 둘이다 — authority는 정보 나이에 따라 계속
+    떨어지는 값이라 hub가 매칭 시점마다 bed_reliability.evaluate()로
+    재계산한다. authorityAtSend/ttlSec은 info의 전송 시점 스냅샷(로그·대조용).
+    """
+
+    predictedSurvivalSec: float
+    bornAt: str
+    # 생존곡선 척도. raw면 1.0(기본값 — 구 info 데이터 하위호환), info가 잔차
+    # 재보정(σR)을 적용해 보내면 그 값 — hub가 같은 곡선을 재계산하는 데 쓴다.
+    sigma: float = 1.0
+    authorityAtSend: float
+    ttlSec: float
+    modelTag: str
+    source: Literal["ai"] = "ai"
+
+
+class SevereGroupDeclaration(BaseModel):
+    """질환군 하나의 현재 중증질환 수용가능 신고 상태 (feature/info의
+    reliability/severe.py — 규칙 기반, 모델 아님)."""
+
+    value: Literal["Y", "불가능"]
+    bornAt: str
+    # True면 info의 추적 시작부터 이 값이었다 — 실제 신고는 더 오래됐을 수
+    # 있어 나이가 하한(좌측검열)이라는 뜻. dashboard는 "최소 X시간 전"으로
+    # 표현해야 한다.
+    ageIsMin: bool = False
+
+
+class SevereDeclarations(BaseModel):
+    """feature/info가 스냅샷 추적으로 알아낸 중증질환 신고의 탄생 시각.
+    E-Gen 응답에는 신고 시각 필드가 없어서 이 값은 info의 추적만이 안다.
+    현재 값이 정보미제공인 그룹은 키가 없다."""
+
+    groups: dict[str, SevereGroupDeclaration] = Field(default_factory=dict)
+    source: Literal["rule"] = "rule"
+
+
 class HospitalInfo(BaseModel):
     hospitalId: str
     name: str
@@ -112,6 +184,9 @@ class HospitalInfo(BaseModel):
     specialties: list[Specialty] = Field(default_factory=list)
     source: Literal["rule"] = "rule"
     updatedAt: str
+    # E-Gen 응급의료기관 등급(dutyEmclsName, 2026-10-01): 권역응급의료센터/지역응급의료센터/
+    # 지역응급의료기관/응급실운영신고기관. 중증 환자 가산(scoring.LEVEL_BONUS_MIN)에 쓴다.
+    emergencyLevel: Optional[str] = None
     # feature/info는 병상 수가 미상일 때 availableBedCount에 0을 넣되, bedsByType에
     # 해당 코드(ER_ADULT 등) 키를 넣지 않는 것으로 "미상"과 "확인된 만실"을 구분한다
     # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
@@ -123,6 +198,15 @@ class HospitalInfo(BaseModel):
     # 깨지지 않는다. Optional로 명시한 이유는 "받으면 실제로 타입 검증까지
     # 하고 싶어서"이지 "안 받으면 깨져서"가 아니다.
     assessment: Optional[Assessment] = None
+    # reliability/(infosurv)의 병상 정보 신뢰도 예측. assessment와 같은 패턴 —
+    # 이 필드 없이 오는 구 feature/info 데이터도 그대로 통과한다.
+    bedReliability: Optional[BedReliabilityInput] = None
+    # 중증질환 신고 신선도(규칙 기반). 같은 Optional 패턴.
+    severeDeclarations: Optional[SevereDeclarations] = None
+    # 응급실 일반(hvec) 외 확장 필드들의 신뢰도 예측 (2026-09-28 다필드 확장).
+    # 키는 E-Gen 필드명(hvoc 수술실·hvgc 입원실·hv28 소아 등), 값 구조는
+    # bedReliability와 동일. 같은 Optional 패턴.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityInput]] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -143,6 +227,19 @@ class AmbulanceInfo(BaseModel):
     updatedAt: str
 
 
+class VoiceUtterance(BaseModel):
+    """feature/voice → feature/hub : 통화 중 발화 하나의 인식 결과(2026-10-03). hub는 그 구급차 대시보드에만
+    call_transcript로 넘긴다 — 통화 시연 패널의 실시간 자막(실제 STT). 저장·로그하지 않는다(통화 원문은 voice
+    로컬 파일과 통화 요약에만 남는다)."""
+
+    apid: str
+    caseId: Optional[str] = None
+    start: float
+    end: float
+    text: str
+    source: Literal["ai"] = "ai"
+
+
 class VoiceRegistration(BaseModel):
     """feature/voice → feature/hub : voice가 뜰 때 자기 IP를 자동 탐지해서
     hub에 알려주는 자가 등록. 포트는 AmbulanceInfo.voicePort로 이미 알고
@@ -151,11 +248,29 @@ class VoiceRegistration(BaseModel):
     중계할 때(CallSignal) 그 주소로 보낸다.
     """
 
-    apid: str
+    # 중앙 voice(2026-10-03)는 구급차 하나에 묶이지 않아 apid 없이 central=True·port로 등록한다. 30초마다 다시 등록해
+    # hub가 재시작해도 다시 붙는다. 구급차별(예전) 등록은 apid + ip.
+    apid: Optional[str] = None
     ip: str
+    central: bool = False
+    port: Optional[int] = None
 
 
 # ── feature/hub → feature/dashboard (출력) ──────────────────────────────────
+
+class PatientUpdate(BaseModel):
+    """이 사건의 앞선 통화 요약 한 건(2026-10-05). 환자 상태가 바뀌어 다시 통화하면(이송 중 목적지 병원과의
+    통화 등) 새 요약이 patientInfo가 되고, 앞선 요약은 지우지 않고 여기 쌓는다 — "덧붙이기" 원칙(AI 처리 결과)."""
+
+    callRound: int
+    receivedAt: str
+    expectedDiagnosis: str
+    severityTag: Severity
+    injuryStatus: list[str] = Field(default_factory=list)
+    ktasLevel: Optional[int] = None
+    vitals: list[Vital] = Field(default_factory=list)
+    consciousness: Optional[str] = None
+
 
 class PatientInfo(BaseModel):
     injuryStatus: list[str]
@@ -163,11 +278,28 @@ class PatientInfo(BaseModel):
     severityTag: Severity
     rawTranscript: str
     filteredTranscript: str
+    # voice v2(2026-10-01~)가 주는 표시용 값(source: ai). 예전 voice면 비어 있다.
+    patient: Optional[str] = None
+    treatment: list[str] = Field(default_factory=list)
+    ktasLevel: Optional[int] = None
+    vitals: list[Vital] = Field(default_factory=list)
+    consciousness: Optional[str] = None
+    onset: Optional[str] = None
+    chiefComplaint: Optional[str] = None
+    requiredDepartment: Optional[str] = None
+    # 몇 번째 통화 요약인지(2026-10-05) — 1이면 현장 첫 통화. 2 이상이면 previousCalls에 앞선 요약이 있다.
+    callRound: int = 1
+    previousCalls: list[PatientUpdate] = Field(default_factory=list)
 
 
 class SpecialtyMatch(BaseModel):
     department: Optional[str] = None
     score: float = 0.0
+    # 어떻게 맞췄나(2026-10-01): voice의 required_department와 정확히 같은 과가 있으면 "exact"
+    # (score 1.0), 없으면 예상 병명과 진료과명의 임베딩 유사도("embedding"), 진료과가 없으면 "none".
+    basis: Literal["exact", "embedding", "none"] = "embedding"
+    # 매칭된 진료과의 전문의 수(심평원). 모르면 None — 가산점 없음.
+    doctorCount: Optional[int] = None
 
 
 class ReliabilityInfo(BaseModel):
@@ -188,11 +320,74 @@ class ReliabilityInfo(BaseModel):
     basis: list[str] = Field(default_factory=list)
 
 
+class BedReliabilityMatch(BaseModel):
+    """이 병원의 병상 숫자를 얼마나 믿어도 되는지 — 매칭 시점에 hub가
+    재계산해 dashboard로 내보내는 설명용 필드(2026-09-24 신설).
+
+    ReliabilityInfo(assessment 기반, 중증질환군 수용 신고의 신뢰도)와는 다른
+    축이다 — 이쪽은 "가용 병상 수 값 자체가 아직 유효한가"를 본다. 순위
+    (finalScore)에는 관여하지 않는다. authority는 지금 시점, rArrive는
+    도착 시점(horizonSec 뒤)의 유효 확률. horizonSec는 순위에 쓴 이동 시간
+    (HospitalMatch.travelMin — 카카오 ETA, 없으면 보정 추정치)과 같다(2026-09-28).
+    """
+
+    authority: float
+    rArrive: float
+    horizonSec: float
+    ttlSec: float
+    modelTag: str
+    source: Literal["ai"] = "ai"
+    # ── 실시간 감쇠 파라미터 (2026-09-28 추가) ──
+    # dashboard가 다음 브로드캐스트를 기다리지 않고 authority를 초 단위로 직접
+    # 감쇠시켜 그릴 수 있게, 곡선의 파라미터 자체를 같이 보낸다:
+    #   S(age) = 1 − Φ((ln age − ln predictedSurvivalSec) / sigma)
+    predictedSurvivalSec: Optional[float] = None
+    bornAt: Optional[str] = None
+    sigma: float = 1.0
+    # 병원 대시보드가 "현재 정보 확인"을 누른 이력이 현재 claim에 유효하면,
+    # 그 확인 시점의 claim 나이(초). 있으면 확률이 조건부 생존 S(a)/S(u)로
+    # 계산된 것이고, dashboard의 로컬 감쇠도 같은 식을 써야 한다(2026-09-29).
+    confirmedAgeSec: Optional[float] = None
+
+
+class SevereFreshness(BaseModel):
+    """매칭된 질환군의 중증질환 수용가능 신고가 얼마나 신선한지 — hub가 매칭
+    시점에 계산해 내보내는 설명용 필드(2026-09-28 신설, 규칙 기반).
+
+    ReliabilityInfo(같은 신고를 심평원 대조로 "믿을 만한가" 판정)와 상보적이다
+    — 이쪽은 "그 신고가 언제 적 것인가"를 본다. ruleRemainingSec은 실측된
+    통상 만료 규칙(신고 후 약 9시간, Phase 0 실측 60.1%가 9.0h)에 따른 잔여
+    초로, 0이면서 여전히 신고가 떠 있으면 병원이 갱신을 지속 중이라는 뜻이지
+    신고가 죽었다는 뜻이 아니다. 순위(finalScore)에는 관여하지 않는다.
+    """
+
+    group: str
+    value: Literal["Y", "불가능"]
+    ageSec: float
+    ageIsMin: bool = False
+    ruleRemainingSec: float
+    source: Literal["rule"] = "rule"
+
+
+# 순위를 맨 뒤쪽으로 내린 이유(2026-09-28 신설). 후보에서 빼지는 않는다 — 뺑뺑이 방지 원칙.
+# declared_no: 관련 중증질환군을 병원이 "수용 불가"로 신고 / beds_full: 병상 0이 확인된 만실
+# (미상·오래된 값은 해당 안 됨) / rejected: 이 사건에 대해 병원이 명시적으로 거절.
+# 병원이 이 사건에 승인(approved)·확정(confirmed) 응답을 했으면 신고·병상 값보다 그 응답이
+# 우선이라 declared_no·beds_full로 내리지 않는다.
+DemoteReason = Literal["declared_no", "beds_full", "rejected"]
+# 순위 계산에 쓴 이동 시간의 출처. eta: 카카오 도로 기준 소요시간 / estimate: 직선거리 ×
+# (같은 사건에서 ETA가 있는 병원들로 보정한 분/km, 없으면 기본값)으로 추정.
+TravelBasis = Literal["eta", "estimate"]
+
+
 class HospitalMatch(BaseModel):
     hospitalId: str
     name: str
     gps: GpsPoint
     distanceKm: float
+    # 이 병원이 속한 존(직선거리 밴드, 2026-10-04) — 구급차 후보 리스트가 Zone 1·2·3
+    # 섹션으로 나눠 그리는 데 쓴다(존 확장이 눈에 보이게)
+    zone: int = 1
     specialtyMatch: SpecialtyMatch
     availableBedCount: int
     # availableBedCount가 0일 때 그게 "확인된 만실"인지 "미상"인지 구분한다.
@@ -200,11 +395,65 @@ class HospitalMatch(BaseModel):
     # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
     bedCountUnknown: bool = False
     status: HospitalStatus = "pending"
+    # 도로 기준 도착 예상 시간(분, 올림). 카카오모빌리티 다중 목적지 길찾기로 채운다(routing.py,
+    # 2026-09-24). 키 없음·조회 실패·반경 10km 밖이면 None. 표시용 원값이고, 순위에는 아래
+    # travelMin(ETA가 있으면 같은 값의 올림 전 분)이 들어간다.
     etaMin: Optional[int] = None
     reliability: Optional[ReliabilityInfo] = None
+    bedReliability: Optional[BedReliabilityMatch] = None
+    severeFreshness: Optional[SevereFreshness] = None
+    # 수술실·입원실·소아 등 확장 필드의 신뢰도 환산값 (키 = E-Gen 필드명).
+    # bedReliability(응급실 일반)와 같은 계산·같은 설명용 원칙.
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
+    # ── 순위 설명 필드 (2026-09-28 신설, 모두 source: "rule") ──
+    # 정렬에 쓴 가중합 점수(scoring.final_score). 승인 액션 뒤 재정렬에도 이 값을 쓴다.
+    finalScore: Optional[float] = None
+    # 순위 계산에 쓴 이동 시간(분)과 그 출처. etaMin은 표시용 올림값, 이건 계산용 원값이다.
+    travelMin: Optional[float] = None
+    travelBasis: Optional[TravelBasis] = None
+    # 병원이 [불가]를 누를 때 고른 사유(2026-10-03, status=rejected일 때만). 병원 화면의 사유 선택칸이 이 값을 보여준다.
+    rejectReason: Optional[str] = None
+    # 병원이 누르지 않았는데도 지금 수용할 수 없는 이유(2026-10-03, 규칙 기반). "beds_full" = 응급실 병상 0이
+    # 확인됨(E-Gen, 미상·1일 넘은 값 제외 — demoteReasons의 beds_full과 같은 기준). status는 pending 그대로라
+    # 병원의 거절로 세지 않고(거절 로그·존 확장 비율 X), E-Gen이 갱신돼 병상이 생기면 재계산 때 사라진다.
+    unavailableReason: Optional[str] = None
+    # 카카오 내비 기준 도로 거리(km, 2026-10-03). 화면은 이걸 우선 보여주고, 없으면(ETA 못 받음) distanceKm를
+    # "직선 추정"으로 표시한다. distanceKm(직선)는 존 판정·설명용으로 그대로 둔다.
+    roadDistanceKm: Optional[float] = None
+    # 순위를 뒤로 내린 이유. 비어 있으면 finalScore 순서 그대로다.
+    demoteReasons: list[DemoteReason] = Field(default_factory=list)
+    # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
+    # "확인된 만실"로 보지 않는다(beds_full로 안 내림). bedCountUnknown과는 별개 축이다.
+    bedDataStale: bool = False
+    # 이 사건에서 제외된 병원(2026-10-05) — 도착 후 수용 불가·이송 중 수용 철회. 같은 사건엔 다시 승인할 수 없다
+    excluded: bool = False
+    # 전문성·등급 가산(2026-10-01, scoring.expertise_bonus_min). 이동시간에서 뺀 분과 그 이유.
+    emergencyLevel: Optional[str] = None
+    travelBonusMin: float = 0.0
+    bonusReasons: list[str] = Field(default_factory=list)
+    # ── 이송 중 부하 페널티 (2026-10-03, scoring.load_penalty_min) ──
+    # 이 병원으로 지금 이송 중(확정, TTL 오버레이)인 건수와, 그 압력만큼 이동시간에 더한 분.
+    # 평시(이송 중 0건)는 둘 다 0 — 기존 순위와 완전히 같다. 대량사고처럼 확정이 쌓일 때만
+    # 작동해, 만실 절벽 강등(beds_full) 전에 연속적으로 분산시킨다. loadReason은 설명 문구.
+    inFlightCount: int = 0
+    loadPenaltyMin: float = 0.0
+    loadReason: Optional[str] = None
+
+
+class ArrivalResult(BaseModel):
+    """확정 병원 도착 뒤 병원이 기록한 실제 수용 결과(2026-10-01)."""
+
+    hospitalId: str
+    result: Literal["accepted", "refused"]
+    at: str
+    reason: Optional[str] = None
 
 
 class HubMatchResult(BaseModel):
+    # 메시지 종류 구분자(2026-09-28 신설). dashboard로 나가는 메시지 중 이것만 type이 없어서
+    # dashboard가 `"type" in parsed`로 구분하고 있었다. 기존 판별(identity_info인지 먼저 확인)과
+    # 충돌하지 않는다.
+    type: Literal["match_result"] = "match_result"
     # 여러 사건(구급차)이 동시에 진행될 수 있어, dashboard가 이 결과를 어느
     # 사건 것인지 구분해 자기 화면에 맞는 것만 골라 쓸 수 있게 한다.
     caseId: str
@@ -217,11 +466,32 @@ class HubMatchResult(BaseModel):
     # apid를 못 찾으면(register_case 전에 process_voice_summary가 불린 등 예외
     # 상황) None으로 두고, dashboard는 URL의 apid로 대체 표시한다.
     ambulanceName: Optional[str] = None
+    # 이 사건을 연 구급차의 apid(2026-09-24 신설). 브로드캐스트는 모든 대시보드에 모든
+    # 사건을 보내므로, 구급차 대시보드가 새로고침 등으로 자기 caseId를 잊었을 때 "내
+    # 구급차의 사건"을 다시 골라내려면 이 값이 필요하다. ambulanceName과 같은 조회
+    # (register_case로 기억해둔 값)라 못 찾으면 None.
+    apid: Optional[str] = None
+    # 매칭에 쓴 구급차 좌표(2026-09-24 신설). 대시보드 지도가 구급차를 임시 위치가 아니라
+    # 실제 위치에 그리고, 도로 경로(GET /route)의 출발점과 맞추는 데 쓴다. 구급차 레지스트리에
+    # 없으면 hub의 기본 좌표(FALLBACK_AMBULANCE_GPS)가 들어간다.
+    ambulanceGps: Optional[GpsPoint] = None
+    # ambulanceGps가 실제 구급차 위치가 아니라 기본 좌표(서울시청)로 대체된 값인지(2026-09-28
+    # 신설). True면 거리·존·순위가 전부 엉뚱한 기준일 수 있다 — 예전엔 콘솔 로그에만 남았다.
+    ambulanceGpsFallback: bool = False
+    # 확정 병원 도착 뒤 병원이 기록한 수용 결과(2026-10-01). 아직 없으면 None.
+    arrival: Optional[ArrivalResult] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
 
-ApprovalActionType = Literal["hospital_approve", "hospital_reject", "final_approval"]
+# arrival_accepted / arrival_refused(2026-10-01): 구급차가 확정 병원에 도착한 뒤 병원이 누르는 실제 수용
+# 결과. 신뢰도 모델의 독립 관측(G2 라벨, AIROOKIE-EGEN.md §7 ④)이 생기는 지점이다.
+# transport_withdraw(2026-10-05): 이송 확정 뒤 **도착 전**에 병원이 수용을 철회한다(환자 상태 변화·병원 사정).
+# 확정을 풀고 그 병원은 이 사건에서 제외 — 구급차는 그 자리에서 재선택 대기(도착 후 수용 불가와 같은 처리).
+ApprovalActionType = Literal[
+    "hospital_approve", "hospital_reject", "final_approval", "arrival_accepted", "arrival_refused",
+    "transport_withdraw",
+]
 Actor = Literal["hospital", "paramedic"]
 
 
@@ -234,6 +504,24 @@ class ApprovalAction(BaseModel):
     hospital_id: str
     actor: Actor
     timestamp: str
+    # dashboard의 "수용 불가" 버튼이 함께 보내는 거절 사유(action == "hospital_reject"일
+    # 때만). hub는 이 값을 순위 계산에 쓰지 않고 feature/info의 거절 로그 수신구
+    # (POST /hub/rejection, hospital_score/ingest.py)로 그대로 중계한다 — 점수의
+    # 진짜 정답("병원이 실제로 받았는가")은 운영 로그가 쌓여야 나오고, 로그는
+    # 소급해서 만들 수 없어서다(CLAUDE.md "거절 로그" 절).
+    #
+    # 여기서 Literal로 막지 않고 Optional[str]로 두는 건 의도적이다 — 수신구가
+    # "관대하게 받는다"(모르는 코드도 UNSPECIFIED로 기록, 필드가 없어도 통과)를
+    # 원칙으로 하므로, dashboard가 어휘를 늘렸을 때 hub가 액션 전체를 거부해
+    # 그 사이 로그가 사라지는 게 더 나쁘다. 기대값은 아래 4축 어휘:
+    #   구조적  : NO_WARD | NO_DEPARTMENT | NO_EQUIPMENT
+    #   주기적  : ON_CALL_MISMATCH | NIGHT_UNAVAILABLE
+    #   순간적  : BEDS_FULL | OR_OCCUPIED | STAFF_BUSY
+    #   환자    : SEVERITY_EXCEEDED | AGE_LIMIT
+    #   미기재  : UNSPECIFIED
+    # (dashboard types/dashboard.ts의 RejectionReason, info hospital_score/rejection.py의
+    #  REASON_AXIS와 같은 어휘. 값이 없거나 hospital_reject가 아니면 None.)
+    reason: Optional[str] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 통화 시작/종료 신호) ─────────────
@@ -255,6 +543,12 @@ class CallSignal(BaseModel):
     timestamp: str
     apid: str
     caseId: str
+    # 휴대폰 통화 화면(2026-10-03)에서 고른 "전화 거는" 병원과 기기. 통화는 연출이라 그 병원과 실제 음성을 주고받지는
+    # 않고, hub가 그 병원 대시보드에 "📞 통화 중"을 띄우고 첫 통화 병원을 기록한다(first_call_selected).
+    hospitalId: Optional[str] = None
+    device: Optional[Literal["phone", "tablet"]] = None
+    # 통화 취소(2026-10-05): call_ended와 함께 true면 이 통화 음성은 처리하지 않고 버린다(요약·전달 없음).
+    cancelled: Optional[bool] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 소켓 연결 시 자기소개) ───────────
@@ -268,7 +562,9 @@ class CallSignal(BaseModel):
 # 연결 시점에 관련된 사건들을 즉시 찾아 그 소켓에만 돌려준다(app.py의
 # `_send_catchup()` 참고).
 
-DashboardRole = Literal["hospital", "ambulance"]
+# monitor(2026-10-03): 관제 지도. 병원 대시보드는 직접 접속하지 않고 이 지도에서 환자 요청이 온 병원을
+# 눌러 연다. 지도는 전체 병원·구급차 위치와 사건 요약(MonitorCase)만 받는다 — 통화 전문 등 환자 상세는 받지 않는다.
+DashboardRole = Literal["hospital", "ambulance", "monitor"]
 
 
 class DashboardIdentify(BaseModel):
@@ -276,6 +572,45 @@ class DashboardIdentify(BaseModel):
     role: DashboardRole
     # role="hospital"이면 hpid, role="ambulance"면 apid.
     id: str
+
+
+# ── feature/dashboard(병원) → feature/hub (입력, 현재 정보 확인) ─────────────
+# 병원 대시보드의 "현재 정보가 맞습니다" 버튼(2026-09-29). E-Gen 자기 신고
+# 밖에서 처음 생기는 유효 확인 관측으로, hub가 그 병원 병상 신뢰도를 조건부
+# 생존(S(a)/S(u))으로 되올리는 데 쓴다 — 값이 그대로여도 "방금 사람이 확인한
+# 정확한 값"임을 시스템이 알게 되는 유일한 경로다. 확인 이력은 의사결정
+# 로그에도 남아, 나중에 infosurv의 유효 확인(G1+) 라벨 재료가 된다.
+
+class HospitalInfoConfirm(BaseModel):
+    type: Literal["info_confirm"] = "info_confirm"
+    hospitalId: str
+    timestamp: str
+
+
+# ── feature/hub → feature/dashboard(병원) (출력, 자기 정보 현황) ─────────────
+# 병원 대시보드에 보내는 "귀원 정보 현황"(2026-09-29). identify 직후,
+# feature/info의 30분 주기 upsert 직후, 정보 확인 직후에 그 병원 소켓으로만
+# 보낸다. 데이터 공급자(병원)가 자기 정보의 신선도를 직접 보게 하는 피드백
+# 루프다 — E-Gen 포털엔 이런 피드백이 없어서 수년 묵은 값이 방치된다
+# (실측: 전국 가용병상 1위가 2,457일 묵은 값). bedReliability는 horizon 0
+# (자기 화면엔 이송 개념이 없으므로 rArrive==authority)으로 환산한 값이고,
+# 곡선 파라미터가 실려 있어 화면이 감쇠를 직접 그린다.
+
+class HospitalSelfInfo(BaseModel):
+    type: Literal["hospital_self_info"] = "hospital_self_info"
+    hospitalId: str
+    name: str
+    availableBedCount: int
+    bedCountUnknown: bool
+    updatedAt: str
+    bedReliability: Optional[BedReliabilityMatch] = None
+    bedReliabilityByType: Optional[dict[str, BedReliabilityMatch]] = None
+    severeDeclarations: Optional[SevereDeclarations] = None
+    # 본원이 무슨 병원으로 지정돼 있는지(2026-10-04) — 응급의료기관 등급(E-Gen dutyEmclsName)
+    emergencyLevel: Optional[str] = None
+    # 지금 받을 수 있는 분야(진료과)와 이송 중 부하 — "얼마나 수용 가능한가"의 나머지 절반
+    specialties: list[Specialty] = Field(default_factory=list)
+    inFlightCount: int = 0
 
 
 # ── feature/hub → feature/dashboard (출력, 자기소개에 대한 즉시 응답) ───────
@@ -291,3 +626,246 @@ class DashboardIdentityInfo(BaseModel):
     id: str
     name: Optional[str] = None
     known: bool
+    # 출동 시뮬레이션이 켜져 있는지(2026-10-01). 구급차 화면이 [이동]·[현장 종료] 버튼을 띄울지 정한다.
+    simDispatch: bool = False
+    # 구급차 대시보드에서도 통화를 시작할 수 있는지(2026-10-03, start-all.sh --dashboard-call). 기본은 꺼서
+    # 통화는 대원 휴대폰 전화 앱(/phone)으로만 하고, 구급차 대시보드엔 보기 전용 통화 현황만 띄운다.
+    dashboardCall: bool = False
+    # 자기 위치(2026-10-04) — 병원은 E-Gen 좌표, 구급차는 기지. 병원 대시보드가 사건이
+    # 없을 때도 본원 위치 지도를 그릴 수 있게 한다. hub가 모르는 코드면 None.
+    gps: Optional[GpsPoint] = None
+
+
+# ── feature/hub → 관제 지도(role=monitor, 2026-10-03) ────────────────────────
+
+
+class MapHospital(BaseModel):
+    """관제 지도의 병원 마커 하나(규칙 기반 — E-Gen 목록 좌표). 관제는 사건과 무관하게
+    **모든 병원의 현재 상태**(등급·병상)를 본다(2026-10-04) — 마커 색은 등급,
+    만실·미상은 병상 필드로 구분한다."""
+    hospitalId: str
+    name: str
+    gps: GpsPoint
+    emergencyLevel: Optional[str] = None
+    # 이 병원으로 지금 이송 중(확정, TTL 오버레이)인 건수(2026-10-03) — 관제 지도가
+    # "이 병원에 N건 몰리는 중"을 보여주는 재료. 확정·도착 결과 때마다 overview가 다시 간다.
+    inFlightCount: int = 0
+    # 응급실 가용 병상(오버레이 차감 후)과 미상 여부(2026-10-04) — 만실(0 확인)·미상 구분은
+    # 후보 목록과 같은 원칙(미상을 만실처럼 보이게 하지 않는다)
+    availableBedCount: int = 0
+    bedCountUnknown: bool = True
+
+
+class MapAmbulance(BaseModel):
+    """관제 지도의 구급차 마커 하나. gps는 출동 시뮬레이션 위치가 있으면 그것, 없으면 등록된 기지 좌표."""
+    apid: str
+    name: str
+    gps: GpsPoint
+    base: GpsPoint
+
+
+class MapOverview(BaseModel):
+    """관제 지도가 연결할 때·병원/구급차 목록이 바뀔 때 받는 전체 목록."""
+    type: Literal["map_overview"] = "map_overview"
+    hospitals: list[MapHospital]
+    ambulances: list[MapAmbulance]
+    simDispatch: bool = False
+    source: Literal["rule"] = "rule"
+
+
+class MonitorCaseHospital(BaseModel):
+    hospitalId: str
+    name: str
+    status: HospitalStatus
+    distanceKm: float
+    roadDistanceKm: Optional[float] = None  # 내비 기준(없으면 직선 distanceKm만)
+    # 병원이 고른 거절 사유 / 병원이 안 눌렀어도 지금 수용 불가인 이유("beds_full", E-Gen 기준 — 이때 status는
+    # rejected로 보낸다, 2026-10-03). 지도는 둘을 구분해 "수용 불가"와 "병상 없음"으로 보여준다.
+    rejectReason: Optional[str] = None
+    unavailableReason: Optional[str] = None
+    # 이 병원이 든 존(1부터, 5km 간격). 존이 넓혀지면 바깥 존 병원들이 새로 들어온다.
+    zone: int
+    # 이 병원이 이 사건에 응답(승인·불가·확정)한 시각(2026-10-04, case_history 기록) — 관제 지도의 응답 시각 칸
+    respondedAt: Optional[str] = None
+
+
+class MonitorCase(BaseModel):
+    """사건 요약 — 매칭 결과(HubMatchResult)에서 지도에 필요한 것만 뽑았다. 통화 전문·활력징후 등 환자 상세는
+    뺀다(그건 요청을 받은 병원 대시보드만 본다). 매칭 결과가 바뀔 때마다 다시 온다."""
+    type: Literal["case_overview"] = "case_overview"
+    caseId: str
+    apid: Optional[str] = None
+    ambulanceName: Optional[str] = None
+    ambulanceGps: Optional[GpsPoint] = None
+    severityTag: Optional[Severity] = None
+    zoneActive: list[int]
+    zoneBandKm: float
+    hospitals: list[MonitorCaseHospital]
+    # 관제 지도 개편(2026-10-04, case_history): 오늘의 사건 번호, 시작 시각(출동·통화·첫 매칭 중 가장 이른 것),
+    # 증상 한 줄(신고 1차 증상 또는 구조화된 주 호소), 진행 과정. 모두 Optional — 예전 dashboard는 무시한다.
+    num: Optional[int] = None
+    startedAt: Optional[str] = None
+    symptom: Optional[str] = None
+    events: list[dict] = []
+    # 시간 기반 존 확장(2026-10-04): 다음 자동 확장 예정 시각. 승인·확정 병원이 있거나 더 넓힐 수 없으면 None
+    zoneExpandAt: Optional[str] = None
+    # [정지] 중이면 멈춰 있는 남은 시간(초) — 이때 zoneExpandAt은 None(시간이 흐르지 않는다)
+    zonePausedLeftSec: Optional[int] = None
+    # 시연 일시정지 중(2026-10-05) — 콘솔·관제 화면이 조작을 막는다
+    paused: Optional[bool] = None
+    source: Literal["rule"] = "rule"
+
+
+class MciAllocate(BaseModel):
+    """시연 콘솔 → hub: 대량사고 [분배 확정](2026-10-05). 사상자 사건들을 **중증 → 중등증 → 경증** 순으로, 사건마다
+    승인 병원 중 hub 순위 1위로 이송 확정한다. 하나 확정할 때마다 다음 사건 순위를 다시 매겨 이송 중 부하 페널티가
+    반영된다(같은 병원으로 몰리면 다음 병원으로). 분배 규칙은 평시 hub 순위 그대로 — 콘솔이 따로 계산하지 않는다."""
+    type: Literal["mci_allocate"] = "mci_allocate"
+    caseIds: list[str]
+    timestamp: Optional[str] = None
+
+
+class MciPreview(BaseModel):
+    """시연 콘솔 → hub: 대량사고 자동 분배 미리 보기(2026-10-05) — 지금 승인 상태로 [분배 확정]하면 누가 어디로 가는지.
+    hub가 mci_plan으로 답한다. 확정은 하지 않는다."""
+    type: Literal["mci_preview"] = "mci_preview"
+    caseIds: list[str]
+
+
+class ZoneExpandNow(BaseModel):
+    """dashboard(시연 콘솔) → hub: [건너뛰기](2026-10-04) — 자동 존 확장 시각을 기다리지 않고 지금 한 단계 넓힌다."""
+    type: Literal["zone_expand_now"] = "zone_expand_now"
+    caseId: str
+    timestamp: Optional[str] = None
+
+
+class CaseMeta(BaseModel):
+    """매칭 전 사건(출동~현장 통화 전)의 번호·시작 시각·증상(2026-10-04) — 관제 지도 사건 목록용.
+    매칭되면 case_overview가 같은 값을 이어받는다."""
+    type: Literal["case_meta"] = "case_meta"
+    caseId: str
+    num: int
+    startedAt: str
+    symptom: Optional[str] = None
+    severity: Optional[str] = None
+    apid: Optional[str] = None
+    ambulanceName: Optional[str] = None
+    events: list[dict] = []
+    source: Literal["rule"] = "rule"
+
+
+class CaseHistory(BaseModel):
+    """오늘(KST) 종료된 사건 목록(2026-10-04) — 관제 지도 '지난 사건' 모달. 최근 종료 순."""
+    type: Literal["case_history"] = "case_history"
+    cases: list[dict]
+    source: Literal["rule"] = "rule"
+
+
+class DispatchRequest(BaseModel):
+    """dashboard → hub: 구급차 대시보드 [이동] (출동 시뮬레이션, 2026-10-01). caseId는 이때 만든다."""
+    type: Literal["dispatch"] = "dispatch"
+    apid: str
+    caseId: str
+    timestamp: str
+    # 주소 검색·지도 클릭으로 고른 출동 위치(2026-10-01). 없으면 기지 근처 무작위. 주소 글자는 받지 않는다(개인정보).
+    target: Optional[GpsPoint] = None
+    targetMode: Optional[Literal["address", "map"]] = None
+    # 신고 접수 1차 증상(2026-10-04, 시연 콘솔) — 상황실이 신고 전화에서 들은 수준의 개요.
+    # 예비 고지에 실려 병원이 "무슨 환자가 올 수 있는지"까지 미리 안다. 확정 정보가 아니라
+    # '신고 내용'이다(현장 평가 = 통화 요약과 다를 수 있음). 경증 신고는 예비 고지를 생략한다.
+    reportedSymptom: Optional[str] = None
+    reportedSeverity: Optional[Literal["high", "medium", "low"]] = None
+
+
+class SceneEnd(BaseModel):
+    """dashboard → hub: [현장 종료] — 이송 확정 없이 현장에서 끝내고 기지로 복귀."""
+    type: Literal["scene_end"] = "scene_end"
+    apid: str
+    caseId: str
+    timestamp: str
+
+
+class SimControl(BaseModel):
+    """dashboard → hub: [일시정지]·[상황 재개](2026-10-03) — 출동 중·현장·이송 중인 시연 상황을 멈추고 이어 간다.
+    [빨리감기](sim_fast_forward, 2026-10-04) — 병원으로 이송 중이면 남은 이동을 3초 안에 마친다.
+    구급차는 apid로 가린다(한 대는 한 번에 한 사건). caseId는 로그용."""
+    type: Literal["sim_pause", "sim_resume", "sim_fast_forward"]
+    apid: str
+    caseId: Optional[str] = None
+    timestamp: str
+
+
+class SimReset(BaseModel):
+    """dashboard(콘솔) → hub: [시연 초기화](2026-10-04) — 모든 사건을 닫고(각 대시보드에
+    case_closed) 전 구급차를 기지 대기로, 이송 중 병상 차감(TTL 오버레이)도 비운다.
+    일시정지(sim_pause)는 멈춤이고 이것은 리셋이다 — 시연 정지가 사건을 지우지 않아
+    헷갈린다는 피드백으로 분리했다. 시연 전용."""
+    type: Literal["sim_reset"] = "sim_reset"
+    timestamp: str
+    apid: Optional[str] = None  # 콘솔은 "*"(전체)만 보낸다
+
+
+# ── 활력징후 입력 구멍 (2.5단계 이송 중 모니터링, 2026-10-04) ─────────────────
+# 출처가 무엇이든(음성 추출·수기·구급차 모니터·데모 시나리오) 같은 형식으로 받는다.
+# 장비는 사지 않는다 — 이미 측정된 값을 받아 쓸 자리만 만든다. 종류·값·측정 시각·
+# 출처를 반드시 남기는 이유: 활력징후도 병상 정보처럼 출처마다 신뢰가 다르고
+# 시간이 지나면 낡는 정보라서다(정보 유통기한 철학의 환자 정보 확장).
+# 필드 의미는 HL7 FHIR Vital Signs 프로파일의 관측 항목에 대응하되, 필드명은
+# voice v2 `summary.vitals`와 같은 축약(rr/spo2/sbp/…)을 유지한다 — 내부 일관성
+# 우선, 표준 명칭 변환은 외부 어댑터(스마트시스템·모니터 연동) 몫이다.
+
+VitalSource = Literal["voice", "manual", "monitor", "demo"]
+
+
+class VitalObservationIn(BaseModel):
+    """이송 중 활력징후 1회 측정. 없는 항목은 None — 음성 추출은 필드가 빠질 수 있다."""
+    measuredAt: str                      # ISO 8601
+    source: VitalSource
+    rr: Optional[int] = None             # 호흡수 (/분)
+    spo2: Optional[int] = None           # 산소포화도 (%)
+    sbp: Optional[int] = None            # 수축기혈압 (mmHg)
+    dbp: Optional[int] = None            # 이완기혈압 — NEWS2엔 안 쓰지만 기록은 남긴다
+    hr: Optional[int] = None             # 맥박 (/분)
+    bt: Optional[float] = None           # 체온 (℃)
+    avpu: Optional[Literal["A", "V", "P", "U"]] = None
+
+
+class TransportVitals(BaseModel):
+    """입력 구멍으로 들어오는 메시지 — dashboard WS(type 필드)와 POST /vitals(HTTP) 공용."""
+    type: Literal["transport_vitals"] = "transport_vitals"
+    caseId: str
+    apid: Optional[str] = None           # 없으면 hub가 사건에서 찾는다
+    demo: bool = False                   # 가상 시나리오 여부 — 화면·로그에 그대로 표시
+    scenario: Optional[str] = None       # 데모 시나리오 이름(로그용)
+    observation: VitalObservationIn
+
+
+class TransportAlternative(BaseModel):
+    """재검토 제안에 동봉하는 대체 병원 후보 — 결정은 사람(구급대원·관제)이 한다."""
+    hospitalId: str
+    name: str
+    status: str                          # approved | pending
+    travelMin: Optional[float] = None
+    availableBedCount: int = 0
+    bedCountUnknown: bool = False
+    rArrive: Optional[float] = None      # 도착 시점 병상 정보 유효 확률 (설명용, AI)
+
+
+class TransportAssessmentMessage(BaseModel):
+    """hub → dashboard: 측정 1회에 대한 판정(transport_triage 규칙 엔진, source: "rule").
+
+    수신 범위가 티어마다 다르다 — 구급차 탭은 전부(자기 환자), 확정 병원 탭은
+    notify 이상만(오경보보다 침묵), 관제 지도는 heli_advisory만(환자 상세 없이)."""
+    type: Literal["transport_assessment"] = "transport_assessment"
+    caseId: str
+    tier: Literal["record", "hold", "notify", "review", "heli_advisory"]
+    news2: int
+    news2Missing: list[str] = Field(default_factory=list)
+    si: Optional[float] = None
+    reasons: list[str] = Field(default_factory=list)
+    observation: VitalObservationIn
+    demo: bool = False
+    scenario: Optional[str] = None
+    alternatives: list[TransportAlternative] = Field(default_factory=list)
+    source: Literal["rule"] = "rule"
+    timestamp: str

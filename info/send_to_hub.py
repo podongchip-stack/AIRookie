@@ -40,6 +40,7 @@ Supabase 대체 DB에 남겨뒀었다 — E-Gen이 조회 전용이라 hub의 �
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -59,7 +60,13 @@ sys.path.insert(0, str(HOSPITAL_INFORM_INFO_DIR))
 
 from egen.client import HttpEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
-from schema import AmbulanceInfo, HospitalInfo  # noqa: E402
+from schema import (  # noqa: E402
+    AmbulanceInfo,
+    BedReliability,
+    HospitalInfo,
+    SevereDeclarations,
+    SevereGroupDeclaration,
+)
 from hospital_score import dataset as hs_dataset  # noqa: E402
 from hospital_score import scoring as hs_scoring  # noqa: E402
 from hospital_score import vocabulary as hs_vocab  # noqa: E402
@@ -75,6 +82,10 @@ load_dotenv(HOSPITAL_INFORM_INFO_DIR.parent / ".env")
 
 HUB_HOSPITALS_URL = os.environ.get("HUB_HOSPITALS_URL", "http://127.0.0.1:5001/info/hospitals")
 HUB_AMBULANCES_URL = os.environ.get("HUB_AMBULANCES_URL", "http://127.0.0.1:5001/info/ambulances")
+HUB_ROSTER_URL = os.environ.get("HUB_ROSTER_URL", "http://127.0.0.1:5001/info/hospitals/roster")
+# 구급차 묶음 전송·목록 동기화(2026-10-04) — 기본값은 HUB_AMBULANCES_URL 뒤에 붙인다
+HUB_AMBULANCES_BATCH_URL = os.environ.get("HUB_AMBULANCES_BATCH_URL", HUB_AMBULANCES_URL.rstrip("/") + "/batch")
+HUB_AMBULANCE_ROSTER_URL = os.environ.get("HUB_AMBULANCE_ROSTER_URL", HUB_AMBULANCES_URL.rstrip("/") + "/roster")
 
 AMBULANCE_SUPABASE_URL = os.environ.get("AMBULANCE_SUPABASE_URL")
 AMBULANCE_SUPABASE_KEY = os.environ.get("AMBULANCE_SUPABASE_KEY")
@@ -188,6 +199,122 @@ def _attach_assessments(
     return enriched
 
 
+# reliability/(infosurv 서빙) 엔진은 claim-version 이력을 사이클 간 이어서
+# 추적해야 하므로 프로세스당 하나를 만들어 계속 들고 있는다. 생성에 한 번
+# 실패하면(모델 파일·xgboost 부재 등) 매 사이클 재시도하지 않고 그대로
+# 끈다 — 실패 원인이 사이클마다 바뀔 성질이 아니고, 로그만 시끄러워진다.
+_bed_engine = None
+_bed_engine_failed = False
+
+
+def _get_bed_engine():
+    global _bed_engine, _bed_engine_failed
+    if _bed_engine is None and not _bed_engine_failed:
+        try:
+            from reliability import BedReliabilityEngine
+
+            _bed_engine = BedReliabilityEngine()
+            print(
+                f"  [reliability] 엔진 준비 완료 (model={_bed_engine.model_tag}, "
+                f"워밍업 관측 {_bed_engine.warmed_up_observations:,}건)"
+            )
+        except Exception as e:  # noqa: BLE001 — 신뢰도 예측 실패가 병원 목록 전송을 막으면 안 됨
+            _bed_engine_failed = True
+            print(f"  [reliability] 엔진 초기화 실패, bedReliability 없이 전송 계속: {e}")
+    return _bed_engine
+
+
+def _attach_reliability(
+    hospitals: list[HospitalInfo], bed_rows: list[dict], severe_rows: list[dict]
+) -> list[HospitalInfo]:
+    """병원마다 reliability/의 두 가지를 붙인다 — 병상 신뢰도 예측(infosurv
+    모델, bedReliability)과 중증질환 신고 신선도(규칙 기반, severeDeclarations).
+
+    hospital_score(_attach_assessments)와 같은 fail-soft 패턴 — 엔진이 없거나
+    이번 사이클 처리가 실패해도 원래 HospitalInfo 그대로 전송한다.
+    """
+    engine = _get_bed_engine()
+    if engine is None:
+        return hospitals
+    try:
+        now = datetime.now(timezone.utc)
+        # 순서 중요: 스냅샷 증분(과거)을 먼저 넣고 이번 사이클 rows(현재)를
+        # 넣는다 — 반대로 하면 tracker의 단조 규칙이 스냅샷 줄을 버린다.
+        engine.ingest_snapshots()
+        engine.observe_rows(bed_rows, now)
+        engine.observe_severe_rows(severe_rows, now)
+        predictions = engine.predict(now)  # field -> (hpid -> BedPrediction)
+        severe_by_hpid = engine.severe.group_declarations()
+    except Exception as e:  # noqa: BLE001 — 신뢰도 처리 실패가 병원 목록 전송을 막으면 안 됨
+        print(f"  [reliability] 이번 주기 처리 실패, 신뢰도 필드 없이 전송: {e}")
+        return hospitals
+
+    def _payload(prediction) -> BedReliability:
+        return BedReliability(
+            predictedSurvivalSec=round(prediction.pred_t_sec, 1),
+            bornAt=prediction.born.isoformat(timespec="seconds"),
+            sigma=round(prediction.sigma, 4),
+            authorityAtSend=round(prediction.authority, 4),
+            ttlSec=round(prediction.ttl_sec, 1),
+            modelTag=prediction.model_tag,
+        )
+
+    hvec_predictions = predictions.get("hvec", {})
+    extra_fields = [f for f in predictions if f != "hvec"]
+    enriched: list[HospitalInfo] = []
+    attached_bed = 0
+    attached_severe = 0
+    for info in hospitals:
+        update: dict = {}
+        prediction = hvec_predictions.get(info.hospitalId)
+        if prediction is not None:
+            update["bedReliability"] = _payload(prediction)
+            attached_bed += 1
+        by_type = {
+            field: _payload(predictions[field][info.hospitalId])
+            for field in extra_fields
+            if info.hospitalId in predictions[field]
+        }
+        if by_type:
+            update["bedReliabilityByType"] = by_type
+        declarations = severe_by_hpid.get(info.hospitalId)
+        if declarations:
+            update["severeDeclarations"] = SevereDeclarations(
+                groups={
+                    group: SevereGroupDeclaration(
+                        value=decl.value,
+                        bornAt=decl.born.isoformat(timespec="seconds"),
+                        ageIsMin=decl.age_is_min,
+                    )
+                    for group, decl in declarations.items()
+                }
+            )
+            attached_severe += 1
+        enriched.append(info.model_copy(update=update) if update else info)
+    print(
+        f"  [reliability] 병상 신뢰도 {attached_bed}곳 · "
+        f"확장 필드 {sorted(extra_fields)} · "
+        f"중증신고 신선도 {attached_severe}곳 / 전체 {len(hospitals)}곳 첨부"
+    )
+    return enriched
+
+
+#: 심평원 전문과목별 전문의 수 캐시(`python -m hospital_score.hira --build-join`이 만든다).
+HIRA_SPECIALISTS_PATH = HOSPITAL_INFORM_INFO_DIR / "data" / "hira" / "specialists.json"
+
+
+def _load_hira_specialists() -> dict[str, list[dict]]:
+    """hpid -> 심평원 전문과목 목록. 캐시가 없거나 깨졌으면 빈 dict — 그러면 진료과는 예전처럼
+    E-Gen 역량 4개 과만 나간다(2026-10-01, 진료과 확장). 새 장비에서 hira --build-join을
+    안 돌렸으면 조용히 줄어드는 것이라, 그 사실만 한 줄 남긴다."""
+    try:
+        data = json.loads(HIRA_SPECIALISTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"  [진료과] 심평원 전문의 캐시를 못 읽어 E-Gen 역량 4개 과만 보냄: {e}")
+        return {}
+    return {hpid: rows for hpid, rows in data.items() if isinstance(rows, list)}
+
+
 def fetch_hospitals() -> list[HospitalInfo]:
     """목록·병상·중증질환 수용가능정보를 전부 실 E-Gen API에서 가져와 합치고,
     병원마다 info-v2 신뢰도 진단을 붙인다.
@@ -207,10 +334,14 @@ def fetch_hospitals() -> list[HospitalInfo]:
         print(f"  [E-Gen] 실 API 조회 실패, 이번 주기는 건너뛰고 다음 주기에 재시도: {e}")
         return []
 
-    hospitals, report = map_all(bed_rows, location_rows, severe_rows)
+    specialists = _load_hira_specialists()
+    hospitals, report = map_all(bed_rows, location_rows, severe_rows, specialists=specialists)
+    with_hira = sum(1 for h in hospitals if h.hospitalId in specialists)
+    print(f"  [진료과] 심평원 전문의 수 반영 {with_hira}/{len(hospitals)}곳 (나머지는 E-Gen 역량 과만)")
     print(report.summary())
 
     hospitals = _attach_assessments(hospitals, location_rows, severe_rows, bed_rows)
+    hospitals = _attach_reliability(hospitals, bed_rows, severe_rows)
     return hospitals
 
 
@@ -251,6 +382,17 @@ def send_to_hub(hospital: HospitalInfo) -> None:
     print(f"  [통신] {hospital.hospitalId} {hospital.name} 전송 완료 -> {HUB_HOSPITALS_URL}")
 
 
+def send_roster_to_hub(hospital_ids: list[str]) -> None:
+    """이번 주기에 보낸 병원 전체 목록(2026-10-01). hub는 여기 없는 병원을 레지스트리에서 뺀다 —
+    예전엔 upsert만 해서 E-Gen에서 빠진 병원도 옛 정보로 계속 후보에 나왔다. 병원을 전부 보낸
+    뒤에만 부른다(도중에 실패하면 raise로 여기까지 안 온다)."""
+    response = requests.post(HUB_ROSTER_URL, json={"hospitalIds": hospital_ids}, timeout=10)
+    response.raise_for_status()
+    body = response.json()
+    print(f"  [통신] 병원 목록 {len(hospital_ids)}곳 전송 — hub 제거 {len(body.get('removed', []))}곳, "
+          f"보류 {len(body.get('kept', []))}곳 -> {HUB_ROSTER_URL}")
+
+
 def send_ambulance_to_hub(ambulance: AmbulanceInfo) -> None:
     response = requests.post(
         HUB_AMBULANCES_URL,
@@ -262,17 +404,45 @@ def send_ambulance_to_hub(ambulance: AmbulanceInfo) -> None:
     print(f"  [통신] {ambulance.apid} {ambulance.name} 전송 완료 -> {HUB_AMBULANCES_URL}")
 
 
+
+def send_ambulances_to_hub(ambulances: list[AmbulanceInfo]) -> None:
+    """구급차를 한 번에 보내고(2026-10-04) 전체 apid 목록을 알린다 — hub는 목록에 없는 구급차를 뺀다
+    (Supabase 테이블을 통째로 바꿔도 옛 구급차가 hub에 남지 않게). 서울 119 구급차 160여 대를 한 대씩
+    보내면 hub가 대수만큼 관제 지도를 다시 보내서 묶었다. 묶음 주소가 없는 예전 hub(404)면 한 대씩 보내고
+    목록 동기화는 건너뛴다."""
+    response = requests.post(
+        HUB_AMBULANCES_BATCH_URL,
+        json={"ambulances": [json.loads(a.model_dump_json()) for a in ambulances]},
+        timeout=30,
+    )
+    if response.status_code == 404:
+        print(f"  [통신] hub에 묶음 수신이 없어 한 대씩 보냅니다(예전 hub) -> {HUB_AMBULANCES_URL}")
+        for ambulance in ambulances:
+            send_ambulance_to_hub(ambulance)
+        return
+    response.raise_for_status()
+    body = response.json()
+    print(f"  [통신] 구급차 {body.get('accepted')}대 전송 완료, 거부 {len(body.get('rejected', []))}대 -> {HUB_AMBULANCES_BATCH_URL}")
+    for item in body.get("rejected", []):
+        print(f"    거부: {item.get('apid')} {item.get('detail')}")
+    response = requests.post(HUB_AMBULANCE_ROSTER_URL, json={"apids": [a.apid for a in ambulances]}, timeout=10)
+    response.raise_for_status()
+    body = response.json()
+    print(f"  [통신] 구급차 목록 {len(ambulances)}대 전송 — hub 제거 {len(body.get('removed', []))}대, "
+          f"보류 {len(body.get('kept', []))}대 -> {HUB_AMBULANCE_ROSTER_URL}")
+
 def sync_once() -> None:
     hospitals = fetch_hospitals()
     print(f"\n=== 병원 정보 {len(hospitals)}건을 feature/hub로 전송 ===")
     for hospital in hospitals:
         send_to_hub(hospital)
+    if hospitals:
+        send_roster_to_hub([h.hospitalId for h in hospitals])
 
     ambulances = fetch_ambulances()
     if ambulances:
         print(f"\n=== 구급차 정보 {len(ambulances)}건을 feature/hub로 전송 ===")
-        for ambulance in ambulances:
-            send_ambulance_to_hub(ambulance)
+        send_ambulances_to_hub(ambulances)
 
 
 def main() -> None:

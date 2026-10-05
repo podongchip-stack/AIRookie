@@ -1,0 +1,138 @@
+"""feature/info의 bedReliability(병상 정보 신뢰도 예측)를 매칭 시점 값으로 환산.
+
+info의 reliability/(infosurv 서빙 모듈)는 병원마다 "예측 생존시간"
+(predictedSurvivalSec)과 현재 claim-version의 탄생 시각(bornAt)을 보내준다.
+authority(지금 믿어도 될 확률)는 정보의 나이에 따라 계속 떨어지는 값이라,
+info가 전송 시점에 계산한 스냅샷(authorityAtSend)을 그대로 쓰면 재조회
+주기(30분)만큼 낡는다 — 그래서 hub가 매칭 시점마다 여기서 재계산한다.
+
+수식은 info 쪽 벤더링 사본(info/Hospital_inform/info/reliability/serve.py,
+원본은 모델링 프로젝트 infosurv.serve)의 log-normal AFT 생존함수와 같다:
+
+    S(t) = 1 − Φ((ln t − ln m)/σ),  σ=1 (모델의 aft_loss_distribution_scale)
+    authority(a) = S(a)
+    r_arrive(a, h) = S(a + h)        h = 도착까지 걸릴 시간
+    ttl(a) = m·exp(σ·Φ⁻¹(1−θ)) − a   authority가 θ 아래로 떨어질 때까지
+
+hub는 브랜치 폴더 원칙상 info/를 import할 수 없어 수식을 표준 라이브러리
+(math.erfc, statistics.NormalDist)로 따로 들고 있다 — scipy 의존을 새로
+얹지 않기 위한 선택이고, 두 구현의 수치 등가성(오차 < 1e-9)은 info 쪽
+`python -m reliability.selftest` 3번 항목이 검증한다.
+
+이 값은 순위(finalScore)에 관여하지 않는 설명용 필드다 — ReliabilityInfo
+(assessment 기반)와 같은 원칙. 캘리브레이트된 확률이라 랭킹 가중치로
+승격할 근거는 있지만(AIROOKIE-EGEN.md §5-1), 실측 로그로 효과를 확인하기
+전까지는 노출만 한다.
+"""
+from __future__ import annotations
+
+import math
+from datetime import datetime, timezone
+from statistics import NormalDist
+
+from schema import BedReliabilityInput, BedReliabilityMatch
+
+#: 모델 학습 파라미터(aft_loss_distribution_scale=1)와 일치해야 한다.
+SIGMA = 1.0
+
+#: ttlSec의 authority 임계 — info 쪽 engine.AUTHORITY_TTL_THRESHOLD와 같은 값.
+AUTHORITY_TTL_THRESHOLD = 0.8
+
+#: horizon_sec를 못 받았을 때만 쓰는 구급차 시내 평균 속도. hub_engine은
+#: 2026-09-28부터 순위에 쓴 이동 시간(카카오 ETA, 없으면 보정 추정치)을 horizon으로
+#: 넘기므로, 이 상수는 단독 호출(테스트 등)용 대비책이다.
+AVG_AMBULANCE_SPEED_KMH = 40.0
+
+_SQRT2 = math.sqrt(2.0)
+_NORMAL = NormalDist()
+
+
+def survival(pred_t_sec: float, t_sec: float, sigma: float = SIGMA) -> float:
+    """log-normal AFT의 S(t) = 1 − Φ((ln t − ln m)/σ). Φ의 보생존은
+    math.erfc로 계산한다 (norm.sf(x) = erfc(x/√2)/2)."""
+    t = max(t_sec, 1e-12)
+    m = max(pred_t_sec, 1e-12)
+    return 0.5 * math.erfc((math.log(t) - math.log(m)) / (sigma * _SQRT2))
+
+
+def ttl_sec(
+    pred_t_sec: float, age_sec: float, threshold: float = AUTHORITY_TTL_THRESHOLD,
+    sigma: float = SIGMA,
+) -> float:
+    """authority가 threshold 아래로 떨어질 때까지 남은 초. 이미 아래면 0."""
+    thr = min(max(threshold, 1e-12), 1.0 - 1e-12)
+    t_hit = max(pred_t_sec, 1e-12) * math.exp(sigma * _NORMAL.inv_cdf(1.0 - thr))
+    return max(t_hit - age_sec, 0.0)
+
+
+def _parse_born_at(born_at: str) -> datetime:
+    born = datetime.fromisoformat(born_at.replace("Z", "+00:00"))
+    if born.tzinfo is None:
+        born = born.replace(tzinfo=timezone.utc)
+    return born
+
+
+def evaluate(
+    bed_reliability: BedReliabilityInput | None,
+    distance_km: float,
+    now: datetime | None = None,
+    horizon_sec: float | None = None,
+    confirmed_at: datetime | None = None,
+) -> BedReliabilityMatch | None:
+    """info가 보낸 예측을 매칭 시점의 authority/r_arrive로 환산한다.
+
+    bedReliability를 안 보내는 병원(모델 미연동 구 데이터)이면 None —
+    dashboard는 이 경우 해당 표시를 안 하면 된다(reliability와 같은 패턴).
+
+    horizon_sec(도착까지 걸릴 초)를 주면 그대로 쓰고, 없으면 거리/평균속도로 추정한다.
+
+    confirmed_at(병원 대시보드의 "현재 정보 확인" 시각, 2026-09-29)이 현재
+    claim의 탄생(bornAt) **이후**면 조건부 생존으로 갱신한다 — infosurv
+    serve.py와 같은 수식:  Authority(a) = S(a)/S(u),  u = 확인 시점의 나이.
+    "u까지 살아있음이 확인된 정보가 a까지도 유효할 확률"이라, 확인 직후엔
+    1.0으로 돌아가고 이후 다시 감쇠한다. 값이 바뀌어 claim이 새로 태어나면
+    (confirmed_at < bornAt) 확인은 자동으로 무효가 된다.
+    """
+    if bed_reliability is None:
+        return None
+    if now is None:
+        now = datetime.now(timezone.utc)
+    born = _parse_born_at(bed_reliability.bornAt)
+    age = max((now - born).total_seconds(), 0.0)
+    horizon = (
+        max(horizon_sec, 0.0)
+        if horizon_sec is not None
+        else distance_km / AVG_AMBULANCE_SPEED_KMH * 3600.0
+    )
+    pred_t = bed_reliability.predictedSurvivalSec
+    sigma = bed_reliability.sigma
+
+    confirmed_age: float | None = None
+    if confirmed_at is not None and confirmed_at > born:
+        confirmed_age = min(max((confirmed_at - born).total_seconds(), 0.0), age)
+
+    if confirmed_age is None:
+        authority = survival(pred_t, age, sigma)
+        r_arrive = survival(pred_t, age + horizon, sigma)
+        ttl = ttl_sec(pred_t, age, sigma=sigma)
+    else:
+        s_u = max(survival(pred_t, confirmed_age, sigma), 1e-12)
+        authority = min(survival(pred_t, age, sigma) / s_u, 1.0)
+        r_arrive = min(survival(pred_t, age + horizon, sigma) / s_u, 1.0)
+        # serve.ttl과 동일: S(t)/S(u) = thr  ⟺  S(t) = thr·S(u)
+        thr = min(max(AUTHORITY_TTL_THRESHOLD * s_u, 1e-12), 1.0 - 1e-12)
+        t_hit = max(pred_t, 1e-12) * math.exp(sigma * _NORMAL.inv_cdf(1.0 - thr))
+        ttl = max(t_hit - age, 0.0)
+
+    return BedReliabilityMatch(
+        authority=round(authority, 4),
+        rArrive=round(r_arrive, 4),
+        horizonSec=round(horizon, 1),
+        ttlSec=round(ttl, 1),
+        modelTag=bed_reliability.modelTag,
+        # dashboard의 실시간 감쇠 렌더용 곡선 파라미터 (schema 주석 참고).
+        predictedSurvivalSec=pred_t,
+        bornAt=bed_reliability.bornAt,
+        sigma=sigma,
+        confirmedAgeSec=round(confirmed_age, 1) if confirmed_age is not None else None,
+    )

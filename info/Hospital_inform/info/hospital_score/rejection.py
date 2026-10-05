@@ -39,10 +39,12 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 
 #: 로그 저장 위치. data/ 아래라 .gitignore에 걸려 커밋되지 않는다
-LOG_DIR = Path(__file__).resolve().parent.parent / "data" / "rejections"
+# HOSPITAL_REJECTION_LOG_DIR: 실서버 E2E 테스트가 진짜 거절 로그(신뢰도 정답 재료)에 섞이지 않게 따로 쓸 때.
+LOG_DIR = Path(os.environ.get("HOSPITAL_REJECTION_LOG_DIR") or Path(__file__).resolve().parent.parent / "data" / "rejections")
 
 #: 거절 이유가 영향을 주는 축
 AXIS_STRUCTURAL = "structural"  # 영구 — 역량 벡터를 고쳐야 한다

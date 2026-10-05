@@ -165,6 +165,70 @@ class Assessment(Strict):
     groups: dict[str, AssessmentGroup] = Field(default_factory=dict)
 
 
+class BedReliability(Strict):
+    """reliability/(infosurv 서빙 모듈)의 병상 정보 신뢰도 예측 결과.
+
+    XGBoost AFT 생존모델이 "이 병원의 병상 숫자(hvec)가 t초 뒤에도 유효할
+    확률"을 병원별·시점별로 계산한 것이다 (AIROOKIE-EGEN.md 참고). 생성형이
+    아닌 학습 모델이지만 규칙 기반은 아니므로 source는 "ai"다.
+
+    핵심 계약: hub는 `predictedSurvivalSec`(예측 생존시간)과 `bornAt`(현재
+    claim-version 탄생 시각)만 있으면 임의 시점의 authority(지금 믿어도 될
+    확률)와 r_arrive(도착 시점 유효 확률)를 스스로 계산할 수 있다 —
+    `authorityAtSend`/`ttlSec`은 전송 시점 스냅샷(디버깅·로그용)일 뿐,
+    hub가 매칭 시점에 재계산한 값이 항상 우선한다.
+    """
+
+    predictedSurvivalSec: float = Field(
+        gt=0.0, description="예측 생존시간(초) — 재보정 상수(μR)가 있으면 반영된 값"
+    )
+    bornAt: str = Field(
+        description="현재 claim-version 탄생(값이 이 값으로 바뀐 게 관측된) 시각, ISO 8601 UTC"
+    )
+    sigma: float = Field(
+        default=1.0, gt=0.0,
+        description="생존곡선 척도 — raw면 1.0, 잔차 재보정(σR)이 적용되면 그 값."
+        " hub가 같은 곡선을 재계산하는 데 필요하다",
+    )
+    authorityAtSend: float = Field(ge=0.0, le=1.0, description="전송 시점의 authority")
+    ttlSec: float = Field(ge=0.0, description="authority가 0.8 아래로 떨어질 때까지 남은 초")
+    modelTag: str = Field(min_length=1, description="사용 모델 식별자. 예: aft_egen_theta3_ext0923")
+    source: Literal["ai"] = "ai"
+
+    @field_validator("bornAt")
+    @classmethod
+    def _iso8601(cls, value: str) -> str:
+        return _validate_iso8601(value)
+
+
+class SevereGroupDeclaration(Strict):
+    """질환군 하나의 현재 중증질환 수용가능 신고 상태 (reliability/severe.py)."""
+
+    value: Literal["Y", "불가능"]
+    bornAt: str = Field(description="이 값으로 바뀐 게 관측된 시각, ISO 8601 UTC")
+    ageIsMin: bool = Field(
+        description="True면 추적 시작부터 이 값이었다 — 실제 신고는 더 오래됐을"
+        " 수 있어 나이가 하한(좌측검열)이라는 뜻"
+    )
+
+    @field_validator("bornAt")
+    @classmethod
+    def _iso8601(cls, value: str) -> str:
+        return _validate_iso8601(value)
+
+
+class SevereDeclarations(Strict):
+    """reliability/severe.py의 중증질환 신고 신선도 추적 결과 — 규칙 기반(모델
+    없음). E-Gen 중증질환 응답에는 신고 시각 필드가 없어서, "이 Y/불가능
+    신고가 언제부터 그 값이었는지"는 우리 스냅샷 추적만이 안다. hub는 매칭된
+    질환군의 신고 나이·9시간 만료 규칙 잔여를 계산해 dashboard로 내보낸다.
+    현재 값이 정보미제공인 그룹은 키를 넣지 않는다(bedsByType의 미상 표현과
+    같은 방식)."""
+
+    groups: dict[str, SevereGroupDeclaration] = Field(default_factory=dict)
+    source: Literal["rule"] = "rule"
+
+
 class HospitalInfo(Strict):
     """병원 1곳의 정보. feature/hub로 보내는 단위."""
 
@@ -182,6 +246,11 @@ class HospitalInfo(Strict):
     updatedAt: str = Field(description="ISO 8601 문자열. 예: '2026-07-30T09:55:00Z'")
 
     # --- 확장 필드 (팀 합의로 추가. 전부 선택 사항) ---
+    emergencyLevel: Optional[str] = Field(
+        default=None,
+        description="E-Gen 응급의료기관 등급(dutyEmclsName): 권역응급의료센터/지역응급의료센터/"
+        "지역응급의료기관/응급실운영신고기관. hub가 중증 환자 가산에 쓴다(2026-10-01)",
+    )
     bedsByType: Optional[dict[str, int]] = Field(
         default=None,
         description="병상 종류별 가용 수. 성인/소아 분기의 핵심. 미상인 종류는 키를 넣지 않는다",
@@ -195,6 +264,24 @@ class HospitalInfo(Strict):
         description="info-v2(hospital_score)의 신뢰도 진단. 심평원 캐시가 없거나 이"
         " 병원 판정에 실패하면 None으로 그대로 전송한다 — hub는 이 필드가 없어도"
         " 기존 로직 그대로 동작한다.",
+    )
+    bedReliability: Optional[BedReliability] = Field(
+        default=None,
+        description="reliability/(infosurv)의 병상 정보 신뢰도 예측. 모델·스냅샷이"
+        " 없거나 예측에 실패하면 None으로 그대로 전송한다 — assessment와 같은"
+        " fail-soft 패턴.",
+    )
+    severeDeclarations: Optional[SevereDeclarations] = Field(
+        default=None,
+        description="reliability/severe.py의 중증질환 신고 신선도(규칙 기반)."
+        " 추적 실패 시 None으로 그대로 전송 — bedReliability와 같은 fail-soft.",
+    )
+    bedReliabilityByType: Optional[dict[str, BedReliability]] = Field(
+        default=None,
+        description="응급실 일반(hvec) 외 확장 필드들의 신뢰도 예측"
+        " (2026-09-28 다필드 확장). 키는 E-Gen 필드명 — hvoc(수술실)·"
+        "hvgc(입원실)·hv28(소아) 등 train_field.py 관문을 통과한 필드만."
+        " 값 구조는 bedReliability와 동일.",
     )
 
     @field_validator("updatedAt")

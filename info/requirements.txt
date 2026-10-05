@@ -26,6 +26,15 @@ supabase==2.31.0
 # Hospital_inform/info/schema.py, mapper.py의 HospitalInfo 검증
 pydantic==2.13.4
 
+# reliability/(infosurv 서빙 모듈) — E-Gen 병상 정보 신뢰도 모델 추론.
+# 3.4.1은 배포된 모델 JSON(aft_egen_theta3_ext0923.json)을 저장한 버전과
+# 같다("version":[3,4,1]) — 다른 버전으로 로드하면 포맷 비호환이 날 수 있어
+# 고정한다. numpy/scipy는 xgboost의 하위 의존이지만 reliability/가 직접
+# import하기도 해서(engine.py, serve.py) 직접 의존성으로 올려 둔다.
+xgboost==3.4.1
+numpy==2.5.1
+scipy==1.18.0
+
 # ===== 하위 의존성 (재현성을 위한 버전 고정, 위 패키지들이 자동으로 설치함) =====
 # bidict/python-engineio/python-socketio/wsproto/simple-websocket은 2026-08-13
 # 제거했다 — 전부 Flask-SocketIO 하나의 하위 의존성 체인이었는데, 그 직접

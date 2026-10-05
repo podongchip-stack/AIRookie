@@ -1,32 +1,34 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { css } from "styled-system/css";
-import { Panel } from "@/components/layout/Panel";
-import { Tag } from "@/components/hospital/Tag";
+import { distanceLabel, distanceTitle } from "@/lib/distance";
+import { AD, cardStyle } from "@/components/ambulance/ambulance-design";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { createColoredMarkerImage, createLabelOverlay } from "@/lib/kakao-map-markers";
-import type { HospitalCandidate, HubMatchResult } from "@/types/dashboard";
+import { fetchRoadPath } from "@/lib/route";
+import type { AmbulanceSimState, DispatchTarget, HospitalCandidate, HubMatchResult, SceneCandidates } from "@/types/dashboard";
 
-const sideBoxStyle = css({
-  flex: "1",
-  borderWidth: "1px",
-  borderColor: "line",
-  borderRadius: "field",
-  paddingX: "3.5",
-  paddingY: "3",
-});
+const overlayChip = {
+  background: "#FFFFFF", border: `1px solid ${AD.line}`, borderRadius: 12, padding: "6px 14px", fontSize: 11.5, color: AD.ink3,
+} as const;
+const zoomButton = {
+  width: 44, height: 44, border: `1px solid ${AD.control}`, borderRadius: 12, background: "#FFFFFF",
+  fontSize: 20, fontWeight: 700, color: AD.navy, cursor: "pointer",
+} as const;
 
-// 구급차 자신의 GPS는 아직 hub 스키마에 없다(ISSUE_카카오맵연동.md 참고, hub팀에
-// 필드 추가 요청해둔 상태). 그 전까지는 후보 병원들의 중심 좌표에서 살짝
-// 떨어진 자리를 임시 표시 위치로 쓴다.
+// 구급차 위치는 hub가 내려주는 ambulanceGps(2026-09-24 신설)를 쓴다. 구버전 hub라 그
+// 값이 없을 때만 후보 병원들의 중심 좌표에서 살짝 떨어진 자리를 임시 표시 위치로 쓴다.
 const PLACEHOLDER_AMBULANCE_OFFSET = { lat: 0.014, lng: -0.012 };
 
-function markerColorHex(hospital: HospitalCandidate, isConfirmed: boolean): string {
-  if (isConfirmed) return "#0E9F6E"; // mint
-  if (hospital.status === "rejected") return "#CBD5E1"; // lineStrong
-  if (hospital.status === "approved" || hospital.status === "confirmed") return "#1E5FA8"; // navy
-  return "#66778A"; // ink3
+// 출동 시뮬레이션 지도 기본 중심(서울시청). 사건·위치가 아직 없을 때만 쓴다.
+const DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 };
+const SIM_MOVING_PHASES = new Set(["dispatching", "transporting", "returning"]);
+
+// 시안(2026-10-05) 색: 후보 병원 주황 · 이송 확정 초록 · 수용 불가 회색 · 현장(구급차) 파랑
+function markerColorHex(hospital: Pick<HospitalCandidate, "status">, isConfirmed: boolean): string {
+  if (isConfirmed) return AD.green;
+  if (hospital.status === "rejected") return "#CBD5E1";
+  return AD.orange;
 }
 
 // hub가 병원별 실제 gps(lat/lng)를 내려주므로 그대로 실좌표에 마커를 찍는다.
@@ -34,12 +36,33 @@ function markerColorHex(hospital: HospitalCandidate, isConfirmed: boolean): stri
 export function CandidateMapPanel({
   data,
   confirmedHospitalId,
+  sim = null,
+  scene = null,
+  target = null,
+  onMapClick,
 }: {
   data: HubMatchResult | null;
   confirmedHospitalId: string | null;
+  // 출동 시뮬레이션 상태(2026-10-01). 있으면 구급차 마커·경로는 이 값으로 따로 그린다 — 1초마다
+  // 오는 위치에 병원 마커 전체를 다시 그리고 화면 범위를 다시 맞추지 않게.
+  sim?: AmbulanceSimState | null;
+  // 매칭 전 현장 후보(도착 시간순, 2026-10-03 내비 기준). 매칭 결과가 없을 때 병원 위치만 보여준다.
+  scene?: SceneCandidates | null;
+  // 출동 전에 고른 위치(주소 검색·지도 클릭) 미리 보기, 그리고 지도를 눌러 출동 위치를 고르는 콜백(2026-10-01).
+  // onMapClick이 없으면(출동 중 등) 클릭해도 아무 일 없다.
+  target?: DispatchTarget | null;
+  onMapClick?: (lat: number, lng: number) => void;
 }) {
-  const hospitals = data?.hospitals ?? [];
-  const confirmedHospital = hospitals.find((h) => h.hospitalId === confirmedHospitalId) ?? null;
+  const hospitals: Pick<HospitalCandidate, "hospitalId" | "name" | "gps" | "status">[] =
+    data?.hospitals ?? scene?.hospitals.map((h) => ({ ...h, status: "pending" as const })) ?? [];
+  const simActive = sim != null;
+  const ambulanceGps = simActive ? null : data?.ambulanceGps ?? scene?.ambulanceGps ?? null;
+  const confirmedHospital = data?.hospitals.find((h) => h.hospitalId === confirmedHospitalId) ?? null;
+  // 이송 중이면 시뮬레이션이 받아 둔 경로의 남은 비율로 계산한 도착 시간(실제 도로 기준)을 쓴다.
+  const confirmedEtaMin =
+    sim?.phase === "transporting" && sim.etaSec != null
+      ? Math.max(1, Math.ceil(sim.etaSec / 60))
+      : confirmedHospital?.etaMin ?? null;
   const { ready, error } = useKakaoMapScript();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -48,6 +71,31 @@ export function CandidateMapPanel({
   const ambulanceMarkerRef = useRef<kakao.maps.Marker | null>(null);
   const ambulanceLabelRef = useRef<kakao.maps.CustomOverlay | null>(null);
   const polylineRef = useRef<kakao.maps.Polyline | null>(null);
+  const simMarkerRef = useRef<kakao.maps.Marker | null>(null);
+  const simLabelRef = useRef<kakao.maps.CustomOverlay | null>(null);
+  const simPathRef = useRef<kakao.maps.Polyline | null>(null);
+  const simPinsRef = useRef<{ marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay }[]>([]);
+  const targetPinRef = useRef<{ marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay } | null>(null);
+  // 지도 클릭 핸들러는 최신 콜백을 ref로 읽는다 — 리스너를 렌더마다 다시 붙이지 않게.
+  const onMapClickRef = useRef(onMapClick);
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
+
+  function ensureMap(center: { lat: number; lng: number }): kakao.maps.Map | null {
+    if (!containerRef.current) return null;
+    if (!mapRef.current) {
+      const map = new window.kakao.maps.Map(containerRef.current, {
+        center: new window.kakao.maps.LatLng(center.lat, center.lng),
+        level: 6,
+      });
+      window.kakao.maps.event.addListener(map, "click", (event) => {
+        onMapClickRef.current?.(event.latLng.getLat(), event.latLng.getLng());
+      });
+      mapRef.current = map;
+    }
+    return mapRef.current;
+  }
 
   useEffect(() => {
     if (!ready || !containerRef.current) return;
@@ -77,10 +125,12 @@ export function CandidateMapPanel({
     const lngs = hospitals.map((h) => h.gps.lng);
     const centerLat = lats.reduce((sum, v) => sum + v, 0) / lats.length;
     const centerLng = lngs.reduce((sum, v) => sum + v, 0) / lngs.length;
-    const ambulancePos = new kakao.maps.LatLng(
-      centerLat + PLACEHOLDER_AMBULANCE_OFFSET.lat,
-      centerLng + PLACEHOLDER_AMBULANCE_OFFSET.lng,
-    );
+    const ambulancePos = ambulanceGps
+      ? new kakao.maps.LatLng(ambulanceGps.lat, ambulanceGps.lng)
+      : new kakao.maps.LatLng(
+          centerLat + PLACEHOLDER_AMBULANCE_OFFSET.lat,
+          centerLng + PLACEHOLDER_AMBULANCE_OFFSET.lng,
+        );
 
     if (!mapRef.current) {
       mapRef.current = new kakao.maps.Map(containerRef.current, {
@@ -113,25 +163,33 @@ export function CandidateMapPanel({
     });
 
     ambulanceMarkerRef.current?.setMap(null);
+    ambulanceLabelRef.current?.setMap(null);
+    ambulanceMarkerRef.current = null;
+    ambulanceLabelRef.current = null;
+    polylineRef.current?.setMap(null);
+    polylineRef.current = null;
+    if (simActive) {
+      // 구급차 마커·경로는 시뮬레이션 레이어(아래 두 effect)가 그린다.
+      map.setBounds(bounds);
+      return;
+    }
     ambulanceMarkerRef.current = new kakao.maps.Marker({
       position: ambulancePos,
       map,
-      title: "구급차 현재 위치(임시 표시)",
-      image: createColoredMarkerImage("#1E5FA8"),
+      title: ambulanceGps ? "구급차 현재 위치" : "구급차 현재 위치(임시 표시)",
+      image: createColoredMarkerImage(AD.blue),
       zIndex: 20,
     });
-    ambulanceLabelRef.current?.setMap(null);
     ambulanceLabelRef.current = createLabelOverlay(ambulancePos, "구급차 현재 위치");
     ambulanceLabelRef.current.setMap(map);
     bounds.extend(ambulancePos);
 
-    polylineRef.current?.setMap(null);
     if (confirmedHospital) {
       const confirmedPos = new kakao.maps.LatLng(confirmedHospital.gps.lat, confirmedHospital.gps.lng);
       polylineRef.current = new kakao.maps.Polyline({
         path: [ambulancePos, confirmedPos],
         strokeWeight: 3,
-        strokeColor: "#1E5FA8",
+        strokeColor: AD.blue,
         strokeOpacity: 0.85,
         strokeStyle: "shortdash",
       });
@@ -141,125 +199,207 @@ export function CandidateMapPanel({
     }
 
     map.setBounds(bounds);
+
+    // 이송 확정 병원까지 도로 경로를 받아오면 직선(점선)을 실제 길(실선)로 바꾼다. 받는 사이
+    // 사건·확정 병원이 바뀌었으면(cancelled) 늦게 온 응답은 버린다. 실패하면 직선 그대로.
+    let cancelled = false;
+    if (confirmedHospital && data && ambulanceGps) {
+      fetchRoadPath(data.caseId, confirmedHospital.hospitalId).then((path) => {
+        if (cancelled || !path) return;
+        polylineRef.current?.setMap(null);
+        polylineRef.current = new kakao.maps.Polyline({
+          path: path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng)),
+          strokeWeight: 4,
+          strokeColor: AD.blue,
+          strokeOpacity: 0.9,
+          strokeStyle: "solid",
+        });
+        polylineRef.current.setMap(map);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
     // hospitals는 매 렌더 새 배열일 수 있어 참조 대신 caseId+길이로 변경을 감지한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, data?.caseId, hospitals.length, confirmedHospitalId]);
+  }, [ready, data?.caseId, scene?.caseId, hospitals.length, confirmedHospitalId, ambulanceGps?.lat, ambulanceGps?.lng, simActive]);
+
+  // 시뮬레이션: 상태가 바뀔 때만 경로 선·현장/기지 표시를 다시 그리고 화면을 맞춘다.
+  useEffect(() => {
+    if (!ready) return;
+    simPathRef.current?.setMap(null);
+    simPathRef.current = null;
+    simPinsRef.current.forEach(({ marker, label }) => {
+      marker.setMap(null);
+      label.setMap(null);
+    });
+    simPinsRef.current = [];
+    if (!sim) return;
+    const { kakao } = window;
+    const map = ensureMap(sim.gps ?? sim.base ?? DEFAULT_CENTER);
+    if (!map) return;
+    const bounds = new kakao.maps.LatLngBounds();
+    const pin = (p: { lat: number; lng: number }, text: string, color: string) => {
+      const pos = new kakao.maps.LatLng(p.lat, p.lng);
+      bounds.extend(pos);
+      const marker = new kakao.maps.Marker({ position: pos, map, title: text, image: createColoredMarkerImage(color), zIndex: 15 });
+      const label = createLabelOverlay(pos, text);
+      label.setMap(map);
+      simPinsRef.current.push({ marker, label });
+    };
+    pin(sim.base, "기지", "#66778A");
+    if (sim.incident && (sim.phase === "dispatching" || sim.phase === "on_scene")) pin(sim.incident, "환자 발생 위치", "#E5484D");
+    if (sim.path && SIM_MOVING_PHASES.has(sim.phase)) {
+      const path = sim.path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng));
+      path.forEach((p) => bounds.extend(p));
+      simPathRef.current = new kakao.maps.Polyline({
+        path,
+        strokeWeight: 4,
+        strokeColor: sim.phase === "returning" ? "#66778A" : AD.blue,
+        strokeOpacity: 0.85,
+        strokeStyle: "solid",
+      });
+      simPathRef.current.setMap(map);
+    }
+    if (hospitals.length === 0 || SIM_MOVING_PHASES.has(sim.phase)) map.setBounds(bounds);
+    // 상태·사건·확정 병원·경로가 바뀔 때만 다시 그린다(1초 위치 갱신엔 반응하지 않음).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, sim?.phase, sim?.caseId, sim?.hospitalId, sim?.path?.length]);
+
+  // 출동 전에 고른 위치 미리 보기(주소 검색·지도 클릭).
+  useEffect(() => {
+    if (!ready) return;
+    targetPinRef.current?.marker.setMap(null);
+    targetPinRef.current?.label.setMap(null);
+    targetPinRef.current = null;
+    if (!target) return;
+    const map = ensureMap(target);
+    if (!map) return;
+    const pos = new window.kakao.maps.LatLng(target.lat, target.lng);
+    targetPinRef.current = {
+      marker: new window.kakao.maps.Marker({ position: pos, map, title: "출동 위치", image: createColoredMarkerImage("#E5484D"), zIndex: 25 }),
+      label: createLabelOverlay(pos, target.mode === "map" ? "출동 위치(지도)" : `출동 위치 · ${target.label}`),
+    };
+    targetPinRef.current.label.setMap(map);
+    map.setCenter(pos);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, target?.lat, target?.lng, target?.label]);
+
+  // 시뮬레이션: 1초마다 구급차 마커만 옮긴다.
+  useEffect(() => {
+    if (!ready) return;
+    if (!sim?.gps) {
+      simMarkerRef.current?.setMap(null);
+      simLabelRef.current?.setMap(null);
+      simMarkerRef.current = null;
+      simLabelRef.current = null;
+      return;
+    }
+    const { kakao } = window;
+    const map = ensureMap(sim.gps);
+    if (!map) return;
+    const pos = new kakao.maps.LatLng(sim.gps.lat, sim.gps.lng);
+    if (!simMarkerRef.current) {
+      simMarkerRef.current = new kakao.maps.Marker({
+        position: pos, map, title: "구급차 (시뮬레이션 위치)", image: createColoredMarkerImage(AD.blue), zIndex: 30,
+      });
+      simLabelRef.current = createLabelOverlay(pos, "구급차 (시뮬레이션)");
+      simLabelRef.current.setMap(map);
+    } else {
+      simMarkerRef.current.setPosition(pos);
+      simLabelRef.current?.setPosition(pos);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, sim?.gps?.lat, sim?.gps?.lng]);
+
+  // 요청 범위(존) 원 — 시안의 "Zone 1 · 5km" 점선 원. 현장(매칭에 쓴 구급차 좌표) 중심, 반경 = 넓힌 존 × 5km.
+  const zoneCenter = data?.ambulanceGps ?? scene?.ambulanceGps ?? null;
+  const zoneMax = Math.max(1, ...(data?.zoneActive ?? scene?.zoneActive ?? [1]));
+  const zoneRef = useRef<{ circle: kakao.maps.Circle; label: kakao.maps.CustomOverlay } | null>(null);
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    zoneRef.current?.circle.setMap(null);
+    zoneRef.current?.label.setMap(null);
+    zoneRef.current = null;
+    if (!zoneCenter || confirmedHospitalId) return;
+    const { kakao } = window;
+    const center = new kakao.maps.LatLng(zoneCenter.lat, zoneCenter.lng);
+    const circle = new kakao.maps.Circle({
+      center,
+      radius: zoneMax * 5000,
+      strokeWeight: 2,
+      strokeColor: AD.blue,
+      strokeOpacity: 0.9,
+      strokeStyle: "dash",
+      fillColor: AD.blue,
+      fillOpacity: 0.06,
+    });
+    circle.setMap(mapRef.current);
+    const north = new kakao.maps.LatLng(zoneCenter.lat + (zoneMax * 5) / 111, zoneCenter.lng);
+    const label = new kakao.maps.CustomOverlay({
+      position: north,
+      yAnchor: 0,
+      content: `<div style="font-size:12px;font-weight:700;color:${AD.blue};background:rgba(255,255,255,.85);padding:1px 8px;border-radius:8px;transform:translateY(4px)">Zone ${zoneMax > 1 ? `1~${zoneMax}` : "1"} · ${zoneMax * 5}km</div>`,
+    });
+    label.setMap(mapRef.current);
+    zoneRef.current = { circle, label };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, zoneCenter?.lat, zoneCenter?.lng, zoneMax, confirmedHospitalId, hospitals.length]);
+
+  const zoom = (delta: number) => {
+    const map = mapRef.current;
+    if (map) map.setLevel(Math.max(1, Math.min(14, map.getLevel() + delta)));
+  };
 
   return (
-    <Panel
-      title="지도 · 네비게이션"
-      subtitle="데이터를 보낸 병원 전체 위치"
-      badge={<Tag source="rule">GPS · 카카오내비</Tag>}
-    >
-      <div className={css({ display: "flex", flexDirection: "column", gap: "3.5", flex: "1", minHeight: "0" })}>
+    <div style={{ ...cardStyle, position: "relative", flex: "1 1 auto", minHeight: 200, height: "100%", overflow: "hidden", background: "#DCE9F5" }}>
+      {/* 카카오맵이 이 div 안쪽 DOM을 직접 그리므로, React가 관리하는 자식은 여기 안 두고 오버레이를 형제로 절대배치한다.
+          zIndex:0으로 별도 쌓임 맥락을 만들어 카카오맵 내부 z-index가 오버레이 위로 새어나가지 않게 한다. */}
+      <div
+        ref={containerRef}
+        role="img"
+        aria-label="현장(구급차) 위치와 데이터를 보낸 병원들의 위치를 표시한 지도"
+        style={{ position: "absolute", inset: 0, zIndex: 0 }}
+      />
+      {/* 출동 시뮬레이션 중엔 병원 후보가 없어도 지도를 가리지 않는다 — 출동 중 움직이는 구급차를 보여야 한다. */}
+      {(!ready || error || (hospitals.length === 0 && !sim)) && (
         <div
-          className={css({
-            position: "relative",
-            flex: "1",
-            minWidth: "240px",
-            minHeight: "160px",
-            borderWidth: "1px",
-            borderColor: "line",
-            borderRadius: "field",
-            backgroundColor: "#EDF2F7",
-            overflow: "hidden",
-          })}
+          style={{
+            position: "absolute", inset: 0, zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+            textAlign: "center", padding: "0 16px", fontSize: 12, color: error ? AD.red : AD.sub, background: "#DCE9F5",
+          }}
         >
-          {/* 카카오맵이 이 div 안쪽 DOM을 직접 그리므로, React가 관리하는 자식은
-              여기 안 두고 아래 오버레이 div를 형제로 절대배치한다. */}
-          <div
-            ref={containerRef}
-            role="img"
-            aria-label="구급차 현재 위치와 데이터를 보낸 병원들의 위치를 표시한 지도"
-            // zIndex:0으로 별도 쌓임 맥락을 만들어 카카오맵 내부 z-index가 형제인
-            // 오버레이 위로 새어나가지 않게 한다(병원 대시보드 MapPanel과 동일한
-            // 이유, 2026-08-12).
-            className={css({ position: "absolute", inset: "0", zIndex: "0" })}
-          />
-          {(!ready || error || hospitals.length === 0) && (
-            <div
-              className={css({
-                position: "absolute",
-                inset: "0",
-                zIndex: "1",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                textAlign: "center",
-                paddingX: "4",
-                fontSize: "xs",
-                color: error ? "coral" : "ink3",
-                backgroundColor: "#EDF2F7",
-              })}
-            >
-              {error ?? (hospitals.length === 0 ? "수신 대기 중..." : "지도를 불러오는 중...")}
-            </div>
-          )}
+          {error ?? (hospitals.length === 0 ? "수신 대기 중..." : "지도를 불러오는 중...")}
         </div>
+      )}
 
-        <div className={css({ width: "100%", display: "flex", flexDirection: "row", gap: "2.5" })}>
-          {confirmedHospital ? (
-            <div
-              className={css({
-                flex: "1",
-                borderWidth: "1px",
-                borderColor: "#B9E4D3",
-                backgroundColor: "mintSoft",
-                borderRadius: "field",
-                paddingX: "3.5",
-                paddingY: "3",
-              })}
-            >
-              <div className={css({ fontSize: "xs", color: "#0A7351" })}>본원 도착 예상</div>
-              <div
-                className={css({
-                  fontSize: "xl",
-                  fontWeight: "semibold",
-                  letterSpacing: "-0.02em",
-                  color: "#0A7351",
-                })}
-              >
-                {confirmedHospital.etaMin != null ? `${confirmedHospital.etaMin}분` : "-"}
-              </div>
-              <div className={css({ fontSize: "2xs", color: "ink3", marginTop: "0.5" })}>
-                실시간 교통 반영
-              </div>
-            </div>
-          ) : (
-            <div
-              className={css({
-                flex: "1",
-                borderWidth: "1px",
-                borderStyle: "dashed",
-                borderColor: "lineStrong",
-                backgroundColor: "surfaceSub",
-                borderRadius: "field",
-                paddingX: "3.5",
-                paddingY: "3",
-                fontSize: "xs",
-                color: "ink3",
-                textAlign: "center",
-              })}
-            >
-              이송 승인된 병원이 없습니다
-              <br />
-              승인하면 경로가 표시됩니다
-            </div>
-          )}
-
-          <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "xs", color: "ink" })}>직선 거리</div>
-            <div className={css({ fontSize: "xl", fontWeight: "semibold", letterSpacing: "-0.02em", color: "ink" })}>
-              {confirmedHospital ? `${confirmedHospital.distanceKm}km` : "-"}
-            </div>
+      <div style={{ position: "absolute", zIndex: 2, left: 12, top: 12, display: "flex", flexWrap: "wrap", gap: "6px 14px", background: "rgba(255,255,255,0.92)", borderRadius: 12, padding: "6px 12px", fontSize: 11.5, color: AD.ink3 }}>
+        {([[AD.orange, "후보 병원"], [AD.green, "이송 확정"], [AD.blue, "현장 · 구급차"]] as const).map(([color, text]) => (
+          <div key={text} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: color }} />
+            {text}
           </div>
-
-          <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "xs", color: "ink" })}>데이터 전송 병원 수</div>
-            <div className={css({ fontSize: "md", fontWeight: "semibold", color: "ink" })}>{hospitals.length}곳</div>
-          </div>
-        </div>
+        ))}
       </div>
-    </Panel>
+      <div style={{ position: "absolute", zIndex: 2, right: 12, top: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <button type="button" aria-label="확대" style={zoomButton} onClick={() => zoom(-1)}>+</button>
+        <button type="button" aria-label="축소" style={zoomButton} onClick={() => zoom(1)}>−</button>
+      </div>
+      <div style={{ position: "absolute", zIndex: 2, left: 12, right: 68, bottom: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div style={overlayChip}>
+          이송 병원 <b style={{ fontWeight: 700, fontSize: 12, color: AD.navy }}>{confirmedHospital?.name ?? "없음"}</b>
+        </div>
+        <div style={overlayChip} title={confirmedHospital ? distanceTitle(confirmedHospital) : undefined}>
+          이동 거리{" "}
+          <b style={{ fontWeight: 700, fontSize: 12, color: AD.navy }}>
+            {confirmedHospital ? `${distanceLabel(confirmedHospital)}${confirmedEtaMin != null ? ` · ETA ${confirmedEtaMin}분` : ""}` : "-"}
+          </b>
+        </div>
+        <div style={overlayChip}>
+          데이터 전송 병원 <b style={{ fontWeight: 700, fontSize: 12, color: AD.navy }}>{hospitals.length}곳</b>
+        </div>
+        <div style={{ background: AD.chip, borderRadius: 12, padding: "6px 14px", fontSize: 11.5, color: AD.sub }}>GPS · 카카오내비</div>
+      </div>
+    </div>
   );
 }

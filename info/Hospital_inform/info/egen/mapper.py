@@ -26,7 +26,9 @@ feature/info의 본체다. 하는 일은 세 가지다.
   위 실측(서울 55곳 1회)에서는 "`-24 ~ -2` 관측, `-1`은 없음"이라고 적었으나,
   전국 34일치 313,371칸으로 넓히자 `-1`이 1,398칸(0.45%), `-25` 이하가 654칸
   관측됐다. 표본 하나로 값의 범위를 단정한 것이 틀렸던 것이고, 처리 자체는
-  그대로 맞다 — `-1`은 미입력, `-2` 이하는 과밀. 재현은
+  그대로 맞다 — `-1`은 미입력, `-2` 이하는 과밀. ~~재현은~~
+  → [갱신됨 2026-10-01] **`hvec`만은 `-1`도 과밀(1명 초과)이다** — 앞뒤 값이 이웃 숫자
+  (0 → -1 → -2)라 미입력일 수 없다. `MINUS_ONE_IS_VALUE_FIELDS` 참고. 재현은
   `python -m hospital_score.report`의 3절(응급실 과밀 지속시간)
 - [확인됨] 필드 자체가 빠지는 것도 미입력의 표현이다 (`hv11`은 55건 중 31건만 등장)
 - [확인됨] `hvidate` = `yyyyMMddHHmmss` (예: `20260810232018`)
@@ -53,6 +55,12 @@ KST = timezone(timedelta(hours=9))
 #: E-Gen이 "병원이 입력하지 않음"을 나타내는 값. [확인됨]
 #: 이 값**만** 미입력이다. `-2` 이하는 미입력이 아니라 과밀(정원 초과 수용)이다.
 MISSING_SENTINEL = -1
+
+#: 예외: 응급실 일반 병상(`hvec`)의 `-1`은 미입력이 아니라 "정원보다 1명 많음"(과밀)이다
+#: (2026-10-01 실측). 전국 스냅샷에서 `hvec=-1`의 앞뒤 값 193개 중 149개(77%)가 -3~1로,
+#: 0 → -1 → -2처럼 이웃한 숫자 사이에 끼어 나온다. 신뢰도 모델(reliability/engine.py의
+#: `minus_one_missing=False`)도 이미 이렇게 읽는다.
+MINUS_ONE_IS_VALUE_FIELDS = frozenset({"hvec"})
 
 
 # --- 매핑표 (실측 후 여기부터 교정한다) --------------------------------------
@@ -119,7 +127,7 @@ CAPABILITY_TO_DEPARTMENT: dict[str, str] = {
 # --- 값 정리 ----------------------------------------------------------------
 
 
-def clean_count(raw: object) -> int | None:
+def clean_count(raw: object, field: str | None = None) -> int | None:
     """병상 수를 정리한다. 미입력이면 `None`(미상)을 돌려준다.
 
     세 가지를 구분해야 한다.
@@ -137,7 +145,9 @@ def clean_count(raw: object) -> int | None:
         value = int(raw)
     except (TypeError, ValueError):
         return None
-    return None if value == MISSING_SENTINEL else value
+    if value == MISSING_SENTINEL and field not in MINUS_ONE_IS_VALUE_FIELDS:
+        return None
+    return value
 
 
 def clamp_available(count: int) -> int:
@@ -213,7 +223,7 @@ def implausible_fields(bed_row: dict) -> list[str]:
     total = total_bed_count(bed_row)
     dropped = []
     for field_name in BED_FIELD_MAP:
-        count = clean_count(bed_row.get(field_name))
+        count = clean_count(bed_row.get(field_name), field_name)
         if count is not None and is_implausible(count, total):
             dropped.append(f"{field_name}={count}")
     return dropped
@@ -230,7 +240,7 @@ def build_beds_by_type(bed_row: dict) -> dict[str, int]:
     total = total_bed_count(bed_row)
 
     for field_name, code in BED_FIELD_MAP.items():
-        count = clean_count(bed_row.get(field_name))
+        count = clean_count(bed_row.get(field_name), field_name)
         if count is None or is_implausible(count, total):
             continue
         beds[code] = clamp_available(count)
@@ -260,26 +270,54 @@ def build_capabilities(severe_row: dict | None, bed_row: dict | None = None) -> 
     return sorted(set(codes))
 
 
-def build_specialties(capabilities: list[str]) -> list[Specialty]:
-    """역량 코드에서 진료과 목록을 만든다.
+#: 심평원 전문과목 중 응급 환자를 받아 치료하는 과만 hub로 보낸다(2026-10-01). 영상의학과·
+#: 마취통증의학과·진단검사의학과·병리과·핵의학과·방사선종양학과·예방의학과·직업환경의학과·
+#: 재활의학과·가정의학과·결핵과, 치과(구강악안면외과 제외)·한방 계열은 뺀다 — 거의 모든 병원에
+#: 있거나(영상의학과 477곳) 응급 수용 과가 아니라서, 넣으면 진료과 매칭이 흐려진다.
+#: voice의 required_department(voice/hmm/department_mapping.json) 값은 전부 여기 들어 있다.
+ACUTE_HIRA_DEPARTMENTS = frozenset({
+    "내과", "외과", "정형외과", "신경외과", "신경과", "산부인과", "소아청소년과", "응급의학과",
+    "비뇨의학과", "심장혈관흉부외과", "정신건강의학과", "이비인후과", "성형외과", "안과", "피부과",
+    "구강악안면외과",
+})
 
-    hub가 아직 `capabilities`를 안 읽고 진료과명을 임베딩으로 대조하기 때문에,
-    같은 근거로 진료과도 채워줘야 매칭이 작동한다. `recentProcedureTags`에는
-    역량의 한글 라벨을 넣는다 — hub의 임베딩이 이 텍스트도 참고한다.
+#: E-Gen 역량에서 뽑은 분과의 전문의 수는 심평원 대분류 과에서 빌려 온다(심평원엔 분과가 없다).
+#: 순환기내과 = PCI 가능이 확인된 내과라, 내과 전문의 수로 규모를 가늠한다.
+_SUBSPECIALTY_PARENT = {"순환기내과": "내과"}
+
+
+def build_specialties(capabilities: list[str], hira_rows: list[dict] | None = None) -> list[Specialty]:
+    """진료과 목록을 만든다: E-Gen 역량 코드 4개 과 + 심평원 전문과목별 전문의 수(2026-10-01).
+
+    예전엔 E-Gen 역량에서 뽑은 4개 과(순환기내과·신경과·신경외과·산부인과)뿐이라 전국 438곳 중
+    186곳(42%)이 진료과 0개였고, 가중치 60%인 진료과 점수가 통째로 빠졌다. `hira_rows`는
+    `data/hira/specialists.json`의 그 병원 목록(dgsbjtCdNm·dtlSdrCnt)이고, 없으면(캐시 없음·조인 안 됨)
+    기존 4개 과만 보낸다. `recentProcedureTags`에는 역량의 한글 라벨을 넣는다.
     """
-    by_dept: dict[str, list[str]] = {}
+    counts: dict[str, int] = {}
+    for row in hira_rows or []:
+        name = (row.get("dgsbjtCdNm") or "").strip()
+        try:
+            n = int(row.get("dtlSdrCnt") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if name in ACUTE_HIRA_DEPARTMENTS and n > 0:
+            counts[name] = counts.get(name, 0) + n
+
+    tags: dict[str, list[str]] = {}
     for code in capabilities:
         dept = CAPABILITY_TO_DEPARTMENT.get(code)
         if dept:
-            by_dept.setdefault(dept, []).append(label_ko(code))
+            tags.setdefault(dept, []).append(label_ko(code))
 
+    departments = sorted(set(counts) | set(tags))
     return [
         Specialty(
             department=dept,
-            doctorCount=0,  # 공개 API에 인력 수가 없다. OCR 또는 병원 입력으로만 채울 수 있다
-            recentProcedureTags=sorted(tags),
+            doctorCount=counts.get(dept, counts.get(_SUBSPECIALTY_PARENT.get(dept, ""), 0)),
+            recentProcedureTags=sorted(tags.get(dept, [])),
         )
-        for dept, tags in sorted(by_dept.items())
+        for dept in departments
     ]
 
 
@@ -317,6 +355,7 @@ def map_hospital(
     location_row: dict | None,
     severe_row: dict | None,
     fallback_ts: str,
+    hira_rows: list[dict] | None = None,
 ) -> HospitalInfo | None:
     """병원 1곳을 `HospitalInfo`로 변환한다. 좌표가 없으면 `None`을 돌려준다.
 
@@ -345,7 +384,8 @@ def map_hospital(
         # 공개 API에 당직 전문의 정보가 없다. 중증질환 수용가능을 프록시로 쓴다 —
         # "재관류가 지금 가능하다"는 곧 해당 과 전문의가 대응 가능하다는 뜻이다.
         nightDutyAvailable=bool(capabilities),
-        specialties=build_specialties(capabilities),
+        specialties=build_specialties(capabilities, hira_rows),
+        emergencyLevel=(location_row.get("dutyEmclsName") or "").strip() or None,
         updatedAt=parse_hvidate(bed_row.get("hvidate")) or fallback_ts,
         bedsByType=beds_by_type or None,
         capabilities=capabilities,
@@ -357,6 +397,7 @@ def map_all(
     location_rows: list[dict],
     severe_rows: list[dict],
     now: datetime | None = None,
+    specialists: dict[str, list[dict]] | None = None,
 ) -> tuple[list[HospitalInfo], MappingReport]:
     """세 오퍼레이션의 응답을 합쳐 `HospitalInfo` 목록을 만든다.
 
@@ -374,7 +415,7 @@ def map_all(
         hpid = bed_row["hpid"]
         name = bed_row.get("dutyName", hpid)
 
-        er_count = clean_count(bed_row.get("hvec"))
+        er_count = clean_count(bed_row.get("hvec"), "hvec")
         if er_count is None:
             report.bed_count_unknown.append(name)
         elif er_count < 0:
@@ -389,7 +430,9 @@ def map_all(
         if hpid not in severes:
             report.no_severe_illness_row.append(name)
 
-        info = map_hospital(bed_row, locations.get(hpid), severes.get(hpid), fallback_ts)
+        info = map_hospital(
+            bed_row, locations.get(hpid), severes.get(hpid), fallback_ts, (specialists or {}).get(hpid)
+        )
         if info is None:
             report.skipped_no_location.append(name)
             continue

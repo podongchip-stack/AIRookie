@@ -75,15 +75,13 @@ dashboard : hospitals[] (specialtyMatch.score, reliability 그대로 노출)
 | 13 | 의사결정 로그 (타임스탬프+SHA-256, append-only, 위변조 검증) | `decision_log.py` | 완료 |
 | 14 | 결과 로컬 저장 (voice 파일명 stem 이어받기) | `delivery.py` | 완료 |
 | 15 | 병원/구급차 정보 수신, voice 자가등록, 매칭 실행, WebSocket 브로드캐스트, 신원 확인 | `app.py` | 완료 |
-| 16 | 테스트 데이터로 엔진 실행하는 CLI (declared_no 데모션 회귀 테스트 포함) | `run_match.py` | 완료 |
+| 16 | 테스트 데이터로 엔진 실행하는 CLI (declared_no 데모션 + 사건 캐시 정리 회귀 테스트 포함) | `run_match.py` | 완료 |
+| 17 | **`hospital_reject` 사유를 info 거절 로그로 중계** (`send_rejection_to_info`, `_build_rejection_payload`) | `delivery.py`/`app.py` | 완료 (2026-09-10) |
+| 18 | 사건 캐시 자동 정리 (`_prune_old_cases`, 확정 후 60분) + 의사결정 로그 통화 전문 지문 치환 (`_redact_transcript`) | `hub_engine.py` | 완료 (2026-09-10) |
 
 **미구현**:
 - info의 표준 코드 정확 대조 제안(하드필터 프리필터) — 미채택, voice의 코드
   출력이 선행 조건
-- **dashboard의 `hospital_reject` 액션을 info의 `POST /hub/rejection`으로
-  전달하는 로직** — hub에 이 전달 코드가 없다. info 쪽 수신구는 준비돼 있어 hub가
-  몇 줄만 추가하면 연동된다. hospital_score 가중치를 실측 기반(3번 방법)으로
-  검증하려면 이게 최우선 선행 과제다
 
 ---
 
@@ -195,7 +193,7 @@ confidence·basis)는 `HospitalMatch.reliability`로 dashboard에 실리고, **�
 | 항목 | 이유 |
 |---|---|
 | 존 확장 임계값·가중치(`W_SPECIALTY`/`W_DISTANCE`) | 실제 운영 데이터 없이 정한 상수 |
-| declared_no 데모션의 "다음 단계"(가중합 승격) | 거절 로그 0건이라 실측 검증 불가 — hub→info 전달 배선부터 필요 |
+| declared_no 데모션의 "다음 단계"(가중합 승격) | hub→info 전달 배선은 완료(2026-09-10). 이제 운영 거절 로그가 쌓이길 기다리는 단계 |
 | 구급차 GPS | 실시간 아님, `AmbulanceInfo` 고정값 |
 | voice 자가등록 재시도 | `AmbulanceInfo` 미등록 시 409, 재시도 큐 없음 |
 
@@ -214,9 +212,9 @@ confidence·basis)는 `HospitalMatch.reliability`로 dashboard에 실리고, **�
 | 5 | dashboard ↔ hub | `WS /ws/dashboard` | HubMatchResult / ApprovalAction / CallSignal / identify | WebSocket | 가동 |
 | 6 | dashboard → hub | `GET /identity?role=&id=` | — | HTTP REST, CORS `*` | 가동 |
 | 7 | hub → voice | `POST /call/start`, `/call/end` (중계) | `{timestamp, caseId}` | HTTP | 가동 |
-| 8 | hub → info | `POST /hub/rejection` | 거절 로그 | HTTP | **미구현** |
+| 8 | hub → info | `POST /hub/rejection` | 거절 로그 (`hospitalId`·`reasonCode` + best-effort `severity`·`diseaseGroup`·`declaredAtRequest`) | HTTP | 가동 (2026-09-10, fire-and-forget). 수신구는 `python -m hospital_score.ingest`(포트 5003)로 별도 기동하는 선택적 서버 |
 
-포트: hub `5001`(고정). voice는 apid마다 다른 포트.
+포트: hub `5001`(고정). info 거절 수신구 `5003`(선택). voice는 apid마다 다른 포트.
 
 ### 3-2. 유일한 외부 의존 — 로컬 AI 모델
 
@@ -266,16 +264,21 @@ D001 [테스트] 초근접·진료과 동점, 수용불가 신고 — 거리 0.1
 
 ## 5. 후속 작업
 
-### 5-1. 🔴 거절 로그를 info로 전달하는 배선 추가
+### 5-1. ✅ 거절 로그를 info로 전달하는 배선 (2026-09-10 완료)
 
-`_handle_dashboard_action()`에 `hospital_reject` 액션일 때 info의
-`POST /hub/rejection`으로 최소 페이로드(`hospitalId`, `timestamp`)를 POST하는
-코드 몇 줄만 추가하면 된다. 이게 되어야 hospital_score 가중치를 실측(거절 로그)
-기반으로 검증하는 단계로 넘어갈 수 있다.
+`_handle_dashboard_action()`이 `hospital_reject`일 때 `_build_rejection_payload()`로
+`{hospitalId, caseId, timestamp, reasonCode}` + 사건 캐시가 있으면
+`severity`·`diseaseGroup`·`declaredAtRequest`까지 채워
+`delivery.send_rejection_to_info()`로 `POST /hub/rejection`(포트 5003)에 보낸다.
+fire-and-forget — 수신구가 안 떠 있어도 승인 처리는 계속된다. `ApprovalAction.reason`은
+`Optional[str]`(수신구의 관대 수신 원칙에 맞춰 Literal로 막지 않음).
+회귀 테스트: `hub/test_rejection_forward.py`.
+
+이제 운영 거절 로그가 쌓이길 기다리는 단계다(로그는 소급 생성 불가).
 
 ### 5-2. 🟡 declared_no 데모션 → 가중합 승격 재검토
 
-거절 로그가 쌓이면(5-1 선행), tier·거리·진료과매칭과 실제 승인율의 관계를
+거절 로그가 쌓이면(5-1 배선 완료), tier·거리·진료과매칭과 실제 승인율의 관계를
 역산해 지금의 하드 데모션을 실측 기반 가중합으로 바꿀지 재검토한다. 이때도
 "declared_no는 항상 최하위권"이라는 불변식을 잃지 않는지 검증할 것.
 

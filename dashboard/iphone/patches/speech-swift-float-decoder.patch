@@ -1,0 +1,111 @@
+diff --git a/Sources/Qwen3ASR/Qwen3ASR.swift b/Sources/Qwen3ASR/Qwen3ASR.swift
+index 2b20105..3f357c4 100644
+--- a/Sources/Qwen3ASR/Qwen3ASR.swift
++++ b/Sources/Qwen3ASR/Qwen3ASR.swift
+@@ -129,7 +129,7 @@ public class Qwen3ASRModel {
+ 
+     public let audioEncoder: Qwen3AudioEncoder
+     public let featureExtractor: WhisperFeatureExtractor
+-    public var textDecoder: QuantizedTextModel?
++    public var textDecoder: FloatTextModel?
+ 
+     /// Tokenizer for decoding output tokens
+     private var tokenizer: Qwen3Tokenizer?
+@@ -162,7 +162,7 @@ public class Qwen3ASRModel {
+ 
+     /// Initialize text decoder (called after loading)
+     func initializeTextDecoder() {
+-        self.textDecoder = QuantizedTextModel(config: textConfig)
++        self.textDecoder = FloatTextModel(config: textConfig)
+     }
+ 
+     // MARK: - Batched Transcription
+@@ -416,7 +416,7 @@ public class Qwen3ASRModel {
+     /// process releases its scratch pool between requests.
+     func generateText(
+         audioEmbeds: MLXArray,
+-        textDecoder: QuantizedTextModel,
++        textDecoder: FloatTextModel,
+         language: String?,
+         maxTokens: Int,
+         context: String? = nil,
+@@ -438,7 +438,7 @@ public class Qwen3ASRModel {
+ 
+     private func generateTextImpl(
+         audioEmbeds: MLXArray,
+-        textDecoder: QuantizedTextModel,
++        textDecoder: FloatTextModel,
+         language: String?,
+         maxTokens: Int,
+         context: String?,
+@@ -623,7 +623,7 @@ public class Qwen3ASRModel {
+     /// loop before every speculative N+1 graph. A throw abandons the
+     /// in-flight step; nothing further is queued on the GPU.
+     static func generateGreedyAsyncEval(
+-        textDecoder: QuantizedTextModel,
++        textDecoder: FloatTextModel,
+         initialLogits: MLXArray,
+         cache initialCache: [(MLXArray, MLXArray)],
+         maxTokens: Int,
+@@ -713,7 +713,7 @@ public class Qwen3ASRModel {
+ 
+     func generateTextBatchedBulkSync(
+         audioEmbedsBatch: [(embeds: MLXArray, seqLen: Int)],
+-        textDecoder: QuantizedTextModel,
++        textDecoder: FloatTextModel,
+         language: String?,
+         maxTokens: Int,
+         context: String? = nil
+@@ -809,7 +809,7 @@ public class Qwen3ASRModel {
+ 
+     func generateTextBatched(
+         audioEmbedsBatch: [(embeds: MLXArray, seqLen: Int)],
+-        textDecoder: QuantizedTextModel,
++        textDecoder: FloatTextModel,
+         language: String?,
+         maxTokens: Int,
+         context: String? = nil
+@@ -981,7 +981,7 @@ public class Qwen3ASRModel {
+         prefixTokenIds: [Int32],
+         suffixTokenIds: [Int32],
+         audioStartIndex: Int,
+-        textDecoder: QuantizedTextModel
++        textDecoder: FloatTextModel
+     ) -> MLXArray {
+         var inputIds = prefixTokenIds
+         for _ in 0..<audioTokenCount {
+@@ -1021,7 +1021,7 @@ public class Qwen3ASRModel {
+     /// n-gram masking, and temperature sampling, so there's no benefit
+     /// from `asyncEval` overlap.
+     static func generateSlow(
+-        textDecoder: QuantizedTextModel,
++        textDecoder: FloatTextModel,
+         initialLogits: MLXArray,
+         cache initialCache: [(MLXArray, MLXArray)],
+         maxTokens: Int,
+diff --git a/Sources/Qwen3ASR/WeightLoading.swift b/Sources/Qwen3ASR/WeightLoading.swift
+index a6732c9..ece4a10 100644
+--- a/Sources/Qwen3ASR/WeightLoading.swift
++++ b/Sources/Qwen3ASR/WeightLoading.swift
+@@ -67,6 +67,21 @@ public enum WeightLoader {
+         print("Applied weights to text decoder (\(textModel.layers.count) layers, \(appliedTotal) tensors)")
+     }
+ 
++    /// Load and apply weights to float (bf16/fp32, 양자화 없음) text decoder. Per-shard streaming.
++    /// GoldenLink 패치: 파인튜닝한 Qwen3-ASR을 원본 정밀도 그대로 쓰기 위해 추가.
++    public static func loadTextDecoderWeights(
++        into textModel: FloatTextModel,
++        from directory: URL
++    ) throws {
++        let files = try safetensorFiles(in: directory)
++        for file in files {
++            let raw = try loadSafetensors(url: file)
++            let textWeights = stripPrefix(raw, prefix: "model.")
++            if textWeights.isEmpty { continue }
++            applyFloatTextDecoderComponents(to: textModel, weights: textWeights)
++        }
++    }
++
+     // MARK: - Forced Aligner Weight Loading
+ 
+     /// Load weights for the forced aligner model. Per-shard streaming.
