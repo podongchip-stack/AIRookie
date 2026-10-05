@@ -1929,7 +1929,7 @@ case_tracker = CaseTracker()
 # 거절 비율(40%) 확장은 병원이 "거절"을 눌러야만 움직인다 — 아무도 답하지 않으면 존이 그대로 멈춘다. 그래서 요청이
 # 나간 뒤(또는 마지막 확장 뒤) ZONE_EXPAND_SEC 동안 승인·확정 병원이 없으면 존을 한 단계 넓힌다. 시연 콘솔의
 # [건너뛰기]는 기다리지 않고 바로 넓힌다. 넓힐 수 없으면(상한) 타이머를 멈춘다. 규칙 기반.
-ZONE_EXPAND_SEC = float(os.environ.get("HUB_ZONE_EXPAND_SEC", "30"))
+ZONE_EXPAND_SEC = float(os.environ.get("HUB_ZONE_EXPAND_SEC", "60"))
 ZONE_TIMER_TICK_SEC = 1.0
 #: caseId -> {"zone": 지금 존, "since": 그 존이 시작된 시각(epoch), "ok": 더 넓힐 수 있는지,
 #:            "paused": [정지]를 누른 시각(epoch, 2026-10-04) — 정지 중엔 시간이 흐르지 않는다}
@@ -2072,7 +2072,7 @@ def _pause_zone_timers(apid: str, pausing: bool) -> None:
 
 
 def _expand_case_zone(case_id: str, cause: str) -> None:
-    """존을 한 단계 넓혀 같은 환자 정보로 다시 요청한다. cause: "timeout"(30초) | "manual"(건너뛰기)."""
+    """존을 한 단계 넓혀 같은 환자 정보로 다시 요청한다. cause: "timeout"(ZONE_EXPAND_SEC, 기본 60초) | "manual"(건너뛰기)."""
     result = engine.get_case_result(case_id)
     if result is None or not _zone_waiting(result.model_dump()):
         return
