@@ -42,7 +42,7 @@ import type {
 
 const PATIENT_TEMPLATES = [
   {
-    key: "cardiac", label: "흉통 · 경색 의심", severity: "중증" as const,
+    key: "cardiac", report: "cardiac", label: "흉통 · 경색 의심", severity: "중증" as const,
     detail: "62세 남성 · 흉통, 호흡 곤란 · 필요 진료과 순환기내과",
     symText: "흉통, 호흡 곤란",
     // KTAS·활력징후·의식·발생 시점까지 — 음성 요약(MF_BERT v2)이 실제로 뽑는 표시용
@@ -57,7 +57,7 @@ const PATIENT_TEMPLATES = [
     transcript: "환자 62세 남성, 흉통 호소. 혈압 150에 90, 맥박 110, 산소포화도 96.",
   },
   {
-    key: "trauma", label: "교통사고 다발성 외상", severity: "중증" as const,
+    key: "trauma", report: "trauma", label: "교통사고 다발성 외상", severity: "중증" as const,
     detail: "35세 남성 · 흉부·복부 충격, 의식 혼미 · 필요 진료과 외과",
     symText: "흉부·복부 충격, 의식 혼미",
     summary: {
@@ -70,7 +70,7 @@ const PATIENT_TEMPLATES = [
     transcript: "30대 남성 교통사고입니다. 흉부 복부 충격, 의식이 혼미합니다.",
   },
   {
-    key: "abdominal", label: "복통 · 복부 압통", severity: "중등증" as const,
+    key: "abdominal", report: "abdominal", label: "복통 · 복부 압통", severity: "중등증" as const,
     detail: "48세 여성 · 지속되는 복통, 구토 · 필요 진료과 외과",
     symText: "지속되는 복통, 구토",
     summary: {
@@ -83,7 +83,7 @@ const PATIENT_TEMPLATES = [
     transcript: "40대 여성, 복통이 심하고 구토가 있습니다. 복부 압통이 뚜렷합니다.",
   },
   {
-    key: "mild", label: "발목 염좌", severity: "경증" as const,
+    key: "mild", report: "mild", label: "발목 염좌", severity: "경증" as const,
     detail: "24세 여성 · 발목 통증·부종 · 필요 진료과 정형외과",
     symText: "발목 통증·부종",
     summary: {
@@ -94,6 +94,113 @@ const PATIENT_TEMPLATES = [
       vitals: [{ sequence: 1, sbp: 120, hr: 78 }],
     },
     transcript: "20대 여성, 발목을 접질렸습니다. 통증과 부종 외 특이사항 없습니다.",
+  },
+  // ── 신고별 현장 상황(2026-10-06) — 위 4개는 신고 접수 증상이자 "신고대로" 현장 상황이고, 아래는 같은 신고로
+  // 출동했는데 현장 평가가 달랐던 경우다. ② 현장 확인은 그 신고(report)에 딸린 상황만 보여 준다 — 흉통 신고로 나가서
+  // 발목 염좌를 고르는 것처럼 신고와 무관한 현장이 나오지 않게. mechanism은 hub 질환군 키워드(disease_group.py)에 맞췄다.
+  {
+    key: "cardiac_aortic", report: "cardiac", label: "흉통 · 대동맥 박리 의심", severity: "중증" as const,
+    detail: "58세 남성 · 찢어지는 흉통, 등으로 뻗침 · 필요 진료과 심장혈관흉부외과",
+    symText: "찢어지는 흉통, 등으로 뻗침, 양팔 혈압 차",
+    summary: {
+      patient: "58세 남성", mechanism: "대동맥질환 · 찢어지는 흉통 · 대동맥 박리 의심",
+      symptoms: ["흉통", "등 통증"], treatment: ["산소 공급", "ECG"],
+      severity_tag: "high", required_department: "심장혈관흉부외과",
+      ktas_level: 2, consciousness: "A", onset: "20분 전부터", chief_complaint: "흉통(찢어지는 양상)",
+      vitals: [{ sequence: 1, sbp: 182, dbp: 104, hr: 104, spo2: 95 }],
+    },
+    transcript: "50대 남성, 가슴이 찢어지는 것처럼 아프고 등으로 뻗친답니다. 혈압 182에 104, 양팔 혈압 차이가 있습니다.",
+  },
+  {
+    key: "cardiac_wall", report: "cardiac", label: "흉통 · 비심장성(흉벽 통증)", severity: "경증" as const,
+    detail: "45세 남성 · 누르면 아픈 흉벽 통증, 활력징후 안정 · 필요 진료과 내과",
+    symText: "누르면 아픈 흉벽 통증, 심전도 이상 없음",
+    summary: {
+      patient: "45세 남성", mechanism: "흉벽 통증 — 근골격성 흉통 의심, 심전도 이상 없음",
+      symptoms: ["흉벽 통증"], treatment: ["ECG"],
+      severity_tag: "low", required_department: "내과",
+      ktas_level: 4, consciousness: "A", onset: "어제부터", chief_complaint: "흉벽 통증",
+      vitals: [{ sequence: 1, sbp: 128, dbp: 82, hr: 80, spo2: 98 }],
+    },
+    transcript: "40대 남성, 가슴 통증 신고였는데 누르면 아픈 흉벽 통증입니다. 심전도 이상 없고 활력징후 안정적입니다.",
+  },
+  {
+    key: "trauma_head", report: "trauma", label: "교통사고 두부 손상", severity: "중증" as const,
+    detail: "41세 남성 · 머리 충격, 의식 저하, 구토 · 필요 진료과 신경외과",
+    symText: "머리 충격, 의식 저하, 구토",
+    summary: {
+      patient: "41세 남성", mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심",
+      symptoms: ["두부 손상", "의식 저하", "구토"], treatment: ["경추 고정", "산소 공급"],
+      severity_tag: "high", required_department: "신경외과",
+      ktas_level: 2, consciousness: "P", onset: "사고 직후", chief_complaint: "두부 손상",
+      vitals: [{ sequence: 1, sbp: 164, dbp: 92, hr: 58, rr: 12, spo2: 95 }],
+    },
+    transcript: "40대 남성 교통사고, 머리를 부딪쳤고 통증에만 반응합니다. 구토 한 번 했고 혈압 164에 92, 맥박 58입니다.",
+  },
+  {
+    key: "trauma_minor", report: "trauma", label: "교통사고 경상", severity: "경증" as const,
+    detail: "29세 여성 · 목·어깨 통증, 찰과상 · 필요 진료과 정형외과",
+    symText: "목·어깨 통증, 찰과상, 보행 가능",
+    summary: {
+      patient: "29세 여성", mechanism: "교통사고 — 경추 염좌·찰과상, 경상",
+      symptoms: ["목 통증", "찰과상"], treatment: ["경추 고정", "상처 소독"],
+      severity_tag: "low", required_department: "정형외과",
+      ktas_level: 4, consciousness: "A", onset: "사고 직후", chief_complaint: "목 통증",
+      vitals: [{ sequence: 1, sbp: 118, dbp: 76, hr: 84, spo2: 99 }],
+    },
+    transcript: "20대 여성 교통사고 동승자, 목과 어깨 통증과 팔 찰과상입니다. 걸을 수 있고 의식 명료합니다.",
+  },
+  {
+    key: "abdominal_gi", report: "abdominal", label: "복통 · 위장관 출혈", severity: "중증" as const,
+    detail: "67세 남성 · 토혈, 흑색변, 어지러움 · 필요 진료과 내과",
+    symText: "토혈, 흑색변, 어지러움",
+    summary: {
+      patient: "67세 남성", mechanism: "위장관 출혈 — 토혈·흑색변, 출혈성 쇼크 우려",
+      symptoms: ["복통", "토혈", "흑색변"], treatment: ["산소 공급", "수액"],
+      severity_tag: "high", required_department: "내과",
+      ktas_level: 2, consciousness: "A", onset: "2시간 전부터", chief_complaint: "토혈",
+      vitals: [{ sequence: 1, sbp: 92, dbp: 58, hr: 122, spo2: 95 }],
+    },
+    transcript: "60대 남성, 복통으로 신고했는데 피를 토했고 검은 변을 봤습니다. 혈압 92에 58, 맥박 122입니다.",
+  },
+  {
+    key: "abdominal_mild", report: "abdominal", label: "복통 · 급성 위장염", severity: "경증" as const,
+    detail: "31세 여성 · 복통, 설사, 활력징후 안정 · 필요 진료과 내과",
+    symText: "복통, 설사, 압통 경미",
+    summary: {
+      patient: "31세 여성", mechanism: "급성 위장염 의심 — 복통·설사, 탈수 경미",
+      symptoms: ["복통", "설사"], treatment: ["수액"],
+      severity_tag: "low", required_department: "내과",
+      ktas_level: 4, consciousness: "A", onset: "어젯밤부터", chief_complaint: "복통",
+      vitals: [{ sequence: 1, sbp: 116, hr: 88, bt: 37.4 }],
+    },
+    transcript: "30대 여성, 어젯밤부터 복통과 설사입니다. 압통은 경미하고 활력징후 안정적입니다.",
+  },
+  {
+    key: "mild_fracture", report: "mild", label: "발목 골절 의심", severity: "중등증" as const,
+    detail: "52세 여성 · 발목 변형, 체중 부하 불가 · 필요 진료과 정형외과",
+    symText: "발목 변형·부종, 체중 부하 불가",
+    summary: {
+      patient: "52세 여성", mechanism: "낙상 — 발목 변형, 골절 의심",
+      symptoms: ["발목 통증", "변형", "부종"], treatment: ["부목 고정"],
+      severity_tag: "medium", required_department: "정형외과",
+      ktas_level: 3, consciousness: "A", onset: "30분 전부터", chief_complaint: "발목 통증",
+      vitals: [{ sequence: 1, sbp: 132, hr: 92 }],
+    },
+    transcript: "50대 여성, 발목 접질림 신고였는데 발목이 변형됐고 체중을 못 싣습니다. 골절 의심되어 부목 고정했습니다.",
+  },
+  {
+    key: "mild_open", report: "mild", label: "개방성 발목 골절", severity: "중증" as const,
+    detail: "38세 남성 · 뼈 노출, 출혈 · 필요 진료과 정형외과",
+    symText: "발목 뼈 노출, 출혈",
+    summary: {
+      patient: "38세 남성", mechanism: "추락 — 개방성 발목 골절, 출혈",
+      symptoms: ["발목 통증", "개방성 상처", "출혈"], treatment: ["지혈", "부목 고정"],
+      severity_tag: "high", required_department: "정형외과",
+      ktas_level: 2, consciousness: "A", onset: "사고 직후", chief_complaint: "개방성 골절",
+      vitals: [{ sequence: 1, sbp: 108, dbp: 70, hr: 112 }],
+    },
+    transcript: "30대 남성, 계단에서 떨어져 발목뼈가 밖으로 나왔습니다. 출혈 있어 지혈하고 부목 고정했습니다.",
   },
 ] as const;
 
@@ -130,6 +237,13 @@ const FOLLOWUPS = [
 type SevLabel = Template["severity"];
 const templateOf = (key: string | null | undefined): Template | null =>
   PATIENT_TEMPLATES.find((t) => t.key === key) ?? null;
+// ① 신고 접수 증상(4종) — 신고대로 현장 상황과 같은 카드
+const REPORT_TEMPLATES = PATIENT_TEMPLATES.filter((t) => t.key === t.report);
+// ② 현장 확인 선택지 — 그 신고에 딸린 현장 상황(신고대로가 맨 앞). 신고를 모르면 신고 증상 4종
+const sceneOptions = (reportKey: string | null | undefined): Template[] => {
+  const report = templateOf(reportKey)?.report;
+  return report ? PATIENT_TEMPLATES.filter((t) => t.report === report) : REPORT_TEMPLATES;
+};
 
 const PRESET_LOCATIONS = [
   { label: "서울시청 앞", lat: 37.5665, lng: 126.978 },
@@ -739,7 +853,7 @@ export default function ControlPage() {
     return candidates.sort((a, b) => Date.parse(b.t) - Date.parse(a.t))[0];
   })();
 
-  const verifyTemplate = templateOf(verifyKey ?? reportedKey ?? "cardiac")!;
+  const verifyTemplate = templateOf(verifyKey ?? reportedTemplate?.key ?? "cardiac")!;
   const voiceSelected = myCall != null || inputMode === "voice";
 
   return (
@@ -1072,7 +1186,7 @@ export default function ControlPage() {
                         <span style={{ fontSize: 12, fontWeight: 700, color: C.ink2 }}>신고 증상 (1차 — 신고 전화에서 파악한 내용)</span>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {PATIENT_TEMPLATES.map((template) => (
+                        {REPORT_TEMPLATES.map((template) => (
                           <SymptomRow key={template.key} template={template} selected={reportedKey === template.key} onPick={() => setReportedKey(template.key)} />
                         ))}
                       </div>
@@ -1254,11 +1368,11 @@ export default function ControlPage() {
                       {reportedTemplate && (
                         <div style={{ ...softBox, padding: "9px 14px", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
                           <Icon name="phone" size={15} color={C.pin} />
-                          <span>신고 내용: <b>{reportedTemplate.label}</b> — 현장 평가가 신고와 다르면 다른 카드를 선택하세요(신고 ≠ 현장일 수 있습니다).</span>
+                          <span>신고 내용: <b>{reportedTemplate.label}</b> — 이 신고로 확인할 수 있는 현장 상황입니다. 현장 평가가 신고와 다르면(더 심각·더 가벼움) 해당 상황을 고르세요.</span>
                         </div>
                       )}
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {PATIENT_TEMPLATES.map((template) => (
+                        {sceneOptions(reportedTemplate?.key).map((template) => (
                           <SymptomRow key={template.key} template={template} selected={verifyTemplate.key === template.key} disabled={sending} onPick={() => setVerifyKey(template.key)} />
                         ))}
                       </div>
@@ -1692,7 +1806,7 @@ function MciWizard({
     return (
       <ScreenCard title="② 현장 확인 — 사상자 구성을 확정하면 인근 병원에 동시 전달됩니다">
         <div style={{ ...softBox, padding: "9px 14px", fontSize: 13 }}>
-          신고 내용: <b>대량사고 · 사상자 {total}명</b> — 현장 트리아지 결과에 맞게 사상자마다 상태를 고르세요.
+          신고 내용: <b>대량사고 · 사상자 {total}명</b> — 사상자마다 접수된 신고 유형에 딸린 현장 상황 중에서 트리아지 결과를 고르세요.
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "flex-start" }}>
           <div style={{ flex: "2.4 1 640px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1705,8 +1819,8 @@ function MciWizard({
                 <div key={c.caseId} style={{ display: "grid", gridTemplateColumns: "28px 56px minmax(0, 1fr) 80px 84px", alignItems: "center", columnGap: 10, padding: "5px 12px", borderRadius: 10, background: "#ffffff", border: `1px solid ${C.line}` }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: C.muted }}>{c.no}</span>
                   <SevChip sev={t.severity} width={56} />
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6, minWidth: 0 }}>
-                    {PATIENT_TEMPLATES.map((o) => {
+                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${sceneOptions(c.templateKey).length}, minmax(0, 1fr))`, gap: 6, minWidth: 0 }}>
+                    {sceneOptions(c.templateKey).map((o) => {
                       const on = o.key === t.key;
                       return (
                         <button
