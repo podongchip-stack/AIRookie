@@ -2672,7 +2672,7 @@ function SourceBadge({ source, label, need }: { source: "voice" | "template" | n
   );
 }
 
-// 시간 기반 존 확장 카운트다운(2026-10-04) — 승인·확정 병원이 없으면 hub가 30초마다 요청 범위를 한 단계 넓힌다.
+// 시간 기반 존 확장 카운트다운(2026-10-04) — 승인·확정 병원이 없으면 hub가 1분(HUB_ZONE_EXPAND_SEC)마다 요청 범위를 한 단계 넓힌다.
 // [건너뛰기]는 기다리지 않고 바로 넓힌다. expandAt이 없으면(승인 병원 있음·더 넓힐 수 없음) 멈춤 안내만.
 function ZoneCountdown({ expandAt, pausedLeft, zone, onSkip }: {
   expandAt: string | null;

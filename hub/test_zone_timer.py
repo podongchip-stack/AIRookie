@@ -1,6 +1,6 @@
 """시간 기반 존 확장 · 건너뛰기 · 이송 빨리감기 검사(2026-10-04) — 실제 서버·로그 없이 app 함수를 직접 부른다.
 
-- 요청이 나간 뒤 30초 동안 승인·확정 병원이 없으면 존을 한 단계 넓힌다(거절 비율과 별개)
+- 요청이 나간 뒤 ZONE_EXPAND_SEC(기본 60초) 동안 승인·확정 병원이 없으면 존을 한 단계 넓힌다(거절 비율과 별개)
 - 시연 콘솔 [건너뛰기]는 기다리지 않고 바로 넓힌다
 - 더 넓힐 수 없으면 타이머가 멈추고, 승인 병원이 생겨도 멈춘다(관제 지도의 다음 확장 시각이 사라진다)
 - 이송 구간은 30초, [빨리감기]는 남은 이동을 3초 안에 마친다
@@ -64,20 +64,20 @@ def main() -> None:
     start = time.time()
     app._send_to_dashboard(result.model_dump())
 
-    print("=== 요청 직후: 다음 자동 확장 시각이 30초 뒤로 잡힌다 ===")
+    print(f"=== 요청 직후: 다음 자동 확장 시각이 {app.ZONE_EXPAND_SEC:g}초 뒤로 잡힌다 ===")
     case = _last(monitor, "case_overview")
     assert case["zoneActive"] == [1] and case["zoneExpandAt"], case
     print(f"  [확인] 다음 확장 {case['zoneExpandAt']}")
 
-    print("=== 29초엔 그대로, 31초가 지나면 존 1 → 2 ===")
+    print(f"=== {app.ZONE_EXPAND_SEC - 1:g}초엔 그대로, {app.ZONE_EXPAND_SEC + 1:g}초가 지나면 존 1 → 2 ===")
     app._zone_timer_tick(start + app.ZONE_EXPAND_SEC - 1)
     assert max(_last(monitor, "case_overview")["zoneActive"]) == 1
     app._zone_timer_tick(start + app.ZONE_EXPAND_SEC + 1)
     case = _last(monitor, "case_overview")
     assert max(case["zoneActive"]) == 2 and "T_MID" in {h["hospitalId"] for h in case["hospitals"]}, case
-    assert any("30초 동안 수용 병원 없음 · 존 1~2로" in e["text"] for e in case["events"]), case["events"]
+    assert any(f"{int(app.ZONE_EXPAND_SEC)}초 동안 수용 병원 없음 · 존 1~2로" in e["text"] for e in case["events"]), case["events"]
     assert case["zoneExpandAt"], "확장 뒤 타이머가 새로 돈다"
-    print("  [확인] 시간 확장 — 진행 과정에 '30초 동안 수용 병원 없음'")
+    print(f"  [확인] 시간 확장 — 진행 과정에 '{int(app.ZONE_EXPAND_SEC)}초 동안 수용 병원 없음'")
 
     print("=== [건너뛰기] → 바로 존 3, 더 넓힐 곳이 없으면 타이머 멈춤 ===")
     app._expand_case_zone(case_id, "manual")
@@ -119,7 +119,7 @@ def main() -> None:
         GpsPoint(lat=37.5670, lng=126.9785))
     app._send_to_dashboard(result.model_dump())
     with app._zone_timer_lock:
-        app._zone_timer[pause_case]["since"] -= 20  # 이미 20초 흘렀다고 치자 → 남은 10초
+        app._zone_timer[pause_case]["since"] -= app.ZONE_EXPAND_SEC - 10  # 남은 시간이 10초가 될 만큼 흘렀다고 치자
     app._handle_sim_command({"type": "sim_pause", "apid": "A_P", "caseId": pause_case, "timestamp": "t"})
     case = [m for m in monitor.sent if m.get("type") == "case_overview" and m["caseId"] == pause_case][-1]
     assert case["zoneExpandAt"] is None and case["zonePausedLeftSec"] == 10, case
