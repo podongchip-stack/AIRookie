@@ -85,22 +85,39 @@ const MAP = { css: "[aria-label*='위치를 표시한 지도']", vh: 760 };
 const DISPATCH = { any: ["기지 대기", "현장으로 출동 중", "병원으로 이송 중", "병원 도착 — 수용 결과 대기", "재선택 대기 (", "기지 복귀 중"].map((t) => ({ tag: "span", has: t, up: "section" })), vh: 760 };
 const NO_MAP = { dispatch: { amb: DISPATCH }, transport: { amb: DISPATCH } };
 const SUMMARY = { panel: "통화 요약" };
+const CONFIRM_CARD = { tag: "button", has: "이송 승인", parents: 1, vh: 760 }; // 이송 승인 버튼이 있는 후보 카드 한 장
+const CONTROL_MAP = { css: "html", vh: 760 }; // 실제 관제 지도(/map) 페이지 전체: 사건 목록 · 지도 · 구급차 패널
 const REQUEST = { css: "article", nth: 0, vh: 1000 };
+// 카드 모드의 역할 설명: 장면 키 → { 창 종류: [이름, 한 줄 설명] }. 전체 화면에서 카드를 강조할 때 이름표로 붙고, 카드만 보일 때는 창 이름표가 된다.
+const ROLES = {
+  dispatch: { map: ["관제 지도", "사건과 구급차, 병원 위치를 실시간으로 본다"] },
+  arrive: { phone: ["대원 휴대폰", "도착하면 가까운 병원 목록이 뜬다"], amb: ["첫 연락 추천", "빈 병상과 도착 시점 유효 확률(AI)로 고른 병원"] },
+  call: { phone: ["통화 화면", "말하는 대로 실시간 자막이 된다"], amb: ["통화 요약", "자막이 AI 구조화로 정리된다"] },
+  structuring: { amb: ["AI 구조화", "KTAS, 주 호소, 활력징후를 뽑아낸다"] },
+  broadcast: { map: ["후보 병원에 동시 전달", "순차 전화 대신 존 안 병원 전체가 한 번에 받는다"] },
+  approve: { hosp: ["병원 대시보드", "수용 요청 카드에서 병원이 승인 또는 불가로 답한다"] },
+  reject: { hosp: ["병원 대시보드", "수용 요청 카드에서 병원이 승인 또는 불가로 답한다"] },
+  confirm: { amb: ["이송 병원 선택", "승인한 병원 중 구급대원이 최종 선택한다"] },
+  transport: { map: ["이송 중", "구급차 위치와 병원 응답을 실시간으로 본다"] },
+  refuse: { hosp: ["도착 후 수용 불가", "병원이 사유를 남기면 확정이 풀린다"] },
+  reselect: { amb: ["그 자리에서 재선택", "이미 승인한 병원으로 다시 전화 없이 바꾼다"] },
+  arrival: { map: ["수용 완료", "사건이 종료되고 기록으로 남는다"] },
+};
 const CARDS = {
-  dispatch: { amb: MAP },
+  dispatch: { map: CONTROL_MAP },
   arrive: { phone: PHONE, amb: { tag: "span", has: "첫 연락 추천", parents: 2, vh: 760 } },
   call: { phone: PHONE, amb: SUMMARY },
   structuring: { amb: SUMMARY },
   structured: { amb: SUMMARY },
-  broadcast: { amb: CAND },
+  broadcast: { map: CONTROL_MAP },
   reject: { hosp: REQUEST },
   approve: { hosp: REQUEST },
   zone: { amb: CAND },
-  confirm: { amb: CAND },
-  transport: { amb: MAP },
+  confirm: { amb: CONFIRM_CARD },
+  transport: { map: CONTROL_MAP },
   refuse: { hosp: REQUEST },
-  reselect: { amb: CAND },
-  arrival: { hosp: REQUEST }, // 수용 완료로 사건이 닫혀도 카드는 직전 영역을 유지한다
+  reselect: { amb: CONFIRM_CARD },
+  arrival: { map: CONTROL_MAP }, // 수용 완료로 병원 요청 카드가 사라지므로(빈 칸) 관제 지도에서 종료 사건을 보여 준다
 };
 
 // ── 고프레임 녹화(--dh): Playwright 내장 녹화는 25fps 고정이라 쓰지 않고, 크롬이 보내 주는 화면 프레임을 받아 일정한 간격(fps)으로
@@ -175,9 +192,9 @@ class Director {
       const ex = EXPLAIN && caption.ex ? EX[caption.ex] : null;
       const cards = DH && caption.ex && ((NO_MAP[caption.ex] && (await this.mapBroken())) ? NO_MAP[caption.ex] : CARDS[caption.ex]);
       if (cards) {
-        const map = {};
-        for (const [kind, find] of Object.entries(cards)) if (this.panes[kind]) map[this.panes[kind]] = find;
-        await this.stage("cards", map);
+        const map = {}, roleMap = {};
+        for (const [kind, find] of Object.entries(cards)) if (this.panes[kind]) { map[this.panes[kind]] = find; const r = ROLES[caption.ex]?.[kind]; if (r) roleMap[this.panes[kind]] = r; }
+        await this.stage("cards", map, roleMap);
       } else {
         if (DH) await this.stage("cards", {});
         await this.stage("focus", focus);
@@ -283,7 +300,7 @@ async function runAmbulance(ctx, spec, idx) {
   }, async () => {
     ctx.mark("callStart");
     for (const text of spec.script) {
-      const dur = EXPLAIN ? Math.max(1.3, text.length / 12) : TIGHT ? Math.max(1.2, text.length / 13) : Math.max(1.8, text.length / 8);
+      const dur = EXPLAIN ? Math.max(1.3, text.length / 12) : TIGHT ? Math.max(1.5, text.length / 11) : Math.max(1.8, text.length / 8);
       await sleep(dur * 1000);
       lines.push({ start: +t.toFixed(1), end: +(t + dur).toFixed(1), text });
       await link.utterance(caseId, t, t + dur, text);
@@ -336,7 +353,7 @@ async function runAmbulance(ctx, spec, idx) {
       responded.add(h.hospitalId);
       const hp = `h-${h.hospitalId}`;
       dir.panes.hosp = hp;
-      await dir.stage("addPane", hp, { url: `${DASH}/hospital?id=${encodeURIComponent(h.hospitalId)}`, label: `병원 · ${h.name}` });
+      await dir.stage("addPane", hp, { url: `${DASH}/hospital?id=${encodeURIComponent(h.hospitalId)}`, label: `병원 · ${h.name}`, vh: 1000 });
       await pace(1800);
       const reject = r.action === "reject";
       await dir.scene([hp], {
@@ -422,7 +439,7 @@ async function main() {
   const outDir = path.resolve(args[args.indexOf("--out") + 1] && args.includes("--out") ? args[args.indexOf("--out") + 1] : path.join(DEMO, "out"));
   fs.mkdirSync(outDir, { recursive: true });
   const TARGET_SEC = DH && scenario.durationSec ? Number(scenario.durationSec) : 0; // 영상 길이 고정(초)
-  if (TARGET_SEC) { TIGHT = true; PACE = scenario.pace ?? 0.7; }
+  if (TARGET_SEC) { TIGHT = true; PACE = scenario.pace ?? 0.8; }
 
   const browser = await chromium.launch({
     channel: "chrome",
@@ -447,29 +464,38 @@ async function main() {
     videoT0 = recorder.t0Ms;
   }
   const dir = new Director(page);
+  dir.panes.map = "map"; // 카드 모드에서 "map" 종류 = 관제 지도 창
   const marks = {};
   const ctx = { page, dir, scenario, confirmed: new Set(), mark: (k) => { if (!(k in marks)) marks[k] = +((Date.now() - videoT0) / 1000).toFixed(2); } };
 
   // 창 준비(소개 카드가 떠 있는 동안 뒤에서 대시보드를 띄운다)
   await dir.stage("setScenario", scenario.id, scenario.title);
   await dir.stage("intro", { no: scenario.id, title: scenario.title, lines: scenario.intro || [], tags: scenario.tags || [], motif: scenario.motif || "" }, true);
-  const loads = [dir.stage("addPane", "map", { url: `${DASH}/map`, label: "관제 지도" })];
+  const loads = [dir.stage("addPane", "map", { url: `${DASH}/map`, label: "관제 지도", vh: 760 })];
   for (const a of scenario.ambulances) {
-    loads.push(dir.stage("addPane", `amb-${a.apid}`, { url: `${DASH}/ambulance?id=${a.apid}`, label: `구급차 · ${a.name || a.apid}` }));
+    loads.push(dir.stage("addPane", `amb-${a.apid}`, { url: `${DASH}/ambulance?id=${a.apid}`, label: `구급차 · ${a.name || a.apid}`, vh: 900 }));
     loads.push(dir.stage("addPane", `phone-${a.apid}`, { url: `${DASH}/phone?id=${a.apid}`, kind: "phone", label: `대원 휴대폰 · ${a.name || a.apid}`, visible: false }));
   }
   await Promise.all(loads);
-  const home = CALM ? [`amb-${scenario.ambulances[0].apid}`] : ["map"];
+  const home = DH ? ["map"] : CALM ? [`amb-${scenario.ambulances[0].apid}`] : ["map"];
   if (CALM) await dir.stage("configure", { thumbs: false, wide: !EXPLAIN });
   await dir.stage("focus", home);
   await sleep(Math.max(0, (scenario.introSec || (EXPLAIN || DH ? 5 : 8)) * 1000 - 1000));
-  await dir.stage("intro", {}, false);
   if (scenario.script) {
-    // 시나리오 앞의 대본 카드(영화 대본 형식): 장면 번호 · 장소 · 지문 · 대사
-    await sleep(600);
+    // 시나리오 앞의 대본 카드(영화 대본 형식): 장면 번호 · 장소 · 지문 · 대사. 소개 카드 위에 겹쳐 띄운 뒤 소개를 내린다
     await dir.stage("script", { no: scenario.id, title: scenario.title, scenes: scenario.script }, true);
-    await sleep((scenario.scriptSec || 5) * 1000);
+    await sleep(700);
+    await dir.stage("intro", {}, false);
+    await sleep(Math.max(0, (scenario.scriptSec || 5) * 1000 - 700));
+    // 뒤의 관제 지도·구급차 창이 다 그려질 때까지(지도 타일 포함) 카드를 붙잡는다 — 뼈대 화면이 비치지 않게
+    await page.waitForFunction(() => {
+      const ok = (id, text) => { const d = document.getElementById("frame-" + id)?.contentDocument; return !!d?.body && d.body.innerText.includes(text) && d.querySelectorAll("img").length > 6; };
+      return ok("map", "구급차");
+    }, null, { timeout: 15000 }).catch(() => {});
+    await sleep(500);
     await dir.stage("script", {}, false);
+  } else {
+    await dir.stage("intro", {}, false);
   }
   await pace(800);
 

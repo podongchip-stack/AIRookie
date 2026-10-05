@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import sys
@@ -22,6 +23,7 @@ import requests
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "hub" / "data" / "state" / "hub_state.json"
 SNAPSHOT = Path(__file__).resolve().parent / "data" / "hospital_snapshot.json"
+SEOUL_AMBULANCES = ROOT / "info" / "ambulance_registry" / "result" / "seoul_ambulances.csv"  # 실서비스가 쓰는 서울 119 구급차 162대
 ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2}|Z)$")
 
 
@@ -47,18 +49,33 @@ def _shift(value, delta):
     return value
 
 
+def _seoul_ambulances() -> list[dict]:
+    """실제 화면의 구급차 목록(서울 119안전센터 구급차 162대). 파일이 없으면 빈 목록 — 스냅샷의 3대로 대신한다."""
+    if not SEOUL_AMBULANCES.exists():
+        return []
+    now = datetime.now(timezone.utc).isoformat()
+    out = []
+    with SEOUL_AMBULANCES.open(encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            name = r["name"].replace("119안전센터", "")  # 화면에는 "신수 구급 1"처럼 줄여 쓴다
+            out.append({"apid": r["apid"], "name": r["name"], "gps": {"lat": float(r["wgs84_lat"]), "lng": float(r["wgs84_lon"])},
+                        "voicePort": int(r["voice_port"] or 6000), "source": "rule", "updatedAt": now})
+    return out
+
+
 def load(hub: str) -> None:
     snap = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     delta = datetime.now(timezone.utc) - _parse(snap["takenAt"])
     session = requests.Session()
-    for amb in snap["ambulances"]:
-        session.post(f"{hub}/info/ambulances", json=_shift(amb, delta), timeout=10).raise_for_status()
+    ambulances = _seoul_ambulances() or [_shift(a, delta) for a in snap["ambulances"]]
+    session.post(f"{hub}/info/ambulances/batch", json={"ambulances": ambulances}, timeout=60).raise_for_status()
+    session.post(f"{hub}/info/ambulances/roster", json={"apids": [a["apid"] for a in ambulances]}, timeout=30)
     for i, hospital in enumerate(snap["hospitals"], 1):
         session.post(f"{hub}/info/hospitals", json=_shift(hospital, delta), timeout=30).raise_for_status()
         if i % 100 == 0:
             print(f"  병원 {i}/{len(snap['hospitals'])}")
     session.post(f"{hub}/info/hospitals/roster", json={"hospitalIds": [h["hospitalId"] for h in snap["hospitals"]]}, timeout=30)
-    print(f"넣음: {hub} — 병원 {len(snap['hospitals'])}곳, 구급차 {len(snap['ambulances'])}대 (시각 {delta} 이동)")
+    print(f"넣음: {hub} — 병원 {len(snap['hospitals'])}곳, 구급차 {len(ambulances)}대 (시각 {delta} 이동)")
 
 
 if __name__ == "__main__":

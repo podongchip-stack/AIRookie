@@ -24,13 +24,14 @@
   #clock { font-size: 16px; color: var(--ink2); font-variant-numeric: tabular-nums; min-width: 70px; text-align: right; }
 
   .pane { position: absolute; border-radius: 14px; overflow: hidden; background: #F4F7FA; box-shadow: 0 6px 24px rgba(0,0,0,.35);
-    transition: left .6s ease, top .6s ease, width .6s ease, height .6s ease, opacity .4s ease, box-shadow .4s ease; }
+    transition: left .6s ease, top .6s ease, width .6s ease, height .6s ease, box-shadow .4s ease; }
   .pane.focus { box-shadow: 0 0 0 3px var(--mint), 0 10px 40px rgba(0,0,0,.5); }
   .pane.hidden { opacity: 0; pointer-events: none; }
+  .pane.snap, .pane.snap iframe, .plabel.snap { transition: none !important; }
   .pane iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; background: #F4F7FA;
     transition: transform .6s ease; }
   .plabel { position: absolute; z-index: 3; font-size: 14px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; pointer-events: none; transition: left .6s ease, top .6s ease, width .6s ease, opacity .4s ease; }
+    text-overflow: ellipsis; pointer-events: none; transition: left .6s ease, top .6s ease, width .6s ease; }
   .plabel i { font-style: normal; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--ink2); }
   .plabel.focus { color: #fff; } .plabel.focus i { background: var(--mint); }
   .plabel.thumb { font-size: 12px; } .plabel.hidden { opacity: 0; }
@@ -73,6 +74,14 @@
   #intro .tags { position: absolute; left: 180px; top: 680px; display: flex; gap: 8px; }
   #intro .tags span { font-size: 15px; font-weight: 600; padding: 4px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); color: #fff; }
   #intro .disc { position: absolute; left: 180px; bottom: 50px; font-size: 15px; font-weight: 600; color: #fff; opacity: .7; }
+  /* 카드 강조: 전체 화면에서 대상 카드만 밝게 남기고 큰 테두리 + 역할 이름표 */
+  #hl { position: absolute; inset: 0; z-index: 12; pointer-events: none; opacity: 0; transition: opacity .25s ease; }
+  #hl.show { opacity: 1; }
+  #hl svg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  #hl .tag { position: absolute; z-index: 13; max-width: 760px; background: #000; border: 3px solid #FFD166; border-radius: 14px; padding: 10px 18px; color: #fff; }
+  #hl .tag b { display: block; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; }
+  #hl .tag span { display: block; font-size: 18px; font-weight: 500; margin-top: 2px; opacity: .92; line-height: 1.35; }
+  #top { z-index: 14; }
   /* 대본 카드(시나리오 앞): 영화 대본처럼 장면 번호 · 장소 · 지문 · 대사. 검은 판 + 흰 글자 */
   #script { position: absolute; inset: 0; z-index: 55; display: none; background: #000; opacity: 0; transition: opacity .5s ease; color: #fff; padding: 70px 150px 0 150px; }
   #script.show { opacity: 1; }
@@ -123,6 +132,7 @@
   <div id="disclaimer">가상 시나리오 · 실제 병원의 응답이 아닙니다</div>
   <div id="clock"></div>
 </div>
+<div id="hl"><svg viewBox="0 0 1920 1080"><path id="hl-dim" fill="rgba(0,0,0,.6)" fill-rule="evenodd"/><g id="hl-rings" fill="none" stroke="#FFD166" stroke-width="5"/></svg></div>
 <div id="caption"><div class="step"></div><div class="text"></div><div class="sub"></div></div>
 <div id="explain"><div class="k">작동 원리</div><div class="h"></div><ul></ul></div>
 <div id="script"><div class="tag">SCENARIO</div><h2></h2><div class="rule"></div><div class="rows"></div><div class="foot">대본은 시연을 위한 연출입니다 · 가상 시나리오 · 실제 병원의 응답이 아닙니다</div></div>
@@ -148,6 +158,7 @@
     const s = Math.min(inner.w / vw, inner.h / vh);
     const w = Math.round(vw * s), h = Math.round(vh * s);
     const left = Math.round(inner.x + (inner.w - w) / 2), top = Math.round(inner.y + (inner.h - h) / 2);
+    p.el.style.borderRadius = "14px";
     p.el.style.left = left + "px";
     p.el.style.top = top + "px";
     p.lab.style.left = left + "px";
@@ -163,8 +174,10 @@
   // ── 카드 모드: 창 전체가 아니라 창 안의 카드(영역)만 확대해 보여 준다 ──
   // 영역은 대시보드 문서에서 찾는다(소스 수정 없음): {panel:"제목"} = 제목이 든 패널 · {tag:"li", has:"글자"} = 글자가 든 가장 안쪽 요소 ·
   // {css:"선택자", has?, nth?} · {any:[찾기…]} = 여러 영역의 합집합 · up:"section" = 찾은 요소를 품은 가장 가까운 조상으로 넓힘 · vh = 그 창의 가상 높이. 못 찾으면(아직 안 나타남) 창 전체를 보여 주다 나타나면 따라간다.
-  const CARD_MAX_SCALE = 2.2, CARD_PAD = 10;
-  const ZOOM_OUT_MS = 1100; // 전체 화면으로 물러나는 동안(.6초 전환) + 잠깐 머무는 시간
+  const CARD_MAX_SCALE = 2.2, CARD_PAD = 0; // 카드 테두리가 잘리지 않을 만큼만(1px) — 바깥 여백이 같이 잘려 오면 이중 테두리처럼 보인다
+  const ZOOM_SETTLE_MS = 650;   // 전체 화면으로 물러나 자리 잡는 시간(.6초 전환)
+  const ZOOM_HL_NEW_MS = 1100;  // 다른 창(다른 화면 구성)으로 넘어갈 때: 전체 화면에서 카드 강조 + 역할 설명
+  const ZOOM_HL_SAME_MS = 700;  // 같은 창 안에서 카드만 바뀔 때
   let lastCardsKey = "";
   function findEl(doc, f) {
     const e = findOne(doc, f);
@@ -198,15 +211,49 @@
       if (!rects.length) { console.warn("[카드 못 찾음]", p.id, JSON.stringify(p.crop)); return null; }
       const x0 = Math.max(0, Math.min(...rects.map((r) => r.left)) - CARD_PAD), y0 = Math.max(0, Math.min(...rects.map((r) => r.top)) - CARD_PAD);
       const x1 = Math.max(...rects.map((r) => r.right)) + CARD_PAD, y1 = Math.max(...rects.map((r) => r.bottom)) + CARD_PAD;
-      return { x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0) };
+      // 카드가 하나일 때는 그 카드의 모서리 반경을 같이 넘긴다 — 사각형으로 자르면 둥근 모서리 바깥이 배경색으로 비친다
+      let r = 0;
+      if (els.length === 1) { const rv = parseFloat(doc.defaultView.getComputedStyle(els[0]).borderTopLeftRadius); if (rv > 0) r = rv; }
+      return { x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0), r };
     } catch { return null; }
   }
+  // ── 카드 강조: 전체 화면에서 카드 영역을 어둡게 뚫어 보여 주고 역할 이름표를 붙인다 ──
+  function rr(x, y, w, h, r) { r = Math.min(r, w / 2, h / 2); return `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`; }
+  function showHL(boxes) {
+    const hl = document.getElementById("hl");
+    hl.querySelectorAll(".tag").forEach((t) => t.remove());
+    // 대상이 전부 페이지 전체면(관제 지도 등) 어둡게 하지 않고 이름표만 띄운다. 일부만 카드면 나머지를 어둡게 하되 페이지 전체인 창은 밝게 둔다
+    const anyCard = boxes.some((b) => !b.full);
+    let dim = anyCard ? "M0 0H1920V1080H0Z" : "", rings = "";
+    for (const b of boxes) {
+      const pad = 6, x = b.x - pad, y = b.y - pad, w = b.w + pad * 2, h = b.h + pad * 2, r = b.r + pad;
+      if (anyCard) dim += rr(x, y, w, h, r);
+      if (!b.full) rings += `<path d="${rr(x, y, w, h, r)}"/>`;
+      if (!b.role) continue;
+      const tag = document.createElement("div");
+      tag.className = "tag";
+      tag.innerHTML = `<b>${ns(b.role[0])}</b><span>${ns(b.role[1])}</span>`;
+      hl.append(tag);
+      const th = tag.offsetHeight;
+      let tx = Math.max(16, Math.min(x, 1920 - tag.offsetWidth - 16)), ty;
+      if (b.full) { tx = x + 24; ty = y + 24; }                    // 페이지 전체면 안쪽 왼쪽 위
+      else if (y - th - 12 >= 70) ty = y - th - 12;                // 위쪽에 자리가 있으면 위에
+      else if (y + h + 12 + th <= 960) ty = y + h + 12;            // 아니면 아래
+      else { tx = x + 20; ty = y + 20; }                           // 둘 다 없으면 카드 안쪽
+      tag.style.left = tx + "px"; tag.style.top = ty + "px";
+    }
+    document.getElementById("hl-dim").setAttribute("d", dim);
+    document.getElementById("hl-rings").innerHTML = rings;
+    hl.classList.add("show");
+  }
+  function hideHL() { document.getElementById("hl").classList.remove("show"); }
+
   function cardLayout(main) {
     const availH = MAIN.h - LAB, gap = PAD * 1.5;
     const items = main.map((p) => {
       const vw = p.kind === "phone" ? VIRTUAL.phone.w : 1440;
       // 대시보드 창의 가상 높이: 찾기에 vh를 주면 그 값(카드가 길쭉해 글자가 작아지면 낮추고, 아래가 잘리면 높인다)
-      const vh = p.kind === "phone" ? VIRTUAL.phone.h : p.crop.vh || 900;
+      const vh = p.kind === "phone" ? VIRTUAL.phone.h : p.vh || p.crop.vh || 900;
       return { p, vw, vh, cr: p.cropRect || { x: 0, y: 0, w: vw, h: vh } };
     });
     let ss = items.map((i) => Math.min(availH / i.cr.h, CARD_MAX_SCALE));
@@ -218,6 +265,7 @@
       const s = ss[k], w = Math.round(cr.w * s), h = Math.round(cr.h * s);
       const left = Math.round(x), top = Math.round(MAIN.y + LAB + (availH - h) / 2);
       p.el.style.left = left + "px"; p.el.style.top = top + "px"; p.el.style.width = w + "px"; p.el.style.height = h + "px";
+      p.el.style.borderRadius = (cr.r ? Math.min(cr.r * s, Math.min(w, h) / 2) : 14) + "px"; // 카드 모서리에 맞춘 둥근 자르기
       p.lab.style.left = left + "px"; p.lab.style.top = top - LAB + "px"; p.lab.style.width = w + "px";
       p.frame.style.width = vw + "px"; p.frame.style.height = vh + "px";
       p.frame.style.transform = `translate(${-cr.x * s}px, ${-cr.y * s}px) scale(${s})`;
@@ -239,6 +287,9 @@
 
   function layout() {
     const main = focused.map((id) => panes.get(id)).filter(Boolean);
+    // 숨겨져 있던 창이 나타날 때는 이동 애니메이션 없이 새 자리에 바로 놓는다 — 옛 자리에서 날아오는 모습이 찍히지 않게
+    const snapping = main.filter((p) => p.el.classList.contains("hidden"));
+    snapping.forEach((p) => { p.el.classList.add("snap"); p.lab.classList.add("snap"); });
     const cardMode = main.some((p) => p.crop);
     const rest = THUMBS ? [...panes.values()].filter((p) => p.visible && !main.includes(p)) : [];
     // 크게: 하나면 주 영역 전체, 휴대폰+대시보드면 휴대폰 왼쪽 좁게, 대시보드 둘이면 좌우 반반
@@ -246,7 +297,7 @@
       cardLayout(main);
     } else if (main.length === 1) {
       const p = main[0];
-      const v = p.kind === "phone" ? VIRTUAL.phone : { w: 1440, h: Math.round(1440 * (MAIN.h - LAB) / MAIN.w) };
+      const v = p.kind === "phone" ? VIRTUAL.phone : { w: 1440, h: p.vh || Math.round(1440 * (MAIN.h - LAB) / MAIN.w) }; // p.vh가 있으면 카드 단계와 같은 크기로 고정
       place(p, MAIN, v.w, v.h);
     } else if (main.length >= 2) {
       const phones = main.filter((p) => p.kind === "phone");
@@ -278,7 +329,11 @@
       p.el.classList.toggle("thumb", !isMain);
       const hide = !isMain && (!p.visible || !THUMBS);
       p.el.classList.toggle("hidden", hide);
-      p.lab.className = "plabel " + (isMain ? "focus" : "thumb") + (hide ? " hidden" : "");
+      p.lab.className = "plabel " + (isMain ? "focus" : "thumb") + (hide ? " hidden" : "") + (snapping.includes(p) ? " snap" : "");
+    }
+    if (snapping.length) {
+      void document.body.offsetWidth; // 새 자리 확정
+      requestAnimationFrame(() => requestAnimationFrame(() => snapping.forEach((p) => { p.el.classList.remove("snap"); p.lab.classList.remove("snap"); })));
     }
   }
 
@@ -294,7 +349,7 @@
       document.getElementById("scenario").textContent = `시나리오 ${parseInt(no, 10)}번 : ${ns(title)}`;
     },
     // 창을 하나 연다. 같은 id면 주소만 바꾼다. iframe이 다 뜨면 끝난다.
-    addPane(id, { url, kind = "dash", label = "", visible = true }) {
+    addPane(id, { url, kind = "dash", label = "", visible = true, vh = 0 }) {
       return new Promise((resolve) => {
         let p = panes.get(id);
         if (!p) {
@@ -308,10 +363,10 @@
           lab.className = "plabel hidden";
           el.append(frame);
           document.body.append(el, lab);
-          p = { id, el, frame, lab, kind, label, visible, crop: null, cropRect: null };
+          p = { id, el, frame, lab, kind, label, visible, crop: null, cropRect: null, vh };
           panes.set(id, p);
         }
-        p.kind = kind; p.visible = visible;
+        p.kind = kind; p.visible = visible; if (vh) p.vh = vh;
         p.lab.innerHTML = `<i></i>${ns(label)}`;
         p.frame.onload = () => { forcePretendard(p.frame); resolve(true); };
         p.frame.src = url;
@@ -330,21 +385,45 @@
     // 카드 모드: { 창id: 찾기 } — 나열한 창의 해당 카드만 크게 보여 준다. 빈 객체면 카드 모드 해제.
     // 장면이 바뀌어 카드가 달라지면 먼저 새 장면의 창을 전체 화면으로 보여 주고(포커스 아웃) 잠깐 머문 뒤 카드로 확대한다(포커스 인).
     // 같은 카드가 이어질 땐 건너뛴다.
-    async cards(map) {
+    async cards(map, roles = {}) {
       const ids = Object.keys(map);
       const key = JSON.stringify(map);
       const changed = key !== lastCardsKey;
       lastCardsKey = key;
       if (ids.length && changed) {
         for (const p of panes.values()) { p.crop = null; p.cropRect = null; }
+        // 새 화면 구성(이전과 겹치는 창이 하나도 없음)이면 전체 화면을 오래, 같은 창에서 카드만 바뀌면 짧게
+        const prev = focused || [];
+        const isNewView = prev.length > 0 && !ids.some((id) => prev.includes(id));
         focused = ids;
         layout();
-        await new Promise((r) => setTimeout(r, ZOOM_OUT_MS));
+        await new Promise((r) => setTimeout(r, ZOOM_SETTLE_MS)); // 전체 화면으로 자리 잡는 시간
+        // 카드 영역을 전체 화면 좌표로 옮겨 강조한다
+        const boxes = [];
+        for (const id of ids) {
+          const p = panes.get(id);
+          if (!p) continue;
+          p.crop = map[id];
+          const cr = measureCrop(p);
+          p.crop = null;
+          if (!cr) continue;
+          const fr = p.frame.getBoundingClientRect();
+          const vw = p.kind === "phone" ? VIRTUAL.phone.w : 1440, vh = p.kind === "phone" ? VIRTUAL.phone.h : p.vh || 900;
+          const sc = fr.width / vw;
+          boxes.push({ x: fr.left + cr.x * sc, y: fr.top + cr.y * sc, w: cr.w * sc, h: cr.h * sc, r: (cr.r || 14) * sc,
+                       full: cr.w * cr.h >= 0.85 * vw * vh, role: roles[id] || null });
+        }
+        if (boxes.length) { showHL(boxes); await new Promise((r) => setTimeout(r, isNewView ? ZOOM_HL_NEW_MS : ZOOM_HL_SAME_MS)); hideHL(); }
       }
       for (const p of panes.values()) { p.crop = map[p.id] || null; p.cropRect = null; }
       if (ids.length) focused = ids;
       for (const id of ids) { const p = panes.get(id); if (p) p.cropRect = measureCrop(p); }
       layout();
+      // 카드만 보일 때 이름표: 그 카드의 역할
+      for (const id of ids) {
+        const p = panes.get(id), r = roles[id];
+        if (p && r) p.lab.innerHTML = `<i></i>${ns(r[0])}${(p.cropRect?.w || 0) * 1 > 520 ? " · " + ns(r[1]) : ""}`;
+      }
     },
     caption(step, text, sub = "", tone = "") {
       const c = document.getElementById("caption");
@@ -369,7 +448,8 @@
     // 대본 카드: scenes = [{slug, action, lines:[{who, text}]}]. 장면이 차례로 나타난다
     script({ no, title, scenes = [], stepMs = 450 }, show = true) {
       const el = document.getElementById("script");
-      if (!show) { el.classList.remove("show"); setTimeout(() => (el.style.display = "none"), 600); return; }
+      if (!show) { el.style.transition = "none"; el.classList.remove("show"); el.style.display = "none"; return; }
+      el.style.transition = "";
       el.querySelector("h2").textContent = `시나리오 ${parseInt(no, 10)}번 : ${ns(title)}`;
       el.querySelector(".rows").innerHTML = scenes.map((c, i) => {
         const d = (c.lines || [])[0];
@@ -384,7 +464,9 @@
     },
     intro({ no, title, lines = [], tags = [], motif = "" }, show = true) {
       const el = document.getElementById("intro");
-      if (!show) { el.classList.remove("show"); setTimeout(() => (el.style.display = "none"), 650); return; }
+      if (!show) { el.style.transition = "none"; el.classList.remove("show"); el.style.display = "none"; return; }
+      const first = !el.dataset.shown; el.dataset.shown = "1";
+      el.style.transition = first ? "none" : ""; // 영상 첫 장면이므로 페이드 인 없이 바로 보인다
       el.querySelector(".no").textContent = `시나리오 ${parseInt(no, 10)}번`;
       el.dataset.motif = motif || "";
       el.querySelector("h1").textContent = ns(title);
@@ -394,35 +476,16 @@
       requestAnimationFrame(() => el.classList.add("show"));
     },
   };
-  // 각 창(같은 출처 iframe)의 글꼴을 Pretendard로 고정 — 대시보드 소스는 건드리지 않고 문서마다 스타일을 주입한다
+  // 각 창(같은 출처 iframe)은 실제 웹 그대로 보여 준다: 글꼴·색을 바꾸지 않는다(무대의 자막·카드만 Pretendard · 검정 배경).
+  // 개발 서버가 화면 구석에 띄우는 이슈 표시("1 Issue")만 숨긴다 — 실제 디자인이 아니다.
   function forcePretendard(frame) {
     const doc = frame.contentDocument;
-    if (!doc || doc.getElementById("demo-pretendard")) return;
+    if (!doc || doc.getElementById("demo-hide-devbadge")) return;
     const st = doc.createElement("style");
-    st.id = "demo-pretendard";
-    st.textContent = `@font-face { font-family: "Pretendard"; font-weight: 45 920; font-display: block; src: url("/demo-fonts/PretendardVariable.woff2") format("woff2-variations"); }
-      html, body, body *, button, input, select, textarea { font-family: "Pretendard", sans-serif !important; }
-      nextjs-portal, [data-nextjs-toast], [data-nextjs-dev-tools-button] { display: none !important; }`; // 개발 서버의 이슈 표시("1 Issue")는 영상에 안 나오게
+    st.id = "demo-hide-devbadge";
+    st.textContent = `nextjs-portal, [data-nextjs-toast], [data-nextjs-dev-tools-button] { display: none !important; }`;
     doc.head.append(st);
   }
-  // 영상에 짙은 남색을 쓰지 않는다: 각 창(대시보드)의 짙은 남색·청색 글자/배경/테두리를 검정으로 바꾼다. 대시보드 소스는 건드리지 않는다
-  const NAVY_PROPS = [["color", "color"], ["backgroundColor", "background-color"], ["borderTopColor", "border-top-color"], ["borderRightColor", "border-right-color"],
-    ["borderBottomColor", "border-bottom-color"], ["borderLeftColor", "border-left-color"], ["fill", "fill"], ["stroke", "stroke"]];
-  function isNavy(c) {
-    const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || "");
-    if (!m) return false;
-    const r = +m[1], g = +m[2], b = +m[3];
-    return Math.max(r, g, b) < 190 && b - r >= 60 && b >= g;
-  }
-  function fixNavy(frame) {
-    const doc = frame.contentDocument, win = frame.contentWindow;
-    if (!doc || !doc.body) return;
-    for (const el of doc.body.querySelectorAll("*")) {
-      const cs = win.getComputedStyle(el);
-      for (const [prop, css] of NAVY_PROPS) if (isNavy(cs[prop])) el.style.setProperty(css, "#000", "important");
-    }
-  }
-  setInterval(() => { for (const p of panes.values()) { try { fixNavy(p.frame); } catch {} } }, 600);
   window.stage = stage;
   setInterval(() => {
     const s = Math.floor((Date.now() - t0) / 1000);
