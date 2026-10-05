@@ -1,0 +1,13 @@
+# 변환한 모델(수 GB)·빌드 산출물은 올리지 않는다
+Models/
+.gradle/
+build/
+*/build/
+local.properties
+.idea/
+*.iml
+captures/
+.kotlin/
+# ASR 정답(실제 통화 녹음 조각이 들어 있다 — 저장소에 올리지 않고 check_qwen3_asr.py --fixtures로 만든다)
+fixtures/
+GoldenLink.apk

@@ -7,12 +7,20 @@
 """
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import bed_reliability
-import decision_log
+# 실제 의사결정 로그에 쓰지 않는다(2026-10-04) — 실서버 hub가 떠 있는 동안 이 검사가 같은 로그에 쓰면
+# hub가 메모리에 들고 있는 마지막 해시와 어긋나 해시 체인이 끊겼다(실제로 한 번 끊김). 다른 test_*.py와
+# 같이 임시 경로를 쓴다. 굳이 실제 로그로 돌리려면 HUB_DECISION_LOG_PATH를 직접 준다.
+_TMP = tempfile.TemporaryDirectory()
+os.environ.setdefault("HUB_DECISION_LOG_PATH", str(Path(_TMP.name) / "decision_log.jsonl"))
+
+import bed_reliability  # noqa: E402
+import decision_log  # noqa: E402
 import delivery
 from hub_engine import (
     _ASSESSMENT_GROUPS,

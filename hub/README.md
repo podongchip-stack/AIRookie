@@ -295,6 +295,26 @@ true면 추적 시작부터 그 값이었다는 뜻이라 "최소 X시간 전"�
   ✓로 표시(`BedReliabilityMatch.confirmedAgeSec`), 관련 사건은 즉시 재계산·
   재브로드캐스트된다. 수식 등가성은 info의 selftest 3번(조건부 항목)이 검증.
 
+### 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04 신설 — 규칙 기반)
+
+이송 확정 뒤 환자 상태 변화를 받아 판정하고 역할별로 알린다. 규칙표·기준값 출처·
+초안 한계는 **`hub/TRANSPORT_TRIAGE.md`**, 엔진은 `transport_triage.py`(순수 함수,
+NEWS2 공개 표준 + 쇼크지수), 검증은 `python test_transport_triage.py`(시연 시나리오
+5종이 픽스처).
+
+- **입력 구멍**: `POST /vitals`(HTTP — 향후 119구급스마트시스템·구급차 모니터 어댑터)와
+  dashboard WS `transport_vitals`(지금은 가상 시나리오·수기)가 같은 처리로 모인다.
+  형식 `VitalObservationIn` — 종류·값·측정시각·출처(voice/manual/monitor/demo).
+  장비는 사지 않고 자리만 만든다는 원칙.
+- **판정 티어**: record(기록) / hold(초과 1회째 — 오경보 필터) / notify(연속 2회 또는
+  NEWS2 ≥ 7 → 확정 병원에 전달) / review(+ 치료 변화 신호 → 대체 병원 최대 3곳 제안,
+  결정은 사람) / heli_advisory(대체 후보 0곳 → 헬기 대기 권고, 결정은 관제).
+- **전송 범위**(`transport_assessment`): 구급차 탭 전부 · 확정 병원 탭 notify 이상만 ·
+  관제 지도 heli_advisory만(활력징후 상세 없이 — 환자 상세는 병원 대시보드만 받는 원칙).
+  notify 이상은 의사결정 로그에 남는다. 사건이 닫히면 판정 상태도 같이 지운다.
+- 대체 후보는 캐시된 매칭 결과에서 승인/대기 병원 중 `HUB_TRANSPORT_ALT_MAX_MIN`
+  (기본 30분) 안쪽만 — 수용 불가 신고·확인된 만실·거절 병원은 내밀지 않는다.
+
 ## 개발 환경 / 언어
 
 - 언어: Python 3.11 (`requirements.txt` 상단 주석 참고)
@@ -845,6 +865,7 @@ HUB_DEBUG=1 python app.py   # 개발 중에만 — 코드 리로더·예외 화�
 | 방치 사건 닫기 | 확정 없이 120분 활동이 없으면 무응답(`NO_RESPONSE`)을 기록한 뒤 사건을 닫고 `{"type":"case_closed"}`를 보낸다 — 대시보드가 카드를 지운다(2026-10-01) | `HUB_UNRESOLVED_TIMEOUT_MIN` |
 | 현장 후보 | 통화 시작(출동 시뮬레이션이면 현장 도착) 때 거리순 후보를 `{"type":"scene_candidates"}`로 그 구급차 탭에만 보낸다(규칙 기반, 환자 정보 전이라 병원 탭엔 안 보냄). 2026-10-03부터 후보마다 `bedReliability`(병상 신뢰도, AI — 매칭 결과와 같은 `BedReliabilityMatch` 형태, 없으면 null)가 붙고, **첫 연락 추천** 한 곳에 `firstCallRecommended: true`가 표시된다 — 빈 병상이 실제로 확인됐고(미상·확인된 만실·1일 넘은 값 제외) 도착 시점 유효 확률(rArrive)이 가장 높은 병원, 동률이면 가까운 쪽. 순위(거리순)·finalScore에는 여전히 신뢰도를 안 쓴다 — 첫 통화 상대 제안은 틀려도 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라 여기만 확률을 직접 쓴다. 추천은 `first_call_recommended`로 의사결정 로그에 남아, 나중에 승인·거절 로그와 대조해 적중률(추천 병원이 실제로 수용했는가)을 셀 수 있다 | — |
 | 병원 목록 동기화 | info가 한 주기 끝에 `POST /info/hospitals/roster {"hospitalIds": [...]}`를 보내면 목록에 없는 병원을 뺀다. 진행 중 사건 후보는 보류, 목록이 절반 아래로 급감하면 부분 조회 실패로 보고 안 뺀다 | — |
+| 구급차 목록 동기화 | info가 구급차를 `POST /info/ambulances/batch {"ambulances": [...]}`로 한 번에 보내고(관제 지도 전송 한 번, 형식 틀린 한 대는 `rejected`) 이어서 `POST /info/ambulances/roster {"apids": [...]}`를 보내면 목록에 없는 구급차를 레지스트리·시뮬레이션·voice 주소에서 뺀다(2026-10-04). 진행 중 사건·출동 중 구급차는 보류, 목록이 비었거나 절반 아래로 급감하면 안 뺀다. 한 대씩 받는 `POST /info/ambulances`도 그대로 | — |
 | 출동 시뮬레이션 | 아래 "출동 시뮬레이션" 절 | `HUB_SIM_DISPATCH=1` |
 
 ### 출동 시뮬레이션 (2026-10-01, 시연용 가짜 위치)

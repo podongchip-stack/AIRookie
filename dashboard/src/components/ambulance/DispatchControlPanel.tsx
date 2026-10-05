@@ -3,13 +3,13 @@
 import { useState } from "react";
 import { css, cx } from "styled-system/css";
 import {
-  dangerButtonStyle,
   inputStyle,
   primaryButtonStyle,
   secondaryButtonStyle,
 } from "@/components/ui/button-styles";
 import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
 import { searchPlaces } from "@/lib/geocode";
+import { AD, pill } from "@/components/ambulance/ambulance-design";
 import type { AmbulancePhase, AmbulanceSimState, DispatchTarget, GeocodeResult } from "@/types/dashboard";
 
 // 구급차 출동 시뮬레이션 조작부(2026-10-01, hub가 출동 시뮬레이션을 켰을 때만 보인다 — start-all.sh 기본값).
@@ -24,19 +24,9 @@ export const PHASE_LABEL: Record<AmbulancePhase, string> = {
   on_scene: "현장 도착",
   transporting: "병원으로 이송 중",
   at_hospital: "병원 도착 — 수용 결과 대기",
-  rerouting: "재선택 대기 (도착 병원 수용 불가)",
+  rerouting: "재선택 대기 (목적지 병원 수용 불가)",
   returning: "기지 복귀 중",
 };
-
-const simBadgeStyle = css({
-  fontSize: "2xs",
-  fontWeight: "semibold",
-  color: "coral",
-  backgroundColor: "coralSoft",
-  paddingX: "2",
-  paddingY: "0.5",
-  borderRadius: "chip",
-});
 
 const targetChipStyle = css({
   display: "inline-flex",
@@ -73,6 +63,7 @@ export function DispatchControlPanel({
   callActive,
   target,
   onTargetChange,
+  allowTargetPick = false,
   onDispatch,
   onSceneEnd,
   onPause,
@@ -84,6 +75,8 @@ export function DispatchControlPanel({
   callActive: boolean;
   target: DispatchTarget | null;
   onTargetChange: (target: DispatchTarget | null) => void;
+  // 출동 위치 지정 UI 표시 여부(2026-10-04 기본 끔) — 위치는 상황실(시연 콘솔) 소관
+  allowTargetPick?: boolean;
   onDispatch: () => void;
   onSceneEnd: () => void;
   onPause: () => void;
@@ -116,70 +109,64 @@ export function DispatchControlPanel({
     setResults([]);
   }
 
+  // 시안(2026-10-05): "현장 도착 / 통화로 환자 정보를 병원에 전송" + 빨간 테두리 [현장 종료] 한 장짜리 카드
+  const hint = paused
+    ? sim?.pauseReason === "call"
+      ? "목적지 병원과 통화 중 — 통화 내용이 환자 정보에 반영되면 다시 출발합니다"
+      : "상황실에서 시연을 멈췄습니다"
+    : etaMin != null
+      ? `도착까지 약 ${etaMin}분 (실제 도로 기준)`
+      : phase === "at_hospital"
+        ? "병원이 수용 결과를 고를 때까지 병원 앞에서 기다립니다"
+        : phase === "rerouting"
+          ? "목적지 병원이 수용할 수 없게 됐습니다 — 승인한 다른 병원을 이송 승인하세요(없으면 범위를 넓혀 다시 요청)"
+          : phase === "on_scene"
+            ? callActive
+              ? "통화를 끝내야 현장 종료할 수 있습니다"
+              : "통화로 환자 정보를 병원에 전송"
+            : "출동 지령 대기 중 — 신고가 접수되면 상황실이 출동시킵니다";
   return (
     <section
-      className={css({
-        display: "flex",
-        flexDirection: "column",
-        gap: "2.5",
-        paddingX: "4",
-        paddingY: "3",
-        borderWidth: "1px",
-        borderColor: "line",
-        borderRadius: "panel",
-        backgroundColor: "surface",
-      })}
+      style={{
+        flex: "none", display: "flex", flexDirection: "column", gap: 8, background: "#FFFFFF",
+        border: `1px solid ${AD.line}`, borderRadius: 18, padding: "6px 16px", minHeight: 58, justifyContent: "center",
+      }}
     >
-      <div className={css({ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "3" })}>
-        <div className={css({ display: "flex", flexDirection: "column", gap: "1", minWidth: "0" })}>
-          <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
-            <span className={css({ fontSize: "sm", fontWeight: "bold", color: "ink" })}>{PHASE_LABEL[phase]}</span>
-            <span className={simBadgeStyle}>시뮬레이션 위치</span>
-            {paused && <span className={simBadgeStyle}>정지됨</span>}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        {/* 2026-10-04: 구급차 화면은 **지령 수신·수행** 화면이다 — 출동·일시정지는 상황실(시연 콘솔) 소관.
+            남는 조작은 현장에서 대원이 실제로 내리는 판단인 [현장 종료](이송 불필요) 하나다. */}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16, fontWeight: 700, color: AD.navy }}>{PHASE_LABEL[phase]}</span>
+            {paused && (sim?.pauseReason === "call"
+              ? <span style={pill(AD.blueSoft, AD.blue, 700)}>추가 통화 중 — 이송 잠시 멈춤</span>
+              : <span style={pill(AD.redSoft, AD.red, 700)}>일시정지됨</span>)}
             {sim?.speedup != null && sim.speedup > 1 && (
-              <span className={simBadgeStyle}>{Math.round(sim.speedup)}배속</span>
+              <span style={pill(AD.chip, AD.ink3)}>시뮬레이션 {Math.round(sim.speedup)}배속</span>
             )}
           </div>
-          <span className={css({ fontSize: "xs", color: "ink3" })}>
-            {paused
-              ? "시연을 멈췄습니다 — [상황 재개]를 누르면 멈춘 자리에서 이어 갑니다"
-              : etaMin != null
-              ? `도착까지 약 ${etaMin}분 (실제 도로 기준)`
-              : phase === "at_hospital"
-                ? "병원이 수용 결과를 고를 때까지 병원 앞에서 기다립니다"
-                : phase === "rerouting"
-                  ? "같은 환자 정보로 넓힌 존의 병원들에 다시 요청했습니다 — 승인한 병원을 이송 승인하세요"
-                  : phase === "on_scene"
-                    ? callActive
-                      ? "통화를 끝내야 현장 종료할 수 있습니다"
-                      : "통화를 시작해 병원에 환자 정보를 보내세요"
-                    : "위치를 고르지 않으면 기지 근처(약 10분 거리) 무작위 위치로 출동합니다"}
-          </span>
+          <div style={{ color: AD.sub, fontSize: 11.5, whiteSpace: "normal" }}>{hint}</div>
         </div>
-        <div className={css({ display: "flex", gap: "2", flexShrink: "0" })}>
-          {(phase === "on_scene" || phase === "rerouting") && (
-            <button type="button" className={dangerButtonStyle} onClick={onSceneEnd} disabled={!canEndScene}>
-              현장 종료
-            </button>
-          )}
-          {canPause && (
-            <button type="button" className={secondaryButtonStyle} onClick={onPause}>
-              정지
-            </button>
-          )}
-          {paused ? (
-            <button type="button" className={primaryButtonStyle} onClick={onResume}>
-              상황 재개
-            </button>
-          ) : (
-            <button type="button" className={primaryButtonStyle} onClick={onDispatch} disabled={!canDispatch}>
-              이동
-            </button>
-          )}
-        </div>
+        {(phase === "on_scene" || phase === "rerouting") && (
+          <button
+            type="button"
+            onClick={onSceneEnd}
+            disabled={!canEndScene}
+            style={{
+              flex: "none", minHeight: 44, padding: "0 20px", border: `2px solid ${AD.red}`, borderRadius: 999,
+              background: "#FFFFFF", color: AD.red, fontWeight: 700, fontSize: 13,
+              cursor: canEndScene ? "pointer" : "not-allowed", opacity: canEndScene ? 1 : 0.4,
+            }}
+          >
+            현장 종료
+          </button>
+        )}
       </div>
 
-      {canDispatch && (
+      {/* 출동 위치 지정(주소 검색·지도 클릭)은 구급차 화면에서 뺐다(2026-10-04) — 실무에서
+          출동 위치는 상황실 지령이지 대원이 고르는 값이 아니다. 지점 지정과 출동은 시연
+          시나리오 콘솔(/control)이 담당하고, 이 화면의 [이동]은 무작위 출동 폴백으로만 남는다. */}
+      {canDispatch && allowTargetPick && (
         <div className={css({ display: "flex", flexDirection: "column", gap: "1.5" })}>
           <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
             <span className={css({ fontSize: "xs", fontWeight: "semibold", color: "ink2" })}>출동 위치</span>

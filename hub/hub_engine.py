@@ -30,6 +30,7 @@ from schema import (
     HospitalStatus,
     HubMatchResult,
     PatientInfo,
+    PatientUpdate,
     ReliabilityInfo,
     SevereFreshness,
     SpecialtyMatch,
@@ -121,6 +122,7 @@ _ACTION_TO_STATUS: dict[str, HospitalStatus] = {
     "final_approval": "confirmed",
     "arrival_accepted": "confirmed",
     "arrival_refused": "rejected",
+    "transport_withdraw": "rejected",
 }
 
 # 액션마다 보낼 수 있는 주체(2026-09-28). 병원 승인·거절은 병원만, 이송 승인은 구급대원만.
@@ -132,7 +134,12 @@ _ACTION_ACTOR: dict[str, str] = {
     "final_approval": "paramedic",
     "arrival_accepted": "hospital",
     "arrival_refused": "hospital",
+    "transport_withdraw": "hospital",
 }
+
+# 확정을 풀면서 그 병원을 이 사건에서 제외하는 원인(2026-10-05). 병원이 직접 "못 받는다"고 한 경우라, 같은 사건에서
+# 다시 승인·이송 승인되지 않게 막는다(다른 사건에는 영향 없음). 구급대원의 재선택(paramedic_reselect)은 제외가 아니다.
+_EXCLUDING_CAUSES = ("arrival_refused", "transport_withdraw")
 
 
 # feature/info는 성인 응급실 병상 수를 bedsByType["ER_ADULT"]로 보내고, 미상이면
@@ -425,6 +432,10 @@ class HubEngine:
         self._case_confirmed_at: dict[str, datetime] = {}
         # 확정 병원 도착 뒤 병원이 기록한 수용 결과(caseId -> ArrivalResult, 2026-10-01). 수용만 들어간다.
         self._case_arrival: dict[str, ArrivalResult] = {}
+        # (caseId, hospitalId) — 이 사건에서 제외된 병원(도착 후 수용 불가·이송 중 수용 철회, 2026-10-05)
+        self._case_excluded: set[tuple[str, str]] = set()
+        # caseId -> 앞선 통화 요약들(2026-10-05, 덧붙이기) — 새 통화 요약이 오면 직전 patientInfo를 여기 쌓는다
+        self._case_prev_calls: dict[str, list[PatientUpdate]] = {}
         # hospitalId -> 병원 대시보드가 "현재 정보 확인"을 누른 시각(2026-09-29).
         # infosurv의 조건부 생존 갱신 S(a)/S(u)에 쓰는 유효 확인 이력 —
         # E-Gen 자기 신고 바깥에서 처음 생기는 관측이다. 값이 바뀌면(새 claim
@@ -470,6 +481,13 @@ class HubEngine:
                 self._dirty = True
             return removed, kept
 
+    def clear_bed_overlay(self) -> None:
+        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감(TTL 오버레이)을 비운다.
+        실운영 경로에서는 부르지 않는다(차감은 TTL로만 풀리는 게 원칙)."""
+        with self._lock:
+            self._bed_overlay.clear()
+            self._dirty = True
+
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
         with self._lock:
             return self._hospitals.get(hospital_id)
@@ -504,6 +522,28 @@ class HubEngine:
         with self._lock:
             self._ambulances[info.apid] = info
             self._dirty = True
+
+    def apply_ambulance_roster(self, apids: list[str], busy: set[str] | None = None) -> tuple[list[str], list[str]]:
+        """feature/info가 한 주기에 보낸 구급차 전체 목록(2026-10-04). 여기 없는 구급차를 레지스트리에서 뺀다 —
+        Supabase ambulances 테이블을 통째로 바꿔도(시연용 3대 → 서울 119 구급차) 옛 구급차가 hub 메모리·상태
+        파일에 계속 남던 문제. apply_hospital_roster와 같은 방어: 목록이 비었거나 지금의 절반 미만이면 아무것도
+        안 빼고(조회 실패·일부만 온 경우), 진행 중 사건이 있거나 busy(출동 시뮬레이션 중)인 구급차는 남긴다.
+        돌려주는 값은 (뺀 apid, 남긴 apid)."""
+        roster = set(apids)
+        busy = busy or set()
+        with self._lock:
+            missing = [apid for apid in self._ambulances if apid not in roster]
+            if not missing or not roster or len(roster) < len(self._ambulances) / 2:
+                return [], missing
+            in_use = {apid for cid, apid in self._case_apid.items() if cid not in self._case_arrival} | busy
+            removed = [apid for apid in missing if apid not in in_use]
+            kept = [apid for apid in missing if apid in in_use]
+            for apid in removed:
+                del self._ambulances[apid]
+                self._gps_override.pop(apid, None)
+            if removed:
+                self._dirty = True
+            return removed, kept
 
     def get_ambulance(self, apid: str) -> AmbulanceInfo | None:
         """시뮬레이션 위치가 있으면 그 GPS로 바꾼 사본을 돌려준다(매칭·경로·ETA가 전부 이걸 쓴다)."""
@@ -579,6 +619,11 @@ class HubEngine:
         with self._lock:
             return list(set(self._case_results) | set(self._case_apid))
 
+    def list_open_case_ids(self) -> list[str]:
+        """아직 끝나지 않은 사건(환자 수용으로 끝난 사건 제외 — 그건 화면에서 이미 지웠고 기록용으로만 60분 남는다)."""
+        with self._lock:
+            return [cid for cid in set(self._case_results) | set(self._case_apid) if cid not in self._case_arrival]
+
     def get_unconfirmed_case_ids(self) -> list[str]:
         """확정 전 사건(재시작 뒤 정리용)."""
         with self._lock:
@@ -632,6 +677,8 @@ class HubEngine:
         self._case_gps_fallback.pop(case_id, None)
         self._case_confirmed_at.pop(case_id, None)
         self._case_arrival.pop(case_id, None)
+        self._case_prev_calls.pop(case_id, None)
+        self._case_excluded = {k for k in self._case_excluded if k[0] != case_id}
         for key in [k for k in self._reject_reason if k[0] == case_id]:
             del self._reject_reason[key]
         for key in [k for k in self._case_overlay if k[0] == case_id]:
@@ -685,7 +732,8 @@ class HubEngine:
         self, case_id: str, match: HospitalMatch, status: HospitalStatus, now: datetime
     ) -> HospitalMatch:
         """캐시된 HospitalMatch 하나를 지금 상태(승인 상태·병상·만실 판정)로 다시 맞춘다."""
-        update: dict[str, Any] = {"status": status, "rejectReason": self._reject_reason_for(case_id, match.hospitalId, status)}
+        update: dict[str, Any] = {"status": status, "rejectReason": self._reject_reason_for(case_id, match.hospitalId, status),
+                                  "excluded": (case_id, match.hospitalId) in self._case_excluded}
         info = self._hospitals.get(match.hospitalId)
         if info is not None:
             beds = self.effective_bed_count(info)
@@ -766,6 +814,13 @@ class HubEngine:
                 refuse_reason = f"{action.action} requires this hospital to be the confirmed destination (current: {current})"
             elif action.action.startswith("arrival_") and action.caseId in self._case_arrival:
                 refuse_reason = "arrival result already recorded"
+            elif action.action == "transport_withdraw" and current != "confirmed":
+                refuse_reason = f"transport_withdraw requires this hospital to be the confirmed destination (current: {current})"
+            elif action.action == "transport_withdraw" and action.caseId in self._case_arrival:
+                refuse_reason = "already arrived and accepted"
+            elif action.action in ("hospital_approve", "final_approval") and status_key in self._case_excluded:
+                # 도착 후 수용 불가·이송 중 철회로 이 사건에서 빠진 병원 — 같은 사건엔 다시 붙이지 않는다(2026-10-05)
+                refuse_reason = f"{action.action} refused: hospital excluded from this case"
             if refuse_reason is not None:
                 decision_log.log_decision(
                     "approval_action_refused", {"action": action.model_dump(), "reason": refuse_reason}
@@ -781,11 +836,13 @@ class HubEngine:
                     self._case_results[action.caseId] = cached.model_copy(update={"arrival": arrival})
                 decision_log.log_decision("arrival_accepted", {"action": action.model_dump()})
                 return True
-            if action.action == "arrival_refused":
-                # 도착 후 수용 불가 — 가장 강한 "정보가 틀렸다" 관측. 확정을 풀고(거절로) 병상 차감을
-                # 회수하며, 사건은 다시 미확정이 된다(재선택·재계산 대상). 도착 결과는 "수용"만 최종이라
-                # 기록은 남기되 다음 도착 결과를 막지 않도록 _case_arrival엔 넣지 않는다.
-                self._release_confirmation(action.caseId, action.hospital_id, action, "arrival_refused")
+            if action.action in _EXCLUDING_CAUSES:
+                # 도착 후 수용 불가 — 가장 강한 "정보가 틀렸다" 관측. 이송 중 수용 철회(2026-10-05)도 같은 처리:
+                # 확정을 풀고(거절로) 병상 차감을 회수하며, 사건은 다시 미확정이 된다(재선택·재계산 대상).
+                # 그 병원은 이 사건에서 제외한다. 도착 결과는 "수용"만 최종이라 _case_arrival엔 넣지 않는다.
+                self._reject_reason[status_key] = action.reason or "UNSPECIFIED"
+                self._case_excluded.add(status_key)
+                self._release_confirmation(action.caseId, action.hospital_id, action, action.action)
                 self._case_confirmed_at.pop(action.caseId, None)
                 return True
 
@@ -870,7 +927,7 @@ class HubEngine:
         - arrival_refused: 도착했는데 병원이 못 받았다. **정보가 틀렸다는 가장 강한 독립 관측.**
           상태는 rejected.
         """
-        new_status = "rejected" if cause == "arrival_refused" else "approved"
+        new_status = "rejected" if cause in _EXCLUDING_CAUSES else "approved"
         self._approval_status[(case_id, hospital_id)] = new_status
         expires_at = self._case_overlay.pop((case_id, hospital_id), None)
         overlay = self._bed_overlay.get(hospital_id, [])
@@ -887,7 +944,7 @@ class HubEngine:
         }
         self._patch_case_result_status(case_id, hospital_id, new_status)
         decision_log.log_decision(
-            "arrival_refused" if cause == "arrival_refused" else "approval_released",
+            cause if cause in _EXCLUDING_CAUSES else "approval_released",
             {
                 "caseId": case_id,
                 "hospitalId": hospital_id,
@@ -926,7 +983,9 @@ class HubEngine:
                     candidates.append((info, distance))
             return candidates
 
-    def build_zone_candidates(self, ambulance_gps: GpsPoint, max_zone: int = 1) -> list[dict]:
+    def build_zone_candidates(
+        self, ambulance_gps: GpsPoint, max_zone: int = 1, reported_severity: str | None = None
+    ) -> list[dict]:
         """1단계: voice 정보가 도착하기 전, GPS+병원 정보만으로 존 기반 후보 리스트를
         만들어 보관해둔다. 진료과 매칭 없이 거리만으로 정렬한 중간 상태를 반환한다.
 
@@ -955,7 +1014,16 @@ class HubEngine:
             eta = etas.get(info.hospitalId)
             return eta[0] / 60.0 if eta is not None else distance * min_per_km
 
-        candidates.sort(key=travel_min_of)
+        # 신고 접수 1차 중증도가 있으면(2026-10-04, 시연 콘솔의 reportedSeverity) 정렬에
+        # 매칭과 같은 '분' 가산을 적용한다 — 중증 의심이면 권역 −5분·지역센터 −2분, 경증은
+        # 센터 +3분(센터 보존). 환자 정보(통화) 전이지만 신고 중증도는 상황실이 이미 아는
+        # 값이라, "이동시간만 보던" 첫 통화 순위를 반 발짝 당긴다. 없으면 기존 그대로.
+        def order_min_of(pair: tuple) -> float:
+            info, _ = pair
+            bonus, _reasons = expertise_bonus_min(None, info.emergencyLevel, reported_severity)
+            return travel_min_of(pair) - bonus
+
+        candidates.sort(key=order_min_of if reported_severity else travel_min_of)
         rows: list[dict] = []
         best_index: int | None = None
         best_r_arrive = 0.0
@@ -984,6 +1052,11 @@ class HubEngine:
                     "bedCountUnknown": unknown,
                     "bedReliability": rel.model_dump() if rel is not None else None,
                     "firstCallRecommended": False,
+                    # 구급대가 전화 상대를 고를 때 바로 보는 정보(2026-10-04) — 등급·진료과
+                    "emergencyLevel": info.emergencyLevel,
+                    "specialties": [
+                        {"department": s.department, "doctorCount": s.doctorCount} for s in info.specialties
+                    ],
                 }
             )
             if rel is not None and beds >= 1 and not unknown and not _is_bed_data_stale(info, now):
@@ -1062,6 +1135,7 @@ class HubEngine:
                         name=info.name,
                         gps=info.gps,
                         distanceKm=round(distance, 2),
+                        zone=zone_of(distance),
                         specialtyMatch=SpecialtyMatch(
                             department=best_dept, score=round(similarity, 4), basis=basis, doctorCount=doctor_count
                         ),
@@ -1106,6 +1180,7 @@ class HubEngine:
                         rejectReason=self._reject_reason_for(voice.caseId, info.hospitalId, status),
                         unavailableReason=_unavailable_reason(status, demote),
                         bedDataStale=stale,
+                        excluded=(voice.caseId, info.hospitalId) in self._case_excluded,
                     )
                 )
 
@@ -1116,21 +1191,7 @@ class HubEngine:
 
         result = HubMatchResult(
             caseId=voice.caseId,
-            patientInfo=PatientInfo(
-                injuryStatus=voice.summary.symptoms,
-                expectedDiagnosis=expected_diagnosis,
-                severityTag=voice.summary.severity_tag,
-                rawTranscript=voice.transcript.raw_text,
-                filteredTranscript=voice.transcript.filtered_text,
-                patient=voice.summary.patient,
-                treatment=voice.summary.treatment,
-                ktasLevel=voice.summary.ktas_level,
-                vitals=voice.summary.vitals,
-                consciousness=voice.summary.consciousness,
-                onset=voice.summary.onset,
-                chiefComplaint=voice.summary.chief_complaint,
-                requiredDepartment=voice.summary.required_department,
-            ),
+            patientInfo=self._patient_info(voice),
             zoneActive=active_zones(max_zone),
             hospitals=_sort_matches(matches),
             source="rule",
@@ -1141,6 +1202,131 @@ class HubEngine:
             arrival=self._case_arrival.get(voice.caseId),
         )
         return result, best_group
+
+    def _patient_info(self, voice: VoiceCallSummaryMessage) -> PatientInfo:
+        """통화 요약 → 대시보드의 환자 정보. 앞선 통화가 있으면(2026-10-05 덧붙이기) 회차와 앞선 요약을 함께 싣는다."""
+        with self._lock:
+            previous = list(self._case_prev_calls.get(voice.caseId, []))
+        return PatientInfo(
+            injuryStatus=voice.summary.symptoms,
+            expectedDiagnosis=voice.summary.mechanism,
+            severityTag=voice.summary.severity_tag,
+            rawTranscript=voice.transcript.raw_text,
+            filteredTranscript=voice.transcript.filtered_text,
+            patient=voice.summary.patient,
+            treatment=voice.summary.treatment,
+            ktasLevel=voice.summary.ktas_level,
+            vitals=voice.summary.vitals,
+            consciousness=voice.summary.consciousness,
+            onset=voice.summary.onset,
+            chiefComplaint=voice.summary.chief_complaint,
+            requiredDepartment=voice.summary.required_department,
+            callRound=len(previous) + 1,
+            previousCalls=previous,
+        )
+
+    def add_call_summary(
+        self,
+        voice: VoiceCallSummaryMessage,
+        ambulance_gps: GpsPoint,
+        max_zone: int = 1,
+        gps_fallback: bool = False,
+    ) -> HubMatchResult:
+        """voice가 보낸 통화 요약 한 건을 사건에 반영한다(app.py의 /voice/summary 경로, 2026-10-05).
+
+        첫 통화면 process_voice_summary()와 같다. 같은 사건의 **추가 통화**(환자 상태 변화로 다시 건 통화 —
+        이송 중 목적지 병원과의 통화 등)면 덧붙인다: 직전 환자 정보를 previousCalls에 쌓고, 통화 전문은 앞뒤로
+        이어 붙이며, 최신 요약이 지금 환자 상태가 된다.
+        - 이송이 확정된 사건: 목적지가 정해졌으니 병원 목록·순위는 그대로 두고 환자 정보만 바꾼다(움직이는 구급차
+          위치로 후보를 다시 뽑으면 확정 병원이 목록에서 빠질 수 있다).
+        - 미확정 사건: 새 환자 정보로 다시 매칭한다(넓혀 둔 존은 유지)."""
+        with self._lock:
+            old_voice = self._case_voice.get(voice.caseId)
+            old_result = self._case_results.get(voice.caseId)
+        if old_voice is None or old_result is None:
+            return self.process_voice_summary(voice, ambulance_gps, max_zone=max_zone, gps_fallback=gps_fallback)
+
+        old_patient = old_result.patientInfo
+        with self._lock:
+            prev = self._case_prev_calls.setdefault(voice.caseId, [])
+            prev.append(PatientUpdate(
+                callRound=old_patient.callRound, receivedAt=_utcnow().isoformat(),
+                expectedDiagnosis=old_patient.expectedDiagnosis, severityTag=old_patient.severityTag,
+                injuryStatus=old_patient.injuryStatus, ktasLevel=old_patient.ktasLevel,
+                vitals=old_patient.vitals, consciousness=old_patient.consciousness,
+            ))
+            round_no = len(prev) + 1
+            confirmed = voice.caseId in self._case_confirmed_at
+            current_zone = self._case_max_zone.get(voice.caseId, 1)
+        marker = f"\n\n── {round_no}차 통화 ──\n"
+        merged = voice.model_copy(update={"transcript": voice.transcript.model_copy(update={
+            "raw_text": old_voice.transcript.raw_text + marker + voice.transcript.raw_text,
+            "filtered_text": old_voice.transcript.filtered_text + marker + voice.transcript.filtered_text,
+        })})
+        decision_log.log_decision("patient_info_appended", {
+            "caseId": voice.caseId, "callRound": round_no, "confirmed": confirmed,
+            "severityTag": voice.summary.severity_tag, "ktasLevel": voice.summary.ktas_level,
+        })
+        if not confirmed:
+            return self.process_voice_summary(merged, ambulance_gps, max_zone=max(max_zone, current_zone),
+                                              gps_fallback=gps_fallback)
+        patient = self._patient_info(merged)
+        with self._lock:
+            self._case_voice[voice.caseId] = merged
+            result = self._case_results[voice.caseId].model_copy(update={"patientInfo": patient})
+            self._case_results[voice.caseId] = result
+            self._dirty = True
+        decision_log.log_decision("hub_match_result", _redact_transcript(result.model_dump()))
+        return result
+
+    def plan_mci(self, case_ids: list[str]) -> list[dict]:
+        """대량사고 자동 분배 계획(2026-10-05) — 승인 병원들 사이에 사상자를 나눈다. 콘솔 ③의 미리 보기와 [분배 확정]이
+        같은 계획을 쓴다(보이는 대로 확정된다).
+
+        규칙은 평시 순위 그대로(규칙 기반): 중증 → 중등증 → 경증 순으로, 사상자마다 그 사건에서 **승인한** 병원(제외 병원
+        빼고) 중 finalScore 최고 — 진료과 적합도 0.6 + 이동시간 0.4, 중증 센터 가산·경증 센터 역가산(travelBonusMin).
+        앞 사상자를 배정할 때마다 그 병원의 이송 중 건수를 하나 늘리고 병상을 하나 줄여 부하 페널티를 다시 매긴다 —
+        한 병원에 몰리지 않고 다음 병원으로 퍼진다. 병상 신뢰도는 쓰지 않는다(순위 원칙)."""
+        order = {"high": 0, "medium": 1, "low": 2}
+        now = _utcnow()
+        with self._lock:
+            items = []
+            for index, case_id in enumerate(dict.fromkeys(case_ids)):
+                result = self._case_results.get(case_id)
+                if result is None:
+                    continue
+                items.append((order.get(result.patientInfo.severityTag, 3), index, case_id, result))
+            extra: dict[str, int] = {}
+            plan = []
+            for _, _, case_id, result in sorted(items, key=lambda x: (x[0], x[1])):
+                best = None
+                for rank, h in enumerate(result.hospitals):
+                    if h.status != "approved" or (case_id, h.hospitalId) in self._case_excluded:
+                        continue
+                    info = self._hospitals.get(h.hospitalId)
+                    added = extra.get(h.hospitalId, 0)
+                    if info is not None:
+                        in_flight = self._prune_and_count_overlay(h.hospitalId, now) + added
+                        beds = self.effective_bed_count(info) - added
+                        load_min, _ = load_penalty_min(in_flight, beds, _is_bed_count_unknown(info))
+                    else:
+                        load_min = 0.0
+                    travel = h.travelMin if h.travelMin is not None else h.distanceKm * 3.0
+                    score = final_score(h.specialtyMatch.score, travel, h.travelBonusMin or 0.0, load_min)
+                    if best is None or score > best[0] + 1e-9:
+                        best = (score, rank, h, load_min)
+                if best is None:
+                    plan.append({"caseId": case_id, "hospitalId": None, "severityTag": result.patientInfo.severityTag})
+                    continue
+                _, _, h, load_min = best
+                extra[h.hospitalId] = extra.get(h.hospitalId, 0) + 1
+                plan.append({"caseId": case_id, "hospitalId": h.hospitalId, "hospitalName": h.name,
+                             "severityTag": result.patientInfo.severityTag, "loadPenaltyMin": round(load_min, 1)})
+            return plan
+
+    def is_excluded(self, case_id: str, hospital_id: str) -> bool:
+        with self._lock:
+            return (case_id, hospital_id) in self._case_excluded
 
     def process_voice_summary(
         self,
@@ -1242,7 +1428,18 @@ class HubEngine:
         with self._lock:
             return self._case_max_zone.get(case_id, 1)
 
-    def force_expand_zone(self, case_id: str, ambulance_gps: GpsPoint) -> HubMatchResult | None:
+    def next_zone_with_new(self, ambulance_gps: GpsPoint, current: int, cap: int = 10) -> int | None:
+        """current 바깥에서 새 병원이 처음 들어오는 존(2026-10-04, 시간 기반 확장). 없으면 None —
+        _expand_until_nonempty는 "후보가 하나라도 있으면"이라 이미 있는 병원만으로도 멈춰, 시간 확장이
+        병원 없는 빈 존으로 계속 넓어졌다."""
+        known = len(self._candidates_in_zone(ambulance_gps, current))
+        for zone in range(current + 1, cap + 1):
+            if len(self._candidates_in_zone(ambulance_gps, zone)) > known:
+                return zone
+        return None
+
+    def force_expand_zone(self, case_id: str, ambulance_gps: GpsPoint, cause: str = "arrival_refused",
+                          to_zone: int | None = None) -> HubMatchResult | None:
         """존을 한 단계 넓혀 **기존 환자 정보(통화 요약) 그대로** 다시 매칭한다(2026-10-01).
         도착 후 수용 불가로 갈 곳이 없어졌을 때 — 다시 통화하지 않고 넓어진 존의 병원들에게 같은
         요청을 보내려는 것이다(역할별 전송이 새 후보 병원 탭에도 보낸다). 새 존이 비면 후보가 잡힐
@@ -1253,12 +1450,12 @@ class HubEngine:
             gps_fallback = self._case_gps_fallback.get(case_id, False)
         if voice is None:
             return None
-        new_max = self._expand_until_nonempty(ambulance_gps, current + 1)
+        new_max = to_zone if to_zone is not None else self._expand_until_nonempty(ambulance_gps, current + 1)
         if new_max <= current:
             return None
-        print(f"  [존 확장] case={case_id} 도착 후 수용 불가 — zone 1~{current} -> 1~{new_max}")
+        print(f"  [존 확장] case={case_id} {cause} — zone 1~{current} -> 1~{new_max}")
         decision_log.log_decision("zone_expanded", {"caseId": case_id, "from": current, "to": new_max,
-                                                    "cause": "arrival_refused"})
+                                                    "cause": cause})
         return self.process_voice_summary(voice, ambulance_gps, max_zone=new_max, gps_fallback=gps_fallback)
 
     def _is_confirmed_full(self, hospital_id: str) -> bool:

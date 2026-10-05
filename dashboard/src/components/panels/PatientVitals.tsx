@@ -13,7 +13,7 @@ const VITAL_FIELDS: [keyof Vital, string, string][] = [
   ["glucose", "혈당", ""],
 ];
 
-function formatVital(vital: Vital): string {
+export function formatVital(vital: Vital): string {
   const parts: string[] = [];
   if (vital.sbp != null || vital.dbp != null) parts.push(`혈압 ${vital.sbp ?? "?"}/${vital.dbp ?? "?"}`);
   for (const [key, label, unit] of VITAL_FIELDS) {
@@ -37,10 +37,13 @@ const ktasStyle = css({
 export function PatientVitals({ patientInfo }: { patientInfo: PatientInfo }) {
   const latest = patientInfo.vitals?.[patientInfo.vitals.length - 1];
   const vitalText = latest ? formatVital(latest) : "";
+  // 주 호소·필요 진료과(2026-10-04 추가) — 그동안 hub가 보내는데 화면에 안 그리던 값
   const facts = [
     patientInfo.patient,
+    patientInfo.chiefComplaint && `주 호소 ${patientInfo.chiefComplaint}`,
     patientInfo.consciousness && `의식 ${patientInfo.consciousness}`,
     patientInfo.onset && `발생 ${patientInfo.onset}`,
+    patientInfo.requiredDepartment && `필요 진료과 ${patientInfo.requiredDepartment}`,
   ].filter(Boolean);
   if (patientInfo.ktasLevel == null && !vitalText && facts.length === 0) return null;
   return (

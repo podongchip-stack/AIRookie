@@ -293,6 +293,8 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   (`send_rejection_to_info()`), 수신구는 info 상시 프로세스와 별개로 띄우는 선택적
   서버다(`python -m hospital_score.ingest`, 포트 5003). 아래 "거절 로그" 절 참고
 - **여러 사건(구급차) 동시 처리를 지원하는 구급차 레지스트리 동기화가 추가됐다.** 병원용과는 **별도의 Supabase 프로젝트**(`ambulances` 테이블, apid/name/gps/voicePort)를 `send_to_hub.py`가 같은 주기로 읽어 `POST /info/ambulances`로 hub에 보낸다. `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY` 환경변수가 없으면 이 부분만 조용히 건너뛰고 병원 정보 동기화는 그대로 진행한다 — voice의 실제 IP는 여기 없고(구급차 노트북마다 네트워크가 달라 자주 바뀔 수 있음) voice가 뜰 때 hub에 직접 자가등록한다(feature/hub 담당자 참고사항 참고)
+- **서울 119 구급차 162대로 교체(2026-10-04, `info/ambulance_registry/`).** 시연용 3대(`A0000001~3` 역삼·성산·회현) 대신 소방청 공공데이터 두 CSV(`dashboard/NationalFireAgency*.csv` — 119안전센터 현황·센터별 구급차 대수)로 **서울 119안전센터 119곳의 구급차 162대**(`SEL0001~SEL0162`, 이름 "<센터명> 구급 N", 좌표 = 센터 주소를 카카오 주소→키워드 검색)를 만든다(`build_seoul.py`). 좌표를 못 구한 센터는 상위 센터 좌표로 대신하지 않고 `result/unregistered_centers.csv`로 따로 뺀다(2026-10-04 실행 0곳). Supabase `ambulances` 테이블에는 보강 컬럼(`sido`·`fire_station`·`center`·`unit_no`·`addr`·`phone`·`coord_source`, `schema_extend.sql`)만 더했고 `send_to_hub.py`는 기존 컬럼만 읽어 **hub로 가는 `AmbulanceInfo` 형식은 그대로**다. 적재는 `upload.py`(기본 확인만, `--apply`로 upsert + 목록에 없는 행 삭제, service_role 키는 `info/ambulance_registry/.env` — 커밋 금지). 위치·대수만 실데이터이고 출동·이동은 여전히 시뮬레이션이다
+  - **구급차도 묶음 전송 + 목록 동기화.** `send_to_hub.py`가 구급차를 `POST /info/ambulances/batch`로 한 번에 보낸 뒤 `POST /info/ambulances/roster`로 전체 apid 목록을 보낸다 — hub가 목록에 없는 구급차를 지운다(병원 목록 동기화와 같은 규칙). 한 대씩 보내면 160여 번 관제 지도가 다시 나가고, 목록 동기화가 없으면 테이블을 바꿔도 옛 3대가 hub 메모리·상태 파일에 남았다. 묶음 주소가 없는 예전 hub(404)면 한 대씩 보내고 목록 동기화는 건너뛴다
 
 ### 신뢰도 진단·외부 대조 트랙 (`hospital_score/`, 2026-08-12 신설 — `feature/info-v2`)
 
@@ -374,6 +376,15 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   E-Gen은 과거 이력을 주지 않으므로 시계열이 필요하면 직접 찍어 쌓는 수밖에 없다.
   가공 전 원본을 저장하는 이유는 매핑 해석이 바뀌어도 과거 데이터를 다시 해석할 수 있어야
   해서다(가공본만 남기면 매핑을 고칠 때마다 지난 데이터가 죽는다)
+- **클라우드 수집 = 동기화 트리거 + 멈춘 로컬 파일 넘겨받기(2026-10-04 저녁).** 이관 당일 로컬 수집이
+  16:52에 멈춘 뒤 sync가 그 날짜 파일을 "로컬 수집기 파일 — 건드리지 않음"으로 계속 건너뛰어, 신뢰도
+  그래프(live_board)·병상 신뢰도 피처가 16:52에 멈춰 있었다. ① 로컬 파일이 `SNAPSHOT_ADOPT_IDLE_SEC`
+  (기본 1시간) 넘게 안 바뀌면 sync가 그 날짜를 넘겨받는다 — 원래 파일은 `<날짜>.jsonl.local-base`로
+  보관(*.jsonl이 아니라 다른 소비자는 안 읽음)하고 다시 만들 때마다 그걸 바탕으로 클라우드 수집분을 이어
+  붙인다(로컬에만 있던 관측 보존). ② `snapshot_cloud.py --watch`: 1분마다(`SNAPSHOT_WATCH_INTERVAL_SEC`)
+  오늘 raw/ 개수만 보고 늘면 바로 sync — Supabase가 장비로 직접 알릴 길이 없어 가벼운 확인으로 트리거를
+  대신한다. start-all이 20분 고정 루프 대신 이걸 띄운다(seed는 그 안에서 20분마다). ③ live_board 캐시는
+  스냅샷 파일이 캐시보다 새로우면 20분을 기다리지 않고 다시 만든다
 
 ### 병상 정보 신뢰도 서빙 (`reliability/`, 2026-09-24 신설)
 
@@ -550,6 +561,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - WebSocket 인증은 여전히 없다(시연 범위 허용, hub/README.md 한계에 명시)
   - **확인된 만실 병원은 병원 승인 불가(2026-10-01)**: 응급실 병상 0이 확인된(미상·1일 넘은 값 제외) 병원의 `hospital_approve`는 hub가 거부한다(`_is_confirmed_full`). 병원 화면은 버튼 대신 "응급실 병상 없음" 안내. 이미 승인한 병원은 나중에 0이 돼도 그대로. 이 병원들은 응답할 수 없었으므로 사건이 끝날 때 무응답으로 기록하지 않는다
   - **존 확장 거절 비율(2026-10-01)**: 분모를 "응답한 병원"에서 "현재 존 안 후보 병원 전체"로, 기준을 50% → **40%**로. 예전엔 첫 응답이 거절이면 1/1=100%라 후보 10곳 중 한 곳의 거절로 바로 넓어졌다(`geo.REJECT_RATIO_THRESHOLD`, `HubEngine.reject_ratio`)
+- **구급차 묶음 수신·목록 동기화(2026-10-04)**: `POST /info/ambulances/batch {"ambulances": [...]}`(형식 틀린 한 대는 `rejected`로 돌려주고 나머지 반영, 관제 지도 `map_overview`는 끝에 한 번)와 `POST /info/ambulances/roster {"apids": [...]}`(`HubEngine.apply_ambulance_roster`)를 추가했다. 목록에 없는 구급차는 레지스트리·시뮬레이션 유닛·voice 주소에서 지운다 — 단 진행 중 사건(수용 완료 전)이 있거나 출동 시뮬레이션 중인 구급차는 보류, 목록이 비었거나 절반 미만으로 급감하면 부분 조회 실패로 보고 아무것도 안 뺀다. 의사결정 로그 `ambulance_roster_applied`. 기존 `POST /info/ambulances`(한 대씩)는 그대로 받는다. 검증 `test_ambulance_roster.py`
 - **질환군 매칭을 임베딩에서 키워드 규칙으로(2026-10-02)**: 예상 병명 → 15개 중증질환군(신뢰도 칩·`declared_no` 내림·신고 신선도에 쓰임)을 고를 때 기준선 없이 임베딩 최근접을 골라, 다리 골절·심근경색·뇌출혈·"미상"이 전부 담낭담관질환으로 붙었다(유사도 0.47~0.93이라 기준선으로도 못 거름). 상관없는 신고로 병원이 뒤로 밀릴 수 있는 오류였다. `hub/disease_group.py`가 E-Gen 항목명 키워드로만 고르고, 해당 없으면 None(칩·내림 없음). 진료과 매칭은 그대로 임베딩. 검사 `python disease_group.py`
 - **시연용 신뢰도 검증 화면(2026-10-02)** — 병원·구급차 상단바 [신뢰도 검증] 모달(3D 뷰어와 같은 `FrameModalButton`) 또는 `/verify` 직접. 가상 이송 요청(시각·병원·이동 5~25분은 무작위)의 결과를 **실제 E-Gen 다음 스냅샷**으로 채점한다 — 도착 때 병상 수가 3석(모델 θ) 이상 안 바뀌었으면 "맞음". info `reliability/replay_demo.py`가 스냅샷 1장당 10건을 만들고(`data/verification/replay_demo.jsonl`, 전부 `demo: true`·`source: "replay"`), 거절 로그 수신구(5003)의 `GET /verification/summary`가 1시간마다 다시 채점해 확률 구간별 예측 vs 실제·거절 사유를 낸다. hub `GET /verification`이 그대로 중계(dashboard는 hub와만 통신, 도메인 라우팅 추가). **실제 운영 검증이 아니다** — "병원이 실제로 받았는가"는 다루지 않고 화면에 늘 "시연용 예시"를 붙인다. 첫 결과(10/1~2, 590건): 구간 순서는 맞고(예측 35→52→71→89% / 실제 83→90→96→98%) 모델이 실제보다 보수적
   - **"우리 병원" 칸(2026-10-02)**: 병원 대시보드에서 열면 `/verify?hpid=` → 맨 위에 그 병원 기록. 무작위 표본이 아니라 그 병원 스냅샷 **전수**(최근 7일)로 "빈 병상이 보였던 모든 시각에 출발했다면 15분 뒤 실제 값은"을 센다(`hospital_score/hospital_view.py`), 빈 병상 수 그래프(수집이 1시간 넘게 끊긴 곳은 선을 끊음)·만실/과밀 시간 비율·E-Gen 15개 질환군 신고·심평원 전문병원 지정과 전문의 수·거절 로그. hub가 `hospitalHub`로 지금 API 값·신뢰도(`_build_self_info`)와 의사결정 로그의 그 병원 활동(`_hospital_activity`)을 덧붙인다. ⚠ 의사결정 로그에는 예전에 테스트를 실로그에 돌린 기록이 섞여 있다(예: A1100017 수용 불가 59건) — 해시 체인이라 지울 수 없음. 첫 수치(서울아산): 출발 53번 중 16번 3석 이상 바뀜·만실, 기록 시간의 51%가 만실·과밀
@@ -563,6 +575,12 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
 - **재시작 뒤 지난 사건이 대시보드에 남던 문제(2026-10-03)**: ① 출동 시뮬레이션 모드에서 hub가 재시작하면 구급차가 전부 기지로 돌아가므로, 복구된 사건을 이송 확정 사건까지 전부 닫는다(`_settle_restored_cases`, 병상 차감은 병원 단위로 TTL대로 남는다) ② 탭은 hub가 꺼졌다 켜져도 자동 재연결하며 화면 상태를 들고 있어서, identify 응답 끝에 `case_sync`(지금 진행 중인 사건 id 목록 — 구급차는 결과 전 사건 포함)를 보내고 대시보드가 목록에 없는 사건을 지운다
 - **통화 중 실시간 자막(2026-10-03)**: voice가 발화 하나를 인식할 때마다 `POST /voice/utterance`로 보내면 hub가 그 구급차 탭에만 `call_transcript`로 넘긴다(병원·관제 지도 X, 저장·로그 X). 대시보드 통화 시연 패널이 이걸 우선 보여주고, 없을 때만 브라우저 Web Speech 자막을 예비로 쓴다 — 예전엔 브라우저 자막뿐이라 voice는 잘 인식하는데 화면엔 안 떴다. voice 쪽 주소는 `HUB_VOICE_UTTERANCE_URL`(기본 HUB_BASE_URL/voice/utterance)
 - **관제 지도 역할(role=monitor, 2026-10-03)**: dashboard 관제 지도(보기 전용 — 병원 대시보드와는 분리, 병원 대시보드는 첫 페이지에서 접근 코드로 연다). hub는 monitor 소켓에 `map_overview`(전체 병원·구급차 목록 — 연결 때·병원 목록 한 주기 끝·구급차 정보 갱신 때), `case_overview`(사건 요약 — 매칭 결과가 나갈 때마다, 통화 전문·활력징후 없음, 병원별 status·zone 포함), 구급차 시뮬레이션 위치(전 구급차)를 보낸다. 거절 비율 존 확장은 기존 로직 그대로이고, 넓혀진 존의 병원이 `case_overview.hospitals`에 들어와 지도에 표시된다. hub/README.md "출력 스키마 7", 검증 `test_monitor_map.py`
+- **관제 지도 개편 · 시간 기반 존 확장 · 이송 30초(2026-10-04 밤)**
+  - 관제 지도(`/map`)를 디자인 시안("골든링크 관제")대로 다시 그렸다 — 진행 중 사건 목록(번호·중증도·증상·경과·단계·대기/불가/승인 수·새 응답 배지), 선택 사건의 요청 병원 탭(응답 시각 포함), 지도(선택 사건 기준 병원 응답 색·말풍선·요청 범위, 구급차 사각형·사건 번호), 하단 구급차 패널(선택 사건 기준 가까운 순), 지난 사건 모달(오늘 종료 사건·진행 과정 타임라인). 화면 `app/map/page.tsx`·`components/map/ControlMapPanel.tsx`·`lib/control-map.ts`. 사건 상황판(`/case`)은 예전 `MonitorMapPanel` 그대로
+  - 재료는 hub의 사건 기록기 `hub/case_history.py`(규칙 기반): 매칭 결과가 나갈 때마다 직전과 비교해 이벤트(요청 시작·첫 거절·범위 확장·승인·확정·완료/취소)와 병원별 응답 시각을 남기고, 사건 번호(하루 단위)·시작 시각·증상 한 줄을 매긴다. `MonitorCase`에 `num`·`startedAt`·`symptom`·`events`·`hospitals[].respondedAt`·`zoneExpandAt`, 새 메시지 `case_meta`(매칭 전 사건)·`case_history`(오늘 종료 사건, hub 상태 파일에 저장). 환자 상세는 여전히 안 보낸다
+  - **시간 기반 존 확장**: 거절 비율(40%) 확장은 병원이 거절을 눌러야만 움직여서, 요청 뒤(또는 마지막 확장 뒤) `HUB_ZONE_EXPAND_SEC`(기본 30초) 동안 승인·확정 병원이 없으면 새 병원이 들어오는 다음 존으로 넓힌다(`_zone_timer_tick`). 시연 콘솔 ③의 [건너뛰기]는 WS `zone_expand_now`로 바로 넓힌다. 더 넓힐 곳이 없으면 멈추고, [정지] 중엔 시간도 멈춘다. 의사결정 로그 `zone_expanded` cause `zone_timeout`/`zone_manual`, 진행 과정에 "30초 동안 수용 병원 없음"/"관제 건너뛰기"
+  - **이송 30초 + 빨리감기**: 출동 시뮬레이션의 병원 이송 구간만 `HUB_SIM_TRANSPORT_SEC`(기본 30초) — 이송 중 환자 상태 변화 시나리오를 고를 시간. 콘솔 ④의 [⏩ 빨리감기]는 `sim_fast_forward`로 남은 이동을 3초(`HUB_SIM_FAST_FORWARD_SEC`) 안에 마친다(지금 위치는 그대로, 배속만 바꿈). 출동·복귀는 5초 그대로. 검증 `python test_zone_timer.py`
+  - ⚠ `run_match.py`가 실제 의사결정 로그에 쓰고 있어서, 실서버 hub가 떠 있는 동안 돌렸더니 해시 체인이 한 곳 끊겼다(2026-10-04 21:14 KST, `decision_log.jsonl` 2,558번째 줄 — 앞뒤 줄의 prevHash 불일치, 내용 변조 아님). 이제 다른 test_*.py처럼 임시 경로를 쓴다
 - **voice v2 스키마 수신(2026-10-01, voice MF_BERT 머지와 함께)**: voice가 summary를 v2(MF_BERT 17필드 — `ktas_level`·`chief_complaint`·`incidents`·`injuries`·`vitals` …)로 바꿔 예전 hub 스키마로는 전부 400이 났다. `hub/voice_v2.py`가 v2를 예전 필드로 옮긴다(규칙 기반) — KTAS 1~2→high·3→medium·4~5→low, 예상 병명 = 주 사고/질병 분류 + 주 호소 + 의심 진단 + 손상, 환자 = 나이+성별, 증상 = "확인"된 것, 처치 = 시행한 것. **필요 진료과는 예전 voice의 대응표(`department_mapping.json`)를 그대로 옮겨** `disease_category`·`incidents[].type`·`injuries[].region`으로 도출한다(외상이면 부위 우선, 여러 부위는 다발성→외과). ⚠ 표는 **팀 확인 전 초안**(뇌혈관: 신경과/신경외과, 소화기: 외과/내과 기본값 미확정). 예전 6필드 형식도 그대로 받는다. KTAS·활력징후·의식(AVPU)·발생 시점·주 호소는 `patientInfo`로 dashboard에 간다(순위에는 안 씀)
 - **도착 결과 · 신뢰도 정답 데이터(2026-10-01)** — hub/README.md "도착 결과와 신뢰도 정답 데이터"
   - 병원이 확정 사건에 `arrival_accepted`/`arrival_refused`(사유)를 기록한다. 구급차는 결과가 나올 때까지 병원 앞에서 기다린다(시뮬레이션). **도착 후 수용 불가**는 확정 해제·병상 회수 → 그 자리에서 재선택 대기, 승인 병원이 없으면 같은 환자 정보로 존 확장해 재요청(재통화 없음). 거절 로그에 `stage: "arrival"`과 당시 병상 수·신뢰도 확률 스냅샷 — 신뢰도 모델의 독립 관측(G2) 재료

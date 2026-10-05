@@ -54,6 +54,10 @@ FALLBACK_SPEED_KMH = 30.0     # 도로 경로가 없을 때 직선 이동 속도
 SPEEDUP = float(os.environ.get("HUB_SIM_SPEEDUP", "5"))
 #: 구급차 화면 이동 시간(초, 2026-10-03). 출동·이송·복귀 모든 구간에 같은 고정값 — 가까워도 멀어도 이 시간에 도착한다.
 TRIP_SEC = float(os.environ.get("HUB_SIM_TRIP_SEC", "5"))
+#: 병원으로 이송하는 구간만 따로(2026-10-04) — 이송 중 환자 상태 변화(활력징후 시나리오)를 고를 시간이 필요해 30초.
+#: [빨리감기]를 누르면 남은 이동을 FAST_FORWARD_SEC 안에 마친다.
+TRANSPORT_SEC = float(os.environ.get("HUB_SIM_TRANSPORT_SEC", "30"))
+FAST_FORWARD_SEC = float(os.environ.get("HUB_SIM_FAST_FORWARD_SEC", "3"))
 #: 정지할 수 있는 단계(2026-10-03) — 현장으로 출동 중 · 현장 도착 · 병원으로 이송 중
 PAUSABLE_PHASES = ("dispatching", "on_scene", "transporting")
 #: [환자 수용 완료] 뒤 병원에 머무는 시간(초). 2026-10-03부터 0 — 수용을 누르면 다음 위치 갱신(1초 안)에 바로
@@ -111,6 +115,16 @@ class Trip:
     def done(self, now: float) -> bool:
         return self.progress(now) >= 1.0
 
+    def fast_forward(self, now: float, within_sec: float) -> None:
+        """[빨리감기](2026-10-04): 지금 위치(진행률)는 그대로 두고 남은 구간을 within_sec 안에 마치게 배속을 바꾼다."""
+        if self.paused_at is not None:
+            self.resume(now)
+        p = self.progress(now)
+        if p >= 1.0 or within_sec <= 0 or self.duration_sec <= 0:
+            return
+        self.speedup = self.duration_sec * (1.0 - p) / within_sec
+        self.started_at = now - p * self.duration_sec / self.speedup
+
     def remaining_sec(self, now: float) -> int:
         """실제 도로 기준 남은 시간(초). 받아 둔 경로의 남은 비율로 계산 — 카카오를 다시 안 부른다."""
         return int(round(self.duration_sec * (1.0 - self.progress(now))))
@@ -138,15 +152,16 @@ def fixed_speedup(duration_sec: float, display_sec: float = TRIP_SEC) -> float:
     return duration_sec / display_sec
 
 
-def plan_trip(router, origin: GpsPoint, dest: GpsPoint, now: float) -> Trip:
-    """도로 경로로 Trip을 만든다. 키가 없거나 실패하면 직선 + 기본 속도. 화면 시간은 TRIP_SEC 고정(fixed_speedup)."""
+def plan_trip(router, origin: GpsPoint, dest: GpsPoint, now: float, display_sec: float = TRIP_SEC) -> Trip:
+    """도로 경로로 Trip을 만든다. 키가 없거나 실패하면 직선 + 기본 속도. 화면 시간은 display_sec 고정(fixed_speedup) —
+    기본 TRIP_SEC, 병원 이송 구간은 TRANSPORT_SEC."""
     route = router.route(origin, dest) if router is not None else None
     if route and route.get("path"):
         path, duration = [tuple(p) for p in route["path"]], float(route["durationSec"])
     else:
         km = haversine_km(origin.lat, origin.lng, dest.lat, dest.lng)
         path, duration = [(origin.lat, origin.lng), (dest.lat, dest.lng)], km / FALLBACK_SPEED_KMH * 3600.0
-    return Trip(path, duration, now, speedup=fixed_speedup(duration))
+    return Trip(path, duration, now, speedup=fixed_speedup(duration, display_sec))
 
 
 # ── 환자 발생 위치 후보 ──────────────────────────────────────────────────────
@@ -236,6 +251,8 @@ class Unit:
     last_incident: Optional[tuple[float, float]] = None
     # [정지] 중(2026-10-03). 이동 중이면 trip도 멈춰 있고, 현장에선 이송 확정이 와도 출발하지 않는다.
     paused: bool = False
+    # 왜 멈췄나(2026-10-05): "manual"(시연 일시정지 — 조작 잠금) | "call"(이송 중 추가 통화 — 통화·정보 처리 동안만 이동 멈춤)
+    pause_reason: Optional[str] = None
 
     def snapshot(self, now: float) -> dict:
         """밖으로 내보낼 상태(경로 포함). app.py가 type·simulated를 붙인다."""
@@ -252,6 +269,7 @@ class Unit:
             "incident": self.incident.model_dump() if self.incident else None,
             "hospitalId": self.hospital_id,
             "paused": self.paused,
+            "pauseReason": self.pause_reason if self.paused else None,
         }
 
 
@@ -277,6 +295,15 @@ class DispatchSim:
             unit.base = base
             if unit.phase == "idle":
                 unit.gps = base
+
+    def remove_unit(self, apid: str) -> bool:
+        """구급차 목록 동기화(2026-10-04)에서 빠진 구급차를 지운다. 출동 중이면 안 지운다(False)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None or unit.phase != "idle":
+                return False
+            del self._units[apid]
+            return True
 
     def gps_for(self, apid: str) -> Optional[GpsPoint]:
         with self._lock:
@@ -334,6 +361,19 @@ class DispatchSim:
             unit.hospital_id = unit.hospital_gps = None
         return True, "ok"
 
+    def reset(self, apid: str) -> Optional[str]:
+        """[시연 초기화](2026-10-04): 어떤 단계에 있든 즉시 기지 대기(idle)로 되돌린다.
+        일시정지와 달리 상태를 지우는 리셋 — 돌려주는 값은 끊긴 사건 id(hub가 닫는 데 쓴다)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None:
+                return None
+            old_case = unit.case_id
+            unit.phase, unit.trip, unit.gps = "idle", None, unit.base
+            unit.case_id = unit.incident = unit.hospital_id = None
+            unit.paused, unit.pause_reason = False, None
+            return old_case
+
     def scene_end(self, apid: str, case_id: str) -> bool:
         """[현장 종료]: 현장(또는 도착 후 수용 불가로 재선택 대기 중)에서 이송 없이 끝낸다 → 바로 기지로."""
         with self._lock:
@@ -357,7 +397,7 @@ class DispatchSim:
             if unit.phase == "transporting" and unit.hospital_id == hospital_id:
                 return False
             origin = unit.gps or unit.base
-        trip = plan_trip(self._router, origin, hospital_gps, self._clock())
+        trip = plan_trip(self._router, origin, hospital_gps, self._clock(), display_sec=TRANSPORT_SEC)
         with self._lock:
             unit = self._units[apid]
             unit.phase, unit.trip, unit.hospital_id, unit.hospital_gps = "transporting", trip, hospital_id, hospital_gps
@@ -365,8 +405,9 @@ class DispatchSim:
                 trip.pause(trip.started_at)
         return True
 
-    def pause(self, apid: str) -> tuple[bool, str]:
-        """[정지](2026-10-03): 출동 중·현장·이송 중일 때만. 위치·남은 시간·진행을 그 자리에 멈춘다."""
+    def pause(self, apid: str, reason: str = "manual") -> tuple[bool, str]:
+        """[정지](2026-10-03): 출동 중·현장·이송 중일 때만. 위치·남은 시간·진행을 그 자리에 멈춘다.
+        reason "call"(2026-10-05)은 이송 중 추가 통화 동안의 멈춤 — 조작 잠금은 하지 않는다(app.py)."""
         with self._lock:
             unit = self._units.get(apid)
             if unit is None:
@@ -376,21 +417,40 @@ class DispatchSim:
             if unit.phase not in PAUSABLE_PHASES:
                 return False, f"phase_{unit.phase}"
             unit.paused = True
+            unit.pause_reason = reason
             if unit.trip is not None:
                 unit.trip.pause(self._clock())
             return True, "ok"
 
-    def resume(self, apid: str) -> tuple[bool, str]:
-        """[상황 재개](2026-10-03): 멈춘 자리에서 이어 간다. 정지 중 이송 확정됐으면 이때 병원으로 출발한다."""
+    def resume(self, apid: str, reason: str | None = None) -> tuple[bool, str]:
+        """[상황 재개](2026-10-03): 멈춘 자리에서 이어 간다. 정지 중 이송 확정됐으면 이때 병원으로 출발한다.
+        reason을 주면 그 이유로 멈춘 경우만 푼다(통화 멈춤 해제가 운영자의 일시정지를 풀지 않게)."""
         with self._lock:
             unit = self._units.get(apid)
             if unit is None:
                 return False, "unknown_ambulance"
             if not unit.paused:
                 return False, "not_paused"
+            if reason is not None and unit.pause_reason != reason:
+                return False, f"paused_for_{unit.pause_reason}"
             unit.paused = False
+            unit.pause_reason = None
             if unit.trip is not None:
                 unit.trip.resume(self._clock())
+            return True, "ok"
+
+    def fast_forward(self, apid: str) -> tuple[bool, str]:
+        """[빨리감기](2026-10-04): 병원으로 이송 중(2026-10-05부터 현장 출동 중도)일 때 — 남은 이동을 FAST_FORWARD_SEC 안에
+        마친다(정지 중이면 풀고). 기지 복귀는 시연 흐름과 무관해 그대로 둔다."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None:
+                return False, "unknown_ambulance"
+            if unit.phase not in ("transporting", "dispatching") or unit.trip is None:
+                return False, f"phase_{unit.phase}"
+            unit.paused = False
+            unit.pause_reason = None
+            unit.trip.fast_forward(self._clock(), FAST_FORWARD_SEC)
             return True, "ok"
 
     def on_arrival_result(self, apid: str, case_id: str, accepted: bool) -> bool:
@@ -404,6 +464,19 @@ class DispatchSim:
                 unit.dwell_until = self._clock() + HOSPITAL_DWELL_SEC
             else:
                 unit.phase, unit.hospital_id, unit.hospital_gps, unit.dwell_until = "rerouting", None, None, None
+            return True
+
+    def on_transport_withdrawn(self, apid: str, case_id: str) -> bool:
+        """이송 중 수용 철회(2026-10-05): 목적지 병원이 도착 전에 못 받는다고 했다 — 그 자리에 멈춰 재선택 대기
+        (rerouting). 승인한 다른 병원으로 이송 승인하면 지금 위치에서 다시 출발한다(on_confirmed)."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None or unit.phase != "transporting" or unit.case_id != case_id:
+                return False
+            if unit.trip is not None:
+                lat, lng, _ = unit.trip.position(self._clock())
+                unit.gps = GpsPoint(lat=lat, lng=lng)
+            unit.phase, unit.trip, unit.hospital_id, unit.hospital_gps = "rerouting", None, None, None
             return True
 
     def tick(self) -> tuple[list[dict], list[dict]]:

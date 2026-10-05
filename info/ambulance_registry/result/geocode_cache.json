@@ -1,0 +1,4282 @@
+{
+ "address:서울특별시 송파구 양재대로 932": [
+  {
+   "address": {
+    "address_name": "서울 송파구 가락동 600",
+    "b_code": "1171010700",
+    "h_code": "1171063100",
+    "main_address_no": "600",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_h_name": "가락1동",
+    "region_3depth_name": "가락동",
+    "sub_address_no": "",
+    "x": "127.108713599026",
+    "y": "37.4945376921828"
+   },
+   "address_name": "서울 송파구 양재대로 932",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 송파구 양재대로 932",
+    "building_name": "가락동 농수산물도매시장",
+    "main_building_no": "932",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_name": "가락동",
+    "road_name": "양재대로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.108713599026",
+    "y": "37.4945376921828",
+    "zone_no": "05699"
+   },
+   "x": "127.108713599026",
+   "y": "37.4945376921828"
+  }
+ ],
+ "address:서울특별시 강동구 고덕로98길 22": [
+  {
+   "address": {
+    "address_name": "서울 강동구 상일동 산 77-38",
+    "b_code": "1174010300",
+    "h_code": "1174052600",
+    "main_address_no": "77",
+    "mountain_yn": "Y",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_h_name": "상일2동",
+    "region_3depth_name": "상일동",
+    "sub_address_no": "38",
+    "x": "127.179684492469",
+    "y": "37.5573406658835"
+   },
+   "address_name": "서울 강동구 고덕로98길 22",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강동구 고덕로98길 22",
+    "building_name": "강동소방서 강일119안전센터",
+    "main_building_no": "22",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_name": "상일동",
+    "road_name": "고덕로98길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.179684492469",
+    "y": "37.5573406658835",
+    "zone_no": "05286"
+   },
+   "x": "127.179684492469",
+   "y": "37.5573406658835"
+  }
+ ],
+ "address:서울특별시 강남구 논현로 10길 19": [
+  {
+   "address": {
+    "address_name": "서울 강남구 개포동 1197-5",
+    "b_code": "1168010300",
+    "h_code": "1168069000",
+    "main_address_no": "1197",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_h_name": "개포4동",
+    "region_3depth_name": "개포동",
+    "sub_address_no": "5",
+    "x": "127.049895047376",
+    "y": "37.4747004805241"
+   },
+   "address_name": "서울 강남구 논현로10길 19",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강남구 논현로10길 19",
+    "building_name": "개포119안전센터",
+    "main_building_no": "19",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_name": "개포동",
+    "road_name": "논현로10길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.049895047376",
+    "y": "37.4747004805241",
+    "zone_no": "06312"
+   },
+   "x": "127.049895047376",
+   "y": "37.4747004805241"
+  }
+ ],
+ "address:서울특별시 강서구 개화동로19길 8": [
+  {
+   "address": {
+    "address_name": "서울 강서구 개화동 559-15",
+    "b_code": "1150011000",
+    "h_code": "1150064000",
+    "main_address_no": "559",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_h_name": "방화2동",
+    "region_3depth_name": "개화동",
+    "sub_address_no": "15",
+    "x": "126.803146069104",
+    "y": "37.575000173221"
+   },
+   "address_name": "서울 강서구 개화동로19길 8",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강서구 개화동로19길 8",
+    "building_name": "개화119안전센터",
+    "main_building_no": "8",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_name": "개화동",
+    "road_name": "개화동로19길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.803146069104",
+    "y": "37.575000173221",
+    "zone_no": "07504"
+   },
+   "x": "126.803146069104",
+   "y": "37.575000173221"
+  }
+ ],
+ "address:서울특별시 송파구 마천로 329": [
+  {
+   "address": {
+    "address_name": "서울 송파구 마천동 307-11",
+    "b_code": "1171011400",
+    "h_code": "1171054000",
+    "main_address_no": "307",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_h_name": "마천1동",
+    "region_3depth_name": "마천동",
+    "sub_address_no": "11",
+    "x": "127.151864606402",
+    "y": "37.4941888066456"
+   },
+   "address_name": "서울 송파구 마천로 329",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 송파구 마천로 329",
+    "building_name": "거여119안전센터",
+    "main_building_no": "329",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_name": "마천동",
+    "road_name": "마천로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.151864606402",
+    "y": "37.4941888066456",
+    "zone_no": "05759"
+   },
+   "x": "127.151864606402",
+   "y": "37.4941888066456"
+  }
+ ],
+ "address:서울특별시 강동구 양재대로156길 133": [
+  {
+   "address": {
+    "address_name": "서울 강동구 고덕동 691-8",
+    "b_code": "1174010200",
+    "h_code": "1174055000",
+    "main_address_no": "691",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_h_name": "고덕1동",
+    "region_3depth_name": "고덕동",
+    "sub_address_no": "8",
+    "x": "127.151888163832",
+    "y": "37.5571475989546"
+   },
+   "address_name": "서울 강동구 양재대로156길 133",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강동구 양재대로156길 133",
+    "building_name": "고덕119안전센터",
+    "main_building_no": "133",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_name": "고덕동",
+    "road_name": "양재대로156길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.151888163832",
+    "y": "37.5571475989546",
+    "zone_no": "05231"
+   },
+   "x": "127.151888163832",
+   "y": "37.5571475989546"
+  }
+ ],
+ "address:서울특별시 구로구 경인로 408": [
+  {
+   "address": {
+    "address_name": "서울 구로구 고척동 63-12",
+    "b_code": "1153010600",
+    "h_code": "1153072000",
+    "main_address_no": "63",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_h_name": "고척1동",
+    "region_3depth_name": "고척동",
+    "sub_address_no": "12",
+    "x": "126.86521575957",
+    "y": "37.4977928295037"
+   },
+   "address_name": "서울 구로구 경인로 408",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 구로구 경인로 408",
+    "building_name": "구로소방서",
+    "main_building_no": "408",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_name": "고척동",
+    "road_name": "경인로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.86521575957",
+    "y": "37.4977928295037",
+    "zone_no": "08275"
+   },
+   "x": "126.86521575957",
+   "y": "37.4977928295037"
+  }
+ ],
+ "address:서울특별시 구로구 고척로 195": [
+  {
+   "address": {
+    "address_name": "서울 구로구 고척동 165-5",
+    "b_code": "1153010600",
+    "h_code": "1153073000",
+    "main_address_no": "165",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_h_name": "고척2동",
+    "region_3depth_name": "고척동",
+    "sub_address_no": "5",
+    "x": "126.854795960848",
+    "y": "37.5049360844661"
+   },
+   "address_name": "서울 구로구 고척로 195",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 구로구 고척로 195",
+    "building_name": "고척119안전센터",
+    "main_building_no": "195",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_name": "고척동",
+    "road_name": "고척로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.854795960848",
+    "y": "37.5049360844661",
+    "zone_no": "08241"
+   },
+   "x": "126.854795960848",
+   "y": "37.5049360844661"
+  }
+ ],
+ "address:서울특별시 구로구 디지털로34길 56": [
+  {
+   "address": {
+    "address_name": "서울 구로구 구로동 812",
+    "b_code": "1153010200",
+    "h_code": "1153054000",
+    "main_address_no": "812",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_h_name": "구로3동",
+    "region_3depth_name": "구로동",
+    "sub_address_no": "",
+    "x": "126.898432630772",
+    "y": "37.484225084951"
+   },
+   "address_name": "서울 구로구 디지털로34길 56",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 구로구 디지털로34길 56",
+    "building_name": "구로소방서 공단119안전센터",
+    "main_building_no": "56",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_name": "구로동",
+    "road_name": "디지털로34길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.898432630772",
+    "y": "37.484225084951",
+    "zone_no": "08379"
+   },
+   "x": "126.898432630772",
+   "y": "37.484225084951"
+  }
+ ],
+ "address:서울특별시 마포구 만리재옛길 82": [
+  {
+   "address": {
+    "address_name": "서울 마포구 공덕동 29-7",
+    "b_code": "1144010200",
+    "h_code": "1144056500",
+    "main_address_no": "29",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_h_name": "공덕동",
+    "region_3depth_name": "공덕동",
+    "sub_address_no": "7",
+    "x": "126.959767170966",
+    "y": "37.5500487475154"
+   },
+   "address_name": "서울 마포구 만리재옛길 82",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 마포구 만리재옛길 82",
+    "building_name": "마포소방서 공덕119안전센터",
+    "main_building_no": "82",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_name": "공덕동",
+    "road_name": "만리재옛길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.959767170966",
+    "y": "37.5500487475154",
+    "zone_no": "04208"
+   },
+   "x": "126.959767170966",
+   "y": "37.5500487475154"
+  }
+ ],
+ "address:서울특별시 노원구 화랑로 482": [
+  {
+   "address": {
+    "address_name": "서울 노원구 공릉동 656-4",
+    "b_code": "1135010300",
+    "h_code": "1135059500",
+    "main_address_no": "656",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_h_name": "공릉1동",
+    "region_3depth_name": "공릉동",
+    "sub_address_no": "4",
+    "x": "127.080693450592",
+    "y": "37.6190612991145"
+   },
+   "address_name": "서울 노원구 화랑로 482",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 노원구 화랑로 482",
+    "building_name": "공릉119 안전센터",
+    "main_building_no": "482",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_name": "공릉동",
+    "road_name": "화랑로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.080693450592",
+    "y": "37.6190612991145",
+    "zone_no": "01803"
+   },
+   "x": "127.080693450592",
+   "y": "37.6190612991145"
+  }
+ ],
+ "address:서울특별시 관악구 관악로 97": [
+  {
+   "address": {
+    "address_name": "서울 관악구 봉천동 1593-3",
+    "b_code": "1162010100",
+    "h_code": "1162059500",
+    "main_address_no": "1593",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_h_name": "청룡동",
+    "region_3depth_name": "봉천동",
+    "sub_address_no": "3",
+    "x": "126.952685489441",
+    "y": "37.474124805543"
+   },
+   "address_name": "서울 관악구 관악로 97",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 관악구 관악로 97",
+    "building_name": "서울관악소방서",
+    "main_building_no": "97",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_name": "봉천동",
+    "road_name": "관악로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.952685489441",
+    "y": "37.474124805543",
+    "zone_no": "08833"
+   },
+   "x": "126.952685489441",
+   "y": "37.474124805543"
+  }
+ ],
+ "address:서울특별시 구로구 구로동로 175": [
+  {
+   "address": {
+    "address_name": "서울 구로구 구로동 409-60",
+    "b_code": "1153010200",
+    "h_code": "1153053000",
+    "main_address_no": "409",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_h_name": "구로2동",
+    "region_3depth_name": "구로동",
+    "sub_address_no": "60",
+    "x": "126.882548301049",
+    "y": "37.4942274908725"
+   },
+   "address_name": "서울 구로구 구로동로 175",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 구로구 구로동로 175",
+    "building_name": "구로소방서 구로119안전센터",
+    "main_building_no": "175",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_name": "구로동",
+    "road_name": "구로동로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.882548301049",
+    "y": "37.4942274908725",
+    "zone_no": "08282"
+   },
+   "x": "126.882548301049",
+   "y": "37.4942274908725"
+  }
+ ],
+ "address:서울특별시 광진구 광나루로 480": [
+  {
+   "address": {
+    "address_name": "서울 광진구 구의동 253-23",
+    "b_code": "1121510300",
+    "h_code": "1121585000",
+    "main_address_no": "253",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "광진구",
+    "region_3depth_h_name": "구의1동",
+    "region_3depth_name": "구의동",
+    "sub_address_no": "23",
+    "x": "127.082778518406",
+    "y": "37.5448260218652"
+   },
+   "address_name": "서울 광진구 광나루로 480",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 광진구 광나루로 480",
+    "building_name": "광진소방서",
+    "main_building_no": "480",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "광진구",
+    "region_3depth_name": "구의동",
+    "road_name": "광나루로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.082778518406",
+    "y": "37.5448260218652",
+    "zone_no": "05023"
+   },
+   "x": "127.082778518406",
+   "y": "37.5448260218652"
+  }
+ ],
+ "address:서울특별시 금천구 시흥대로 342": [
+  {
+   "address": {
+    "address_name": "서울 금천구 독산동 1054-8",
+    "b_code": "1154510200",
+    "h_code": "1154562000",
+    "main_address_no": "1054",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "금천구",
+    "region_3depth_h_name": "독산2동",
+    "region_3depth_name": "독산동",
+    "sub_address_no": "8",
+    "x": "126.897934083993",
+    "y": "37.4641358331914"
+   },
+   "address_name": "서울 금천구 시흥대로 342",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 금천구 시흥대로 342",
+    "building_name": "",
+    "main_building_no": "342",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "금천구",
+    "region_3depth_name": "독산동",
+    "road_name": "시흥대로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.897934083993",
+    "y": "37.4641358331914",
+    "zone_no": "08616"
+   },
+   "x": "126.897934083993",
+   "y": "37.4641358331914"
+  }
+ ],
+ "address:서울특별시 성동구 난계로 19": [
+  {
+   "address": {
+    "address_name": "서울 성동구 금호동1가 179-3",
+    "b_code": "1120010900",
+    "h_code": "1120059000",
+    "main_address_no": "179",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_h_name": "금호1가동",
+    "region_3depth_name": "금호동1가",
+    "sub_address_no": "3",
+    "x": "127.024208560228",
+    "y": "37.5540068802159"
+   },
+   "address_name": "서울 성동구 난계로 19",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 성동구 난계로 19",
+    "building_name": "금호119안전센터",
+    "main_building_no": "19",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_name": "금호동1가",
+    "road_name": "난계로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.024208560228",
+    "y": "37.5540068802159",
+    "zone_no": "04727"
+   },
+   "x": "127.024208560228",
+   "y": "37.5540068802159"
+  }
+ ],
+ "address:서울특별시 강동구 천중로 215": [
+  {
+   "address": {
+    "address_name": "서울 강동구 길동 344-4",
+    "b_code": "1174010500",
+    "h_code": "1174068500",
+    "main_address_no": "344",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_h_name": "길동",
+    "region_3depth_name": "길동",
+    "sub_address_no": "4",
+    "x": "127.144357712705",
+    "y": "37.5409744935373"
+   },
+   "address_name": "서울 강동구 천중로 215",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강동구 천중로 215",
+    "building_name": "강동소방서 길동119안전센터",
+    "main_building_no": "215",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_name": "길동",
+    "road_name": "천중로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.144357712705",
+    "y": "37.5409744935373",
+    "zone_no": "05304"
+   },
+   "x": "127.144357712705",
+   "y": "37.5409744935373"
+  }
+ ],
+ "address:서울특별시 성북구 정릉로 321": [
+  {
+   "address": {
+    "address_name": "서울 성북구 길음동 1286-13",
+    "b_code": "1129013400",
+    "h_code": "1129066000",
+    "main_address_no": "1286",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성북구",
+    "region_3depth_h_name": "길음1동",
+    "region_3depth_name": "길음동",
+    "sub_address_no": "13",
+    "x": "127.019209084913",
+    "y": "37.6028230300214"
+   },
+   "address_name": "서울 성북구 정릉로 321",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 성북구 정릉로 321",
+    "building_name": "길음119안전센터",
+    "main_building_no": "321",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성북구",
+    "region_3depth_name": "길음동",
+    "road_name": "정릉로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.019209084913",
+    "y": "37.6028230300214",
+    "zone_no": "02721"
+   },
+   "x": "127.019209084913",
+   "y": "37.6028230300214"
+  }
+ ],
+ "address:서울특별시 관악구 난곡로 243": [
+  {
+   "address": {
+    "address_name": "서울 관악구 신림동 757-5",
+    "b_code": "1162010200",
+    "h_code": "1162076500",
+    "main_address_no": "757",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_h_name": "미성동",
+    "region_3depth_name": "신림동",
+    "sub_address_no": "5",
+    "x": "126.916070379965",
+    "y": "37.4756896173156"
+   },
+   "address_name": "서울 관악구 난곡로 243",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 관악구 난곡로 243",
+    "building_name": "난곡119안전센터",
+    "main_building_no": "243",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_name": "신림동",
+    "road_name": "난곡로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.916070379965",
+    "y": "37.4756896173156",
+    "zone_no": "08864"
+   },
+   "x": "126.916070379965",
+   "y": "37.4756896173156"
+  }
+ ],
+ "address:서울특별시 동작구 노량진로 187": [
+  {
+   "address": {
+    "address_name": "서울 동작구 노량진동 153-18",
+    "b_code": "1159010100",
+    "h_code": "1159051000",
+    "main_address_no": "153",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_h_name": "노량진1동",
+    "region_3depth_name": "노량진동",
+    "sub_address_no": "18",
+    "x": "126.946943945314",
+    "y": "37.513669634701"
+   },
+   "address_name": "서울 동작구 노량진로 187",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동작구 노량진로 187",
+    "building_name": "노량진119안전센터",
+    "main_building_no": "187",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_name": "노량진동",
+    "road_name": "노량진로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.946943945314",
+    "y": "37.513669634701",
+    "zone_no": "06902"
+   },
+   "x": "126.946943945314",
+   "y": "37.513669634701"
+  }
+ ],
+ "address:서울특별시 은평구 은평로 245": [
+  {
+   "address": {
+    "address_name": "서울 은평구 녹번동 48-5",
+    "b_code": "1138010200",
+    "h_code": "1138051000",
+    "main_address_no": "48",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_h_name": "녹번동",
+    "region_3depth_name": "녹번동",
+    "sub_address_no": "5",
+    "x": "126.935146145667",
+    "y": "37.6011049837261"
+   },
+   "address_name": "서울 은평구 은평로 245",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 은평구 은평로 245",
+    "building_name": "은평소방서녹번119안전센터",
+    "main_building_no": "245",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_name": "녹번동",
+    "road_name": "은평로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.935146145667",
+    "y": "37.6011049837261",
+    "zone_no": "03382"
+   },
+   "x": "126.935146145667",
+   "y": "37.6011049837261"
+  }
+ ],
+ "address:서울특별시 광진구 능동로 242": [
+  {
+   "address": {
+    "address_name": "서울 광진구 능동 316-4",
+    "b_code": "1121510200",
+    "h_code": "1121578000",
+    "main_address_no": "316",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "광진구",
+    "region_3depth_h_name": "능동",
+    "region_3depth_name": "능동",
+    "sub_address_no": "4",
+    "x": "127.077014317342",
+    "y": "37.5516748979298"
+   },
+   "address_name": "서울 광진구 능동로 242",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 광진구 능동로 242",
+    "building_name": "능동 119안전센터",
+    "main_building_no": "242",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "광진구",
+    "region_3depth_name": "능동",
+    "road_name": "능동로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.077014317342",
+    "y": "37.5516748979298",
+    "zone_no": "04991"
+   },
+   "x": "127.077014317342",
+   "y": "37.5516748979298"
+  }
+ ],
+ "address:서울특별시 영등포구 양평로 70-1": [
+  {
+   "address": {
+    "address_name": "서울 영등포구 당산동6가 339-7",
+    "b_code": "1156011600",
+    "h_code": "1156056000",
+    "main_address_no": "339",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_h_name": "당산2동",
+    "region_3depth_name": "당산동6가",
+    "sub_address_no": "7",
+    "x": "126.899192700249",
+    "y": "37.5354973829456"
+   },
+   "address_name": "서울 영등포구 양평로 70-1",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 영등포구 양평로 70-1",
+    "building_name": "당산119안전센터",
+    "main_building_no": "70",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_name": "당산동6가",
+    "road_name": "양평로",
+    "sub_building_no": "1",
+    "underground_yn": "N",
+    "x": "126.899192700249",
+    "y": "37.5354973829456",
+    "zone_no": "07222"
+   },
+   "x": "126.899192700249",
+   "y": "37.5354973829456"
+  }
+ ],
+ "address:서울특별시 영등포구 도림로 212": [
+  {
+   "address": {
+    "address_name": "서울 영등포구 신길동 440-61",
+    "b_code": "1156013200",
+    "h_code": "1156067000",
+    "main_address_no": "440",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_h_name": "신길5동",
+    "region_3depth_name": "신길동",
+    "sub_address_no": "61",
+    "x": "126.904060701993",
+    "y": "37.4973134949082"
+   },
+   "address_name": "서울 영등포구 도림로 212",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 영등포구 도림로 212",
+    "building_name": "대림119안전센터",
+    "main_building_no": "212",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_name": "신길동",
+    "road_name": "도림로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.904060701993",
+    "y": "37.4973134949082",
+    "zone_no": "07423"
+   },
+   "x": "126.904060701993",
+   "y": "37.4973134949082"
+  }
+ ],
+ "address:서울특별시 도봉구 도봉산길 40": [
+  {
+   "address": {
+    "address_name": "서울 도봉구 도봉동 282-345",
+    "b_code": "1132010800",
+    "h_code": "1132052100",
+    "main_address_no": "282",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_h_name": "도봉1동",
+    "region_3depth_name": "도봉동",
+    "sub_address_no": "345",
+    "x": "127.040955512838",
+    "y": "37.6875947514332"
+   },
+   "address_name": "서울 도봉구 도봉산길 40",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 도봉구 도봉산길 40",
+    "building_name": "도봉119안전센터",
+    "main_building_no": "40",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_name": "도봉동",
+    "road_name": "도봉산길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.040955512838",
+    "y": "37.6875947514332",
+    "zone_no": "01300"
+   },
+   "x": "127.040955512838",
+   "y": "37.6875947514332"
+  }
+ ],
+ "address:서울특별시 성북구 보문로 192": [
+  {
+   "address": {
+    "address_name": "서울 성북구 삼선동4가 349-1",
+    "b_code": "1129011400",
+    "h_code": "1129055500",
+    "main_address_no": "349",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성북구",
+    "region_3depth_h_name": "삼선동",
+    "region_3depth_name": "삼선동4가",
+    "sub_address_no": "1",
+    "x": "127.014439292796",
+    "y": "37.590987927928"
+   },
+   "address_name": "서울 성북구 보문로 192",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 성북구 보문로 192",
+    "building_name": "돈암119 안전센터",
+    "main_building_no": "192",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성북구",
+    "region_3depth_name": "삼선동4가",
+    "road_name": "보문로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.014439292796",
+    "y": "37.590987927928",
+    "zone_no": "02847"
+   },
+   "x": "127.014439292796",
+   "y": "37.590987927928"
+  }
+ ],
+ "address:서울특별시 동작구 여의대방로16길 55": [
+  {
+   "address": {
+    "address_name": "서울 동작구 신대방동 460-19",
+    "b_code": "1159010900",
+    "h_code": "1159068000",
+    "main_address_no": "460",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_h_name": "신대방2동",
+    "region_3depth_name": "신대방동",
+    "sub_address_no": "19",
+    "x": "126.91771856513",
+    "y": "37.4946721349965"
+   },
+   "address_name": "서울 동작구 여의대방로16길 55",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동작구 여의대방로16길 55",
+    "building_name": "동작소방서",
+    "main_building_no": "55",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_name": "신대방동",
+    "road_name": "여의대방로16길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.91771856513",
+    "y": "37.4946721349965",
+    "zone_no": "07062"
+   },
+   "x": "126.91771856513",
+   "y": "37.4946721349965"
+  }
+ ],
+ "address:서울특별시 강서구 양천로 550": [
+  {
+   "address": {
+    "address_name": "서울 강서구 등촌동 630-2",
+    "b_code": "1150010200",
+    "h_code": "1150052000",
+    "main_address_no": "630",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_h_name": "등촌1동",
+    "region_3depth_name": "등촌동",
+    "sub_address_no": "2",
+    "x": "126.860047002918",
+    "y": "37.5582460680719"
+   },
+   "address_name": "서울 강서구 양천로 550",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강서구 양천로 550",
+    "building_name": "강서소방서",
+    "main_building_no": "550",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_name": "등촌동",
+    "road_name": "양천로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.860047002918",
+    "y": "37.5582460680719",
+    "zone_no": "07550"
+   },
+   "x": "126.860047002918",
+   "y": "37.5582460680719"
+  }
+ ],
+ "address:서울특별시 강서구 마곡서로 9": [
+  {
+   "address": {
+    "address_name": "서울 강서구 마곡동 749-8",
+    "b_code": "1150010500",
+    "h_code": "1150062000",
+    "main_address_no": "749",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_h_name": "공항동",
+    "region_3depth_name": "마곡동",
+    "sub_address_no": "8",
+    "x": "126.820718949632",
+    "y": "37.5559362655126"
+   },
+   "address_name": "서울 강서구 마곡서로 9",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강서구 마곡서로 9",
+    "building_name": "강서소방서 마곡119안전센터",
+    "main_building_no": "9",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_name": "마곡동",
+    "road_name": "마곡서로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.820718949632",
+    "y": "37.5559362655126",
+    "zone_no": "07810"
+   },
+   "x": "126.820718949632",
+   "y": "37.5559362655126"
+  }
+ ],
+ "address:서울특별시 송파구 오금로51길 56": [
+  {
+   "address": {
+    "address_name": "서울 송파구 마천동 29-1",
+    "b_code": "1171011400",
+    "h_code": "1171055000",
+    "main_address_no": "29",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_h_name": "마천2동",
+    "region_3depth_name": "마천동",
+    "sub_address_no": "1",
+    "x": "127.142591860451",
+    "y": "37.4998334512085"
+   },
+   "address_name": "서울 송파구 오금로51길 56",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 송파구 오금로51길 56",
+    "building_name": "송파소방서",
+    "main_building_no": "56",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_name": "마천동",
+    "road_name": "오금로51길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.142591860451",
+    "y": "37.4998334512085",
+    "zone_no": "05737"
+   },
+   "x": "127.142591860451",
+   "y": "37.4998334512085"
+  }
+ ],
+ "address:서울특별시 중랑구 용마산로 524": [
+  {
+   "address": {
+    "address_name": "서울 중랑구 망우동 364-20",
+    "b_code": "1126010500",
+    "h_code": "1126065500",
+    "main_address_no": "364",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_h_name": "망우본동",
+    "region_3depth_name": "망우동",
+    "sub_address_no": "20",
+    "x": "127.100571864346",
+    "y": "37.5977258343186"
+   },
+   "address_name": "서울 중랑구 용마산로 524",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중랑구 용마산로 524",
+    "building_name": "망우119안전센터",
+    "main_building_no": "524",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_name": "망우동",
+    "road_name": "용마산로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.100571864346",
+    "y": "37.5977258343186",
+    "zone_no": "02176"
+   },
+   "x": "127.100571864346",
+   "y": "37.5977258343186"
+  }
+ ],
+ "address:서울특별시 중랑구 동일로 475": [
+  {
+   "address": {
+    "address_name": "서울 중랑구 면목동 727-250",
+    "b_code": "1126010100",
+    "h_code": "1126054000",
+    "main_address_no": "727",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_h_name": "면목4동",
+    "region_3depth_name": "면목동",
+    "sub_address_no": "250",
+    "x": "127.079878532438",
+    "y": "37.5728233444034"
+   },
+   "address_name": "서울 중랑구 동일로 475",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중랑구 동일로 475",
+    "building_name": "중랑소방서 면목119안전센터",
+    "main_building_no": "475",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_name": "면목동",
+    "road_name": "동일로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.079878532438",
+    "y": "37.5728233444034",
+    "zone_no": "02248"
+   },
+   "x": "127.079878532438",
+   "y": "37.5728233444034"
+  }
+ ],
+ "address:서울특별시 양천구 안양천로 1139": [
+  {
+   "address": {
+    "address_name": "서울 양천구 목동 900-11",
+    "b_code": "1147010200",
+    "h_code": "1147055000",
+    "main_address_no": "900",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_h_name": "목5동",
+    "region_3depth_name": "목동",
+    "sub_address_no": "11",
+    "x": "126.883552801526",
+    "y": "37.5427783009136"
+   },
+   "address_name": "서울 양천구 안양천로 1139",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 양천구 안양천로 1139",
+    "building_name": "양천소방서 목동119안전센터",
+    "main_building_no": "1139",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_name": "목동",
+    "road_name": "안양천로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.883552801526",
+    "y": "37.5427783009136",
+    "zone_no": "07978"
+   },
+   "x": "126.883552801526",
+   "y": "37.5427783009136"
+  }
+ ],
+ "address:서울특별시 중구 퇴계로 394": [
+  {
+   "address": {
+    "address_name": "서울 중구 무학동 43",
+    "b_code": "1114016400",
+    "h_code": "1114061500",
+    "main_address_no": "43",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_h_name": "신당동",
+    "region_3depth_name": "무학동",
+    "sub_address_no": "",
+    "x": "127.015378573704",
+    "y": "37.5648664558126"
+   },
+   "address_name": "서울 중구 퇴계로 394",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중구 퇴계로 394",
+    "building_name": "중부소방서",
+    "main_building_no": "394",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_name": "무학동",
+    "road_name": "퇴계로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.015378573704",
+    "y": "37.5648664558126",
+    "zone_no": "04611"
+   },
+   "x": "127.015378573704",
+   "y": "37.5648664558126"
+  }
+ ],
+ "address:서울특별시 강북구 도봉로 125": [
+  {
+   "address": {
+    "address_name": "서울 강북구 미아동 327-2",
+    "b_code": "1130510100",
+    "h_code": "1130555500",
+    "main_address_no": "327",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_h_name": "송천동",
+    "region_3depth_name": "미아동",
+    "sub_address_no": "2",
+    "x": "127.02829468516",
+    "y": "37.6200218033242"
+   },
+   "address_name": "서울 강북구 도봉로 125",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강북구 도봉로 125",
+    "building_name": "강북소방서 미아119안전센터",
+    "main_building_no": "125",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_name": "미아동",
+    "road_name": "도봉로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.02829468516",
+    "y": "37.6200218033242",
+    "zone_no": "01177"
+   },
+   "x": "127.02829468516",
+   "y": "37.6200218033242"
+  }
+ ],
+ "address:서울특별시 서초구 사평대로 67": [
+  {
+   "address": {
+    "address_name": "서울 서초구 반포동 114-2",
+    "b_code": "1165010700",
+    "h_code": "1165057000",
+    "main_address_no": "114",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_h_name": "반포2동",
+    "region_3depth_name": "반포동",
+    "sub_address_no": "2",
+    "x": "126.991717915502",
+    "y": "37.4986689821794"
+   },
+   "address_name": "서울 서초구 사평대로 67",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서초구 사평대로 67",
+    "building_name": "서초소방서",
+    "main_building_no": "67",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_name": "반포동",
+    "road_name": "사평대로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.991717915502",
+    "y": "37.4986689821794",
+    "zone_no": "06550"
+   },
+   "x": "126.991717915502",
+   "y": "37.4986689821794"
+  }
+ ],
+ "address:서울특별시 강서구 강서로 329": [
+  {
+   "address": {
+    "address_name": "서울 강서구 내발산동 667-1",
+    "b_code": "1150010600",
+    "h_code": "1150061100",
+    "main_address_no": "667",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_h_name": "발산1동",
+    "region_3depth_name": "내발산동",
+    "sub_address_no": "1",
+    "x": "126.836860953088",
+    "y": "37.555261129542"
+   },
+   "address_name": "서울 강서구 강서로 329",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강서구 강서로 329",
+    "building_name": "발산119안전센터",
+    "main_building_no": "329",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_name": "내발산동",
+    "road_name": "강서로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.836860953088",
+    "y": "37.555261129542",
+    "zone_no": "07632"
+   },
+   "x": "126.836860953088",
+   "y": "37.555261129542"
+  }
+ ],
+ "address:서울특별시 서초구 남부순환로 2155": [
+  {
+   "address": {
+    "address_name": "서울 서초구 방배동 481-9",
+    "b_code": "1165010100",
+    "h_code": "1165062000",
+    "main_address_no": "481",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_h_name": "방배3동",
+    "region_3depth_name": "방배동",
+    "sub_address_no": "9",
+    "x": "126.98820996058",
+    "y": "37.4755003421939"
+   },
+   "address_name": "서울 서초구 남부순환로 2155",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서초구 남부순환로 2155",
+    "building_name": "방배119안전센터",
+    "main_building_no": "2155",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_name": "방배동",
+    "road_name": "남부순환로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.98820996058",
+    "y": "37.4755003421939",
+    "zone_no": "06699"
+   },
+   "x": "126.98820996058",
+   "y": "37.4755003421939"
+  }
+ ],
+ "address:서울특별시 송파구 강동대로 286": [
+  {
+   "address": {
+    "address_name": "서울 송파구 방이동 89-3",
+    "b_code": "1171011100",
+    "h_code": "1171056600",
+    "main_address_no": "89",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_h_name": "오륜동",
+    "region_3depth_name": "방이동",
+    "sub_address_no": "3",
+    "x": "127.136571935167",
+    "y": "37.519784557048"
+   },
+   "address_name": "서울 송파구 강동대로 286",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 송파구 강동대로 286",
+    "building_name": "송파소방서 방이119안전센터",
+    "main_building_no": "286",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_name": "방이동",
+    "road_name": "강동대로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.136571935167",
+    "y": "37.519784557048",
+    "zone_no": "05649"
+   },
+   "x": "127.136571935167",
+   "y": "37.519784557048"
+  }
+ ],
+ "address:서울특별시 도봉구 도봉로 666": [
+  {
+   "address": {
+    "address_name": "서울 도봉구 방학동 708",
+    "b_code": "1132010600",
+    "h_code": "1132069000",
+    "main_address_no": "708",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_h_name": "방학1동",
+    "region_3depth_name": "방학동",
+    "sub_address_no": "",
+    "x": "127.043019014157",
+    "y": "37.6640064725024"
+   },
+   "address_name": "서울 도봉구 도봉로 666",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 도봉구 도봉로 666",
+    "building_name": "도봉소방서",
+    "main_building_no": "666",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_name": "방학동",
+    "road_name": "도봉로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.043019014157",
+    "y": "37.6640064725024",
+    "zone_no": "01334"
+   },
+   "x": "127.043019014157",
+   "y": "37.6640064725024"
+  }
+ ],
+ "address:서울특별시 강서구 금낭화로26길 10": [
+  {
+   "address": {
+    "address_name": "서울 강서구 방화동 821",
+    "b_code": "1150010900",
+    "h_code": "1150064100",
+    "main_address_no": "821",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_h_name": "방화3동",
+    "region_3depth_name": "방화동",
+    "sub_address_no": "",
+    "x": "126.814281581572",
+    "y": "37.5797935701872"
+   },
+   "address_name": "서울 강서구 금낭화로26길 10",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강서구 금낭화로26길 10",
+    "building_name": "방화119안전센터",
+    "main_building_no": "10",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_name": "방화동",
+    "road_name": "금낭화로26길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.814281581572",
+    "y": "37.5797935701872",
+    "zone_no": "07511"
+   },
+   "x": "126.814281581572",
+   "y": "37.5797935701872"
+  }
+ ],
+ "address:서울특별시 동작구 사당로 63": [
+  {
+   "address": {
+    "address_name": "서울 동작구 상도동 106",
+    "b_code": "1159010200",
+    "h_code": "1159053000",
+    "main_address_no": "106",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_h_name": "상도1동",
+    "region_3depth_name": "상도동",
+    "sub_address_no": "",
+    "x": "126.961590416037",
+    "y": "37.4948022151833"
+   },
+   "address_name": "서울 동작구 사당로 63",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동작구 사당로 63",
+    "building_name": "백운119안전센터",
+    "main_building_no": "63",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_name": "상도동",
+    "road_name": "사당로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.961590416037",
+    "y": "37.4948022151833",
+    "zone_no": "06987"
+   },
+   "x": "126.961590416037",
+   "y": "37.4948022151833"
+  }
+ ],
+ "address:서울특별시 강북구 한천로 911": [
+  {
+   "address": {
+    "address_name": "서울 강북구 번동 365-1",
+    "b_code": "1130510200",
+    "h_code": "1130560300",
+    "main_address_no": "365",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_h_name": "번2동",
+    "region_3depth_name": "번동",
+    "sub_address_no": "1",
+    "x": "127.038180860463",
+    "y": "37.6330513410328"
+   },
+   "address_name": "서울 강북구 한천로 911",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강북구 한천로 911",
+    "building_name": "강북소방서",
+    "main_building_no": "911",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_name": "번동",
+    "road_name": "한천로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.038180860463",
+    "y": "37.6330513410328",
+    "zone_no": "01137"
+   },
+   "x": "127.038180860463",
+   "y": "37.6330513410328"
+  }
+ ],
+ "address:서울특별시 관악구 은천로 54": [
+  {
+   "address": {
+    "address_name": "서울 관악구 봉천동 936-1",
+    "b_code": "1162010100",
+    "h_code": "1162060500",
+    "main_address_no": "936",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_h_name": "은천동",
+    "region_3depth_name": "봉천동",
+    "sub_address_no": "1",
+    "x": "126.941113960309",
+    "y": "37.4859489532925"
+   },
+   "address_name": "서울 관악구 은천로 54",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 관악구 은천로 54",
+    "building_name": "봉천119안전센터",
+    "main_building_no": "54",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_name": "봉천동",
+    "road_name": "은천로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.941113960309",
+    "y": "37.4859489532925",
+    "zone_no": "08750"
+   },
+   "x": "126.941113960309",
+   "y": "37.4859489532925"
+  }
+ ],
+ "address:서울특별시 서대문구 증가로 242": [
+  {
+   "address": {
+    "address_name": "서울 서대문구 북가좌동 333-9",
+    "b_code": "1141011900",
+    "h_code": "1141072000",
+    "main_address_no": "333",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_h_name": "북가좌2동",
+    "region_3depth_name": "북가좌동",
+    "sub_address_no": "9",
+    "x": "126.913003680191",
+    "y": "37.5828643962709"
+   },
+   "address_name": "서울 서대문구 증가로 242",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서대문구 증가로 242",
+    "building_name": "북가좌119안전센터",
+    "main_building_no": "242",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_name": "북가좌동",
+    "road_name": "증가로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.913003680191",
+    "y": "37.5828643962709",
+    "zone_no": "03677"
+   },
+   "x": "126.913003680191",
+   "y": "37.5828643962709"
+  }
+ ],
+ "address:서울특별시 서대문구 북아현로 37": [
+  {
+   "address": {
+    "address_name": "서울 서대문구 북아현동 1016-1",
+    "b_code": "1141011000",
+    "h_code": "1141055500",
+    "main_address_no": "1016",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_h_name": "북아현동",
+    "region_3depth_name": "북아현동",
+    "sub_address_no": "1",
+    "x": "126.955739118108",
+    "y": "37.5606596163451"
+   },
+   "address_name": "서울 서대문구 북아현로 37",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서대문구 북아현로 37",
+    "building_name": "북아현119안전센터",
+    "main_building_no": "37",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_name": "북아현동",
+    "road_name": "북아현로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.955739118108",
+    "y": "37.5606596163451",
+    "zone_no": "03771"
+   },
+   "x": "126.955739118108",
+   "y": "37.5606596163451"
+  }
+ ],
+ "address:서울특별시 강북구 솔샘로 208": [
+  {
+   "address": {
+    "address_name": "서울 강북구 미아동 1353-6",
+    "b_code": "1130510100",
+    "h_code": "1130557500",
+    "main_address_no": "1353",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_h_name": "삼각산동",
+    "region_3depth_name": "미아동",
+    "sub_address_no": "6",
+    "x": "127.015503392069",
+    "y": "37.6198625399321"
+   },
+   "address_name": "서울 강북구 솔샘로 208",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강북구 솔샘로 208",
+    "building_name": "강북소방서 삼각산119안전센터",
+    "main_building_no": "208",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_name": "미아동",
+    "road_name": "솔샘로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.015503392069",
+    "y": "37.6198625399321",
+    "zone_no": "01193"
+   },
+   "x": "127.015503392069",
+   "y": "37.6198625399321"
+  }
+ ],
+ "address:서울특별시 강남구 테헤란로 629": [
+  {
+   "address": {
+    "address_name": "서울 강남구 삼성동 171-3",
+    "b_code": "1168010500",
+    "h_code": "1168058000",
+    "main_address_no": "171",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_h_name": "삼성1동",
+    "region_3depth_name": "삼성동",
+    "sub_address_no": "3",
+    "x": "127.066830196714",
+    "y": "37.5102791937918"
+   },
+   "address_name": "서울 강남구 테헤란로 629",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강남구 테헤란로 629",
+    "building_name": "강남소방서",
+    "main_building_no": "629",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_name": "삼성동",
+    "road_name": "테헤란로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.066830196714",
+    "y": "37.5102791937918",
+    "zone_no": "06171"
+   },
+   "x": "127.066830196714",
+   "y": "37.5102791937918"
+  }
+ ],
+ "address:서울특별시 노원구 노원로26길 111": [
+  {
+   "address": {
+    "address_name": "서울 노원구 상계동 197-9",
+    "b_code": "1135010500",
+    "h_code": "1135064000",
+    "main_address_no": "197",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_h_name": "상계2동",
+    "region_3depth_name": "상계동",
+    "sub_address_no": "9",
+    "x": "127.0716247327",
+    "y": "37.6550522215901"
+   },
+   "address_name": "서울 노원구 노원로26길 111",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 노원구 노원로26길 111",
+    "building_name": "상계119안전센터",
+    "main_building_no": "111",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_name": "상계동",
+    "road_name": "노원로26길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.0716247327",
+    "y": "37.6550522215901",
+    "zone_no": "01702"
+   },
+   "x": "127.0716247327",
+   "y": "37.6550522215901"
+  }
+ ],
+ "address:서울특별시 동작구 국사봉1길 17": [
+  {
+   "address": {
+    "address_name": "서울 동작구 상도동 324-21",
+    "b_code": "1159010200",
+    "h_code": "1159055000",
+    "main_address_no": "324",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_h_name": "상도3동",
+    "region_3depth_name": "상도동",
+    "sub_address_no": "21",
+    "x": "126.929474600621",
+    "y": "37.4990401585505"
+   },
+   "address_name": "서울 동작구 국사봉1길 17",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동작구 국사봉1길 17",
+    "building_name": "상도119안전센터",
+    "main_building_no": "17",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동작구",
+    "region_3depth_name": "상도동",
+    "road_name": "국사봉1길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.929474600621",
+    "y": "37.4990401585505",
+    "zone_no": "07041"
+   },
+   "x": "126.929474600621",
+   "y": "37.4990401585505"
+  }
+ ],
+ "address:서울특별시 마포구 월드컵북로 42길 34": [],
+ "keyword:서울 상암119안전센터": [
+  {
+   "address_name": "서울 마포구 상암동 1677",
+   "category_group_code": "PO3",
+   "category_group_name": "공공기관",
+   "category_name": "사회,공공기관 > 행정기관 > 소방서 > 119안전센터",
+   "distance": "",
+   "id": "1382131562",
+   "phone": "",
+   "place_name": "상암119안전센터",
+   "place_url": "http://place.map.kakao.com/1382131562",
+   "road_address_name": "서울 마포구 월드컵로42길 34",
+   "x": "126.881219692378",
+   "y": "37.5799118886997"
+  }
+ ],
+ "address:서울특별시 마포구 양화로 60": [
+  {
+   "address": {
+    "address_name": "서울 마포구 서교동 394-42",
+    "b_code": "1144012000",
+    "h_code": "1144066000",
+    "main_address_no": "394",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_h_name": "서교동",
+    "region_3depth_name": "서교동",
+    "sub_address_no": "42",
+    "x": "126.915543990283",
+    "y": "37.5502847053114"
+   },
+   "address_name": "서울 마포구 양화로 60",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 마포구 양화로 60",
+    "building_name": "마포소방서 서교119안전센터",
+    "main_building_no": "60",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_name": "서교동",
+    "road_name": "양화로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.915543990283",
+    "y": "37.5502847053114",
+    "zone_no": "04045"
+   },
+   "x": "126.915543990283",
+   "y": "37.5502847053114"
+  }
+ ],
+ "address:서울특별시 용산구 서빙고로67길 7": [
+  {
+   "address": {
+    "address_name": "서울 용산구 서빙고동 122-6",
+    "b_code": "1117013300",
+    "h_code": "1117069000",
+    "main_address_no": "122",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_h_name": "서빙고동",
+    "region_3depth_name": "서빙고동",
+    "sub_address_no": "6",
+    "x": "126.995010003972",
+    "y": "37.5208326196955"
+   },
+   "address_name": "서울 용산구 서빙고로67길 7",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 용산구 서빙고로67길 7",
+    "building_name": "서빙고119안전센터",
+    "main_building_no": "7",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_name": "서빙고동",
+    "road_name": "서빙고로67길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.995010003972",
+    "y": "37.5208326196955",
+    "zone_no": "04398"
+   },
+   "x": "126.995010003972",
+   "y": "37.5208326196955"
+  }
+ ],
+ "address:서울특별시 서초구 효령로 400": [
+  {
+   "address": {
+    "address_name": "서울 서초구 서초동 1342-2",
+    "b_code": "1165010800",
+    "h_code": "1165052000",
+    "main_address_no": "1342",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_h_name": "서초2동",
+    "region_3depth_name": "서초동",
+    "sub_address_no": "2",
+    "x": "127.027597379495",
+    "y": "37.4880317322992"
+   },
+   "address_name": "서울 서초구 효령로 400",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서초구 효령로 400",
+    "building_name": "서초119안전센터",
+    "main_building_no": "400",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_name": "서초동",
+    "road_name": "효령로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.027597379495",
+    "y": "37.4880317322992",
+    "zone_no": "06727"
+   },
+   "x": "127.027597379495",
+   "y": "37.4880317322992"
+  }
+ ],
+ "address:서울특별시 강동구 성내로 39": [
+  {
+   "address": {
+    "address_name": "서울 강동구 성내동 541",
+    "b_code": "1174010800",
+    "h_code": "1174064000",
+    "main_address_no": "541",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_h_name": "성내1동",
+    "region_3depth_name": "성내동",
+    "sub_address_no": "",
+    "x": "127.125372107356",
+    "y": "37.5294578780874"
+   },
+   "address_name": "서울 강동구 성내로 39",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강동구 성내로 39",
+    "building_name": "강동소방서",
+    "main_building_no": "39",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_name": "성내동",
+    "road_name": "성내로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.125372107356",
+    "y": "37.5294578780874",
+    "zone_no": "05397"
+   },
+   "x": "127.125372107356",
+   "y": "37.5294578780874"
+  }
+ ],
+ "address:서울특별시 마포구 월드컵북로 240": [
+  {
+   "address": {
+    "address_name": "서울 마포구 성산동 448",
+    "b_code": "1144012500",
+    "h_code": "1144073000",
+    "main_address_no": "448",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_h_name": "성산2동",
+    "region_3depth_name": "성산동",
+    "sub_address_no": "",
+    "x": "126.90305825047",
+    "y": "37.5706093453431"
+   },
+   "address_name": "서울 마포구 월드컵북로 240",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 마포구 월드컵북로 240",
+    "building_name": "마포소방서 성산119안전센터",
+    "main_building_no": "240",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_name": "성산동",
+    "road_name": "월드컵북로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.90305825047",
+    "y": "37.5706093453431",
+    "zone_no": "03935"
+   },
+   "x": "126.90305825047",
+   "y": "37.5706093453431"
+  }
+ ],
+ "address:서울특별시 성동구 뚝섬로 452": [
+  {
+   "address": {
+    "address_name": "서울 성동구 성수동2가 236-59",
+    "b_code": "1120011500",
+    "h_code": "1120067000",
+    "main_address_no": "236",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_h_name": "성수2가1동",
+    "region_3depth_name": "성수동2가",
+    "sub_address_no": "59",
+    "x": "127.060654486737",
+    "y": "37.537176455916"
+   },
+   "address_name": "서울 성동구 뚝섬로 452",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 성동구 뚝섬로 452",
+    "building_name": "성수119안전센터",
+    "main_building_no": "452",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_name": "성수동2가",
+    "road_name": "뚝섬로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.060654486737",
+    "y": "37.537176455916",
+    "zone_no": "04777"
+   },
+   "x": "127.060654486737",
+   "y": "37.537176455916"
+  }
+ ],
+ "address:서울특별시 강남구 밤고개로 268": [
+  {
+   "address": {
+    "address_name": "서울 강남구 율현동 404",
+    "b_code": "1168011300",
+    "h_code": "1168070000",
+    "main_address_no": "404",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_h_name": "세곡동",
+    "region_3depth_name": "율현동",
+    "sub_address_no": "",
+    "x": "127.107231662366",
+    "y": "37.4704038248928"
+   },
+   "address_name": "서울 강남구 밤고개로 268",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강남구 밤고개로 268",
+    "building_name": "강남소방서 세곡119안전센터",
+    "main_building_no": "268",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_name": "율현동",
+    "road_name": "밤고개로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.107231662366",
+    "y": "37.4704038248928",
+    "zone_no": "06377"
+   },
+   "x": "127.107231662366",
+   "y": "37.4704038248928"
+  }
+ ],
+ "address:서울특별시 종로구 율곡로 78": [
+  {
+   "address": {
+    "address_name": "서울 종로구 운니동 114-2",
+    "b_code": "1111013200",
+    "h_code": "1111061500",
+    "main_address_no": "114",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_h_name": "종로1.2.3.4가동",
+    "region_3depth_name": "운니동",
+    "sub_address_no": "2",
+    "x": "126.987649258831",
+    "y": "37.5768173425423"
+   },
+   "address_name": "서울 종로구 율곡로 78",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 종로구 율곡로 78",
+    "building_name": "종로소방서 임시청사",
+    "main_building_no": "78",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_name": "운니동",
+    "road_name": "율곡로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.987649258831",
+    "y": "37.5768173425423",
+    "zone_no": "03131"
+   },
+   "x": "126.987649258831",
+   "y": "37.5768173425423"
+  }
+ ],
+ "address:서울특별시 구로구 오리로 1285": [
+  {
+   "address": {
+    "address_name": "서울 구로구 궁동 285",
+    "b_code": "1153010900",
+    "h_code": "1153079000",
+    "main_address_no": "285",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_h_name": "수궁동",
+    "region_3depth_name": "궁동",
+    "sub_address_no": "",
+    "x": "126.82954314226",
+    "y": "37.4962644992294"
+   },
+   "address_name": "서울 구로구 오리로 1285",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 구로구 오리로 1285",
+    "building_name": "구로소방서 수궁119안전센터",
+    "main_building_no": "1285",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_name": "궁동",
+    "road_name": "오리로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.82954314226",
+    "y": "37.4962644992294",
+    "zone_no": "08257"
+   },
+   "x": "126.82954314226",
+   "y": "37.4962644992294"
+  }
+ ],
+ "address:서울특별시 노원구 동일로 1694": [
+  {
+   "address": {
+    "address_name": "서울 노원구 상계동 1267-1",
+    "b_code": "1135010500",
+    "h_code": "1135063000",
+    "main_address_no": "1267",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_h_name": "상계1동",
+    "region_3depth_name": "상계동",
+    "sub_address_no": "1",
+    "x": "127.055776663279",
+    "y": "37.6797401642825"
+   },
+   "address_name": "서울 노원구 동일로 1694",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 노원구 동일로 1694",
+    "building_name": "수락119안전센터",
+    "main_building_no": "1694",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_name": "상계동",
+    "road_name": "동일로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.055776663279",
+    "y": "37.6797401642825",
+    "zone_no": "01624"
+   },
+   "x": "127.055776663279",
+   "y": "37.6797401642825"
+  }
+ ],
+ "address:서울특별시 은평구 수색로 320": [
+  {
+   "address": {
+    "address_name": "서울 은평구 수색동 417-1",
+    "b_code": "1138010100",
+    "h_code": "1138065000",
+    "main_address_no": "417",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_h_name": "수색동",
+    "region_3depth_name": "수색동",
+    "sub_address_no": "1",
+    "x": "126.889905679045",
+    "y": "37.5852677029786"
+   },
+   "address_name": "서울 은평구 수색로 320",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 은평구 수색로 320",
+    "building_name": "수색119안전센터",
+    "main_building_no": "320",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_name": "수색동",
+    "road_name": "수색로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.889905679045",
+    "y": "37.5852677029786",
+    "zone_no": "03507"
+   },
+   "x": "126.889905679045",
+   "y": "37.5852677029786"
+  }
+ ],
+ "address:서울특별시 강남구 광평로31길 6": [
+  {
+   "address": {
+    "address_name": "서울 강남구 수서동 741-1",
+    "b_code": "1168011500",
+    "h_code": "1168072000",
+    "main_address_no": "741",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_h_name": "일원본동",
+    "region_3depth_name": "수서동",
+    "sub_address_no": "1",
+    "x": "127.092841706314",
+    "y": "37.4849268509466"
+   },
+   "address_name": "서울 강남구 광평로31길 6",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강남구 광평로31길 6",
+    "building_name": "수서119안전센터",
+    "main_building_no": "6",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_name": "수서동",
+    "road_name": "광평로31길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.092841706314",
+    "y": "37.4849268509466",
+    "zone_no": "06353"
+   },
+   "x": "127.092841706314",
+   "y": "37.4849268509466"
+  }
+ ],
+ "address:서울특별시 종로구 숭인동길 63": [
+  {
+   "address": {
+    "address_name": "서울 종로구 숭인동 688",
+    "b_code": "1111017500",
+    "h_code": "1111071000",
+    "main_address_no": "688",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_h_name": "숭인2동",
+    "region_3depth_name": "숭인동",
+    "sub_address_no": "",
+    "x": "127.021706560708",
+    "y": "37.5777636587545"
+   },
+   "address_name": "서울 종로구 숭인동길 63",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 종로구 숭인동길 63",
+    "building_name": "숭인119안전센터",
+    "main_building_no": "63",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_name": "숭인동",
+    "road_name": "숭인동길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.021706560708",
+    "y": "37.5777636587545",
+    "zone_no": "03110"
+   },
+   "x": "127.021706560708",
+   "y": "37.5777636587545"
+  }
+ ],
+ "address:서울특별시 금천구 시흥대로 45길 31": [
+  {
+   "address": {
+    "address_name": "서울 금천구 시흥동 988-15",
+    "b_code": "1154510300",
+    "h_code": "1154567000",
+    "main_address_no": "988",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "금천구",
+    "region_3depth_h_name": "시흥1동",
+    "region_3depth_name": "시흥동",
+    "sub_address_no": "15",
+    "x": "126.900483576723",
+    "y": "37.4485440952535"
+   },
+   "address_name": "서울 금천구 시흥대로45길 31",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 금천구 시흥대로45길 31",
+    "building_name": "금천소방서(시흥119안전센터)",
+    "main_building_no": "31",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "금천구",
+    "region_3depth_name": "시흥동",
+    "road_name": "시흥대로45길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.900483576723",
+    "y": "37.4485440952535",
+    "zone_no": "08636"
+   },
+   "x": "126.900483576723",
+   "y": "37.4485440952535"
+  }
+ ],
+ "address:서울특별시 종로구 자하문로 93": [
+  {
+   "address": {
+    "address_name": "서울 종로구 신교동 70-2",
+    "b_code": "1111010200",
+    "h_code": "1111051500",
+    "main_address_no": "70",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_h_name": "청운효자동",
+    "region_3depth_name": "신교동",
+    "sub_address_no": "2",
+    "x": "126.970027499987",
+    "y": "37.5842789170648"
+   },
+   "address_name": "서울 종로구 자하문로 93",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 종로구 자하문로 93",
+    "building_name": "신교119안전센터",
+    "main_building_no": "93",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_name": "신교동",
+    "road_name": "자하문로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.970027499987",
+    "y": "37.5842789170648",
+    "zone_no": "03032"
+   },
+   "x": "126.970027499987",
+   "y": "37.5842789170648"
+  }
+ ],
+ "address:서울특별시 영등포구 영등포로84길 31": [
+  {
+   "address": {
+    "address_name": "서울 영등포구 신길동 454-11",
+    "b_code": "1156013200",
+    "h_code": "1156063000",
+    "main_address_no": "454",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_h_name": "신길1동",
+    "region_3depth_name": "신길동",
+    "sub_address_no": "11",
+    "x": "126.922193363902",
+    "y": "37.5104280770526"
+   },
+   "address_name": "서울 영등포구 영등포로84길 31",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 영등포구 영등포로84길 31",
+    "building_name": "신길119안전센터",
+    "main_building_no": "31",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_name": "신길동",
+    "road_name": "영등포로84길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.922193363902",
+    "y": "37.5104280770526",
+    "zone_no": "07355"
+   },
+   "x": "126.922193363902",
+   "y": "37.5104280770526"
+  }
+ ],
+ "address:서울특별시 중랑구 신내로 183": [
+  {
+   "address": {
+    "address_name": "서울 중랑구 신내동 644-2",
+    "b_code": "1126010600",
+    "h_code": "1126069000",
+    "main_address_no": "644",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_h_name": "신내2동",
+    "region_3depth_name": "신내동",
+    "sub_address_no": "2",
+    "x": "127.09488645434",
+    "y": "37.6153857016411"
+   },
+   "address_name": "서울 중랑구 신내로 183",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중랑구 신내로 183",
+    "building_name": "중랑소방서",
+    "main_building_no": "183",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_name": "신내동",
+    "road_name": "신내로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.09488645434",
+    "y": "37.6153857016411",
+    "zone_no": "02024"
+   },
+   "x": "127.09488645434",
+   "y": "37.6153857016411"
+  }
+ ],
+ "address:서울특별시 중구 다산로8길 2": [
+  {
+   "address": {
+    "address_name": "서울 중구 신당동 366-12",
+    "b_code": "1114016200",
+    "h_code": "1114063500",
+    "main_address_no": "366",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_h_name": "약수동",
+    "region_3depth_name": "신당동",
+    "sub_address_no": "12",
+    "x": "127.009640800452",
+    "y": "37.5529259688215"
+   },
+   "address_name": "서울 중구 다산로8길 2",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중구 다산로8길 2",
+    "building_name": "신당119안전센터",
+    "main_building_no": "2",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_name": "신당동",
+    "road_name": "다산로8길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.009640800452",
+    "y": "37.5529259688215",
+    "zone_no": "04597"
+   },
+   "x": "127.009640800452",
+   "y": "37.5529259688215"
+  }
+ ],
+ "address:서울특별시 구로구 경인로59길 57": [
+  {
+   "address": {
+    "address_name": "서울 구로구 신도림동 416-36",
+    "b_code": "1153010100",
+    "h_code": "1153051000",
+    "main_address_no": "416",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_h_name": "신도림동",
+    "region_3depth_name": "신도림동",
+    "sub_address_no": "36",
+    "x": "126.881212537772",
+    "y": "37.5073244326985"
+   },
+   "address_name": "서울 구로구 경인로59길 57",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 구로구 경인로59길 57",
+    "building_name": "구로소방서 신도림119안전센터",
+    "main_building_no": "57",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "구로구",
+    "region_3depth_name": "신도림동",
+    "road_name": "경인로59길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.881212537772",
+    "y": "37.5073244326985",
+    "zone_no": "08211"
+   },
+   "x": "126.881212537772",
+   "y": "37.5073244326985"
+  }
+ ],
+ "address:서울특별시 관악구 봉천로 202": [
+  {
+   "address": {
+    "address_name": "서울 관악구 신림동 1444-21",
+    "b_code": "1162010200",
+    "h_code": "1162069500",
+    "main_address_no": "1444",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_h_name": "신림동",
+    "region_3depth_name": "신림동",
+    "sub_address_no": "21",
+    "x": "126.923986693672",
+    "y": "37.4896334876154"
+   },
+   "address_name": "서울 관악구 봉천로 202",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 관악구 봉천로 202",
+    "building_name": "신림119안전센터",
+    "main_building_no": "202",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "관악구",
+    "region_3depth_name": "신림동",
+    "road_name": "봉천로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.923986693672",
+    "y": "37.4896334876154",
+    "zone_no": "08706"
+   },
+   "x": "126.923986693672",
+   "y": "37.4896334876154"
+  }
+ ],
+ "address:서울특별시 마포구 창전로 76": [
+  {
+   "address": {
+    "address_name": "서울 마포구 신수동 100-5",
+    "b_code": "1144011100",
+    "h_code": "1144063000",
+    "main_address_no": "100",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_h_name": "신수동",
+    "region_3depth_name": "신수동",
+    "sub_address_no": "5",
+    "x": "126.933203247254",
+    "y": "37.5493938460342"
+   },
+   "address_name": "서울 마포구 창전로 76",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 마포구 창전로 76",
+    "building_name": "마포소방서",
+    "main_building_no": "76",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_name": "신수동",
+    "road_name": "창전로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.933203247254",
+    "y": "37.5493938460342",
+    "zone_no": "04098"
+   },
+   "x": "126.933203247254",
+   "y": "37.5493938460342"
+  }
+ ],
+ "address:서울특별시 종로구 진흥로 477": [
+  {
+   "address": {
+    "address_name": "서울 종로구 신영동 1-4",
+    "b_code": "1111018600",
+    "h_code": "1111055000",
+    "main_address_no": "1",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_h_name": "부암동",
+    "region_3depth_name": "신영동",
+    "sub_address_no": "4",
+    "x": "126.960846444543",
+    "y": "37.6057957808925"
+   },
+   "address_name": "서울 종로구 진흥로 477",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 종로구 진흥로 477",
+    "building_name": "신영119안전센터",
+    "main_building_no": "477",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_name": "신영동",
+    "road_name": "진흥로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.960846444543",
+    "y": "37.6057957808925",
+    "zone_no": "03007"
+   },
+   "x": "126.960846444543",
+   "y": "37.6057957808925"
+  }
+ ],
+ "address:서울특별시 양천구 남부순환로 448": [
+  {
+   "address": {
+    "address_name": "서울 양천구 신월동 206-3",
+    "b_code": "1147010300",
+    "h_code": "1147058000",
+    "main_address_no": "206",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_h_name": "신월3동",
+    "region_3depth_name": "신월동",
+    "sub_address_no": "3",
+    "x": "126.833084887826",
+    "y": "37.527925585812"
+   },
+   "address_name": "서울 양천구 남부순환로 448",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 양천구 남부순환로 448",
+    "building_name": "양천소방서 신월119안전센터",
+    "main_building_no": "448",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_name": "신월동",
+    "road_name": "남부순환로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.833084887826",
+    "y": "37.527925585812",
+    "zone_no": "07916"
+   },
+   "x": "126.833084887826",
+   "y": "37.527925585812"
+  }
+ ],
+ "address:서울특별시 양천구 신월로 268": [
+  {
+   "address": {
+    "address_name": "서울 양천구 신정동 1191-4",
+    "b_code": "1147010100",
+    "h_code": "1147064000",
+    "main_address_no": "1191",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_h_name": "신정3동",
+    "region_3depth_name": "신정동",
+    "sub_address_no": "4",
+    "x": "126.850955859801",
+    "y": "37.5217756482988"
+   },
+   "address_name": "서울 양천구 신월로 268",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 양천구 신월로 268",
+    "building_name": "양천소방서 신정119안전센터",
+    "main_building_no": "268",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_name": "신정동",
+    "road_name": "신월로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.850955859801",
+    "y": "37.5217756482988",
+    "zone_no": "08058"
+   },
+   "x": "126.850955859801",
+   "y": "37.5217756482988"
+  }
+ ],
+ "address:서울특별시 양천구 신정로 238": [
+  {
+   "address": {
+    "address_name": "서울 양천구 신정동 1294-8",
+    "b_code": "1147010100",
+    "h_code": "1147064000",
+    "main_address_no": "1294",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_h_name": "신정3동",
+    "region_3depth_name": "신정동",
+    "sub_address_no": "8",
+    "x": "126.84798529112",
+    "y": "37.5106105096518"
+   },
+   "address_name": "서울 양천구 신정로 238",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 양천구 신정로 238",
+    "building_name": "양천소방서 신트리119안전센터",
+    "main_building_no": "238",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_name": "신정동",
+    "road_name": "신정로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.84798529112",
+    "y": "37.5106105096518",
+    "zone_no": "08108"
+   },
+   "x": "126.84798529112",
+   "y": "37.5106105096518"
+  }
+ ],
+ "address:서울특별시 도봉구 노해로 152": [
+  {
+   "address": {
+    "address_name": "서울 도봉구 쌍문동 346-3",
+    "b_code": "1132010500",
+    "h_code": "1132068000",
+    "main_address_no": "346",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_h_name": "쌍문3동",
+    "region_3depth_name": "쌍문동",
+    "sub_address_no": "3",
+    "x": "127.026815972409",
+    "y": "37.6481984004112"
+   },
+   "address_name": "서울 도봉구 노해로 152",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 도봉구 노해로 152",
+    "building_name": "도봉소방서 쌍문119안전센터",
+    "main_building_no": "152",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_name": "쌍문동",
+    "road_name": "노해로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.026815972409",
+    "y": "37.6481984004112",
+    "zone_no": "01450"
+   },
+   "x": "127.026815972409",
+   "y": "37.6481984004112"
+  }
+ ],
+ "address:서울특별시 강동구 올림픽로 815": [
+  {
+   "address": {
+    "address_name": "서울 강동구 암사동 505-9",
+    "b_code": "1174010700",
+    "h_code": "1174058000",
+    "main_address_no": "505",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_h_name": "암사2동",
+    "region_3depth_name": "암사동",
+    "sub_address_no": "9",
+    "x": "127.12863753848",
+    "y": "37.5539834377479"
+   },
+   "address_name": "서울 강동구 올림픽로 815",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강동구 올림픽로 815",
+    "building_name": "강동소방서 암사119안전센터",
+    "main_building_no": "815",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_name": "암사동",
+    "road_name": "올림픽로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.12863753848",
+    "y": "37.5539834377479",
+    "zone_no": "05241"
+   },
+   "x": "127.12863753848",
+   "y": "37.5539834377479"
+  }
+ ],
+ "address:서울특별시 서초구 동산로 9": [
+  {
+   "address": {
+    "address_name": "서울 서초구 양재동 324-5",
+    "b_code": "1165010200",
+    "h_code": "1165065200",
+    "main_address_no": "324",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_h_name": "양재2동",
+    "region_3depth_name": "양재동",
+    "sub_address_no": "5",
+    "x": "127.040825131053",
+    "y": "37.4694635060301"
+   },
+   "address_name": "서울 서초구 동산로 9",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서초구 동산로 9",
+    "building_name": "양재119안전센터",
+    "main_building_no": "9",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_name": "양재동",
+    "road_name": "동산로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.040825131053",
+    "y": "37.4694635060301",
+    "zone_no": "06779"
+   },
+   "x": "127.040825131053",
+   "y": "37.4694635060301"
+  }
+ ],
+ "address:서울특별시 양천구 목동서로 180": [
+  {
+   "address": {
+    "address_name": "서울 양천구 목동 919-6",
+    "b_code": "1147010200",
+    "h_code": "1147051000",
+    "main_address_no": "919",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_h_name": "목1동",
+    "region_3depth_name": "목동",
+    "sub_address_no": "6",
+    "x": "126.872342277813",
+    "y": "37.5302359667761"
+   },
+   "address_name": "서울 양천구 목동서로 180",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 양천구 목동서로 180",
+    "building_name": "양천소방서",
+    "main_building_no": "180",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "양천구",
+    "region_3depth_name": "목동",
+    "road_name": "목동서로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.872342277813",
+    "y": "37.5302359667761",
+    "zone_no": "07992"
+   },
+   "x": "126.872342277813",
+   "y": "37.5302359667761"
+  }
+ ],
+ "address:서울특별시 영등포구 의사당대로 162": [
+  {
+   "address": {
+    "address_name": "서울 영등포구 여의도동 48-3",
+    "b_code": "1156011000",
+    "h_code": "1156054000",
+    "main_address_no": "48",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_h_name": "여의동",
+    "region_3depth_name": "여의도동",
+    "sub_address_no": "3",
+    "x": "126.927973753551",
+    "y": "37.5172246813066"
+   },
+   "address_name": "서울 영등포구 의사당대로 162",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 영등포구 의사당대로 162",
+    "building_name": "여의도119안전센터",
+    "main_building_no": "162",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_name": "여의도동",
+    "road_name": "의사당대로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.927973753551",
+    "y": "37.5172246813066",
+    "zone_no": "07324"
+   },
+   "x": "126.927973753551",
+   "y": "37.5172246813066"
+  }
+ ],
+ "address:서울특별시 강남구 역삼로 236": [
+  {
+   "address": {
+    "address_name": "서울 강남구 역삼동 771-2",
+    "b_code": "1168010100",
+    "h_code": "1168065000",
+    "main_address_no": "771",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_h_name": "역삼2동",
+    "region_3depth_name": "역삼동",
+    "sub_address_no": "2",
+    "x": "127.042446564006",
+    "y": "37.4971302963569"
+   },
+   "address_name": "서울 강남구 역삼로 236",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강남구 역삼로 236",
+    "building_name": "역삼119안전센터",
+    "main_building_no": "236",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_name": "역삼동",
+    "road_name": "역삼로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.042446564006",
+    "y": "37.4971302963569",
+    "zone_no": "06226"
+   },
+   "x": "127.042446564006",
+   "y": "37.4971302963569"
+  }
+ ],
+ "address:서울특별시 은평구 갈현로 80": [
+  {
+   "address": {
+    "address_name": "서울 은평구 역촌동 55-37",
+    "b_code": "1138010800",
+    "h_code": "1138062500",
+    "main_address_no": "55",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_h_name": "역촌동",
+    "region_3depth_name": "역촌동",
+    "sub_address_no": "37",
+    "x": "126.910669577673",
+    "y": "37.6049907333044"
+   },
+   "address_name": "서울 은평구 갈현로 80",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 은평구 갈현로 80",
+    "building_name": "역촌119안전센터",
+    "main_building_no": "80",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_name": "역촌동",
+    "road_name": "갈현로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.910669577673",
+    "y": "37.6049907333044",
+    "zone_no": "03419"
+   },
+   "x": "126.910669577673",
+   "y": "37.6049907333044"
+  }
+ ],
+ "address:서울특별시 종로구 대학로 91": [
+  {
+   "address": {
+    "address_name": "서울 종로구 연건동 34-2",
+    "b_code": "1111016600",
+    "h_code": "1111064000",
+    "main_address_no": "34",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_h_name": "이화동",
+    "region_3depth_name": "연건동",
+    "sub_address_no": "2",
+    "x": "127.001835354449",
+    "y": "37.5794142791836"
+   },
+   "address_name": "서울 종로구 대학로 91",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 종로구 대학로 91",
+    "building_name": "연건119안전센터",
+    "main_building_no": "91",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_name": "연건동",
+    "road_name": "대학로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.001835354449",
+    "y": "37.5794142791836",
+    "zone_no": "03082"
+   },
+   "x": "127.001835354449",
+   "y": "37.5794142791836"
+  }
+ ],
+ "address:서울특별시 서대문구 연희로 182": [
+  {
+   "address": {
+    "address_name": "서울 서대문구 연희동 76-12",
+    "b_code": "1141011700",
+    "h_code": "1141061500",
+    "main_address_no": "76",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_h_name": "연희동",
+    "region_3depth_name": "연희동",
+    "sub_address_no": "12",
+    "x": "126.935995916827",
+    "y": "37.57320485877"
+   },
+   "address_name": "서울 서대문구 연희로 182",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서대문구 연희로 182",
+    "building_name": "서대문소방서",
+    "main_building_no": "182",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_name": "연희동",
+    "road_name": "연희로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.935995916827",
+    "y": "37.57320485877",
+    "zone_no": "03720"
+   },
+   "x": "126.935995916827",
+   "y": "37.57320485877"
+  }
+ ],
+ "address:서울특별시 마포구 토정로 37길 27": [
+  {
+   "address": {
+    "address_name": "서울 마포구 염리동 174-19",
+    "b_code": "1144010900",
+    "h_code": "1144059000",
+    "main_address_no": "174",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_h_name": "용강동",
+    "region_3depth_name": "염리동",
+    "sub_address_no": "19",
+    "x": "126.945572683437",
+    "y": "37.5417335945556"
+   },
+   "address_name": "서울 마포구 토정로37길 27",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 마포구 토정로37길 27",
+    "building_name": "마포소방서 염리119안전센터",
+    "main_building_no": "27",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "마포구",
+    "region_3depth_name": "염리동",
+    "road_name": "토정로37길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.945572683437",
+    "y": "37.5417335945556",
+    "zone_no": "04155"
+   },
+   "x": "126.945572683437",
+   "y": "37.5417335945556"
+  }
+ ],
+ "address:서울특별시 강남구 도산대로 320": [
+  {
+   "address": {
+    "address_name": "서울 강남구 논현동 92-1",
+    "b_code": "1168010800",
+    "h_code": "1168053100",
+    "main_address_no": "92",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_h_name": "논현2동",
+    "region_3depth_name": "논현동",
+    "sub_address_no": "1",
+    "x": "127.03693433067",
+    "y": "37.5221428647963"
+   },
+   "address_name": "서울 강남구 도산대로 320",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강남구 도산대로 320",
+    "building_name": "영동119안전센터",
+    "main_building_no": "320",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강남구",
+    "region_3depth_name": "논현동",
+    "road_name": "도산대로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.03693433067",
+    "y": "37.5221428647963",
+    "zone_no": "06054"
+   },
+   "x": "127.03693433067",
+   "y": "37.5221428647963"
+  }
+ ],
+ "address:서울특별시 영등포구 문래로 197": [
+  {
+   "address": {
+    "address_name": "서울 영등포구 영등포동4가 99",
+    "b_code": "1156010500",
+    "h_code": "1156053500",
+    "main_address_no": "99",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_h_name": "영등포동",
+    "region_3depth_name": "영등포동4가",
+    "sub_address_no": "",
+    "x": "126.904188745933",
+    "y": "37.5184389128995"
+   },
+   "address_name": "서울 영등포구 문래로 197",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 영등포구 문래로 197",
+    "building_name": "영등포소방서",
+    "main_building_no": "197",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "영등포구",
+    "region_3depth_name": "영등포동4가",
+    "road_name": "문래로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.904188745933",
+    "y": "37.5184389128995",
+    "zone_no": "07301"
+   },
+   "x": "126.904188745933",
+   "y": "37.5184389128995"
+  }
+ ],
+ "address:서울특별시 성동구 고산자로 249": [
+  {
+   "address": {
+    "address_name": "서울 성동구 도선동 35",
+    "b_code": "1120010400",
+    "h_code": "1120053500",
+    "main_address_no": "35",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_h_name": "왕십리도선동",
+    "region_3depth_name": "도선동",
+    "sub_address_no": "",
+    "x": "127.035492497636",
+    "y": "37.5620751604551"
+   },
+   "address_name": "서울 성동구 고산자로 249",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 성동구 고산자로 249",
+    "building_name": "왕십리119안전센터",
+    "main_building_no": "249",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_name": "도선동",
+    "road_name": "고산자로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.035492497636",
+    "y": "37.5620751604551",
+    "zone_no": "04709"
+   },
+   "x": "127.035492497636",
+   "y": "37.5620751604551"
+  }
+ ],
+ "address:서울특별시 동대문구 왕산로 76": [
+  {
+   "address": {
+    "address_name": "서울 동대문구 용두동 112-4",
+    "b_code": "1123010200",
+    "h_code": "1123053300",
+    "main_address_no": "112",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_h_name": "용두동",
+    "region_3depth_name": "용두동",
+    "sub_address_no": "4",
+    "x": "127.031745691291",
+    "y": "37.5778486922352"
+   },
+   "address_name": "서울 동대문구 왕산로 76",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동대문구 왕산로 76",
+    "building_name": "동대문소방서 용두119안전센터",
+    "main_building_no": "76",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_name": "용두동",
+    "road_name": "왕산로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.031745691291",
+    "y": "37.5778486922352",
+    "zone_no": "02584"
+   },
+   "x": "127.031745691291",
+   "y": "37.5778486922352"
+  }
+ ],
+ "address:서울특별시 서초구 남부순환로340길 49": [
+  {
+   "address": {
+    "address_name": "서울 서초구 서초동 393-1",
+    "b_code": "1165010800",
+    "h_code": "1165051000",
+    "main_address_no": "393",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_h_name": "서초1동",
+    "region_3depth_name": "서초동",
+    "sub_address_no": "1",
+    "x": "127.021885024707",
+    "y": "37.479576332262"
+   },
+   "address_name": "서울 서초구 남부순환로340길 49",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서초구 남부순환로340길 49",
+    "building_name": "서울특별시데이터센터",
+    "main_building_no": "49",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_name": "서초동",
+    "road_name": "남부순환로340길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.021885024707",
+    "y": "37.479576332262",
+    "zone_no": "06756"
+   },
+   "x": "127.021885024707",
+   "y": "37.479576332262"
+  }
+ ],
+ "address:서울특별시 강북구 삼각산로 111": [
+  {
+   "address": {
+    "address_name": "서울 강북구 수유동 605-347",
+    "b_code": "1130510300",
+    "h_code": "1130566000",
+    "main_address_no": "605",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_h_name": "인수동",
+    "region_3depth_name": "수유동",
+    "sub_address_no": "347",
+    "x": "127.016496342099",
+    "y": "37.6409535904087"
+   },
+   "address_name": "서울 강북구 삼각산로 111",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강북구 삼각산로 111",
+    "building_name": "강북소방서 우이119안전센터",
+    "main_building_no": "111",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강북구",
+    "region_3depth_name": "수유동",
+    "road_name": "삼각산로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.016496342099",
+    "y": "37.6409535904087",
+    "zone_no": "01036"
+   },
+   "x": "127.016496342099",
+   "y": "37.6409535904087"
+  }
+ ],
+ "address:서울특별시 노원구 월계로 323": [
+  {
+   "address": {
+    "address_name": "서울 노원구 월계동 599",
+    "b_code": "1135010200",
+    "h_code": "1135057000",
+    "main_address_no": "599",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_h_name": "월계2동",
+    "region_3depth_name": "월계동",
+    "sub_address_no": "",
+    "x": "127.056393818666",
+    "y": "37.6288105788559"
+   },
+   "address_name": "서울 노원구 월계로 323",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 노원구 월계로 323",
+    "building_name": "월계119안전센터",
+    "main_building_no": "323",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_name": "월계동",
+    "road_name": "월계로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.056393818666",
+    "y": "37.6288105788559",
+    "zone_no": "01880"
+   },
+   "x": "127.056393818666",
+   "y": "37.6288105788559"
+  }
+ ],
+ "address:서울특별시 중구 을지로45길 43": [
+  {
+   "address": {
+    "address_name": "서울 중구 신당동 251-7",
+    "b_code": "1114016200",
+    "h_code": "1114061500",
+    "main_address_no": "251",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_h_name": "신당동",
+    "region_3depth_name": "신당동",
+    "sub_address_no": "7",
+    "x": "127.012025690221",
+    "y": "37.566728573095"
+   },
+   "address_name": "서울 중구 을지로45길 43",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중구 을지로45길 43",
+    "building_name": "을지로119안전센터",
+    "main_building_no": "43",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_name": "신당동",
+    "road_name": "을지로45길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.012025690221",
+    "y": "37.566728573095",
+    "zone_no": "04566"
+   },
+   "x": "127.012025690221",
+   "y": "37.566728573095"
+  }
+ ],
+ "address:서울특별시 용산구 이촌로2가길 1": [
+  {
+   "address": {
+    "address_name": "서울 용산구 이촌동 212-3",
+    "b_code": "1117012900",
+    "h_code": "1117064000",
+    "main_address_no": "212",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_h_name": "이촌2동",
+    "region_3depth_name": "이촌동",
+    "sub_address_no": "3",
+    "x": "126.953423122186",
+    "y": "37.5300531370846"
+   },
+   "address_name": "서울 용산구 이촌로2가길 1",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 용산구 이촌로2가길 1",
+    "building_name": "이촌119안전센터",
+    "main_building_no": "1",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_name": "이촌동",
+    "road_name": "이촌로2가길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.953423122186",
+    "y": "37.5300531370846",
+    "zone_no": "04374"
+   },
+   "x": "126.953423122186",
+   "y": "37.5300531370846"
+  }
+ ],
+ "address:서울특별시 용산구 이태원로 196": [
+  {
+   "address": {
+    "address_name": "서울 용산구 이태원동 126-13",
+    "b_code": "1117013000",
+    "h_code": "1117065000",
+    "main_address_no": "126",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_h_name": "이태원1동",
+    "region_3depth_name": "이태원동",
+    "sub_address_no": "13",
+    "x": "126.995806522873",
+    "y": "37.5343799350815"
+   },
+   "address_name": "서울 용산구 이태원로 196",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 용산구 이태원로 196",
+    "building_name": "",
+    "main_building_no": "196",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_name": "이태원동",
+    "road_name": "이태원로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.995806522873",
+    "y": "37.5343799350815",
+    "zone_no": "04405"
+   },
+   "x": "126.995806522873",
+   "y": "37.5343799350815"
+  }
+ ],
+ "address:서울특별시 송파구 석촌호수로 151": [
+  {
+   "address": {
+    "address_name": "서울 송파구 잠실동 44-5",
+    "b_code": "1171010100",
+    "h_code": "1171068000",
+    "main_address_no": "44",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_h_name": "잠실3동",
+    "region_3depth_name": "잠실동",
+    "sub_address_no": "5",
+    "x": "127.093892988329",
+    "y": "37.5073165698743"
+   },
+   "address_name": "서울 송파구 석촌호수로 151",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 송파구 석촌호수로 151",
+    "building_name": "잠실119안전센터",
+    "main_building_no": "151",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_name": "잠실동",
+    "road_name": "석촌호수로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.093892988329",
+    "y": "37.5073165698743",
+    "zone_no": "05607"
+   },
+   "x": "127.093892988329",
+   "y": "37.5073165698743"
+  }
+ ],
+ "address:서울특별시 서초구 서초중앙로29길 6": [
+  {
+   "address": {
+    "address_name": "서울 서초구 반포동 45-3",
+    "b_code": "1165010700",
+    "h_code": "1165058100",
+    "main_address_no": "45",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_h_name": "반포4동",
+    "region_3depth_name": "반포동",
+    "sub_address_no": "3",
+    "x": "127.011600589722",
+    "y": "37.4990716329324"
+   },
+   "address_name": "서울 서초구 서초중앙로29길 6",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서초구 서초중앙로29길 6",
+    "building_name": "잠원119안전센터",
+    "main_building_no": "6",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서초구",
+    "region_3depth_name": "반포동",
+    "road_name": "서초중앙로29길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.011600589722",
+    "y": "37.4990716329324",
+    "zone_no": "06593"
+   },
+   "x": "127.011600589722",
+   "y": "37.4990716329324"
+  }
+ ],
+ "address:서울특별시 동대문구 장한로 34": [
+  {
+   "address": {
+    "address_name": "서울 동대문구 장안동 434",
+    "b_code": "1123010600",
+    "h_code": "1123065000",
+    "main_address_no": "434",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_h_name": "장안1동",
+    "region_3depth_name": "장안동",
+    "sub_address_no": "",
+    "x": "127.066724569715",
+    "y": "37.5637542523416"
+   },
+   "address_name": "서울 동대문구 장한로 34",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동대문구 장한로 34",
+    "building_name": "동대문소방서",
+    "main_building_no": "34",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_name": "장안동",
+    "road_name": "장한로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.066724569715",
+    "y": "37.5637542523416",
+    "zone_no": "02644"
+   },
+   "x": "127.066724569715",
+   "y": "37.5637542523416"
+  }
+ ],
+ "address:서울특별시 성북구 한천로 662-10": [],
+ "keyword:서울 장위119안전센터": [
+  {
+   "address_name": "서울 성북구 장위동 121-1",
+   "category_group_code": "PO3",
+   "category_group_name": "공공기관",
+   "category_name": "사회,공공기관 > 행정기관 > 소방서 > 119안전센터",
+   "distance": "",
+   "id": "1381808057",
+   "phone": "",
+   "place_name": "장위119안전센터",
+   "place_url": "http://place.map.kakao.com/1381808057",
+   "road_address_name": "서울 성북구 한천로 662-8",
+   "x": "127.057041386183",
+   "y": "37.6174390886608"
+  }
+ ],
+ "address:서울특별시 동대문구 황물로 3": [
+  {
+   "address": {
+    "address_name": "서울 동대문구 전농동 643-116",
+    "b_code": "1123010400",
+    "h_code": "1123056000",
+    "main_address_no": "643",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_h_name": "전농1동",
+    "region_3depth_name": "전농동",
+    "sub_address_no": "116",
+    "x": "127.046017913495",
+    "y": "37.5763087872444"
+   },
+   "address_name": "서울 동대문구 황물로 3",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동대문구 황물로 3",
+    "building_name": "동대문소방서 전농119안전센터",
+    "main_building_no": "3",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_name": "전농동",
+    "road_name": "황물로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.046017913495",
+    "y": "37.5763087872444",
+    "zone_no": "02591"
+   },
+   "x": "127.046017913495",
+   "y": "37.5763087872444"
+  }
+ ],
+ "address:서울특별시 종로구 돈화문로 30": [
+  {
+   "address": {
+    "address_name": "서울 종로구 묘동 59-5",
+    "b_code": "1111015100",
+    "h_code": "1111061500",
+    "main_address_no": "59",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_h_name": "종로1.2.3.4가동",
+    "region_3depth_name": "묘동",
+    "sub_address_no": "5",
+    "x": "126.992233420661",
+    "y": "37.5712662536965"
+   },
+   "address_name": "서울 종로구 돈화문로 30",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 종로구 돈화문로 30",
+    "building_name": "종로119안전센터",
+    "main_building_no": "30",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_name": "묘동",
+    "road_name": "돈화문로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.992233420661",
+    "y": "37.5712662536965",
+    "zone_no": "03138"
+   },
+   "x": "126.992233420661",
+   "y": "37.5712662536965"
+  },
+  {
+   "address": {
+    "address_name": "서울 종로구 묘동 20-5",
+    "b_code": "1111015100",
+    "h_code": "1111061500",
+    "main_address_no": "20",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_h_name": "종로1.2.3.4가동",
+    "region_3depth_name": "묘동",
+    "sub_address_no": "5",
+    "x": "126.991994361467",
+    "y": "37.5711402785938"
+   },
+   "address_name": "서울 종로구 돈화문로 지하 30",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 종로구 돈화문로 지하 30",
+    "building_name": "3호선 종로3가역",
+    "main_building_no": "30",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "종로구",
+    "region_3depth_name": "묘동",
+    "road_name": "돈화문로",
+    "sub_building_no": "",
+    "underground_yn": "Y",
+    "x": "126.991994361467",
+    "y": "37.5711402785938",
+    "zone_no": "03138"
+   },
+   "x": "126.991994361467",
+   "y": "37.5711402785938"
+  }
+ ],
+ "address:서울특별시 성북구 종암로 27길 3": [
+  {
+   "address": {
+    "address_name": "서울 성북구 종암동 3-72",
+    "b_code": "1129013500",
+    "h_code": "1129070500",
+    "main_address_no": "3",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성북구",
+    "region_3depth_h_name": "종암동",
+    "region_3depth_name": "종암동",
+    "sub_address_no": "72",
+    "x": "127.031685812902",
+    "y": "37.6024395812855"
+   },
+   "address_name": "서울 성북구 종암로27길 3",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 성북구 종암로27길 3",
+    "building_name": "성북소방서",
+    "main_building_no": "3",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성북구",
+    "region_3depth_name": "종암동",
+    "road_name": "종암로27길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.031685812902",
+    "y": "37.6024395812855",
+    "zone_no": "02803"
+   },
+   "x": "127.031685812902",
+   "y": "37.6024395812855"
+  }
+ ],
+ "address:서울특별시 송파구 올림픽로 25": [
+  {
+   "address": {
+    "address_name": "서울 송파구 잠실동 10",
+    "b_code": "1171010100",
+    "h_code": "1171067000",
+    "main_address_no": "10",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_h_name": "잠실2동",
+    "region_3depth_name": "잠실동",
+    "sub_address_no": "",
+    "x": "127.075940589715",
+    "y": "37.5161987797456"
+   },
+   "address_name": "서울 송파구 올림픽로 25",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 송파구 올림픽로 25",
+    "building_name": "서울종합운동장",
+    "main_building_no": "25",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "송파구",
+    "region_3depth_name": "잠실동",
+    "road_name": "올림픽로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.075940589715",
+    "y": "37.5161987797456",
+    "zone_no": "05500"
+   },
+   "x": "127.075940589715",
+   "y": "37.5161987797456"
+  }
+ ],
+ "address:서울특별시 광진구 용마산로 150": [
+  {
+   "address": {
+    "address_name": "서울 광진구 중곡동 18-20",
+    "b_code": "1121510100",
+    "h_code": "1121577000",
+    "main_address_no": "18",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "광진구",
+    "region_3depth_h_name": "중곡4동",
+    "region_3depth_name": "중곡동",
+    "sub_address_no": "20",
+    "x": "127.086643780864",
+    "y": "37.5669486795626"
+   },
+   "address_name": "서울 광진구 용마산로 150",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 광진구 용마산로 150",
+    "building_name": "중곡 119안전센터",
+    "main_building_no": "150",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "광진구",
+    "region_3depth_name": "중곡동",
+    "road_name": "용마산로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.086643780864",
+    "y": "37.5669486795626",
+    "zone_no": "04940"
+   },
+   "x": "127.086643780864",
+   "y": "37.5669486795626"
+  }
+ ],
+ "address:서울특별시 중랑구 동일로 787": [
+  {
+   "address": {
+    "address_name": "서울 중랑구 중화동 303-5",
+    "b_code": "1126010300",
+    "h_code": "1126061000",
+    "main_address_no": "303",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_h_name": "중화2동",
+    "region_3depth_name": "중화동",
+    "sub_address_no": "5",
+    "x": "127.079272472628",
+    "y": "37.600698662945"
+   },
+   "address_name": "서울 중랑구 동일로 787",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중랑구 동일로 787",
+    "building_name": "",
+    "main_building_no": "787",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중랑구",
+    "region_3depth_name": "중화동",
+    "road_name": "동일로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.079272472628",
+    "y": "37.600698662945",
+    "zone_no": "02102"
+   },
+   "x": "127.079272472628",
+   "y": "37.600698662945"
+  }
+ ],
+ "address:서울특별시 은평구 통일로 962": [
+  {
+   "address": {
+    "address_name": "서울 은평구 진관동 120",
+    "b_code": "1138011400",
+    "h_code": "1138069000",
+    "main_address_no": "120",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_h_name": "진관동",
+    "region_3depth_name": "진관동",
+    "sub_address_no": "",
+    "x": "126.919788062767",
+    "y": "37.6287565171839"
+   },
+   "address_name": "서울 은평구 통일로 962",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 은평구 통일로 962",
+    "building_name": "은평소방서",
+    "main_building_no": "962",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "은평구",
+    "region_3depth_name": "진관동",
+    "road_name": "통일로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.919788062767",
+    "y": "37.6287565171839",
+    "zone_no": "03311"
+   },
+   "x": "126.919788062767",
+   "y": "37.6287565171839"
+  }
+ ],
+ "address:서울특별시 도봉구 해등로 25": [
+  {
+   "address": {
+    "address_name": "서울 도봉구 창동 362-1",
+    "b_code": "1132010700",
+    "h_code": "1132051100",
+    "main_address_no": "362",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_h_name": "창1동",
+    "region_3depth_name": "창동",
+    "sub_address_no": "1",
+    "x": "127.043734714786",
+    "y": "37.646761768825"
+   },
+   "address_name": "서울 도봉구 해등로 25",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 도봉구 해등로 25",
+    "building_name": "도봉소방서 창동119안전센터",
+    "main_building_no": "25",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "도봉구",
+    "region_3depth_name": "창동",
+    "road_name": "해등로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.043734714786",
+    "y": "37.646761768825",
+    "zone_no": "01485"
+   },
+   "x": "127.043734714786",
+   "y": "37.646761768825"
+  }
+ ],
+ "address:서울특별시 강동구 진황도로 37": [
+  {
+   "address": {
+    "address_name": "서울 강동구 천호동 166-112",
+    "b_code": "1174010900",
+    "h_code": "1174062000",
+    "main_address_no": "166",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_h_name": "천호3동",
+    "region_3depth_name": "천호동",
+    "sub_address_no": "112",
+    "x": "127.131370251226",
+    "y": "37.538619937408"
+   },
+   "address_name": "서울 강동구 진황도로 37",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강동구 진황도로 37",
+    "building_name": "강동소방서 천호119안전센터",
+    "main_building_no": "37",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강동구",
+    "region_3depth_name": "천호동",
+    "road_name": "진황도로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.131370251226",
+    "y": "37.538619937408",
+    "zone_no": "05333"
+   },
+   "x": "127.131370251226",
+   "y": "37.538619937408"
+  }
+ ],
+ "address:서울특별시 동대문구 왕산로 299": [
+  {
+   "address": {
+    "address_name": "서울 동대문구 청량리동 2-4",
+    "b_code": "1123010700",
+    "h_code": "1123070500",
+    "main_address_no": "2",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_h_name": "청량리동",
+    "region_3depth_name": "청량리동",
+    "sub_address_no": "4",
+    "x": "127.052316985824",
+    "y": "37.5871648475754"
+   },
+   "address_name": "서울 동대문구 왕산로 299",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동대문구 왕산로 299",
+    "building_name": "동대문소방서 청량리119안전센터",
+    "main_building_no": "299",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_name": "청량리동",
+    "road_name": "왕산로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.052316985824",
+    "y": "37.5871648475754",
+    "zone_no": "02462"
+   },
+   "x": "127.052316985824",
+   "y": "37.5871648475754"
+  }
+ ],
+ "address:서울특별시 중구 충무로 11": [
+  {
+   "address": {
+    "address_name": "서울 중구 충무로3가 40-6",
+    "b_code": "1114015800",
+    "h_code": "1114057000",
+    "main_address_no": "40",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_h_name": "필동",
+    "region_3depth_name": "충무로3가",
+    "sub_address_no": "6",
+    "x": "126.992912675198",
+    "y": "37.5621562365797"
+   },
+   "address_name": "서울 중구 충무로 11",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중구 충무로 11",
+    "building_name": "충무로119안전센터",
+    "main_building_no": "11",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_name": "충무로3가",
+    "road_name": "충무로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.992912675198",
+    "y": "37.5621562365797",
+    "zone_no": "04554"
+   },
+   "x": "126.992912675198",
+   "y": "37.5621562365797"
+  }
+ ],
+ "address:서울특별시 노원구 한글비석로 1길 8": [
+  {
+   "address": {
+    "address_name": "서울 노원구 하계동 251-14",
+    "b_code": "1135010400",
+    "h_code": "1135061100",
+    "main_address_no": "251",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_h_name": "하계1동",
+    "region_3depth_name": "하계동",
+    "sub_address_no": "14",
+    "x": "127.071107030841",
+    "y": "37.6382549586524"
+   },
+   "address_name": "서울 노원구 한글비석로1길 8",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 노원구 한글비석로1길 8",
+    "building_name": "노원소방서 하계119안전센터",
+    "main_building_no": "8",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "노원구",
+    "region_3depth_name": "하계동",
+    "road_name": "한글비석로1길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.071107030841",
+    "y": "37.6382549586524",
+    "zone_no": "01791"
+   },
+   "x": "127.071107030841",
+   "y": "37.6382549586524"
+  }
+ ],
+ "address:서울특별시 용산구 한강대로 167": [
+  {
+   "address": {
+    "address_name": "서울 용산구 한강로2가 2-89",
+    "b_code": "1117012500",
+    "h_code": "1117062500",
+    "main_address_no": "2",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_h_name": "한강로동",
+    "region_3depth_name": "한강로2가",
+    "sub_address_no": "89",
+    "x": "126.971506544727",
+    "y": "37.5341074431998"
+   },
+   "address_name": "서울 용산구 한강대로 167",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 용산구 한강대로 167",
+    "building_name": "용산소방서",
+    "main_building_no": "167",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_name": "한강로2가",
+    "road_name": "한강대로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.971506544727",
+    "y": "37.5341074431998",
+    "zone_no": "04375"
+   },
+   "x": "126.971506544727",
+   "y": "37.5341074431998"
+  }
+ ],
+ "address:서울특별시 성동구 살곶이길 331": [
+  {
+   "address": {
+    "address_name": "서울 성동구 행당동 92-10",
+    "b_code": "1120010700",
+    "h_code": "1120055000",
+    "main_address_no": "92",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_h_name": "사근동",
+    "region_3depth_name": "행당동",
+    "sub_address_no": "10",
+    "x": "127.039519760538",
+    "y": "37.5538788610456"
+   },
+   "address_name": "서울 성동구 살곶이길 331",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 성동구 살곶이길 331",
+    "building_name": "성동소방서",
+    "main_building_no": "331",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "성동구",
+    "region_3depth_name": "행당동",
+    "road_name": "살곶이길",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.039519760538",
+    "y": "37.5538788610456",
+    "zone_no": "04765"
+   },
+   "x": "127.039519760538",
+   "y": "37.5538788610456"
+  }
+ ],
+ "address:서울특별시 서대문구 홍은중앙로 83": [
+  {
+   "address": {
+    "address_name": "서울 서대문구 홍은동 11-854",
+    "b_code": "1141011800",
+    "h_code": "1141066000",
+    "main_address_no": "11",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_h_name": "홍은1동",
+    "region_3depth_name": "홍은동",
+    "sub_address_no": "854",
+    "x": "126.947029460621",
+    "y": "37.5987232899088"
+   },
+   "address_name": "서울 서대문구 홍은중앙로 83",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 서대문구 홍은중앙로 83",
+    "building_name": "홍은119안전센터",
+    "main_building_no": "83",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "서대문구",
+    "region_3depth_name": "홍은동",
+    "road_name": "홍은중앙로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.947029460621",
+    "y": "37.5987232899088",
+    "zone_no": "03604"
+   },
+   "x": "126.947029460621",
+   "y": "37.5987232899088"
+  }
+ ],
+ "address:서울특별시 강서구 까치산로 49": [
+  {
+   "address": {
+    "address_name": "서울 강서구 화곡동 61-8",
+    "b_code": "1150010300",
+    "h_code": "1150059000",
+    "main_address_no": "61",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_h_name": "화곡본동",
+    "region_3depth_name": "화곡동",
+    "sub_address_no": "8",
+    "x": "126.845223517709",
+    "y": "37.543664744296"
+   },
+   "address_name": "서울 강서구 까치산로 49",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 강서구 까치산로 49",
+    "building_name": "",
+    "main_building_no": "49",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "강서구",
+    "region_3depth_name": "화곡동",
+    "road_name": "까치산로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.845223517709",
+    "y": "37.543664744296",
+    "zone_no": "07721"
+   },
+   "x": "126.845223517709",
+   "y": "37.543664744296"
+  }
+ ],
+ "address:서울특별시 중구 소공로 30": [
+  {
+   "address": {
+    "address_name": "서울 중구 회현동2가 33-1",
+    "b_code": "1114012200",
+    "h_code": "1114055000",
+    "main_address_no": "33",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_h_name": "명동",
+    "region_3depth_name": "회현동2가",
+    "sub_address_no": "1",
+    "x": "126.983364600162",
+    "y": "37.558208190069"
+   },
+   "address_name": "서울 중구 소공로 30",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 중구 소공로 30",
+    "building_name": "회현119안전센터",
+    "main_building_no": "30",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "중구",
+    "region_3depth_name": "회현동2가",
+    "road_name": "소공로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.983364600162",
+    "y": "37.558208190069",
+    "zone_no": "04630"
+   },
+   "x": "126.983364600162",
+   "y": "37.558208190069"
+  }
+ ],
+ "address:서울특별시 용산구 후암로 34": [
+  {
+   "address": {
+    "address_name": "서울 용산구 후암동 244-54",
+    "b_code": "1117010100",
+    "h_code": "1117051000",
+    "main_address_no": "244",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_h_name": "후암동",
+    "region_3depth_name": "후암동",
+    "sub_address_no": "54",
+    "x": "126.977888643401",
+    "y": "37.548930436814"
+   },
+   "address_name": "서울 용산구 후암로 34",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 용산구 후암로 34",
+    "building_name": "후암 119안전센터",
+    "main_building_no": "34",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "용산구",
+    "region_3depth_name": "후암동",
+    "road_name": "후암로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "126.977888643401",
+    "y": "37.548930436814",
+    "zone_no": "04331"
+   },
+   "x": "126.977888643401",
+   "y": "37.548930436814"
+  }
+ ],
+ "address:서울특별시 동대문구 망우로 106": [
+  {
+   "address": {
+    "address_name": "서울 동대문구 휘경동 34-11",
+    "b_code": "1123010900",
+    "h_code": "1123073000",
+    "main_address_no": "34",
+    "mountain_yn": "N",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_h_name": "휘경2동",
+    "region_3depth_name": "휘경동",
+    "sub_address_no": "11",
+    "x": "127.0651426879",
+    "y": "37.5906585512362"
+   },
+   "address_name": "서울 동대문구 망우로 106",
+   "address_type": "ROAD_ADDR",
+   "road_address": {
+    "address_name": "서울 동대문구 망우로 106",
+    "building_name": "동대문소방서 휘경119안전센터",
+    "main_building_no": "106",
+    "region_1depth_name": "서울",
+    "region_2depth_name": "동대문구",
+    "region_3depth_name": "휘경동",
+    "road_name": "망우로",
+    "sub_building_no": "",
+    "underground_yn": "N",
+    "x": "127.0651426879",
+    "y": "37.5906585512362",
+    "zone_no": "02501"
+   },
+   "x": "127.0651426879",
+   "y": "37.5906585512362"
+  }
+ ]
+}

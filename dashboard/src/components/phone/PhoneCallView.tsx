@@ -379,6 +379,11 @@ export function PhoneCallView({
   async function handleCall(h: SceneCandidate) {
     if (!caseId || myCall) return;
     setError(null);
+    // 시연 일시정지 중엔 통화를 시작하지 않는다(2026-10-05, hub도 거부한다)
+    if (sim?.paused && sim.pauseReason !== "call") {
+      setError("현재 시연 일시정지 중입니다.");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("이 브라우저는 마이크를 쓸 수 없습니다. https 주소(도메인)로 열었는지 확인하세요.");
       return;
@@ -704,6 +709,16 @@ export function PhoneCallView({
       </>);
   }
 
+  // ── 정해진 상황으로 이미 전달됨(2026-10-04) — 운영자가 시연 콘솔 ②에서 정해진 상황 카드를 골라 통화 없이
+  // 환자 정보가 나간 사건. 통화는 사건마다 한 번이고, 여기서 또 통화하면 음성 요약이 그 정보를 덮어쓴다.
+  if (caseId && !callStatus && sentHospitalCount != null) {
+    return lightScreen(4, <>
+        <StatusPanel icon={<CheckIcon />} tone="mint" title={`후보 병원 ${sentHospitalCount}곳에 전달됐습니다`}>
+          현장 확인을 정해진 상황(시연 콘솔)으로 마쳐 이 사건은 통화하지 않습니다. 병원 응답 확인·이송 승인은 구급차 대시보드에서 하세요.
+        </StatusPanel>
+      </>);
+  }
+
   // ── 대기(현장 도착 전·시뮬레이션 꺼짐) ──
   const onScene = simOn && sim?.phase === "on_scene" && caseId != null && sim.caseId === caseId;
   if (!onScene) {
@@ -731,8 +746,16 @@ export function PhoneCallView({
           어느 병원에 먼저 전화할까요?
         </p>
         <p className={css({ fontSize: "xs", color: "ink2", marginTop: "1", lineHeight: "1.5" })}>
-          도착 시간순(규칙 기반) · 첫 통화 내용이 존 안 모든 후보 병원에 함께 전달됩니다
+          {scene?.reportedSeverity
+            ? "이동시간 + 신고 중증도(센터 가산) 순위 · 첫 통화 내용이 존 안 모든 후보 병원에 함께 전달됩니다"
+            : "도착 시간순(규칙 기반) · 첫 통화 내용이 존 안 모든 후보 병원에 함께 전달됩니다"}
         </p>
+        {scene?.reportedSymptom && (
+          <p className={css({ fontSize: "sm", fontWeight: "semibold", color: "ink", marginTop: "1.5" })}>
+            📞 신고: {scene.reportedSymptom}
+            {scene.reportedSeverity === "high" ? " · 중증 의심" : scene.reportedSeverity === "low" ? " · 경증" : ""}
+          </p>
+        )}
         {error && (
           <p className={css({ marginTop: "2", padding: "2.5", borderRadius: "field", fontSize: "sm", color: "coral", backgroundColor: "coralSoft" })}>
             {error}
@@ -802,6 +825,16 @@ export function PhoneCallView({
                         {h.etaMin != null ? ` · ${Math.round(h.etaMin)}분` : ""}
                       </span>
                       <span className={bed.className}>{bed.text}</span>
+                      {/* 등급·진료과(2026-10-04) — 전화 상대를 고르는 자리에서 바로 보이게 */}
+                      {h.emergencyLevel && h.emergencyLevel.endsWith("센터") && (
+                        <span className={chipNeutral}>{h.emergencyLevel.replace("응급의료", "")}</span>
+                      )}
+                      {h.specialties && h.specialties.length > 0 && (
+                        <span className={chipNeutral}>
+                          {h.specialties.slice(0, 2).map((s) => s.department).join("·")}
+                          {h.specialties.length > 2 ? ` 외 ${h.specialties.length - 2}과` : ""}
+                        </span>
+                      )}
                       {h.bedReliability && (
                         <span className={chipAi}>AI 도착 시 유효 {Math.round(h.bedReliability.rArrive * 100)}%</span>
                       )}

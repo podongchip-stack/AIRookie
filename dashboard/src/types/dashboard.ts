@@ -24,6 +24,21 @@ export interface PatientInfo {
   onset?: string | null;
   chiefComplaint?: string | null;
   requiredDepartment?: string | null;
+  // 추가 통화 덧붙이기(2026-10-05): 몇 번째 통화 요약인지와 앞선 요약들. 1이면 현장 첫 통화(구버전 hub면 없음).
+  callRound?: number;
+  previousCalls?: PatientUpdate[];
+}
+
+// 앞선 통화 요약 한 건(hub PatientUpdate) — 환자 상태가 바뀌어 다시 통화하면 최신 요약이 patientInfo가 되고 이전 것은 여기 쌓인다
+export interface PatientUpdate {
+  callRound: number;
+  receivedAt: string;
+  expectedDiagnosis: string;
+  severityTag: Severity;
+  injuryStatus?: string[];
+  ktasLevel?: number | null;
+  vitals?: Vital[];
+  consciousness?: string | null;
 }
 
 // 활력징후 1회 측정. 없는 값은 null.
@@ -121,6 +136,11 @@ export interface HospitalSelfInfo {
   bedReliability?: BedReliabilityMatch | null;
   bedReliabilityByType?: Record<string, BedReliabilityMatch> | null;
   severeDeclarations?: SevereDeclarations | null;
+  // hub 2026-10-04~: 본원 지정 등급(권역/지역응급의료센터 등)·수용 분야(진료과)·이송 중 부하 —
+  // "지금 얼마나/어떤 분야를 받을 수 있는 병원인가"를 자기 화면에서 바로 보게.
+  emergencyLevel?: string | null;
+  specialties?: { department: string; doctorCount: number }[];
+  inFlightCount?: number;
 }
 
 // 병원 대시보드 → hub: "현재 정보가 맞습니다" 확인 신호(2026-09-29). hub가
@@ -152,6 +172,9 @@ export interface HospitalCandidate {
   gps: { lat: number; lng: number };
   // 직선거리(존 판정·설명용). 화면엔 roadDistanceKm(카카오 내비 도로 거리, 2026-10-03)를 우선 보여준다.
   distanceKm: number;
+  // 이 병원이 속한 존(hub 2026-10-04~) — 후보 리스트를 Zone 1·2·3 섹션으로 나눠 그린다.
+  // 구버전 hub면 없어서 거리/5km로 추정한다.
+  zone?: number;
   roadDistanceKm?: number | null;
   // 병원이 [불가] 때 고른 사유(status=rejected일 때) / 병원이 안 눌렀어도 지금 수용 불가인 이유
   // ("beds_full" = 응급실 병상 0 확인, E-Gen 기준 — E-Gen이 갱신돼 병상이 생기면 사라진다). 2026-10-03.
@@ -167,6 +190,8 @@ export interface HospitalCandidate {
   bedCountUnknown: boolean;
   // 병상 값이 오래됐거나(1일 초과) 피드에서 빠짐 — 이 경우 0이어도 "확인된 만실"로 보지 않는다(hub 2026-09-28~).
   bedDataStale?: boolean;
+  // 이 사건에서 제외된 병원(2026-10-05, 도착 후 수용 불가·이송 중 수용 철회) — 같은 사건엔 다시 승인·이송 승인 불가
+  excluded?: boolean;
   status: HospitalStatus;
   etaMin?: number;
   reliability?: ReliabilityInfo;
@@ -182,6 +207,18 @@ export interface HospitalCandidate {
   emergencyLevel?: string | null;
   travelBonusMin?: number;
   bonusReasons?: string[];
+  // hub 2026-09-28~인데 타입 선언이 빠져 있던 값들(2026-10-04 감사로 추가): 순위 점수(툴팁 설명용),
+  // 순위에 쓴 이동 시간(분)과 그 근거(eta=카카오 내비 / estimate=직선 추정), 강등 사유(declared_no 등).
+  finalScore?: number;
+  travelMin?: number | null;
+  travelBasis?: "eta" | "estimate";
+  demoteReasons?: string[];
+  // hub 2026-10-03~: 이송 중 부하(이 병원으로 확정돼 아직 TTL 안인 환자 수)와 그만큼
+  // 이동시간에 더해진 분. 규칙 기반 — 대량사고처럼 확정이 한 병원에 몰릴 때만 0이
+  // 아니며, 그때 이 병원이 왜 순위에서 밀렸는지(분산 장치 작동 중)를 설명한다.
+  inFlightCount?: number;
+  loadPenaltyMin?: number;
+  loadReason?: string | null;
 }
 
 // 확정 병원 도착 뒤 병원이 기록한 수용 결과(hub 2026-10-01~). 수용만 남는다(수용 불가는 그 병원이 rejected로 바뀜).
@@ -217,6 +254,8 @@ export interface HubMatchResult {
   // 매칭에 쓴 구급차 좌표(hub HubMatchResult.ambulanceGps, 2026-09-24 신설). 지도가 구급차를
   // 임시 위치 대신 실제 위치에 그리는 데 쓴다. 구버전 hub면 없어서 임시 위치로 대체한다.
   ambulanceGps?: { lat: number; lng: number } | null;
+  // 시연 일시정지 중(2026-10-05, hub가 실어 보냄) — 대시보드는 이 사건의 조작 버튼을 막는다
+  paused?: boolean;
 }
 
 export type ApprovalActionType =
@@ -225,7 +264,9 @@ export type ApprovalActionType =
   | "final_approval"
   // 2026-10-01: 구급차가 확정 병원에 도착한 뒤 병원이 기록하는 실제 수용 결과
   | "arrival_accepted"
-  | "arrival_refused";
+  | "arrival_refused"
+  // 2026-10-05: 이송 확정 뒤 도착 전에 병원이 수용을 철회 — 그 병원은 이 사건에서 제외, 구급차는 재선택
+  | "transport_withdraw";
 
 export type Actor = "hospital" | "paramedic";
 
@@ -283,6 +324,8 @@ export interface CallSignal {
   hospitalId?: string | null;
   // 어느 기기에서 건 통화인지 — 휴대폰은 통화 전용 화면, 태블릿·PC는 전체 화면.
   device?: CallDevice;
+  // 통화 취소(2026-10-05) — call_ended와 함께 true면 이 통화 음성은 처리·전달하지 않는다
+  cancelled?: boolean;
 }
 
 export type CallDevice = "phone" | "tablet";
@@ -300,6 +343,43 @@ export interface CallStatus {
   state: "calling" | "ended";
   startedAt: string;
   endedAt: string | null;
+  // 2026-10-05: 같은 사건의 추가 통화인지(환자 상태 변화) · 취소된 통화인지(전달 안 됨)
+  followup?: boolean;
+  cancelled?: boolean;
+}
+
+// hub → 시연 콘솔: 대량사고 [분배 확정] 결과(2026-10-05). reason: confirmed | no_approved_hospital | paused | already_confirmed | no_result
+export interface MciAllocationResult {
+  caseId: string;
+  hospitalId: string | null;
+  hospitalName?: string | null;
+  loadPenaltyMin?: number | null;
+  reason: string;
+}
+export interface MciAllocated {
+  type: "mci_allocated";
+  results: MciAllocationResult[];
+}
+// hub → 시연 콘솔: 대량사고 자동 분배 미리 보기(2026-10-05) — 지금 승인 상태로 [분배 확정]하면 누가 어디로 가는지.
+// hub가 확정 때도 같은 계획을 쓴다(중증부터, 승인 병원 중 finalScore 최고, 앞 배정마다 부하 페널티). hospitalId null = 승인 병원 없음
+export interface MciPlanItem {
+  caseId: string;
+  hospitalId: string | null;
+  hospitalName?: string | null;
+  severityTag?: string | null;
+  loadPenaltyMin?: number | null;
+}
+export interface MciPlan {
+  type: "mci_plan";
+  caseIds: string[];
+  plan: MciPlanItem[];
+}
+
+// hub → 조작한 탭: 조작이 거부됨(2026-10-05). reason "paused" = 시연 일시정지 중
+export interface ActionRefused {
+  type: "action_refused";
+  caseId: string | null;
+  reason: string;
 }
 
 export type DashboardRole = "ambulance" | "hospital";
@@ -335,6 +415,8 @@ export interface DashboardIdentityInfo {
   // hub 2026-10-03~: 구급차 대시보드에서도 통화를 시작할 수 있는지(start-all.sh --dashboard-call). 기본 false —
   // 통화는 휴대폰 전화 앱으로만 하고 대시보드엔 통화 현황만. 이 필드가 없는 구버전 hub면 예전처럼 버튼을 둔다.
   dashboardCall?: boolean;
+  // hub 2026-10-04~: 자기 위치(병원=E-Gen 좌표, 구급차=기지) — 사건이 없어도 본원 지도를 그린다.
+  gps?: { lat: number; lng: number } | null;
 }
 
 // 신원 확인 결과. known=null은 "아직 hub 응답을 못 받음(확인 중)" —
@@ -344,6 +426,7 @@ export interface IdentityState {
   known: boolean | null;
   simDispatch?: boolean;
   dashboardCall?: boolean;
+  gps?: { lat: number; lng: number } | null;
 }
 
 export interface DashboardState {
@@ -373,6 +456,78 @@ export interface DashboardState {
   callStatus: Record<string, CallStatus>;
   // 관제 지도의 "병원 응답" 기록(2026-10-03) — 사건 요약이 바뀔 때 병원 상태가 달라진 것을 쌓는다(최근 것이 앞).
   monitorEvents: MonitorEvent[];
+  // caseId -> 이송 중 활력징후 판정 이력(2026-10-04, 시간순). 구급차 탭은 전부 받고,
+  // 병원 탭은 자기 확정 사건의 notify 이상만 받는다(hub가 역할별로 거른다).
+  transportAssessments: Record<string, TransportAssessment[]>;
+  // caseId -> 예비 고지(2026-10-04). 실제 요청이 오면(matchResults에 그 사건이 생기면) 지운다.
+  preAlerts: Record<string, PreAlert>;
+  // 관제 지도 전용(2026-10-04): 매칭 전 사건의 번호·시작 시각·증상, 오늘 종료된 사건 목록
+  caseMeta: Record<string, CaseMeta>;
+  caseHistory: CaseHistoryItem[];
+  // 마지막으로 hub가 거부한 조작(2026-10-05) — 화면이 "현재 시연 일시정지 중입니다." 같은 안내를 잠깐 띄운다
+  actionRefused: { at: number; reason: string; caseId: string | null } | null;
+  // 마지막 대량사고 분배 확정 결과(시연 콘솔)
+  mciAllocated: { at: number; results: MciAllocationResult[] } | null;
+  // 마지막 대량사고 자동 분배 미리 보기(시연 콘솔 ③)
+  mciPlan: { at: number; caseIds: string[]; plan: MciPlanItem[] } | null;
+}
+
+// ── 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04) ─────────────────────────
+// 입력 구멍: 출처(음성·수기·모니터·데모)가 무엇이든 같은 형식으로 hub에 보낸다.
+// 판정은 hub의 규칙 엔진(NEWS2 + 규칙표, hub/transport_triage.py — source: "rule").
+
+export type VitalSource = "voice" | "manual" | "monitor" | "demo";
+
+export interface VitalObservationIn {
+  measuredAt: string;
+  source: VitalSource;
+  rr?: number | null;
+  spo2?: number | null;
+  sbp?: number | null;
+  dbp?: number | null;
+  hr?: number | null;
+  bt?: number | null;
+  avpu?: "A" | "V" | "P" | "U" | null;
+}
+
+// dashboard → hub (WS). 데모 시나리오·수기 입력이 쓴다. demo=true면 hub 로그에도 가상 표시가 남는다.
+export interface TransportVitalsMessage {
+  type: "transport_vitals";
+  caseId: string;
+  apid?: string;
+  demo?: boolean;
+  scenario?: string | null;
+  observation: VitalObservationIn;
+}
+
+// record=기록만 · hold=초과 1회째(오경보 필터) · notify=확정 병원에 전달 ·
+// review=대체 병원 제안(결정은 사람) · heli_advisory=헬기 대기 권고(결정은 관제)
+export type TransportTier = "record" | "hold" | "notify" | "review" | "heli_advisory";
+
+export interface TransportAlternative {
+  hospitalId: string;
+  name: string;
+  status: string;
+  travelMin?: number | null;
+  availableBedCount: number;
+  bedCountUnknown: boolean;
+  rArrive?: number | null;
+}
+
+export interface TransportAssessment {
+  type: "transport_assessment";
+  caseId: string;
+  tier: TransportTier;
+  news2: number;
+  news2Missing: string[];
+  si?: number | null;
+  reasons: string[];
+  observation: VitalObservationIn;
+  demo: boolean;
+  scenario?: string | null;
+  alternatives: TransportAlternative[];
+  source: "rule";
+  timestamp: string;
 }
 
 // hub → dashboard: 연결(재연결) 직후 따라잡기 끝에 오는 "지금 진행 중인 사건 목록"(2026-10-03). 탭은 hub가
@@ -410,6 +565,13 @@ export interface MapHospital {
   name: string;
   gps: { lat: number; lng: number };
   emergencyLevel?: string | null;
+  // 이송 중 부하(TTL 오버레이 건수, hub 2026-10-03~) — 관제 지도에서 환자가 몰리는
+  // 병원을 표시해 분산 장치가 작동 중임을 보여준다. 구버전 hub면 필드 자체가 없다.
+  inFlightCount?: number;
+  // 응급실 가용 병상(오버레이 차감 후)·미상 여부(hub 2026-10-04~). 관제는 모든 병원의
+  // 상태를 봐야 하므로 만실(0 확인)은 마커·라벨에서 구분한다. 미상 ≠ 만실 원칙 그대로.
+  availableBedCount?: number;
+  bedCountUnknown?: boolean;
 }
 
 export interface MapAmbulance {
@@ -439,6 +601,53 @@ export interface MonitorCaseHospital {
   unavailableReason?: string | null;
   // 이 병원이 든 존(1부터, zoneBandKm 간격). 거절 비율로 존이 넓혀지면 바깥 존 병원이 새로 들어온다.
   zone: number;
+  // 이 병원이 이 사건에 응답(승인·불가·확정)한 시각(2026-10-04, hub case_history)
+  respondedAt?: string | null;
+}
+
+// 사건 진행 과정 한 줄(2026-10-04, hub case_history — 규칙 기반 기록). kind: p 출동·통화 / s 요청 시작 /
+// r 수용 불가 / x 범위 확장 / a 수용 승인 / t 이송 확정 / c 취소·해제 / d 이송 완료
+export interface CaseEvent {
+  t: string;
+  kind: "p" | "s" | "r" | "x" | "a" | "t" | "c" | "d" | string;
+  text: string;
+}
+
+// hub → 관제: 매칭 전 사건의 번호·시작 시각·증상(2026-10-04). 매칭되면 case_overview가 이어받는다.
+export interface CaseMeta {
+  type: "case_meta";
+  caseId: string;
+  num: number;
+  startedAt: string;
+  symptom?: string | null;
+  severity?: Severity | string | null;
+  apid?: string | null;
+  ambulanceName?: string | null;
+  events?: CaseEvent[];
+}
+
+// 오늘 종료된 사건 하나(관제 '지난 사건')
+export interface CaseHistoryItem {
+  caseId: string;
+  num: number;
+  startedAt: string;
+  endedAt: string;
+  symptom?: string | null;
+  severity?: Severity | string | null;
+  apid?: string | null;
+  ambulanceName?: string | null;
+  requested: number;
+  rejected: number;
+  zone: number;
+  hospital?: string | null;
+  result: "done" | "cancel";
+  reason: string;
+  events: CaseEvent[];
+}
+
+export interface CaseHistory {
+  type: "case_history";
+  cases: CaseHistoryItem[];
 }
 
 // 사건 요약 — 통화 전문·활력징후 등 환자 상세는 없다(그건 요청을 받은 병원 대시보드만 본다).
@@ -452,7 +661,37 @@ export interface MonitorCase {
   zoneActive: number[];
   zoneBandKm: number;
   hospitals: MonitorCaseHospital[];
+  // 관제 지도 개편(2026-10-04): 오늘의 사건 번호·시작 시각·증상 한 줄·진행 과정(구버전 hub면 없음)
+  num?: number | null;
+  startedAt?: string | null;
+  symptom?: string | null;
+  events?: CaseEvent[];
+  // 시간 기반 존 확장(2026-10-04): 다음 자동 확장 예정 시각. 승인·확정 병원이 있거나 더 넓힐 수 없으면 null
+  zoneExpandAt?: string | null;
+  // [정지] 중이면 멈춰 있는 남은 시간(초) — 이때 zoneExpandAt은 null(시간이 흐르지 않는다)
+  zonePausedLeftSec?: number | null;
+  // 시연 일시정지 중(2026-10-05) — 콘솔이 조작 버튼을 막는다
+  paused?: boolean | null;
   source: "rule";
+}
+
+// hub → 병원·관제: 예비 고지(2026-10-04, 출동 시뮬레이션 모드) — 구급대가 출동한 순간,
+// 현장 존 안 후보 병원에 "인근 사고 발생 — 수용 요청이 올 수 있음"을 먼저 알린다(v2 계획
+// '예비 고지'의 경량판). 병원엔 자기까지의 거리(distanceKm)만, 관제·콘솔엔 발송 병원 수
+// (hospitalCount)만 온다 — 현장 좌표는 보내지 않는다. 실제 요청(match_result)이 오거나
+// 사건이 닫히면 지운다.
+export interface PreAlert {
+  type: "pre_alert";
+  caseId: string;
+  apid: string;
+  ambulanceName?: string | null;
+  distanceKm?: number | null;
+  hospitalCount?: number | null;
+  // 신고 접수 때 파악한 1차 증상(2026-10-04) — '신고 내용'일 뿐 확정 정보가 아니다
+  reportedSymptom?: string | null;
+  reportedSeverity?: Severity | null;
+  source: "rule";
+  timestamp: string;
 }
 
 // hub → dashboard: 확정 없이 끝난 사건(방치 정리·현장 종료, 2026-10-01). 받으면 그 사건을
@@ -482,6 +721,9 @@ export interface SceneCandidate {
   // 높은 한 곳에만 true. 순위(거리순)는 바꾸지 않는다 — 첫 통화 상대 제안일 뿐,
   // 틀려도 통화 뒤 존 전체 동시 전달이 뒤를 받친다.
   firstCallRecommended?: boolean;
+  // hub 2026-10-04~: 구급대가 전화 상대를 고를 때 바로 보는 정보 — 등급·진료과(전문의 수)
+  emergencyLevel?: string | null;
+  specialties?: { department: string; doctorCount: number }[];
 }
 
 export interface SceneCandidates {
@@ -492,6 +734,10 @@ export interface SceneCandidates {
   ambulanceGpsFallback: boolean;
   zoneActive: number[];
   hospitals: SceneCandidate[];
+  // hub 2026-10-04~: 신고 접수 1차 증상 — 전화 앱 머리에 "신고: 흉통(중증)" 표시용.
+  // 있으면 순위에도 중증도 가산(권역/지역센터 분)이 반영돼 있다.
+  reportedSymptom?: string | null;
+  reportedSeverity?: Severity | null;
   source: "rule";
 }
 
@@ -523,18 +769,27 @@ export interface AmbulanceSimState {
   hospitalId: string | null;
   // [정지] 중(2026-10-03). 위치·남은 시간이 그대로 멈춰 있다. 구버전 hub면 없음.
   paused?: boolean;
+  // 왜 멈췄나(2026-10-05): "manual" 시연 일시정지(조작 잠금) | "call" 이송 중 추가 통화 동안만 이동 멈춤(잠금 없음)
+  pauseReason?: "manual" | "call" | string | null;
   simulated: true;
 }
 
 // dashboard → hub: [이동] · [현장 종료] · [정지] · [상황 재개](2026-10-03)
 export interface DispatchCommand {
-  type: "dispatch" | "scene_end" | "sim_pause" | "sim_resume";
+  // sim_reset(2026-10-04): [시연 초기화] — 모든 사건 종료 + 전 구급차 기지 복귀(apid는 "*")
+  // sim_fast_forward(2026-10-04): [빨리감기] — 병원으로 이송 중이면 남은 이동을 3초 안에 마친다
+  type: "dispatch" | "scene_end" | "sim_pause" | "sim_resume" | "sim_reset" | "sim_fast_forward";
   apid: string;
   caseId: string;
   timestamp: string;
   // 주소 검색·지도 클릭으로 고른 출동 위치(2026-10-01). 없으면 기지 근처 무작위. 주소 글자는 보내지 않는다.
   target?: { lat: number; lng: number };
   targetMode?: "address" | "map";
+  // 신고 접수 때 파악한 1차 증상(2026-10-04) — 상황실이 신고 전화에서 들은 수준의 개요.
+  // hub가 예비 고지에 실어 병원이 "무슨 환자가 올 수 있는지"까지 미리 안다. 현장 평가와
+  // 다를 수 있어 어디서나 '신고 내용'으로만 표기한다.
+  reportedSymptom?: string;
+  reportedSeverity?: Severity;
 }
 
 // 출동 위치 선택(구급차 화면 상태). label은 화면 표시용으로만 이 탭에 남는다.
@@ -567,4 +822,11 @@ export type InboundMessage =
   | MonitorCase
   | CallTranscriptLine
   | CallStatus
-  | CaseSync;
+  | CaseSync
+  | TransportAssessment
+  | PreAlert
+  | CaseMeta
+  | CaseHistory
+  | ActionRefused
+  | MciAllocated
+  | MciPlan;
