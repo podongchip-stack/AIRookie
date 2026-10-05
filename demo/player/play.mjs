@@ -43,7 +43,8 @@ const EXPLAIN = process.argv.includes("--explain");
 const DH = process.argv.includes("--dh");
 const CALM = EXPLAIN || DH || process.argv.includes("--calm");
 const SUFFIX = EXPLAIN ? "_explain" : DH ? "_dh" : CALM ? "_calm" : "";
-const PACE = EXPLAIN ? 0.55 : 1;
+let PACE = EXPLAIN ? 0.55 : 1;
+let TIGHT = false; // 영상 길이를 고정하는 시나리오(durationSec): 진행을 PACE배로 줄이고 통화 자막도 빠르게
 const EXPLAIN_MIN_MS = 5200;
 const pace = (ms) => sleep(ms * PACE);
 const EX = {
@@ -105,11 +106,13 @@ const CARDS = {
 // ── 고프레임 녹화(--dh): Playwright 내장 녹화는 25fps 고정이라 쓰지 않고, 크롬이 보내 주는 화면 프레임을 받아 일정한 간격(fps)으로
 // ffmpeg에 넣어 mp4를 바로 만든다. 새 프레임이 없는 동안(정지 화면)에는 직전 프레임을 반복한다. 크롬이 실제로 그려 주는 프레임은
 // 환경에 따라 60fps 안팎이 한계라, fps를 그 이상 올리면 같은 장면이 반복될 뿐 더 부드러워지지는 않는다.
-async function startRecorder(page, out, fps) {
+async function startRecorder(page, out, fps, maxSec = 0) {
   const cdp = await page.context().newCDPSession(page);
   const ff = spawn(ffmpegStatic, ["-v", "error", "-y", "-f", "image2pipe", "-framerate", String(fps), "-c:v", "mjpeg", "-i", "-",
-    "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-r", String(fps), "-movflags", "+faststart", out], { stdio: ["pipe", "inherit", "inherit"] });
+    "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p", "-r", String(fps), ...(maxSec ? ["-t", String(maxSec)] : []), "-movflags", "+faststart", out], { stdio: ["pipe", "inherit", "inherit"] });
   const exited = once(ff, "exit");
+  let ffDone = false;
+  exited.then(() => (ffDone = true), () => (ffDone = true));
   ff.stdin.on("error", () => {});
   let last = null, stopped = false, gotFirst;
   const first = new Promise((r) => (gotFirst = r));
@@ -128,7 +131,8 @@ async function startRecorder(page, out, fps) {
       const due = t0 + BigInt(Math.round((n * 1e9) / fps));
       const wait = Number(due - process.hrtime.bigint()) / 1e6;
       if (wait > 2) await sleep(wait - 1);
-      if (!ff.stdin.write(last)) await once(ff.stdin, "drain");
+      if (ffDone) break; // -t로 인코더가 먼저 끝나면(길이 고정) 더 쓰지 않는다
+      try { if (!ff.stdin.write(last)) await Promise.race([once(ff.stdin, "drain"), exited]); } catch { break; }
     }
   })();
   return {
@@ -279,7 +283,7 @@ async function runAmbulance(ctx, spec, idx) {
   }, async () => {
     ctx.mark("callStart");
     for (const text of spec.script) {
-      const dur = EXPLAIN ? Math.max(1.3, text.length / 12) : Math.max(1.8, text.length / 8);
+      const dur = EXPLAIN ? Math.max(1.3, text.length / 12) : TIGHT ? Math.max(1.2, text.length / 13) : Math.max(1.8, text.length / 8);
       await sleep(dur * 1000);
       lines.push({ start: +t.toFixed(1), end: +(t + dur).toFixed(1), text });
       await link.utterance(caseId, t, t + dur, text);
@@ -417,6 +421,8 @@ async function main() {
   const record = args.includes("--record");
   const outDir = path.resolve(args[args.indexOf("--out") + 1] && args.includes("--out") ? args[args.indexOf("--out") + 1] : path.join(DEMO, "out"));
   fs.mkdirSync(outDir, { recursive: true });
+  const TARGET_SEC = DH && scenario.durationSec ? Number(scenario.durationSec) : 0; // 영상 길이 고정(초)
+  if (TARGET_SEC) { TIGHT = true; PACE = scenario.pace ?? 0.75; }
 
   const browser = await chromium.launch({
     channel: "chrome",
@@ -437,7 +443,7 @@ async function main() {
   const outBase = path.join(outDir, `scenario_${scenario.id}${SUFFIX}`);
   if (record && DH) {
     const fpsArg = args.indexOf("--fps");
-    recorder = await startRecorder(page, `${outBase}.mp4`, fpsArg >= 0 ? Number(args[fpsArg + 1]) || 60 : 60);
+    recorder = await startRecorder(page, `${outBase}.mp4`, fpsArg >= 0 ? Number(args[fpsArg + 1]) || 60 : 60, TARGET_SEC);
     videoT0 = recorder.t0Ms;
   }
   const dir = new Director(page);
@@ -465,7 +471,13 @@ async function main() {
     await dir.stage("explain", null, []);
     await dir.stage("caption", "", "", "", "");
     await dir.stage("intro", { no: scenario.id, title: scenario.title, lines: results.length === 1 ? results[0].trail.map((t, i) => `${i + 1}. ${t}`) : results.map((r) => `${r.name}: ${r.trail.join(" → ")}`), tags: scenario.tags || [] }, true);
-    await sleep(5000);
+    if (TARGET_SEC) {
+      // 영상 길이 고정: 마지막 요약 카드를 남은 시간만큼 보여 주고, 녹화기가 정확히 TARGET_SEC에서 끊는다
+      const elapsed = (Date.now() - videoT0) / 1000;
+      console.log(`[길이] 요약 카드 시작 ${elapsed.toFixed(1)}초 / 목표 ${TARGET_SEC}초 (카드 ${(TARGET_SEC - elapsed).toFixed(1)}초)`);
+      if (TARGET_SEC - elapsed < 4) console.warn("⚠ 요약 카드가 4초 미만이라 장면이 잘립니다. 시나리오 pace나 HUB_SIM_TRANSPORT_SEC를 줄이세요");
+      await sleep(Math.max(0, (TARGET_SEC - elapsed) * 1000 + 400));
+    } else await sleep(5000);
   } else {
     await dir.scene(home, { step: "시나리오 완료", text: results.map((r) => `${r.apid} → ${r.dest}`).join(" · "), sub: scenario.outro || "" }, async () => {}, 4000);
   }

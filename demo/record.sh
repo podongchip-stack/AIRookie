@@ -39,7 +39,7 @@ for a in "$@"; do
   case "$a" in
     --play) PLAY_ONLY=1 ;;
     --explain) EXPLAIN_ARG="--explain"; SUFFIX="_explain" ;;
-    --dh) [ -z "$EXPLAIN_ARG" ] && { EXPLAIN_ARG="--dh"; SUFFIX="_dh"; } ;;
+    --dh) [ -z "$EXPLAIN_ARG" ] && { EXPLAIN_ARG="--dh"; SUFFIX="_dh"; export HUB_SIM_TRANSPORT_SEC="${HUB_SIM_TRANSPORT_SEC:-7}"; } ;;
     --calm) [ -z "$EXPLAIN_ARG" ] && { EXPLAIN_ARG="--calm"; SUFFIX="_calm"; } ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     all) for f in "$DEMO"/scenarios/*.json; do IDS+=("$(basename "$f" .json)"); done ;;

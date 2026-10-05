@@ -51,5 +51,7 @@
       }
     }
   ],
-  "motif": "chest"
+  "motif": "chest",
+  "durationSec": 90,
+  "introSec": 4
 }
