@@ -66,7 +66,7 @@
   #intro .brand2 i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #fff; }
   #intro .no { position: absolute; left: 180px; top: 270px; font-size: 24px; font-weight: 700; color: #fff; opacity: .85; }
   #intro .big { display: none; }
-  #intro h1 { position: absolute; left: 180px; top: 315px; width: 1000px; font-size: 62px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.25; color: #fff; }
+  #intro h1 { position: absolute; left: 180px; top: 315px; width: 900px; word-break: keep-all; font-size: 62px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.25; color: #fff; }
   #intro h1 em { font-style: normal; color: #FF6B6F; }
   #intro ul { position: absolute; left: 180px; top: 470px; width: 900px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
   #intro li { font-size: 20px; color: #fff; opacity: .78; line-height: 1.4; padding-left: 18px; position: relative; }
@@ -99,16 +99,36 @@
   #script .sc .dlg .say { font-size: 24px; font-weight: 600; line-height: 1.4; margin-top: 3px; }
   #script .sc.nodlg .dlg { visibility: hidden; }
   #script .foot { position: absolute; left: 150px; bottom: 44px; font-size: 15px; font-weight: 600; opacity: .7; }
+  /* 모니터 상자 종류: ecg(심전도) · checks(체크 항목) · thermo(체온계) · people(사상자 수) */
+  #intro .motif .mon { width: 100%; min-height: 220px; border: 2px solid rgba(255,255,255,.35); border-radius: 22px; padding: 18px 22px; position: relative; }
+  #intro .motif .mon .cap { font-size: 18px; font-weight: 700; opacity: .8; margin-bottom: 12px; }
+  #intro .motif .chk { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #intro .motif .chk div { display: flex; align-items: center; gap: 12px; font-size: 26px; font-weight: 800; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.06); opacity: 0; transform: translateY(8px); transition: opacity .35s ease, transform .35s ease; }
+  #intro.show .motif .chk div { opacity: 1; transform: none; }
+  #intro .motif .chk i { flex: none; width: 30px; height: 30px; border-radius: 50%; background: #FF6B6F; display: grid; place-items: center; }
+  #intro .motif .chk i svg { width: 18px; height: 18px; }
+  #intro .motif .thermo { display: flex; align-items: center; gap: 22px; height: 150px; }
+  #intro .motif .thermo .bar { flex: 1; height: 34px; border-radius: 999px; background: rgba(255,255,255,.12); position: relative; overflow: hidden; }
+  #intro .motif .thermo .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 999px; background: linear-gradient(90deg, #F5B94A, #FF6B6F); transition: width 1.6s ease-out .3s; }
+  #intro .motif .thermo .val { font-size: 76px; font-weight: 900; color: #FF8A8E; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+  #intro .motif .thermo .val small { font-size: 30px; font-weight: 700; margin-left: 2px; }
+  #intro .motif .ppl { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
+  #intro .motif .ppl i { aspect-ratio: 1; border-radius: 50%; opacity: 0; transform: scale(.6); transition: opacity .3s ease, transform .3s ease; }
+  #intro.show .motif .ppl i { opacity: 1; transform: none; }
+  #intro .motif .ppl i.h { background: #FF6B6F; } #intro .motif .ppl i.m { background: #F5B94A; } #intro .motif .ppl i.l { background: #4CC38A; }
+  #intro .motif .legend { display: flex; gap: 18px; margin-top: 14px; font-size: 18px; font-weight: 700; }
+  #intro .motif .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; background: var(--c); }
   /* 모티프가 없는 카드(마지막 요약): 결과 줄을 크게 */
-  #intro:not([data-motif="chest"]) h1 { font-size: 58px; top: 250px; width: 1600px; }
-  #intro:not([data-motif="chest"]) .no { top: 205px; }
-  #intro:not([data-motif="chest"]) ul { top: 400px; gap: 18px; width: 1400px; }
-  #intro:not([data-motif="chest"]) li { font-size: 38px; opacity: 1; padding-left: 28px; }
-  #intro:not([data-motif="chest"]) li::before { top: 18px; width: 10px; height: 10px; }
-  #intro:not([data-motif="chest"]) .tags { top: 820px; }
+  #intro.has-motif h1.long { font-size: 50px; } /* 제목이 길면 오른쪽 그래픽과 겹치지 않게 줄인다 */
+  #intro:not(.has-motif) h1 { font-size: 58px; top: 250px; width: 1600px; }
+  #intro:not(.has-motif) .no { top: 205px; }
+  #intro:not(.has-motif) ul { top: 400px; gap: 18px; width: 1400px; }
+  #intro:not(.has-motif) li { font-size: 38px; opacity: 1; padding-left: 28px; }
+  #intro:not(.has-motif) li::before { top: 18px; width: 10px; height: 10px; }
+  #intro:not(.has-motif) .tags { top: 820px; }
   /* 흉통 모티프(motif=chest): 심전도와 활력징후를 크게 */
   #intro .motif { display: none; position: absolute; right: 130px; top: 250px; width: 620px; }
-  #intro[data-motif="chest"] .motif { display: block; }
+  #intro.has-motif .motif { display: block; }
   #intro .motif .ecg { width: 100%; height: 220px; border: 2px solid rgba(255,255,255,.35); border-radius: 22px; padding: 14px 20px; position: relative; }
   #intro .motif .ecg path { fill: none; stroke: #FF6B6F; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1400; stroke-dashoffset: 1400; }
   #intro.show .motif .ecg path { animation: ecgdraw 1.8s ease-out .3s forwards; }
@@ -136,7 +156,7 @@
 <div id="caption"><div class="step"></div><div class="text"></div><div class="sub"></div></div>
 <div id="explain"><div class="k">작동 원리</div><div class="h"></div><ul></ul></div>
 <div id="script"><div class="tag">SCENARIO</div><h2></h2><div class="rule"></div><div class="rows"></div><div class="foot">대본은 시연을 위한 연출입니다 · 가상 시나리오 · 실제 병원의 응답이 아닙니다</div></div>
-<div id="intro"><div class="brand2"><i></i>GOLDENLINK</div><div class="no"></div><div class="big"></div><h1></h1><ul></ul><div class="tags"></div><div class="motif"><svg class="heart" viewBox="0 0 24 24"><path fill="#FF6B6F" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 2.7 4.8 6.3 4.8c2.1 0 3.9 1.1 5.7 3.3 1.8-2.2 3.6-3.3 5.7-3.3 3.6 0 5.4 3.6 3.9 7C19.5 16.4 12 21 12 21z"/></svg><div class="ecg"><svg viewBox="0 0 520 130" width="100%" height="100%" preserveAspectRatio="none"><path d="M0 70 H70 l10 -8 10 8 H130 l10 14 14 -70 16 100 12 -44 H230 l12 -12 14 12 H300 l10 14 14 -70 16 100 12 -44 H400 l12 -12 14 12 H520"/></svg></div><div class="vitals"><div><small>혈압</small><b>160/95</b><em>mmHg</em></div><div><small>맥박</small><b>100</b><em>회/분</em></div><div><small>산소포화도</small><b class="ok">95</b><em>%</em></div></div><div class="pain">가슴 가운데가 묵직하게 아픔 · 식은땀 · 숨참</div></div><div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다 · 병원 정보는 E-Gen 실제 데이터</div></div>
+<div id="intro"><div class="brand2"><i></i>GOLDENLINK</div><div class="no"></div><div class="big"></div><h1></h1><ul></ul><div class="tags"></div><div class="motif"></div><div class="disc">가상 시나리오 · 실제 병원의 응답이 아닙니다 · 병원 정보는 E-Gen 실제 데이터</div></div>
 <script>
 (() => {
   const W = 1920, H = 1080, PAD = 16, TOP = 72, CAP = 116, LAB = 24;
@@ -248,6 +268,33 @@
   }
   function hideHL() { document.getElementById("hl").classList.remove("show"); }
 
+  // 소개 카드 오른쪽: 시나리오별 그래픽 + 활력징후 + 증상 한 줄. motif = { kind, cap, vitals: [[이름, 값, 단위, 위험?]], line, items, value, counts }
+  const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  const ECG_PATH = "M0 70 H70 l10 -8 10 8 H130 l10 14 14 -70 16 100 12 -44 H230 l12 -12 14 12 H300 l10 14 14 -70 16 100 12 -44 H400 l12 -12 14 12 H520";
+  function renderMotif(el, m) {
+    if (!m || !m.kind) { el.innerHTML = ""; return false; }
+    let mon = "";
+    if (m.kind === "ecg") {
+      mon = `<svg class="heart" viewBox="0 0 24 24"><path fill="#FF6B6F" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 2.7 4.8 6.3 4.8c2.1 0 3.9 1.1 5.7 3.3 1.8-2.2 3.6-3.3 5.7-3.3 3.6 0 5.4 3.6 3.9 7C19.5 16.4 12 21 12 21z"/></svg>` +
+            `<div class="ecg"><svg viewBox="0 0 520 130" width="100%" height="100%" preserveAspectRatio="none"><path d="${ECG_PATH}"/></svg></div>`;
+    } else if (m.kind === "checks") {
+      mon = `<div class="mon"><div class="cap">${ns(m.cap || "")}</div><div class="chk">` +
+            (m.items || []).map((t, i) => `<div style="transition-delay:${0.25 + i * 0.25}s"><i>${CHECK_SVG}</i>${ns(t)}</div>`).join("") + `</div></div>`;
+    } else if (m.kind === "thermo") {
+      const pct = Math.max(0, Math.min(100, ((m.value - 35) / (42 - 35)) * 100));
+      mon = `<div class="mon"><div class="cap">${ns(m.cap || "체온")}</div><div class="thermo"><div class="bar"><b data-w="${pct}%"></b></div><div class="val">${m.value}<small>°C</small></div></div></div>`;
+    } else if (m.kind === "people") {
+      const c = m.counts || {}, dots = [];
+      for (const [k, n] of [["h", c.high || 0], ["m", c.mid || 0], ["l", c.low || 0]]) for (let i = 0; i < n; i++) dots.push(k);
+      mon = `<div class="mon"><div class="cap">${ns(m.cap || "")}</div><div class="ppl">` +
+            dots.map((k, i) => `<i class="${k}" style="transition-delay:${0.2 + i * 0.05}s"></i>`).join("") + `</div>` +
+            `<div class="legend"><span style="--c:#FF6B6F">중증 ${c.high || 0}</span><span style="--c:#F5B94A">중등증 ${c.mid || 0}</span><span style="--c:#4CC38A">경증 ${c.low || 0}</span></div></div>`;
+    }
+    const vit = (m.vitals || []).map(([k, v, u, hot]) => `<div><small>${ns(k)}</small><b class="${hot ? "" : "ok"}">${ns(v)}</b><em>${ns(u || "")}</em></div>`).join("");
+    el.innerHTML = mon + (vit ? `<div class="vitals" style="grid-template-columns:repeat(${Math.min(3, (m.vitals || []).length)},1fr)">${vit}</div>` : "") + (m.line ? `<div class="pain">${ns(m.line)}</div>` : "");
+    requestAnimationFrame(() => requestAnimationFrame(() => el.querySelectorAll(".thermo .bar b").forEach((b) => (b.style.width = b.dataset.w))));
+    return true;
+  }
   function cardLayout(main) {
     const availH = MAIN.h - LAB, gap = PAD * 1.5;
     const items = main.map((p) => {
@@ -468,8 +515,10 @@
       const first = !el.dataset.shown; el.dataset.shown = "1";
       el.style.transition = first ? "none" : ""; // 영상 첫 장면이므로 페이드 인 없이 바로 보인다
       el.querySelector(".no").textContent = `시나리오 ${parseInt(no, 10)}번`;
-      el.dataset.motif = motif || "";
+      el.dataset.motif = typeof motif === "string" ? motif : (motif && motif.kind) || "";
+      el.classList.toggle("has-motif", renderMotif(el.querySelector(".motif"), motif));
       el.querySelector("h1").textContent = ns(title);
+      el.querySelector("h1").classList.toggle("long", ns(title).length > 18);
       el.querySelector("ul").innerHTML = lines.map((l) => `<li>${ns(l)}</li>`).join("");
       el.querySelector(".tags").innerHTML = tags.map((t) => `<span>${ns(t)}</span>`).join("");
       el.style.display = "flex";

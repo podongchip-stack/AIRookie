@@ -18,6 +18,7 @@ import { once } from "node:events";
 import { chromium } from "playwright-core";
 import ffmpegStatic from "ffmpeg-static";
 import { HubLink } from "./hub.mjs";
+import { MCI_CARDS, MCI_ROLES, runMci } from "./mci.mjs"; // 대량사고 시나리오(scenario.mci)
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEMO = path.resolve(HERE, "..");
@@ -96,7 +97,8 @@ const ROLES = {
   structuring: { amb: ["AI 구조화", "KTAS, 주 호소, 활력징후를 뽑아낸다"] },
   broadcast: { map: ["후보 병원에 동시 전달", "순차 전화 대신 존 안 병원 전체가 한 번에 받는다"] },
   approve: { hosp: ["병원 대시보드", "수용 요청 카드에서 병원이 승인 또는 불가로 답한다"] },
-  reject: { hosp: ["병원 대시보드", "수용 요청 카드에서 병원이 승인 또는 불가로 답한다"] },
+  reject: { hosp: ["병원 대시보드", "병원이 불가와 사유를 고르면 구급대 화면에 바로 보인다"] },
+  zone: { amb: ["요청 범위 확장", "거절이 쌓이면 다음 존의 병원까지 자동으로 넓힌다"] },
   confirm: { amb: ["이송 병원 선택", "승인한 병원 중 구급대원이 최종 선택한다"] },
   transport: { map: ["이송 중", "구급차 위치와 병원 응답을 실시간으로 본다"] },
   refuse: { hosp: ["도착 후 수용 불가", "병원이 사유를 남기면 확정이 풀린다"] },
@@ -119,6 +121,9 @@ const CARDS = {
   reselect: { amb: CONFIRM_CARD },
   arrival: { map: CONTROL_MAP }, // 수용 완료로 병원 요청 카드가 사라지므로(빈 칸) 관제 지도에서 종료 사건을 보여 준다
 };
+
+Object.assign(CARDS, MCI_CARDS); // 대량사고 장면(키가 mci_로 시작 — 기존 장면과 겹치지 않는다)
+Object.assign(ROLES, MCI_ROLES);
 
 // ── 고프레임 녹화(--dh): Playwright 내장 녹화는 25fps 고정이라 쓰지 않고, 크롬이 보내 주는 화면 프레임을 받아 일정한 간격(fps)으로
 // ffmpeg에 넣어 mp4를 바로 만든다. 새 프레임이 없는 동안(정지 화면)에는 직전 프레임을 반복한다. 크롬이 실제로 그려 주는 프레임은
@@ -499,11 +504,13 @@ async function main() {
   }
   await pace(800);
 
-  const results = await Promise.all(scenario.ambulances.map((a, i) => runAmbulance(ctx, a, i)));
+  // 대량사고 시나리오는 별도 진행기(mci.mjs)가 맡는다 — 요약 카드 줄도 그쪽이 만든다
+  const mciResult = scenario.mci ? await runMci(ctx, { HubLink, DASH, HUB, sleep, pace, REASON_LABEL }) : null;
+  const results = mciResult ? [] : await Promise.all(scenario.ambulances.map((a, i) => runAmbulance(ctx, a, i)));
   if (DH) {
     await dir.stage("explain", null, []);
     await dir.stage("caption", "", "", "", "");
-    await dir.stage("intro", { no: scenario.id, title: scenario.title, lines: results.length === 1 ? results[0].trail.map((t, i) => `${i + 1}. ${t}`) : results.map((r) => `${r.name}: ${r.trail.join(" → ")}`), tags: scenario.tags || [] }, true);
+    await dir.stage("intro", { no: scenario.id, title: scenario.title, lines: mciResult ? mciResult.lines : results.length === 1 ? results[0].trail.map((t, i) => `${i + 1}. ${t}`) : results.map((r) => `${r.name}: ${r.trail.join(" → ")}`), tags: mciResult ? mciResult.tags : scenario.tags || [] }, true);
     if (TARGET_SEC) {
       // 영상 길이 고정: 마지막 요약 카드를 남은 시간만큼 보여 주고, 녹화기가 정확히 TARGET_SEC에서 끊는다
       const elapsed = (Date.now() - videoT0) / 1000;

@@ -1,0 +1,72 @@
+{
+  "id": "06",
+  "title": "다중 교통사고, 사상자 6명 동시 분배",
+  "intro": [
+    "세종대로 사거리에서 차량 4대 연쇄 추돌 · 사상자 6명",
+    "인근 119안전센터 6곳의 구급대가 동시에 출동해 사상자마다 인근 병원에 동시 요청",
+    "승인한 병원들 사이에 hub가 중증도 기준으로 자동 분배, 한 병원에 몰리지 않는다"
+  ],
+  "tags": ["구급차 6대", "대량사고", "중증도 기준 분배"],
+  "ambulances": [],
+  "mci": {
+    "siteLabel": "세종대로 사거리",
+    "site": { "lat": 37.5714, "lng": 126.9768 },
+    "first": { "hospital": "강북삼성" },
+    "reject": { "hospital": "세브란스", "reason": "OR_OCCUPIED" },
+    "approve": ["서울대학교병원", "국립중앙의료원", "서울적십자", "세란병원"],
+    "units": [
+      { "apid": "SEL0082", "name": "세종로 구급 1", "casualty": {
+        "label": "다발성 외상", "severity": "high", "ktas": 1, "department": "외과", "patient": "45세 남성", "consciousness": "V",
+        "mechanism": "교통사고 운전자 · 흉부·복부 충격, 다발성 외상 의심", "symptoms": ["흉통", "복부 압통", "의식 혼미"], "treatment": ["산소 공급", "경추 고정"],
+        "vitals": { "sbp": 86, "dbp": 54, "hr": 128, "rr": 28, "spo2": 91 },
+        "transcript": "40대 남성 운전자, 흉부와 복부 충격으로 의식이 혼미합니다. 혈압 86에 54, 맥박 128입니다." } },
+      { "apid": "SEL0140", "name": "종로 구급 1", "casualty": {
+        "label": "두부 손상", "severity": "high", "ktas": 2, "department": "신경외과", "patient": "38세 여성", "consciousness": "P",
+        "mechanism": "교통사고 동승자 · 두부 충격, 외상성 뇌출혈 의심", "symptoms": ["두통", "구토", "의식 저하"], "treatment": ["경추 고정"],
+        "vitals": { "sbp": 162, "dbp": 94, "hr": 60, "rr": 14, "spo2": 95 },
+        "transcript": "30대 여성 동승자, 머리를 부딪쳐 통증에만 반응합니다. 구토 한 번, 혈압 162에 94입니다." } },
+      { "apid": "SEL0090", "name": "신교 구급 1", "casualty": {
+        "label": "대퇴골 골절 의심", "severity": "medium", "ktas": 3, "department": "정형외과", "patient": "52세 남성",
+        "mechanism": "교통사고 운전자 · 오른쪽 허벅지 변형, 대퇴골 골절 의심", "symptoms": ["허벅지 통증", "변형"], "treatment": ["부목 고정"],
+        "vitals": { "sbp": 134, "dbp": 82, "hr": 104, "rr": 20, "spo2": 98 },
+        "transcript": "50대 남성, 오른쪽 허벅지가 변형됐고 체중을 못 싣습니다. 부목 고정했습니다." } },
+      { "apid": "SEL0160", "name": "회현 구급 1", "casualty": {
+        "label": "늑골 골절 의심", "severity": "medium", "ktas": 3, "department": "흉부외과", "patient": "61세 여성",
+        "mechanism": "교통사고 보행자 · 왼쪽 가슴 타박, 늑골 골절 의심", "symptoms": ["흉벽 통증", "숨 쉴 때 통증"], "treatment": ["산소 공급"],
+        "vitals": { "sbp": 142, "dbp": 88, "hr": 98, "rr": 22, "spo2": 96 },
+        "transcript": "60대 여성 보행자, 왼쪽 가슴을 부딪혀 숨 쉴 때 아파합니다. 산소포화도 96입니다." } },
+      { "apid": "SEL0153", "name": "충무로 구급 1", "casualty": {
+        "label": "경추 염좌", "severity": "low", "ktas": 4, "department": "정형외과", "patient": "29세 여성",
+        "mechanism": "교통사고 동승자 · 목·어깨 통증, 경추 염좌 의심", "symptoms": ["목 통증"], "treatment": ["경추 고정"],
+        "vitals": { "sbp": 122, "dbp": 78, "hr": 86, "rr": 16, "spo2": 99 },
+        "transcript": "20대 여성 동승자, 목과 어깨가 아프고 걸을 수 있습니다. 의식 명료합니다." } },
+      { "apid": "SEL0064", "name": "북아현 구급 1", "casualty": {
+        "label": "팔 찰과상", "severity": "low", "ktas": 5, "department": "정형외과", "patient": "34세 남성",
+        "mechanism": "교통사고 운전자 · 팔 찰과상, 경상", "symptoms": ["팔 통증", "찰과상"], "treatment": ["드레싱"],
+        "vitals": { "sbp": 126, "dbp": 80, "hr": 82, "rr": 16, "spo2": 99 },
+        "transcript": "30대 남성 운전자, 왼팔 찰과상 외 특이사항 없습니다. 활력징후 안정적입니다." } }
+    ]
+  },
+  "motif": {
+    "kind": "people",
+    "cap": "세종대로 사거리 · 차량 4대 연쇄 추돌",
+    "counts": { "high": 2, "mid": 2, "low": 2 },
+    "vitals": [["사상자", "6", "명", 1], ["출동 구급대", "6", "대", 0]],
+    "line": "다발성 외상 · 두부 손상 · 골절 · 경상"
+  },
+  "durationSec": 90,
+  "introSec": 2.5,
+  "scriptSec": 5,
+  "script": [
+    { "slug": "현장 · 세종대로 사거리", "action": "출근길 차량 4대가 연쇄 추돌한다. 사상자 6명, 인근 119안전센터 6곳의 구급대가 동시에 출동한다.",
+      "lines": [{ "who": "상황실", "text": "세종대로 사거리 다중 추돌, 가까운 구급대 전부 출동하세요." }] },
+    { "slug": "현장 트리아지", "action": "구급대원들이 사상자를 중증 2명, 중등증 2명, 경증 2명으로 분류한다. 사상자마다 인근 병원에 동시에 요청이 간다.",
+      "lines": [{ "who": "구급대원", "text": "중증 둘, 중등증 둘, 경증 둘입니다." }] },
+    { "slug": "병원 응답", "action": "후보 병원들이 대시보드에서 승인 또는 불가로 답한다.",
+      "lines": [{ "who": "병원", "text": "수용 가능합니다." }] },
+    { "slug": "중증도 기준 자동 분배", "action": "중증부터 순위 1위 병원에 배정하고, 한 병원에 몰리면 다음 병원으로 넘긴다.",
+      "lines": [] },
+    { "slug": "동시 이송", "action": "구급차들이 서로 다른 병원으로 흩어져 동시에 출발한다.",
+      "lines": [{ "who": "상황실", "text": "한 병원에 몰리지 않게 나눠 보냅니다." }] }
+  ]
+}
