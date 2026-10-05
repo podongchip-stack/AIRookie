@@ -8,7 +8,7 @@
 
 # ===== 직접 의존성 (용도별) =====
 
-# 모델 실행 — ASR(Qwen3-ASR)·구조화(HMM) 공통 (AI 처리)
+# 모델 실행 — ASR(Qwen3-ASR)·구조화(MF_BERT) 공통 (AI 처리)
 torch==2.11.0
 # Qwen3ASRForConditionalGeneration은 transformers 5.13 이상에만 있다
 transformers==5.17.0

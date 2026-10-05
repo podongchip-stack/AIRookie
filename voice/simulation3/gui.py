@@ -1,12 +1,12 @@
-r"""Qwen3-ASR -> HMM 실험용 데스크톱 시뮬레이터 (tkinter).
+r"""Qwen3-ASR -> MF_BERT 실험용 데스크톱 시뮬레이터 (tkinter).
 
-장비 마이크로 말하면 발화 단위로 인식하고, 6필드·모델 판정 중간값·hub로 갈 JSON을 보여준다.
+장비 마이크로 말하면 발화 단위로 인식하고, v2 17필드·hub로 갈 JSON을 보여준다.
 실운영 경로가 아니다. 처리는 전부 voice/의 실운영 모듈을 import해서 쓴다 — 마이크(MicRecorder)·무음 감지
-(LiveTranscriber)·ASR·HMM·JSON 조립까지 app.py와 같은 코드라, 여기서 맞춘 무음 기준을 환경변수로 그대로
+(LiveTranscriber)·ASR·MF_BERT·JSON 조립까지 app.py와 같은 코드라, 여기서 맞춘 무음 기준을 환경변수로 그대로
 옮기면 된다. 사본이 없으니 화면 결과와 실제 hub 전송값이 달라질 일도 없다.
 
     마이크 -> MicRecorder -> LiveTranscriber (발화 단위 ASR)
-                               -> 발화가 늘 때마다 HmmExtractor.analyze() -> 6필드·중간값
+                               -> 발화가 늘 때마다 MfBertExtractor.extract() -> v2 17필드
                                -> build_call_summary_message() -> hub JSON (전송·저장은 안 함)
 
     conda activate AIRookieProject
@@ -15,6 +15,7 @@ r"""Qwen3-ASR -> HMM 실험용 데스크톱 시뮬레이터 (tkinter).
 from __future__ import annotations
 
 import argparse
+import json
 import queue
 import sys
 import threading
@@ -28,9 +29,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from asr import SAMPLE_RATE, AsrModel, Segment  # noqa: E402
-from hmm import HmmExtractor  # noqa: E402
-from hmm import labels as L  # noqa: E402
-from hmm.symptom_names import standard_names  # noqa: E402
+from MF_BERT import MfBertExtractor  # noqa: E402
 from live_transcriber import SILENCE_RMS, UTTERANCE_HOLD_SEC, LiveTranscriber  # noqa: E402
 from mic_recorder import MicRecorder  # noqa: E402
 from transcribe import build_call_summary_message, load_models  # noqa: E402
@@ -38,64 +37,47 @@ from transcribe import build_call_summary_message, load_models  # noqa: E402
 SESSION_NAME = "simulation"
 POLL_MS = 300
 
-#: summary 6필드가 어디서 왔는지 — CLAUDE.md "AI 처리 / 규칙 기반" 구분을 화면에 드러낸다
+#: summary v2 17필드가 어디서 왔는지 — CLAUDE.md "AI 처리 / 규칙 기반" 구분을 화면에 드러낸다
 FIELD_SOURCES = [
-    ("patient", "환자", "AI 나이대·성별 → 규칙 연결"),
-    ("mechanism", "발생 기전", "AI 원인·부위 → 규칙 조립 (질병이면 대표 증상)"),
-    ("symptoms", "증상", "AI 증상 구간 → 규칙 표준명"),
-    ("treatment", "처치", "AI (시행 확률 0.5 이상)"),
-    ("severity_tag", "중증도", "AI"),
-    ("required_department", "필요 진료과", "규칙 (원인·부위 → 전문과목 대응표)"),
-]
-
-#: 조립 전 모델 판정 — hmm/decode.py decode_example()의 fields
-DETAIL_ROWS = [
-    ("cause", "원인", "AI"),
-    ("cause_type", "원인 유형", "규칙 (원인에서 결정)"),
-    ("body_part", "부위", "AI (외상·손상일 때만)"),
-    ("representative_symptom", "대표 증상", "규칙 (질병일 때 첫 '있음' 증상)"),
-    ("age_band", "나이대", "AI"),
+    ("call_type", "통화 종류", "미예측 (항상 null)"),
+    ("ktas_level", "KTAS 중증도", "AI"),
+    ("ktas_evidence", "KTAS 근거", "미예측 (항상 null)"),
+    ("chief_complaint", "주 호소", "AI (대분류에 속한 소분류만 선택)"),
+    ("suspected_diagnosis", "의심 진단", "AI 구간 태깅 (원문 그대로)"),
+    ("vitals", "활력징후", "AI 구간 태깅 → 규칙 숫자 파싱"),
+    ("consciousness", "의식", "AI (AVPU)"),
+    ("symptoms", "증상", "AI"),
+    ("onset", "발생 시점", "AI 구간 태깅 → 규칙 분 환산"),
+    ("incidents", "발생 기전", "AI"),
+    ("disease_category", "질병 분류", "AI (기전에 질병이 있을 때만)"),
+    ("injuries", "손상", "AI"),
+    ("treatments", "처치", "AI"),
+    ("age", "나이", "AI 구간 태깅 → 규칙 나이 파싱"),
     ("sex", "성별", "AI"),
-    ("severity_tag", "중증도", "AI"),
-    ("treatment", "처치", "AI"),
+    ("medications", "복용약", "AI 유무 + 구간 태깅"),
+    ("notes", "비고", "미예측 (항상 null)"),
 ]
 
 
 def show(value) -> str:
     if value is None:
-        return "판단 보류"
-    if isinstance(value, list):
-        return ", ".join(value) if value else "—"
-    return value or "—"
+        return "—"
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
-def show_detail(key: str, fields: dict) -> str:
-    """부위는 외상·손상일 때만, 대표 증상은 질병일 때만 쓰는 값이라 그 밖에는 '판단 보류'가 아니라 '해당 없음'이다."""
-    if key == "body_part" and fields["cause_type"] not in (L.TRAUMA, L.NON_TRAUMATIC_INJURY):
-        return "해당 없음 (외상·손상 아님)"
-    if key == "representative_symptom" and fields["cause_type"] != L.DISEASE:
-        return "해당 없음 (질병 아님)"
-    return show(fields[key])
-
-
-def render(extractor: HmmExtractor, segments: list[Segment], duration_sec: float) -> dict | None:
+def render(extractor: MfBertExtractor, segments: list[Segment], duration_sec: float) -> dict | None:
     """구간 목록 -> 화면에 채울 값. 인식된 말이 없으면 None."""
     text = "\n".join(s.text for s in segments)
     if not text:
         return None
-    result = extractor.analyze(text)
-    summary, fields = result["final_output"], result["fields"]
+    summary, seconds = extractor.extract(text)
     message = build_call_summary_message(segments, duration_sec, SESSION_NAME, summary)
     return {
         "fields": [(label, show(summary[key]), source) for key, label, source in FIELD_SOURCES],
-        "details": [(label, show_detail(key, fields), source) for key, label, source in DETAIL_ROWS],
-        "spans": [
-            (span["span_text"], "있음" if span["present"] else "없음",
-             ", ".join(name for _, name in standard_names(span["span_text"])) or "(사전에 없음 — 원문 그대로)")
-            for span in result["symptom_spans"]
-        ],
-        "json": message.model_dump_json(exclude_none=True, indent=2),
-        "seconds": result["seconds"],
+        "json": json.dumps(message.to_payload(), ensure_ascii=False, indent=2),
+        "seconds": seconds,
     }
 
 
@@ -130,14 +112,14 @@ class SimulatorApp:
         self.root = root
         self.device = device
         self.asr_model: AsrModel | None = None
-        self.extractor: HmmExtractor | None = None
+        self.extractor: MfBertExtractor | None = None
         self.recorder: MicRecorder | None = None
         self.live: LiveTranscriber | None = None
         self.shown = 0
         self.meter_pos = 0
         self.results: queue.Queue = queue.Queue()
 
-        root.title("Qwen3-ASR → HMM 시뮬레이터")
+        root.title("Qwen3-ASR → MF_BERT 시뮬레이터")
         root.geometry("1400x860")
         self._build()
         self._set_status("모델 로딩 중… (약 15~20초)")
@@ -177,21 +159,12 @@ class SimulatorApp:
 
         top = ttk.Frame(right)
         top.pack(fill="both", expand=True)
-        box = ttk.LabelFrame(top, text="summary 6필드 (hub로 가는 값)", padding=4)
+        box = ttk.LabelFrame(top, text="summary v2 17필드 (hub로 가는 값)", padding=4)
         box.pack(side="left", fill="both", expand=True)
-        self.fields_table = make_table(box, [("필드", 90), ("값", 300), ("근거", 260)], 6)
-        box = ttk.LabelFrame(top, text="모델 판정 중간값 (조립 전)", padding=4)
+        self.fields_table = make_table(box, [("필드", 100), ("값", 420), ("근거", 240)], 12)
+        box = ttk.LabelFrame(top, text="발화별 인식", padding=4)
         box.pack(side="left", fill="both", expand=True, padx=(8, 0))
-        self.details_table = make_table(box, [("판정", 80), ("값", 200), ("처리", 200)], 8)
-
-        middle = ttk.Frame(right)
-        middle.pack(fill="both", expand=True, pady=(8, 0))
-        box = ttk.LabelFrame(middle, text="발화별 인식", padding=4)
-        box.pack(side="left", fill="both", expand=True)
-        self.utterance_table = make_table(box, [("시작(초)", 60), ("끝(초)", 60), ("인식 텍스트", 480)], 10)
-        box = ttk.LabelFrame(middle, text="증상 구간 (AI 태깅)", padding=4)
-        box.pack(side="left", fill="both", expand=True, padx=(8, 0))
-        self.spans_table = make_table(box, [("증상 구간 원문", 220), ("있음/없음", 70), ("표준명", 150)], 10)
+        self.utterance_table = make_table(box, [("시작(초)", 60), ("끝(초)", 60), ("인식 텍스트", 320)], 12)
 
         box = ttk.LabelFrame(right, text="hub 전송 JSON 미리보기 (CallSummaryMessage, 스키마 검증 통과본 — 전송 안 함)",
                              padding=4)
@@ -230,7 +203,7 @@ class SimulatorApp:
         self.live.start()
         self.shown = 0
         self.meter_pos = 0
-        for table in (self.fields_table, self.details_table, self.utterance_table, self.spans_table):
+        for table in (self.fields_table, self.utterance_table):
             fill_table(table, [])
         self.json_text.delete("1.0", "end")
         self.start_button.config(state="disabled")
@@ -293,11 +266,9 @@ class SimulatorApp:
             self._set_status(f"{note} · 인식된 발화 없음 (무음 기준을 낮춰 보세요)")
             return
         fill_table(self.fields_table, view["fields"])
-        fill_table(self.details_table, view["details"])
-        fill_table(self.spans_table, view["spans"])
         self.json_text.delete("1.0", "end")
         self.json_text.insert("1.0", view["json"])
-        self._set_status(f"{note} · 발화 {len(segments)}건 · 통화 {duration:.1f}초 · HMM {view['seconds']:.2f}초")
+        self._set_status(f"{note} · 발화 {len(segments)}건 · 통화 {duration:.1f}초 · MF_BERT {view['seconds']:.2f}초")
 
 
 def main() -> None:

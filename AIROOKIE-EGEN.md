@@ -92,7 +92,9 @@ python egen_train.py --theta 3 --cutoff <경계일> --labels egen_labels_v0_<tag
 ### 5-1. 모델 출력 사용법 — **실물 함수가 있다** (2026-09-22)
 
 개념 설명이 아니라 바로 호출할 수 있는 코드다. `infosurv` 패키지를 설치하면
-된다(`pip install -e "<모델링 프로젝트 경로>"`):
+된다(`pip install -e "C:\Dev\Info_Survival"` — 2026-09-25부터 infosurv는
+독립 저장소. 단 이 저장소의 서빙은 벤더링 사본이라 설치 불필요, 상단 연동
+상태 참고):
 
 ```python
 import xgboost as xgb

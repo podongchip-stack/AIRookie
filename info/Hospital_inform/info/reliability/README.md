@@ -29,14 +29,22 @@ authority는 정보 나이에 따라 계속 떨어지는 값이라, **hub가 매
 
 ```
 reliability/
-├── serve.py                  infosurv.serve 벤더링 사본 (수정 금지 — 원본 갱신 시 통째로 재복사)
+├── serve.py / fit.py / evaluate.py   infosurv 벤더링 사본 (수정 금지 — 원본 갱신 시 통째로 재복사)
 ├── features.py               claim-version 추적 + 피처 9종 실시간 구성 (신규 구현)
-├── engine.py                 모델 로드·스냅샷 워밍업·예측 (신규 구현)
-├── build_route_med_gap.py    병원별 리듬 테이블 재생성 CLI
+├── labeling.py               스냅샷 → 버전·라벨 배치 재구성 (calibrate/train 공용)
+├── engine.py                 모델 로드·스냅샷 워밍업·예측 — 다필드 (신규 구현)
+├── severe.py                 중증질환 신고(MKioskTy) 추적 — 규칙 기반, 모델 없음 (아래 절)
+├── train_field.py            필드별 자급 학습 CLI — 채택 관문 내장 (아래 절)
+├── calibrate.py              잔차 재보정 (μR,σR) 적합 CLI — % 노출의 전제 (아래 절)
+├── probe_severe.py           중증질환 확장 타당성 측정 CLI (Phase 0 실측 재현)
+├── build_route_med_gap.py    hvec 리듬 테이블 재생성 CLI
 ├── selftest.py               자체검증 (API 호출 0회)
 └── model/
-    ├── aft_egen_theta3_ext0923.json   학습 모델 (모델링 프로젝트에서 복사)
-    └── route_med_gap.json             병원별 평소 버전수명 중위값 (스냅샷에서 생성)
+    ├── aft_egen_theta3_ext0923.json   hvec 모델 (모델링 프로젝트에서 복사)
+    ├── aft_egen_{hvoc,hvgc,hv28}_*.json   확장 필드 모델 (train_field.py 산출)
+    ├── route_med_gap*.json            필드별 병원 리듬 테이블
+    ├── recalibration.json             hvec 잔차 재보정 상수 (calibrate.py 산출)
+    └── train_results_*.json           학습 관문 수치 기록 (기각도 기록 — hvicc 참고)
 ```
 
 - **벤더링인 이유**: 모델링 저장소는 git remote가 없는 로컬 전용이라 pip 로컬
@@ -59,6 +67,59 @@ reliability/
 - **fail-soft**: 이 폴더는 바깥을 import하지 않고, `send_to_hub.py` 쪽 호출부는
   try/except로 감싸져 있다. 폴더를 통째로 지워도 `bedReliability` 없이 원본
   그대로 전송된다(hospital_score와 같은 원칙).
+
+## 중증질환 신고 신선도 (severe.py, 2026-09-28) — 왜 모델이 아니라 규칙인가
+
+infosurv를 중증질환 수용가능 28항목으로 확장하기 전에 타당성을 실측했다
+(`python -m reliability.probe_severe`, 스냅샷 47.3일 · 439곳):
+
+- 값 분포: 정보미제공 69.0% / Y 29.7% / 불가능 1.4%
+- 값 변화 사건 31,398건 중 **90%가 Y↔정보미제공 왕복**이고, 그 만료 수명의
+  **60.1%가 정확히 9.0시간** — 지배 성분이 병원 행동이 아니라 "신고 후 약
+  9시간 자동 만료"라는 시스템 규칙이다. 모델로 포장하면 hvidate 기각과 같은
+  오류가 된다(규칙으로 되는 것은 규칙으로)
+- 진짜 내용 변화(Y↔불가능)는 2,658건뿐 — 학습 최소 관문(2,000) 턱걸이에
+  사건 있는 병원이 106곳(상위 10곳이 39%)이라, **학습은 축적 후 재평가**
+
+대신 확실한 사실 하나를 규칙으로 서빙한다: E-Gen 중증질환 응답에는 신고
+시각 필드가 아예 없어서(실측 — hpid·dutyName·MKioskTy*뿐), **"이 Y/불가능
+신고가 언제부터 그 값이었는지"는 우리 스냅샷 추적만이 안다.** `severe.py`가
+병원×항목을 3상태로 추적해(미제공 전이를 봐야 재신고 시점이 잡힘) 질환군별
+현재 신고값·탄생시각·좌측검열 여부를 `HospitalInfo.severeDeclarations`
+(source: "rule")로 내보내고, hub가 매칭된 질환군의 신고 나이와 9h 규칙 잔여를
+`HospitalMatch.severeFreshness`로 환산한다. hospital_score의 24시간 stale
+절벽보다 훨씬 정밀한 신선도다.
+
+## 다필드 확장 (2026-09-28) — 수술실·입원실·소아까지, 저장소 자급 학습
+
+infosurv의 학습 본체는 도메인 중립이라(벤더링된 fit·evaluate + labeling.py
+파서), hvec 외 필드는 이 저장소 안에서 `train_field.py`로 직접 학습한다.
+Phase 0(probe_multifield)에서 10개 숫자 병상 필드 전부가 이벤트 관문(2,000)을
+통과했고, 학습 관문(리듬 단독 INTERVAL baseline 대비 C-index 시드 3종 전승)
+결과:
+
+| 필드 | 용도 | θ | C-index | 판정 |
+|---|---|---|---|---|
+| hvoc | 수술실 | 3 | **0.867** | 채택 (hvec 0.764보다 높음) |
+| hvgc | 입원실 일반 | 3 | **0.856** | 채택 |
+| hv28 | 응급실 소아 | 2 | 0.784 | 채택 |
+| hvicc | 중환자실 일반 | 2~3 | — | **기각** — 이벤트 1,578 < 2,000, 약 2주 축적 후 재시도 |
+
+engine이 `model/`의 산출물을 자동 발견해 필드별 독립 tracker·모델로 서빙하고,
+`HospitalInfo.bedReliabilityByType`(키 = E-Gen 필드명)로 hub에 나간다 —
+수술실·입원실은 **배후진료 역량(Capacity)의 신뢰도**라 5층 프레이밍의 핵심
+확장이다. 재학습: `python -m reliability.train_field --field <f>` (관문 미달
+시 모델 저장을 거부하고 기각 기록만 남긴다).
+
+## 잔차 재보정 (calibrate.py) — % 노출의 전제
+
+raw 생존확률은 판별(순위)은 정직하지만 절대값이 과신될 수 있다. hvec에서
+실측: 생존시간 1.5배 과대예측(μR=−0.431)·과예리 분포(σR=1.797), τ=30분 ECE
+0.272→0.114로 교정. 상수는 `model/recalibration.json`으로 배포되고 engine이
+기동 시 적용한다(modelTag 불일치 시 raw 폴백). **확장 필드들은 raw가 이미
+정직해서(ECE 0.03~0.06 — 우리 파이프라인으로 같은 분포에서 학습된 덕) 관문이
+저장을 거부했다** — ECE·Brier 둘 다 개선될 때만 상수를 얹는다. 월 재학습 시
+`python -m reliability.calibrate [--field <f>]`로 재적합.
 
 ## 학습·서빙 정의가 어긋나기 쉬운 함정 3가지 (모델링 프로젝트가 실제로 밟은 것)
 

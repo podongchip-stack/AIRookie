@@ -7,8 +7,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-Severity = Literal["high", "medium", "low"]
-
 
 class TranscriptTurn(BaseModel):
     speaker: str
@@ -30,12 +28,30 @@ class Transcript(BaseModel):
 
 
 class Summary(BaseModel):
-    patient: str
-    mechanism: str
-    symptoms: list[str]
-    treatment: list[str]
-    severity_tag: Severity
-    required_department: Optional[str] = None
+    """MF_BERT 출력 그대로 — C:\Dev\HMM\data_v3\필드_설명.md의 v2 스키마 17개 필드 + meta.
+
+    값이 null인 것도 의미가 있다(모델이 안 배운 필드, 통화에 없는 정보). 중첩 구조는 모델 출력을 그대로
+    두고 여기서는 검증하지 않는다 — hub 담당자가 필요한 필드부터 타입을 좁힌다.
+    """
+
+    call_type: Optional[str] = None
+    ktas_level: int
+    ktas_evidence: Optional[list[str]] = None
+    chief_complaint: dict
+    suspected_diagnosis: list[dict]
+    vitals: list[dict]
+    consciousness: list[dict]
+    symptoms: list[dict]
+    onset: dict
+    incidents: list[dict]
+    disease_category: Optional[str] = None
+    injuries: list[dict]
+    treatments: list[dict]
+    age: dict
+    sex: Optional[str] = None
+    medications: dict
+    notes: Optional[str] = None
+    meta: dict
 
 
 class ModelUsed(BaseModel):
@@ -54,3 +70,12 @@ class CallSummaryMessage(BaseModel):
     summary: Summary
     source: Literal["ai"] = "ai"
     model_used: ModelUsed
+
+    def to_payload(self) -> dict:
+        """hub 전송·저장용 dict. v2 필드의 null은 남기고(의미가 있다), 항상 비어 있는
+        turns[].excludedFromSummary만 빼서 예전 전송 형태를 유지한다."""
+        payload = self.model_dump()
+        for turn in payload["transcript"]["turns"]:
+            if turn["excludedFromSummary"] is None:
+                del turn["excludedFromSummary"]
+        return payload

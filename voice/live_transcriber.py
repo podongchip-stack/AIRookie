@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from typing import Callable
 
 import numpy as np
 
@@ -73,8 +74,12 @@ class LiveTranscriber:
         asr_model: AsrModel,
         threshold: float = SILENCE_RMS,
         hold_sec: float = UTTERANCE_HOLD_SEC,
+        on_segment: Callable[[Segment], None] | None = None,
     ) -> None:
         self._recorder = recorder
+        # 발화 하나를 인식할 때마다 부른다(2026-10-03, app.py가 hub로 보내 구급차 화면에 실시간 표시).
+        # 여기서 예외가 나도 인식은 계속한다.
+        self._on_segment = on_segment
         self._asr = asr_model
         self._threshold = threshold
         self._hold_frames = max(1, round(hold_sec * SAMPLE_RATE / FRAME))
@@ -97,6 +102,11 @@ class LiveTranscriber:
         self._thread.join()
         self._process(final=True)
         return self._segments
+
+    def cancel(self) -> None:
+        """통화 취소(2026-10-05): 감시만 멈추고 남은 소리는 인식하지 않는다(요약·전달 없음)."""
+        self._stop.set()
+        self._thread.join()
 
     def _run(self) -> None:
         # 여기서 예외로 스레드가 죽어도 통화를 잃지 않는다 — _consumed가 멈춘 자리부터 finish()가 다시 인식한다
@@ -126,6 +136,12 @@ class LiveTranscriber:
     def _recognize(self, audio: np.ndarray) -> None:
         offset = self._consumed / SAMPLE_RATE
         for segment in self._asr.transcribe_audio(audio):
-            self._segments.append(Segment(offset + segment.start, offset + segment.end, segment.text))
+            recognized = Segment(offset + segment.start, offset + segment.end, segment.text)
+            self._segments.append(recognized)
             print(f"[발화 인식] {offset + segment.start:6.1f}s  {segment.text}")
+            if self._on_segment is not None:
+                try:
+                    self._on_segment(recognized)
+                except Exception as e:  # noqa: BLE001 — 화면 표시용 콜백 실패가 인식을 멈추면 안 된다
+                    print(f"[발화 인식] 실시간 전달 실패(인식은 계속): {e}", file=sys.stderr)
         self._consumed += len(audio)

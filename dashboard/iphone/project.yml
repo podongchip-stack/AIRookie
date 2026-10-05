@@ -1,0 +1,42 @@
+# XcodeGen 정의 — `xcodegen generate`(또는 ./setup.sh)가 GoldenLinkPhone.xcodeproj를 만든다.
+# .xcodeproj는 생성물이라 커밋하지 않는다(이 파일이 원본). 서명 팀·번들 ID만 Xcode에서 바꾸면 된다.
+name: GoldenLinkPhone
+options:
+  bundleIdPrefix: com.goldenlink
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+packages:
+  GoldenLinkCore:
+    path: GoldenLinkCore
+  speech-swift:
+    path: Vendor/speech-swift   # setup.sh가 받아 float 디코더 패치를 적용한다
+
+targets:
+  GoldenLinkPhone:
+    type: application
+    platform: iOS
+    sources:
+      - path: GoldenLinkPhone
+      # 모델(convert/ 스크립트 출력, git 제외)은 Models/ 폴더째 번들에 넣는다. 파일을 하나씩 등록하면 없는 모델 때문에
+      # 빌드가 깨지므로 폴더 참조로 둔다 — 빈 폴더여도 빌드되고(그때는 서버 STT 모드), .mlpackage는 앱이 첫 실행 때 컴파일한다.
+      - path: Models
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: GoldenLinkCore
+      - package: speech-swift
+        product: Qwen3ASR
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.goldenlink.phone   # 내 Apple ID로 서명할 때 겹치지 않게 바꾼다
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""   # Xcode > Signing & Capabilities에서 팀 선택
+        CODE_SIGN_ENTITLEMENTS: GoldenLinkPhone/GoldenLinkPhone.entitlements
+        INFOPLIST_FILE: GoldenLinkPhone/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"

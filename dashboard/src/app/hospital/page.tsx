@@ -1,197 +1,71 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { css, cx } from "styled-system/css";
-import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
-import { Legend } from "@/components/hospital/Legend";
-import { CaseMatchPanel } from "@/components/hospital/CaseMatchPanel";
-import { MapPanel } from "@/components/hospital/MapPanel";
-import { thinScrollbarStyle } from "@/components/ui/scrollbar-style";
-import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
+import { css } from "styled-system/css";
+import { HospitalDashboard } from "@/components/hospital/HospitalDashboard";
+import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 
-// 병원 대시보드는 병원 1곳 전용 화면이라 자신의 병원 ID(hpid)가 고정된다.
-// 랜딩 페이지(src/app/page.tsx)의 코드 입력에서 "?id="로 넘어온 값을 쓴다.
-// 여러 구급차가 동시에 본원을 후보로 걸 수 있으므로("여러 사건"), id가 없으면
-// 예전처럼 임의의 mock ID로 대체하지 않고 안내 문구를 보여준다 — 실제 hpid와
-// 안 맞는 화면을 mock인 줄 모르고 보는 게 더 위험하다.
-function HospitalDashboardContent() {
-  const searchParams = useSearchParams();
-  const MY_HOSPITAL_ID = searchParams.get("id");
-  const { state, connectionMode, sendAction } = useDashboardSocket(
-    MY_HOSPITAL_ID ? { role: "hospital", id: MY_HOSPITAL_ID } : null,
-  );
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
-
-  // 본원이 후보로 들어있는 사건만 걸러 카드로 나열한다 — 하나의 병원이 여러
-  // 구급차의 후보 목록에 동시에 들어갈 수 있어서, 사건 하나만 보던 예전
-  // 구조로는 다른 구급차의 요청이 화면에서 사라져 보였다.
-  //
-  // 본원 자신의 승인/불가는 번복 가능한 후보 등록일 뿐이라 카드를 지우지 않지만
-  // (CaseMatchPanel 참고), 그 사건이 "다른" 병원으로 이미 최종 확정됐다면 본원
-  // 입장에서는 더 이상 의미가 없는 사건이라 목록에서 뺀다(2026-08-11 논의).
-  const myCases = MY_HOSPITAL_ID
-    ? Object.values(state.matchResults)
-        .map((result) => ({
-          result,
-          hospital: result.hospitals.find((h) => h.hospitalId === MY_HOSPITAL_ID) ?? null,
-        }))
-        .filter((entry): entry is { result: typeof entry.result; hospital: NonNullable<typeof entry.hospital> } =>
-          entry.hospital !== null,
-        )
-        .filter(
-          ({ result, hospital }) =>
-            hospital.status === "confirmed" ||
-            !result.hospitals.some((h) => h.hospitalId !== MY_HOSPITAL_ID && h.status === "confirmed"),
-        )
-    : [];
-
-  const selected = myCases.find((c) => c.result.caseId === selectedCaseId) ?? myCases[0] ?? null;
-
-  if (!MY_HOSPITAL_ID) {
-    return (
-      <div
-        className={css({
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: "full",
-          padding: "8",
-        })}
-      >
-        <p className={css({ color: "coral", fontSize: "sm" })}>
-          병원 ID가 없습니다. 랜딩 페이지에서 H-&lt;병원ID&gt; 형식의 코드로 다시 입장해주세요.
-        </p>
-      </div>
-    );
+// 시연용 자동 로그인(2026-10-04): /hospital?id=auto — 특정 병원에 고정하지 않고, 사건이
+// 병원들에 수용 요청을 보내는 순간 **그 사건의 1순위 병원**(이송이 확정되면 확정 병원)
+// 대시보드로 자동 전환된다. 구급대 자동 전환(/ambulance?id=auto)과 짝 — 시연 중 관제에서
+// H-코드를 찾아 입력할 필요가 없어진다. 사건이 끝나면 대기 화면으로 돌아온다.
+function HospitalAutoFollow() {
+  const { state, connectionMode } = useDashboardSocket({ role: "monitor", id: "hospital-auto" });
+  const [hpid, setHpid] = useState<string | null>(null);
+  const cases = Object.values(state.monitorCases);
+  // 최신 사건 기준 — 확정 병원이 있으면 그쪽(도착 결과까지 그 병원 화면이 담당), 없으면 아직 거절하지
+  // 않은 병원 중 1순위(hub가 보낸 순서). 거절한 병원(병상 없음 포함)은 건너뛴다(2026-10-04).
+  let target: string | null = null;
+  for (const monitorCase of cases) {
+    const confirmed = monitorCase.hospitals.find((h) => h.status === "confirmed");
+    const open = monitorCase.hospitals.find((h) => h.status !== "rejected");
+    target = (confirmed ?? open)?.hospitalId ?? target;
   }
+  // 지금 보는 병원이 아직 응답할 수 있는 후보/확정이면 화면을 유지한다(요청 도중 널뛰기 방지).
+  // 거절하면(2026-10-04) 더는 유지 대상이 아니라 다음 후보 병원 화면으로 넘어간다 — 예전엔 거절해도
+  // 후보 목록에 남아 있다는 이유로 그 병원 화면에 멈춰 있었다.
+  const stillRelevant = hpid
+    ? cases.some((c) => c.hospitals.some((h) => h.hospitalId === hpid && h.status !== "rejected"))
+    : false;
+  // 처음 전환·사건 종료는 렌더 중에 바로(React 권장 패턴), 거절 뒤 다음 병원으로는 1.5초 뒤에
+  // (그 병원 화면에 거절 결과가 잠깐 보이도록) 넘긴다.
+  if (!hpid && target) setHpid(target);
+  else if (hpid && !stillRelevant && !target) setHpid(null);
+  const nextAfterReject = hpid && !stillRelevant && target && target !== hpid ? target : null;
+  useEffect(() => {
+    if (!nextAfterReject) return;
+    const timer = setTimeout(() => setHpid(nextAfterReject), 1500);
+    return () => clearTimeout(timer);
+  }, [nextAfterReject]);
 
-  // 존재하지 않는 hpid는 이제 랜딩 페이지(src/app/page.tsx)에서 GET /identity로
-  // 미리 걸러서 애초에 이 페이지까지 못 들어오게 한다 — 여기서 known===false로
-  // 전체 화면을 막는 처리는 2026-08-11에 랜딩 페이지 쪽으로 옮겼다(직접 URL로
-  // 들어온 경우엔 상단바 이름이 ID 폴백으로 남는 정도로만 티가 난다).
-
+  if (hpid) return <HospitalDashboard key={hpid} hospitalId={hpid} />;
   return (
     <div
       className={css({
-        display: "flex",
-        flexDirection: "column",
-        minHeight: "full",
-        backgroundColor: "bg",
-        padding: "7",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: "3", minHeight: "100vh", backgroundColor: "bg", padding: "8", textAlign: "center",
       })}
     >
-      <HospitalTopBar
-        caseCount={myCases.length}
-        connectionMode={connectionMode}
-        since={state.receivedAt}
-        hospitalId={MY_HOSPITAL_ID}
-        hospitalName={state.identity.name ?? selected?.hospital.name ?? null}
-      />
-      <Legend />
-
-      <main
-        className={css({
-          display: "grid",
-          gridTemplateColumns: { base: "1fr", lg: "1.8fr 1fr" },
-          gap: "6",
-          alignItems: "stretch",
-          flex: "1",
-          minHeight: "0",
-        })}
-      >
-        {/* 왼쪽: 본원이 후보로 걸린 사건을 전부 카드로 나열한다. 카드를 누르면
-            선택되어 오른쪽 지도에 그 사건 기준 거리/ETA가 표시된다.
-            바깥 div가 그리드 셀 높이를 정확히 지키고(height:100% + minHeight:0
-            + overflow:hidden), 안쪽 div만 스크롤한다 — 구급차 쪽 병원 후보
-            리스트에서 겪은 것과 같은 문제(overflowY:auto 하나만으론 페이지
-            전체가 늘어남)를 겪지 않으려고 처음부터 이 구조로 짰다(2026-08-11). */}
-        <div
-          className={css({
-            display: "flex",
-            flexDirection: "column",
-            height: "100%",
-            minHeight: "0",
-            overflow: "hidden",
-          })}
-        >
-        <div
-          className={cx(
-            css({
-              display: "flex",
-              flexDirection: "column",
-              gap: "3.5",
-              flex: "1",
-              minHeight: "0",
-              overflowY: "auto",
-              paddingRight: "1",
-            }),
-            thinScrollbarStyle,
-          )}
-        >
-          {myCases.length === 0 ? (
-            <CaseMatchPanel patientInfo={null} hospital={null} hospitalId={MY_HOSPITAL_ID} caseId="" onAction={sendAction} />
-          ) : (
-            myCases.map(({ result, hospital }) => {
-              const isSelected = selected?.result.caseId === result.caseId;
-              return (
-                // CaseMatchPanel 안에 승인/거절 버튼이 이미 있어서 이 카드 자체를
-                // <button>으로 감싸면 button-in-button이 되어 유효하지 않은 HTML이
-                // 된다 — 대신 role="button"을 준 <div>로 카드 선택만 처리한다.
-                <div
-                  key={result.caseId}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelectedCaseId(result.caseId)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") setSelectedCaseId(result.caseId);
-                  }}
-                  className={css({
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    borderRadius: "panel",
-                    cursor: "pointer",
-                    outline: "none",
-                    borderWidth: "2px",
-                    borderColor: isSelected ? "navy" : "transparent",
-                  })}
-                >
-                  <CaseMatchPanel
-                    patientInfo={result.patientInfo}
-                    hospital={hospital}
-                    hospitalId={MY_HOSPITAL_ID}
-                    caseId={result.caseId}
-                    ambulanceName={result.ambulanceName}
-                    onAction={sendAction}
-                  />
-                </div>
-              );
-            })
-          )}
-        </div>
-        </div>
-
-        <MapPanel
-          hospital={selected?.hospital ?? null}
-          caseId={selected?.result.caseId ?? null}
-          ambulanceGps={selected?.result.ambulanceGps ?? null}
-        />
-      </main>
-
-      <p
-        className={css({
-          marginTop: "3.5",
-          paddingX: "1",
-          fontSize: "xs",
-          color: "ink",
-          textAlign: "center",
-        })}
-      >
-        AI는 환자 정보 구조화와 기록 자동화만 수행합니다. 수용 결정은 본원 의료진의 판단입니다.
+      <p className={css({ fontSize: "2xl" })}>🏥</p>
+      <h1 className={css({ fontSize: "lg", fontWeight: "bold", color: "ink" })}>수용 요청 대기 중</h1>
+      <p className={css({ fontSize: "sm", color: "ink2" })}>
+        사건이 병원에 수용 요청을 보내면 그 사건의 1순위 병원 대시보드로 자동 전환됩니다. (시연용 자동 로그인)
+      </p>
+      <p className={css({ fontSize: "xs", color: CONNECTION_LABEL[connectionMode].color })}>
+        {CONNECTION_LABEL[connectionMode].text}
       </p>
     </div>
   );
+}
+
+// 병원 대시보드 — 첫 페이지에서 병원 접근 코드(H-<hpid>)를 입력해 연다(2026-10-03 회의로 관제 지도와 분리).
+// 관제 지도는 병원 이름과 접근 코드를 보여줄 뿐 이 화면을 열지 않는다. 내용은 HospitalDashboard 컴포넌트.
+function HospitalDashboardContent() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
+  if (id === "auto") return <HospitalAutoFollow />;
+  return <HospitalDashboard hospitalId={id ?? ""} />;
 }
 
 export default function HospitalDashboardPage() {

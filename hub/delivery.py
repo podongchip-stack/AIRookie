@@ -36,6 +36,9 @@ from schema import HubMatchResult
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "data" / "test" / "output"
+# 실서버(app.py)의 매칭 결과 사본. 예전엔 테스트 결과와 같은 data/test/output/에 섞여
+# 쌓였다(2026-09-28 분리). data/는 .gitignore 대상이라 커밋되지 않는다.
+LIVE_OUTPUT_DIR = BASE_DIR / "data" / "live" / "output"
 VOICE_SUMMARY_SUFFIX = "_call_summary.json"
 RESULT_SUFFIX = "_hub_match_result.json"
 
@@ -73,12 +76,12 @@ def send_to_dashboard(result: HubMatchResult) -> None:
     print("  [통신] feature/dashboard 실시간 전송은 아직 미연동 (자리만 준비됨)")
 
 
-def deliver(result: HubMatchResult, voice_summary_path: Path) -> Path:
+def deliver(result: HubMatchResult, voice_summary_path: Path, output_dir: Path = OUTPUT_DIR) -> Path:
     """로컬 저장 + (나중에) 통신을 함께 수행하는 단일 진입점.
     develop 브랜치에서 실제 feature/dashboard와 병합될 때도 호출부는 이 함수
     하나만 그대로 쓰면 되도록 만들어뒀다.
     """
-    saved_path = save_local(result, voice_summary_path)
+    saved_path = save_local(result, voice_summary_path, output_dir)
     send_to_dashboard(result)
     return saved_path
 

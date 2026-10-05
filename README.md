@@ -5,6 +5,8 @@
 > `demo`로 가져가는 것(develop → demo)만 하고, 반대 방향(demo → develop, demo → main) 병합·체리픽은 하지 않는다.
 > GitHub 설정으로 막아 두지 않았으니 직접 지켜야 한다.
 
+> 🐧 **리눅스 장비에서 환경 구축·서버 실행(도메인 접속)은 [SETUP-LINUX.md](SETUP-LINUX.md)** — Claude Code(Cursor)에 그대로 넣어 따라 하게 쓴 문서다.
+
 응급이송 과정에서 발생하는 음성·병원 응답 로그를 자동 수집·구조화하여 병원 수용
 판단을 지원하고, 모든 의사결정 과정을 자동 기록하는 **Zero Data Entry 기반
 응급이송 지원 플랫폼**이다. 구급대원이 여러 병원에 순차적으로 전화를 돌리는
@@ -83,7 +85,74 @@ E-Gen·심평원 실 API)을 기준으로 하며, 경로 B는 아직 경로 A와
 
 ---
 
-## 로컬에서 전체 흐름 실행해보기
+## 실행 명령 정리 (2026-10-03 기준)
+
+평소에는 이 두 명령이면 된다. macOS·Linux·Windows 공통이고, **Windows는 반드시 Git Bash**에서 실행한다
+(PowerShell·cmd에서는 bash 스크립트가 안 돈다). 가상환경·API 키 준비(최초 1회)는 아래
+"서버를 하나씩 따로 실행하기"의 0번을 먼저 끝낸다.
+
+```bash
+./start-all.sh            # 터미널 1 — hub + info + 거절 로그 수신구 + 스냅샷 수집 + dashboard + Cloudflare 터널
+./voice/start-voice.sh    # 터미널 2 — 중앙 voice 1대(STT·구조화). 모든 구급차의 통화를 처리한다
+```
+
+두 터미널 모두 Ctrl-C 한 번으로 끈다. 서버 로그는 `$LOG_DIR`(기본 `/tmp/goldenlink-logs`)에 서버별로 남는다.
+
+### `./start-all.sh` 옵션
+
+| 명령 | 하는 일 |
+|---|---|
+| `./start-all.sh` | 기본. 공개 모드(도메인 `https://app.rookie-goldenlink.xyz`), 출동 시뮬레이션 켬, 통화는 **휴대폰 전화 앱으로만** |
+| `--local` | 터널 없이 로컬 주소로만(`http://localhost:3000`, 같은 Wi-Fi 시연·개발용). ⚠ 휴대폰 마이크는 https에서만 열려 휴대폰 통화는 도메인(공개 모드)으로 할 것 |
+| `--dashboard-call` | 구급차 대시보드에도 [통화 시작] 버튼(마이크 파형)을 띄운다. 기본은 꺼서 대시보드엔 보기 전용 "통화 현황"(상태·실시간 자막)만 보인다 |
+| `--no-sim-dispatch` | 출동 시뮬레이션(가짜 GPS) 끄기. 휴대폰 전화 앱은 시뮬레이션 사건으로만 통화해서, 이때는 `--dashboard-call`이 자동으로 켜진다 |
+| `--skip-build` | dashboard 빌드 생략(직전과 **같은 모드**로 다시 띄울 때만) |
+| `--no-info` | info(병원 정보 주기 전송)·E-Gen 스냅샷 수집·거절 로그 수신구를 띄우지 않는다 |
+| `--no-snapshot` | E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델 관측 기록)만 생략 |
+| `--lidar` | lidar3d(3D 뷰어)도 함께 — 병원 대시보드에 3D 버튼이 생긴다(기본 끔) |
+| `--setup-dns` | 처음 한 번만: `app.*` 호스트를 Cloudflare 터널에 DNS로 연결 |
+| `--help` | 옵션 설명 |
+
+옵션은 섞어 쓸 수 있다(예: `./start-all.sh --local --dashboard-call`).
+
+### `./voice/start-voice.sh` (STT·구조화 서버)
+
+| 명령 | 하는 일 |
+|---|---|
+| `./voice/start-voice.sh` | **중앙 voice(권장)**, 포트 6000. 휴대폰 전화 앱·대시보드 브라우저 마이크 음성을 hub 경유로 받아 모든 구급차를 처리한다 |
+| `./voice/start-voice.sh A0000001` | 예전 방식 — 그 구급차 전용, **이 장비 마이크**로 통화를 받는다(포트 자동: A0000001=6001, A0000002=6002, A0000003=6003). 중앙 voice가 떠 있으면 hub는 중앙 voice를 우선 쓴다 |
+| `./voice/start-voice.sh A0000004 6004` | 표에 없는 구급차는 포트를 직접 준다 |
+| `HUB_BASE_URL=http://<hub IP>:5001 ./voice/start-voice.sh` | hub가 다른 장비일 때 |
+| `VOICE_DEVICE=cpu ./voice/start-voice.sh` | 연산 장치 지정(`auto` 기본 · `cuda` · `mps` · `cpu`) |
+
+처음 실행이면 모델(약 3GB)을 내려받는다. `[통신] hub에 중앙 voice로 등록 완료`가 뜨면 준비된 것이다.
+voice는 30초마다 hub에 다시 등록하므로 hub와 띄우는 순서는 상관없다.
+
+### 접속 주소 · 접근 코드
+
+첫 페이지(`/`)에 코드를 입력해 들어간다(대소문자 무관, `-` 생략 가능).
+
+| 코드 | 화면 | 주소 |
+|---|---|---|
+| `A-<구급차ID>` 예: `A-A0000001` | 구급차 대시보드 — 출동([이동])·현장 종료·통화 현황·병원 후보·이송 승인 | `/ambulance?id=` |
+| `P-<구급차ID>` 예: `P-A0000001` | **대원 휴대폰 전화 앱** — 현장 도착 후 병원을 골라 통화(통화만 한다) | `/phone?id=` |
+| `H-<병원ID>` 예: `H-A1100017` | 병원 대시보드 — 수용 승인·불가, 도착 결과 | `/hospital?id=` |
+| (첫 페이지 [관제 지도 열기]) | 관제 지도 — 전체 병원·구급차 위치와 요청 현황(보기 전용). 병원 코드 `H-…`가 병원 이름 옆에 보인다 | `/map` |
+
+구급차 ID: A0000001 역삼 구급대 · A0000002 성산 구급대 · A0000003 회현 구급대.
+구급차 대시보드 상단바의 "📞 전화 앱 (P-…)" 링크로도 전화 앱을 열 수 있다.
+
+### 시연 순서 (기본 옵션)
+
+1. 구급차 대시보드(`A-A0000001`)에서 [이동] → 현장 도착
+2. 대원 휴대폰으로 `P-A0000001` 접속 → 병원 목록(첫 통화 추천이 맨 위)에서 병원을 골라 통화 → 말하기 → 종료
+   - 고른 병원 대시보드엔 "📞 통화 중", 구급차 대시보드엔 통화 상태·실시간 자막, 관제 지도엔 📞 표시
+3. 통화 내용이 구조화(AI)돼 존 안의 후보 병원 전체에 동시에 전달 → 병원 대시보드에서 수용 승인·불가
+4. 구급차 대시보드에서 이송 승인 → 병원 도착 → 병원 대시보드 [환자 수용 완료] → 기지 복귀
+
+---
+
+## (수동) 서버를 하나씩 따로 실행하기
 
 네 서비스는 HTTP/WebSocket으로 통신하므로 각자 독립된 가상환경에서 따로
 실행한다 (하나로 통합하지 않는다 — torch/transformers 등 버전이 서로 달라
@@ -169,7 +238,7 @@ npm install
 npm run dev               # http://localhost:3000
 ```
 `NEXT_PUBLIC_HUB_HTTP_URL`(예: `http://127.0.0.1:5001`)을 `.env.local`에
-설정한다. `/ambulance?id=<apid>`·`/hospital?id=<hpid>`로 접속하며, 접근 코드는
+설정한다. `/ambulance?id=<apid>`·`/phone?id=<apid>`·`/hospital?id=<hpid>`·`/map`으로 접속하며(접근 코드는 위 "접속 주소" 표), 접근 코드는
 `send_to_hub.py`가 실제로 보낸 hpid/apid를 써야 한다(더 이상 `S0000001~7`
 같은 고정 코드가 아니다).
 
@@ -184,6 +253,7 @@ dashboard에서 병원이 "수용 불가"를 누르면 hub가 사유를 `POST /h
 hub는 조용히 넘어간다(fire-and-forget). 쌓인 로그는
 `python -m hospital_score.rejection --summary`로 축별 집계해 본다.
 
-**결과 확인**: hub가 반환한 매칭 결과는 `hub/data/test/output/`에 저장되고,
-모든 의사결정은 `hub/data/logs/decision_log.jsonl`에 타임스탬프+해시로
-기록된다(`hub/decision_log.py` — 통화 전문은 sha256 지문으로 치환돼 남는다).
+**결과 확인**: hub 실서버의 매칭 결과는 `hub/data/live/output/`에(테스트 `run_match.py`는
+`hub/data/test/output/`), 모든 의사결정은 `hub/data/logs/decision_log.jsonl`에
+타임스탬프+해시 체인으로 기록된다(`hub/decision_log.py` — 통화 전문은 sha256 지문으로
+치환돼 남는다). 재시작 복구용 상태는 `hub/data/state/hub_state.json`(통화 원문 제외).

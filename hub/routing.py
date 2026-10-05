@@ -26,6 +26,10 @@ from schema import GpsPoint
 
 _DESTINATIONS_URL = "https://apis-navi.kakaomobility.com/v1/destinations/directions"
 _DIRECTIONS_URL = "https://apis-navi.kakaomobility.com/v1/directions"
+# 카카오 로컬(주소·장소 검색, 2026-10-01): 출동 시뮬레이션의 "주소 지정" — 같은 REST 키를 쓴다.
+_ADDRESS_URL = "https://dapi.kakao.com/v2/local/search/address.json"
+_KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
+_SEARCH_LIMIT = 5
 _MAX_DESTINATIONS = 30        # 다중 목적지 API 한도
 _MAX_RADIUS_M = 10000         # 다중 목적지 API 반경 한도
 _TIMEOUT_SEC = 3.0            # 매칭 응답을 붙잡지 않도록 짧게
@@ -56,6 +60,7 @@ class KakaoRouting:
         self._headers = {"Authorization": f"KakaoAK {api_key}"}
         self._eta_cache: dict[tuple, tuple[float, int, int]] = {}      # key -> (저장시각, 초, 미터)
         self._route_cache: dict[tuple, tuple[float, dict]] = {}
+        self._search_cache: dict[str, tuple[float, list[dict]]] = {}
 
     @classmethod
     def from_env(cls) -> "KakaoRouting | None":
@@ -106,6 +111,34 @@ class KakaoRouting:
                 result[hid] = (duration, distance)
                 self._eta_cache[_cache_key(origin, by_id[hid])] = (time.time(), duration, distance)
         return result
+
+    def search_places(self, query: str) -> list[dict]:
+        """주소 또는 장소 이름 → [{name, address, lat, lng}] 최대 5개. 주소 검색을 먼저 하고, 결과가 없으면
+        장소(키워드) 검색. 실패하면 빈 목록. 검색어는 캐시 키로만 메모리에 두고 로그에 남기지 않는다(개인정보)."""
+        hit = self._fresh(self._search_cache, query)
+        if hit:
+            return hit[1]
+        results: list[dict] = []
+        try:
+            for url in (_ADDRESS_URL, _KEYWORD_URL):
+                response = requests.get(url, params={"query": query, "size": _SEARCH_LIMIT},
+                                        headers=self._headers, timeout=_TIMEOUT_SEC)
+                response.raise_for_status()
+                for doc in response.json().get("documents", []):
+                    road = (doc.get("road_address") or {}).get("address_name") if isinstance(doc.get("road_address"), dict) else None
+                    results.append({
+                        "name": doc.get("place_name") or road or doc.get("address_name"),
+                        "address": doc.get("road_address_name") or road or doc.get("address_name"),
+                        "lat": float(doc["y"]), "lng": float(doc["x"]),
+                    })
+                if results:
+                    break
+        except (requests.RequestException, ValueError, KeyError) as e:
+            print(f"  [주소 검색] 실패 — 빈 결과로 대체: {type(e).__name__}")
+            return []
+        results = results[:_SEARCH_LIMIT]
+        self._search_cache[query] = (time.time(), results)
+        return results
 
     def route(self, origin: GpsPoint, dest: GpsPoint) -> dict | None:
         """도로 경로: {"path": [[lat, lng], ...], "durationSec", "distanceM"} 또는 None."""

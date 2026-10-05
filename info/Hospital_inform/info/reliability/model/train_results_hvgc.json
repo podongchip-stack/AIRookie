@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-09-28T14:08:03+00:00",
+  "field": "hvgc",
+  "label": "입원실 일반",
+  "theta": 3,
+  "cutoff": "2026-09-21T15:00:00+00:00",
+  "train": {
+    "versions": 95597,
+    "events": 35593
+  },
+  "test": {
+    "versions": 33479,
+    "events": 11018
+  },
+  "seeds": {
+    "42": {
+      "cFull": 0.8558,
+      "cInterval": 0.7285,
+      "win": true
+    },
+    "43": {
+      "cFull": 0.856,
+      "cInterval": 0.7292,
+      "win": true
+    },
+    "44": {
+      "cFull": 0.8558,
+      "cInterval": 0.7292,
+      "win": true
+    }
+  },
+  "meanCFull": 0.8559,
+  "adopted": true,
+  "reason": "관문 통과 (시드 3종 전승, 평균 FULL C 0.8559)"
+}

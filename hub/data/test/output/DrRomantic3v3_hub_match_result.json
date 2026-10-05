@@ -1,4 +1,5 @@
 {
+  "type": "match_result",
   "caseId": "case-DrRomantic3v3",
   "patientInfo": {
     "injuryStatus": [
@@ -8,7 +9,17 @@
     "expectedDiagnosis": "교통사고로 인한 흉부 손상",
     "severityTag": "high",
     "rawTranscript": "구급대원: 환자 50대 남성, 교통사고 흉부 충격입니다... A병원: 네 잠시만요...",
-    "filteredTranscript": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란."
+    "filteredTranscript": "환자 50대 남성, 교통사고 흉부 충격. 의식 저하, 호흡 곤란.",
+    "patient": "50대 남성",
+    "treatment": [
+      "산소 공급"
+    ],
+    "ktasLevel": null,
+    "vitals": [],
+    "consciousness": null,
+    "onset": null,
+    "chiefComplaint": null,
+    "requiredDepartment": null
   },
   "zoneActive": [
     1
@@ -24,14 +35,28 @@
       "distanceKm": 1.22,
       "specialtyMatch": {
         "department": "외상외과",
-        "score": 0.5776
+        "score": 0.5776,
+        "basis": "embedding",
+        "doctorCount": 2
       },
       "availableBedCount": 5,
       "bedCountUnknown": false,
       "status": "pending",
       "etaMin": null,
       "reliability": null,
-      "bedReliability": null
+      "bedReliability": null,
+      "severeFreshness": null,
+      "bedReliabilityByType": null,
+      "finalScore": 0.733161,
+      "travelMin": 1.8,
+      "travelBasis": "estimate",
+      "demoteReasons": [],
+      "bedDataStale": true,
+      "emergencyLevel": null,
+      "travelBonusMin": 1.1,
+      "bonusReasons": [
+        "전문의 2명 −1.1분"
+      ]
     },
     {
       "hospitalId": "H001",
@@ -43,14 +68,28 @@
       "distanceKm": 2.0,
       "specialtyMatch": {
         "department": "흉부외과",
-        "score": 0.5132
+        "score": 0.5132,
+        "basis": "embedding",
+        "doctorCount": 3
       },
       "availableBedCount": 12,
       "bedCountUnknown": false,
       "status": "pending",
       "etaMin": null,
       "reliability": null,
-      "bedReliability": null
+      "bedReliability": null,
+      "severeFreshness": null,
+      "bedReliabilityByType": null,
+      "finalScore": 0.679372,
+      "travelMin": 3.0,
+      "travelBasis": "estimate",
+      "demoteReasons": [],
+      "bedDataStale": true,
+      "emergencyLevel": null,
+      "travelBonusMin": 1.4,
+      "bonusReasons": [
+        "전문의 3명 −1.4분"
+      ]
     },
     {
       "hospitalId": "H002",
@@ -62,16 +101,35 @@
       "distanceKm": 3.66,
       "specialtyMatch": {
         "department": null,
-        "score": 0.0
+        "score": 0.0,
+        "basis": "none",
+        "doctorCount": null
       },
       "availableBedCount": 0,
       "bedCountUnknown": false,
       "status": "pending",
       "etaMin": null,
       "reliability": null,
-      "bedReliability": null
+      "bedReliability": null,
+      "severeFreshness": null,
+      "bedReliabilityByType": null,
+      "finalScore": 0.310342,
+      "travelMin": 5.5,
+      "travelBasis": "estimate",
+      "demoteReasons": [],
+      "bedDataStale": true,
+      "emergencyLevel": null,
+      "travelBonusMin": 0.0,
+      "bonusReasons": []
     }
   ],
   "source": "rule",
-  "ambulanceName": null
+  "ambulanceName": null,
+  "apid": null,
+  "ambulanceGps": {
+    "lat": 35.18,
+    "lng": 128.108
+  },
+  "ambulanceGpsFallback": false,
+  "arrival": null
 }

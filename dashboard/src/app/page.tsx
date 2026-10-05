@@ -3,12 +3,14 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { css } from "styled-system/css";
-import { inputStyle, primaryButtonStyle } from "@/components/ui/button-styles";
+import { inputStyle, primaryButtonStyle, secondaryButtonStyle } from "@/components/ui/button-styles";
 
-// 코드 형식: "H-<병원ID>" 또는 "A-<차량ID>" (대소문자 무관, 대시 생략 가능)
-// 예: H-C → 병원 대시보드(병원 ID "C"), A-1 → 구급차 대시보드(차량 ID "1")
+// 코드 형식: "H-<병원ID>", "A-<차량ID>", "P-<차량ID>" (대소문자 무관, 대시 생략 가능).
+// 예: H-A1100009 → 병원 대시보드, A-A0000001 → 구급차 대시보드, P-A0000001 → 그 구급차 대원 휴대폰 전화 앱(2026-10-03).
+// 병원 접근 코드는 관제 지도의 병원 이름 옆에 보인다.
 // 실제 인증 서버가 붙기 전까지는 이 코드로 역할/ID만 판단해 해당 대시보드로 라우팅한다.
-const CODE_PATTERN = /^([HA])-?(.+)$/i;
+const CODE_PATTERN = /^([HAP])-?(.+)$/i;
+const ROUTE_BY_PREFIX = { H: "hospital", A: "ambulance", P: "phone" } as const;
 
 // hub의 GET /identity로 hpid/apid가 실제로 존재하는지 라우팅 전에 미리 확인한다
 // (2026-08-11). 예전엔 /hospital, /ambulance 페이지로 넘어간 뒤에야 알 수 있어서
@@ -40,11 +42,18 @@ export default function Home() {
     event.preventDefault();
     const match = code.trim().match(CODE_PATTERN);
     if (!match) {
-      setError("코드 형식이 올바르지 않습니다. 예: H-C(병원), A-1(구급차)");
+      setError("코드 형식이 올바르지 않습니다. 예: H-A1100009(병원), A-A0000001(구급차), P-A0000001(전화 앱)");
       return;
     }
-    const [, roleChar, id] = match;
-    const role = roleChar.toUpperCase() === "H" ? "hospital" : "ambulance";
+    const [, roleChar, rawId] = match;
+    const page = ROUTE_BY_PREFIX[roleChar.toUpperCase() as keyof typeof ROUTE_BY_PREFIX];
+    // P-AUTO(2026-10-04) — 전화 앱 자동 전환. 휴대폰에서 코드 입력칸에 바로 칠 수 있게 코드로도 받는다
+    if (page === "phone" && rawId.toLowerCase() === "auto") {
+      window.location.assign("/phone?id=auto");
+      return;
+    }
+    const id = rawId;
+    const role = page === "hospital" ? "hospital" : "ambulance"; // 전화 앱도 구급차 코드로 확인한다
 
     setChecking(true);
     const exists = await checkCodeExists(role, id);
@@ -53,7 +62,11 @@ export default function Home() {
       setError("존재하지 않는 코드입니다.");
       return;
     }
-    router.push(`/${role}?id=${encodeURIComponent(id)}`);
+    const href = `/${page}?id=${encodeURIComponent(id)}`;
+    // 전화 앱은 페이지를 새로 불러 연다 — 화면 안 이동(router.push)이면 이 페이지에서 생긴 확대(입력칸 자동 확대 등)가
+    // 그대로 남는데, 전화 앱은 확대를 막아 두어 되돌릴 수 없다. 새로 불러오면 배율이 1로 돌아간다.
+    if (page === "phone") window.location.assign(href);
+    else router.push(href);
   }
 
   return (
@@ -86,7 +99,7 @@ export default function Home() {
             setCode(event.target.value);
             setError(null);
           }}
-          placeholder="코드 입력 (예: H-C, A-1)"
+          placeholder="코드 입력 (예: H-A1100009, A-A0000001, P-A0000001)"
           className={inputStyle}
         />
         {error && (
@@ -96,6 +109,33 @@ export default function Home() {
           {checking ? "확인 중..." : "입장"}
         </button>
       </form>
+
+      <div className={css({ display: "flex", flexDirection: "column", gap: "2", width: "280px", textAlign: "center" })}>
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/map")}>
+          관제 지도 열기
+        </button>
+        <p className={css({ fontSize: "xs", color: "gray.500" })}>
+          병원·구급차 위치와 환자 요청 현황을 실시간으로 봅니다. 병원 접근 코드도 여기서 확인할 수 있습니다.
+        </p>
+        {/* 시연용 자동 로그인(2026-10-04) — 상황이 발생하면 해당 구급대/1순위 병원 대시보드로 자동 전환 */}
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/ambulance?id=auto")}>
+          구급대 대시보드 (자동 전환)
+        </button>
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/hospital?id=auto")}>
+          병원 대시보드 (자동 전환)
+        </button>
+        {/* 전화 앱 자동 전환(2026-10-04) — 휴대폰 확대가 남지 않게 페이지를 새로 불러 연다(코드 P-AUTO와 같음) */}
+        <button type="button" className={secondaryButtonStyle} onClick={() => window.location.assign("/phone?id=auto")}>
+          휴대폰 전화 앱 (자동 전환)
+        </button>
+        {/* 시연 통제 콘솔(2026-10-04) — 운영자가 출동·통화·승인·활력징후 시나리오를 한 화면에서 조작 */}
+        <button type="button" className={secondaryButtonStyle} onClick={() => router.push("/control")}>
+          시연 통제 콘솔
+        </button>
+        <p className={css({ fontSize: "xs", color: "gray.500" })}>
+          운영자 전용 — 출동·통화·가짜 환자 전송·승인·이송 중 시나리오를 한 화면에서 조작합니다.
+        </p>
+      </div>
     </main>
   );
 }

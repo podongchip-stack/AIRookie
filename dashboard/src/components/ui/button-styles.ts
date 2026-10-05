@@ -63,7 +63,9 @@ export const inputStyle = css({
   borderRadius: "md",
   paddingX: "2.5",
   paddingY: "1.5",
-  fontSize: "sm",
+  // 휴대폰 폭에선 16px — 아이폰 Safari는 16px보다 작은 입력칸을 누르면 화면을 저절로 확대하고, 그 확대가 다음
+  // 화면(전화 앱)까지 남아 양옆이 잘렸다(2026-10-03 실기기). 태블릿·PC 폭부터는 예전처럼 작게.
+  fontSize: { base: "16px", md: "sm" },
   color: "ink",
   _focus: { borderColor: "brand", outline: "none" },
 });

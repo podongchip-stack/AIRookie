@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-09-28T14:07:30+00:00",
+  "field": "hvoc",
+  "label": "수술실",
+  "theta": 3,
+  "cutoff": "2026-09-21T15:00:00+00:00",
+  "train": {
+    "versions": 43213,
+    "events": 7987
+  },
+  "test": {
+    "versions": 12523,
+    "events": 1841
+  },
+  "seeds": {
+    "42": {
+      "cFull": 0.8674,
+      "cInterval": 0.7445,
+      "win": true
+    },
+    "43": {
+      "cFull": 0.8632,
+      "cInterval": 0.7437,
+      "win": true
+    },
+    "44": {
+      "cFull": 0.8671,
+      "cInterval": 0.7383,
+      "win": true
+    }
+  },
+  "meanCFull": 0.8659,
+  "adopted": true,
+  "reason": "관문 통과 (시드 3종 전승, 평균 FULL C 0.8659)"
+}
