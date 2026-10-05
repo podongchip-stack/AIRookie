@@ -1515,17 +1515,7 @@ export default function ControlPage() {
                           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: C.ink3 }}>
                             <Pulse color="#7ba0cc" />휴대폰 통화를 기다리는 중…
                           </div>
-                          {/* 시연용 지름길 — 통화 없이 진행할 때. 음성처럼 꾸미지 않고 정해진 상황(신고 증상)으로 보내 출처가 정직하게 남는다 */}
-                          <div>
-                            <button
-                              type="button"
-                              disabled={sending}
-                              onClick={g(() => handleReport(verifyTemplate.key))}
-                              style={{ minHeight: 38, padding: "0 16px", background: "#ffffff", border: `1px dashed ${C.blue}`, borderRadius: 10, color: C.blue, fontSize: 13, fontWeight: 700, cursor: "pointer" }}
-                            >
-                              시연용 · 통화 없이 진행 ({verifyTemplate.label} — 정해진 상황으로 전달)
-                            </button>
-                          </div>
+                          <div style={{ fontSize: 12, color: C.ink3 }}>통화가 어려우면 위의 <b>정해진 상황 선택</b> 탭으로 바꿔 진행하세요.</div>
                         </>
                       )}
                     </div>
