@@ -1,0 +1,9 @@
+# 생성물·대용량 — 커밋하지 않는다
+GoldenLinkPhone.xcodeproj/
+Models/
+Vendor/
+.build/
+GoldenLinkCore/.build/
+GoldenLinkCore/.swiftpm/
+DerivedData/
+xcuserdata/

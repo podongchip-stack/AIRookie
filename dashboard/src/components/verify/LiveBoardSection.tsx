@@ -80,6 +80,7 @@ export type LiveBoard = {
 const REFRESH_MS = 5 * 60 * 1000; // hub 쪽 캐시가 20분이라 5분이면 충분히 신선
 const REPLAY_SEC = 90;
 const WARN_ROLL = 18; // 경고선은 폴링당 표본이 4건 안팎이라 6시간(18폴링) 이동평균으로 그린다
+const WARN_MIN_N = 15; // 6시간 합이 이보다 적으면 비율이 튀어서 선을 그리지 않는다(표본 부족 표시)
 
 // 시리즈 색 — dataviz 검증을 통과한 카테고리 슬롯(이 파일 안에서만 쓰는 역할 고정 색).
 // 용어는 화면 전체에서 통일한다: 신고값(E-Gen 원본) · 유지율(다음 실측까지 맞은 비율) ·
@@ -138,7 +139,7 @@ export function liveP(row: BoardRow, nowMs: number): number {
 // 20분 폴링마다 점이 하나씩 붙는 선 3개: 엔진 선별(파랑) / 전체 평균(회색 점선) / 경고(주황).
 // 경고선은 소표본이라 6시간 이동평균(범례에 명시). 리플레이 중에는 cutoff까지만 그린다.
 
-export type ChartPoint = { tMs: number; hi: number | null; all: number | null; warn: number | null; raw: PollStat };
+export type ChartPoint = { tMs: number; hi: number | null; all: number | null; warn: number | null; warnN: number; raw: PollStat };
 
 export function buildPoints(timeseries: PollStat[]): ChartPoint[] {
   return timeseries.map((poll, index) => {
@@ -152,7 +153,8 @@ export function buildPoints(timeseries: PollStat[]): ChartPoint[] {
       tMs: Date.parse(poll.ts),
       hi: poll.hiN >= 20 ? (poll.hiHeld / poll.hiN) * 100 : null,
       all: poll.n >= 20 ? (poll.held / poll.n) * 100 : null,
-      warn: warnN >= 15 ? (warnHeld / warnN) * 100 : null,
+      warn: warnN >= WARN_MIN_N ? (warnHeld / warnN) * 100 : null,
+      warnN,
       raw: poll,
     };
   });
@@ -180,6 +182,11 @@ export function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint
       .join(" ");
   const lastOf = (key: "hi" | "all" | "warn") => [...visible].reverse().find((p) => p[key] != null);
   const hoverPoint = hover != null ? visible[Math.min(hover, visible.length - 1)] : null;
+  // 경고 선이 중간에 끝났으면(그 뒤 6시간 경고 표본 < WARN_MIN_N, 2026-10-04) 끊긴 이유를 표시한다 — 데이터가
+  // 끊긴 게 아니라 모델이 경고를 거의 안 낸 구간이다. 이 표시가 없으면 "경고 선이 멈췄다"로 읽힌다.
+  const lastWarn = lastOf("warn");
+  const lastVisible = visible[visible.length - 1];
+  const warnGap = lastWarn && lastVisible && lastVisible.tMs > lastWarn.tMs ? lastWarn : null;
 
   const labelRows = (["hi", "all", "warn"] as const)
     .map((key) => ({ key, last: lastOf(key) }))
@@ -261,9 +268,21 @@ export function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint
             <circle cx={x(last!.tMs) + 10} cy={yPos - 3} r="3.5" fill={SERIES[key].color} />
             <text x={x(last!.tMs) + 18} y={yPos} fontSize="12" fontWeight="600" fill="var(--colors-ink)">
               {SERIES[key].label} {Math.round(last![key] as number)}%
+              {key === "warn" && warnGap ? ` · ${kstDayTime(warnGap.raw.ts)}까지` : ""}
             </text>
+            {key === "warn" && warnGap && (
+              <text x={x(last!.tMs) + 18} y={yPos + 14} fontSize="11" fill={SERIES.warn.color}>
+                이후 표본 부족 — 최근 6시간 경고 {lastVisible.warnN}건(선은 {WARN_MIN_N}건부터)
+              </text>
+            )}
           </g>
         ))}
+        {warnGap && (
+          <line
+            x1={x(warnGap.tMs)} y1={y(warnGap.warn as number)} x2={x(lastVisible.tMs)} y2={y(warnGap.warn as number)}
+            stroke={SERIES.warn.color} strokeWidth="1" strokeDasharray="1 5" strokeLinecap="round" opacity="0.6"
+          />
+        )}
 
         {hoverPoint && (
           <line x1={x(hoverPoint.tMs)} y1={T} x2={x(hoverPoint.tMs)} y2={H - B} stroke="var(--colors-ink3)" strokeWidth="1" strokeDasharray="2 3" />
@@ -282,7 +301,11 @@ export function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint
           <b className={css({ color: "ink" })}>{kstDayTime(hoverPoint.raw.ts)} 채점</b>
           <br />전체 {hoverPoint.raw.n}건 중 {hoverPoint.raw.held} 유지
           {hoverPoint.hi != null && <> · 엔진 선별 {hoverPoint.raw.hiN}건 중 {hoverPoint.raw.hiHeld}</>}
-          {hoverPoint.warn != null && <> · 경고(6h 평균) {Math.round(hoverPoint.warn)}%</>}
+          {hoverPoint.warn != null ? (
+            <> · 경고(6h 평균) {Math.round(hoverPoint.warn)}%</>
+          ) : (
+            <> · 경고 표본 부족(6h {hoverPoint.warnN}건)</>
+          )}
         </div>
       )}
     </div>

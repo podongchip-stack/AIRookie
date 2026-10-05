@@ -1,0 +1,23 @@
+// 병원 대시보드 디자인 시안(2026-10-04, "골든링크 병원 대시보드")의 색 — 화면 조각들이 같은 값을 쓰도록 한 곳에 둔다.
+export const HD = {
+  bg: "#F4F6F9",
+  ink: "#1B2430",
+  navy: "#14213D",
+  ink3: "#4A5565",
+  sub: "#5A6676",
+  muted: "#7A8594",
+  line: "#E1E6EC",
+  line2: "#F1F3F6",
+  chip: "#F1F3F6",
+  blue: "#1F4E9C",
+  blueSoft: "#E8EEF8",
+  green: "#168A55",
+  greenSoft: "#E6F4EC",
+  lime: "#4E8B1F",
+  limeSoft: "#EEF5E6",
+  orange: "#C75B00",
+  orangeSoft: "#FFF1E0",
+  red: "#D93025",
+  redSoft: "#FDECEA",
+  gray: "#9AA3B0",
+} as const;

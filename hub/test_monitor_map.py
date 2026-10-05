@@ -61,6 +61,7 @@ def main() -> None:
     assert {h["hospitalId"] for h in overview["hospitals"]} >= {near.hospitalId, "T_FAR"}
     assert [a["apid"] for a in overview["ambulances"]] == ["A_MAP"] and overview["simDispatch"]
     assert "ambulance_phase" in _types(monitor), "연결 때 구급차 시뮬레이션 상태도 받는다"
+    assert "case_history" in _types(monitor), "연결 때 오늘 종료된 사건 목록도 받는다(2026-10-04)"
     print("  [확인] 병원 2곳·구급차 1대·구급차 상태 수신")
 
     print("=== 매칭 결과 → 관제 지도엔 요약만(환자 상세 없음), 구급차·병원 탭엔 전체 ===")
@@ -82,7 +83,10 @@ def main() -> None:
     assert [h["hospitalId"] for h in case["hospitals"]] == [near.hospitalId] and case["hospitals"][0]["zone"] == 1
     assert case["zoneActive"] == [1] and case["zoneBandKm"] == 5.0
     assert "match_result" in _types(amb) and "match_result" in _types(hosp)
-    print("  [확인] 사건 요약(존 1, 근처 병원 1곳) — 통화 전문 없음")
+    # 관제 지도 개편(2026-10-04): 사건 번호·시작 시각·진행 과정이 요약에 실린다
+    assert isinstance(case["num"], int) and case["startedAt"], case
+    assert [e["kind"] for e in case["events"]] == ["s"] and "수용 요청 시작 · 1곳" in case["events"][0]["text"]
+    print("  [확인] 사건 요약(존 1, 근처 병원 1곳) — 통화 전문 없음, 사건 번호·시작 시각·진행 과정")
 
     print("=== 병원 거절 → 거절 비율로 존 확장 → 바깥 존 병원이 요약에 들어온다 ===")
     monitor.sent.clear()
@@ -94,6 +98,10 @@ def main() -> None:
     statuses = {h["hospitalId"]: (h["status"], h["zone"]) for h in case["hospitals"]}
     assert statuses[near.hospitalId] == ("rejected", 1), statuses
     assert statuses.get("T_FAR", (None, 0))[1] == 2 and max(case["zoneActive"]) == 2, case
+    responded = {h["hospitalId"]: h["respondedAt"] for h in case["hospitals"]}
+    assert responded[near.hospitalId] and responded["T_FAR"] is None, "응답한 병원만 응답 시각이 있다"
+    texts = [e["text"] for e in case["events"]]
+    assert any("수용 불가 · 병상 만실" in t for t in texts) and any("존 1~2로 요청 범위 확장 · +1곳" in t for t in texts), texts
     print(f"  [확인] 존 {case['zoneActive']} — 먼 병원(존 2) 추가, 거절 병원 상태 rejected")
 
     print("=== 구급차 이동·사건 종료·병원 목록 갱신도 관제 지도로 ===")
@@ -103,6 +111,9 @@ def main() -> None:
     assert _last(monitor, "ambulance_phase")["phase"] == "dispatching"
     app._close_case(case_id, "scene_ended")
     assert _last(monitor, "case_closed")["caseId"] == case_id
+    past = _last(monitor, "case_history")["cases"][0]
+    assert past["caseId"] == case_id and past["result"] == "cancel" and past["requested"] == 2 and past["rejected"] == 1
+    assert past["zone"] == 2 and past["events"][-1]["text"].startswith("현장 종료"), past
     client.post("/info/hospitals/roster", json={"hospitalIds": [near.hospitalId, "T_FAR"]})
     assert "map_overview" in _types(monitor), "병원 목록 한 주기가 끝나면 지도 목록을 다시 보낸다"
     print("  [확인] 구급차 상태·case_closed·map_overview 수신")

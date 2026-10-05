@@ -45,6 +45,7 @@ const MOCK_ACTION_TO_STATUS: Record<ApprovalActionType, HospitalStatus> = {
   final_approval: "confirmed",
   arrival_accepted: "confirmed",
   arrival_refused: "rejected",
+  transport_withdraw: "rejected",
 };
 
 // hub 연결 상태. "reconnecting"은 hub 주소는 설정돼 있는데 연결이 끊겨 다시 붙는 중이라는
@@ -70,6 +71,11 @@ const INITIAL_STATE: DashboardState = {
   callStatus: {},
   transportAssessments: {},
   preAlerts: {},
+  caseMeta: {},
+  caseHistory: [],
+  actionRefused: null,
+  mciAllocated: null,
+  mciPlan: null,
 };
 
 // 관제 지도 "병원 응답" 기록에 남길 최대 개수
@@ -115,7 +121,8 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
         !(caseId in prev.matchResults) &&
         !(caseId in prev.sceneCandidates) &&
         !(caseId in prev.monitorCases) &&
-        !(caseId in prev.callStatus)
+        !(caseId in prev.callStatus) &&
+        !(caseId in prev.caseMeta)
       ) {
         return prev;
       }
@@ -133,7 +140,9 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       delete callStatus[caseId];
       delete transportAssessments[caseId];
       delete preAlerts[caseId];
-      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts, callStatus, transportAssessments, preAlerts };
+      const caseMeta = { ...prev.caseMeta };
+      delete caseMeta[caseId];
+      return { ...prev, matchResults, sceneCandidates, monitorCases, callTranscripts, callStatus, transportAssessments, preAlerts, caseMeta };
     });
   }, []);
 
@@ -371,6 +380,22 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "pre_alert":
               applyPreAlert(parsed);
               break;
+            // 관제 지도(2026-10-04): 매칭 전 사건 정보 · 오늘 종료된 사건 목록
+            case "case_meta":
+              setState((prev) => ({ ...prev, caseMeta: { ...prev.caseMeta, [parsed.caseId]: parsed } }));
+              break;
+            case "case_history":
+              setState((prev) => ({ ...prev, caseHistory: parsed.cases }));
+              break;
+            case "mci_allocated":
+              setState((prev) => ({ ...prev, mciAllocated: { at: Date.now(), results: parsed.results } }));
+              break;
+            case "mci_plan":
+              setState((prev) => ({ ...prev, mciPlan: { at: Date.now(), caseIds: parsed.caseIds, plan: parsed.plan } }));
+              break;
+            case "action_refused":
+              setState((prev) => ({ ...prev, actionRefused: { at: Date.now(), reason: parsed.reason, caseId: parsed.caseId } }));
+              break;
             case "match_result":
             case undefined:
               applyMatchResult(parsed);
@@ -440,7 +465,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       signal: CallSignalType,
       apid: string,
       caseId: string,
-      extra?: { hospitalId?: string | null; device?: CallDevice },
+      extra?: { hospitalId?: string | null; device?: CallDevice; cancelled?: boolean },
     ): boolean => {
     const payload: CallSignal = {
       type: "call_signal",
@@ -450,6 +475,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
       caseId,
       ...(extra?.hospitalId ? { hospitalId: extra.hospitalId } : {}),
       ...(extra?.device ? { device: extra.device } : {}),
+      ...(extra?.cancelled ? { cancelled: true } : {}),
     };
     const socket = socketRef.current;
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -565,7 +591,31 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     [],
   );
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals };
+  // [건너뛰기](2026-10-04, 시연 콘솔) — 자동 존 확장 시각을 기다리지 않고 지금 한 단계 넓힌다
+  const sendZoneExpand = useCallback((caseId: string): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "zone_expand_now", caseId, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
+  // 대량사고 [분배 확정](2026-10-05) — hub가 중증부터 사건마다 승인 병원 중 순위 1위로 이송 확정한다(부하 페널티 반영)
+  const sendMciAllocate = useCallback((caseIds: string[]): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "mci_allocate", caseIds, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
+  // 대량사고 자동 분배 미리 보기(2026-10-05) — 확정하지 않고 hub의 계획만 받는다(mci_plan)
+  const sendMciPreview = useCallback((caseIds: string[]): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "mci_preview", caseIds }));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.

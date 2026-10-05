@@ -10,7 +10,7 @@ import {
   escapeHtml,
 } from "@/lib/kakao-map-markers";
 import {
-  MAP_COLORS, PHASE_SHORT, STATUS_ICON, STATUS_SHORT, hospitalLevelColor, requestColor, statusInk, topStatus,
+  AMBULANCE_PHASE_COLORS, MAP_COLORS, PHASE_SHORT, STATUS_ICON, STATUS_SHORT, hospitalLevelColor, requestColor, statusInk, topStatus,
   type HospitalRequest,
 } from "@/lib/monitor";
 import type { AmbulanceSimState, CallStatus, MapOverview, MonitorCase } from "@/types/dashboard";
@@ -32,7 +32,8 @@ const LABEL_MAX_LEVEL = 7;
 const MOVING_PHASES = new Set(["dispatching", "transporting", "returning"]);
 
 type HospitalLayer = { marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay };
-type AmbulanceLayer = { marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay; text: string };
+// label은 기지 대기 중이면 없다(2026-10-04 — 이름은 사건으로 움직이는 구급차만). color는 마커 색(단계별).
+type AmbulanceLayer = { marker: kakao.maps.Marker; label: kakao.maps.CustomOverlay | null; text: string; color: string };
 
 // 요청 표시는 짧게(상태만) — 요청 병원이 존 확장으로 20곳 가까이 되면 긴 표시는 서로 겹쳐 지도를 가렸다.
 // 어느 구급대의 요청인지는 마우스를 올리면(title) 보인다. 색은 상태별(노랑·연두·빨강·초록).
@@ -313,30 +314,42 @@ export function MonitorMapPanel({
       const sim = ambulanceSim[ambulance.apid];
       const gps = sim?.gps ?? ambulance.gps;
       const pos = new kakao.maps.LatLng(gps.lat, gps.lng);
-      const phase = sim ? `${PHASE_SHORT[sim.phase]}${sim.paused ? " · 정지" : ""}` : null;
+      // 2026-10-04: 서울 119 구급차 160여 대 — 이름은 사건으로 움직이는(기지 대기가 아닌) 구급차만 띄우고,
+      // 단계는 마커 색으로 구분한다(AMBULANCE_PHASE_COLORS). 기지 대기 마커는 작게.
+      const phaseKey = sim?.phase ?? "idle";
+      const active = phaseKey !== "idle";
+      const color = AMBULANCE_PHASE_COLORS[phaseKey];
+      const phase = active ? `${PHASE_SHORT[phaseKey]}${sim?.paused ? " · 정지" : ""}` : null;
       const calling = calls.some((c) => c.apid === ambulance.apid);
-      const text = `${phase ? `${ambulance.name} · ${phase}` : ambulance.name}${calling ? " · 📞" : ""}`;
+      const text = active || calling ? `${ambulance.name}${phase ? ` · ${phase}` : ""}${calling ? " · 📞" : ""}` : "";
+      const title = `${ambulance.name} · ${PHASE_SHORT[phaseKey]} (시뮬레이션 위치)`;
       let layer = ambulancesRef.current.get(ambulance.apid);
       if (!layer) {
         const marker = new kakao.maps.Marker({
-          position: pos, map, title: `${ambulance.name} (시뮬레이션 위치)`,
-          image: createAmbulanceMarkerImage(MAP_COLORS.ambulance), zIndex: 50,
+          position: pos, map, title,
+          image: createAmbulanceMarkerImage(color, active ? 28 : 20), zIndex: active ? 50 : 40,
         });
-        layer = { marker, label: createLabelOverlay(pos, text), text };
-        layer.label.setZIndex(51);
-        layer.label.setMap(map);
+        layer = { marker, label: null, text: "", color };
         ambulancesRef.current.set(ambulance.apid, layer);
       } else {
         layer.marker.setPosition(pos);
-        if (layer.text !== text) {
-          layer.label.setMap(null);
+        if (layer.color !== color) {
+          layer.marker.setImage(createAmbulanceMarkerImage(color, active ? 28 : 20));
+          layer.marker.setZIndex(active ? 50 : 40);
+          layer.color = color;
+        }
+      }
+      if (layer.text !== text) {
+        layer.label?.setMap(null);
+        layer.label = null;
+        if (text) {
           layer.label = createLabelOverlay(pos, text);
           layer.label.setZIndex(51);
           layer.label.setMap(map);
-          layer.text = text;
-        } else {
-          layer.label.setPosition(pos);
         }
+        layer.text = text;
+      } else {
+        layer.label?.setPosition(pos);
       }
 
       // 이동 경로: 움직이는 구간만. 경로가 바뀔 때만 다시 그린다.
@@ -350,7 +363,7 @@ export function MonitorMapPanel({
       if (path && (!drawn || drawn.key !== pathKey)) {
         const line = new kakao.maps.Polyline({
           path: path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng)),
-          strokeWeight: 4, strokeColor: MAP_COLORS.ambulance, strokeOpacity: 0.75, strokeStyle: "solid",
+          strokeWeight: 4, strokeColor: color, strokeOpacity: 0.75, strokeStyle: "solid",
         });
         line.setMap(map);
         pathsRef.current.set(ambulance.apid, { line, key: pathKey });
@@ -380,7 +393,7 @@ export function MonitorMapPanel({
     ambulancesRef.current.forEach((layer, apid) => {
       if (seen.has(apid)) return;
       layer.marker.setMap(null);
-      layer.label.setMap(null);
+      layer.label?.setMap(null);
       ambulancesRef.current.delete(apid);
       pathsRef.current.get(apid)?.line.setMap(null);
       pathsRef.current.delete(apid);

@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { css } from "styled-system/css";
 
 // 상단바 버튼 → 다른 화면을 iframe 모달로 띄운다(3D 현장 뷰어·신뢰도 검증이 같이 쓴다).
 // 바깥(어두운 배경)·Esc로 닫고, "새 탭에서 열기"로 시연장 큰 화면에 따로 띄울 수 있다.
-export function FrameModalButton({ label, badge, url }: { label: string; badge: string; url: string }) {
+// buttonStyle(2026-10-05): 화면마다 디자인 시안이 달라 여는 버튼 모양만 바꿔 끼울 수 있게 한다(없으면 기본 남색 알약).
+export function FrameModalButton({ label, badge, url, buttonStyle }: { label: string; badge: string; url: string; buttonStyle?: CSSProperties }) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -19,7 +21,7 @@ export function FrameModalButton({ label, badge, url }: { label: string; badge: 
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className={openButtonStyle}>
+      <button type="button" onClick={() => setOpen(true)} className={buttonStyle ? undefined : openButtonStyle} style={buttonStyle}>
         {label}
       </button>
 

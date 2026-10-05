@@ -72,6 +72,9 @@ class VoiceCallSummaryMessage(BaseModel):
     transcript: VoiceTranscript
     summary: VoiceSummary
     source: Literal["ai"] = "ai"
+    # 어떤 모델이 만들었나(voice가 원래 보내던 필드, 2026-10-05부터 읽는다) — 콘솔의 정해진 상황은
+    # stt "scenario-template"이라 이송 중 2차 통화 활력징후를 가상(demo)으로 표시할 때 쓴다.
+    model_used: Optional[dict] = None
 
 
 # ── feature/info → feature/hub (입력) ───────────────────────────────────────
@@ -255,6 +258,20 @@ class VoiceRegistration(BaseModel):
 
 # ── feature/hub → feature/dashboard (출력) ──────────────────────────────────
 
+class PatientUpdate(BaseModel):
+    """이 사건의 앞선 통화 요약 한 건(2026-10-05). 환자 상태가 바뀌어 다시 통화하면(이송 중 목적지 병원과의
+    통화 등) 새 요약이 patientInfo가 되고, 앞선 요약은 지우지 않고 여기 쌓는다 — "덧붙이기" 원칙(AI 처리 결과)."""
+
+    callRound: int
+    receivedAt: str
+    expectedDiagnosis: str
+    severityTag: Severity
+    injuryStatus: list[str] = Field(default_factory=list)
+    ktasLevel: Optional[int] = None
+    vitals: list[Vital] = Field(default_factory=list)
+    consciousness: Optional[str] = None
+
+
 class PatientInfo(BaseModel):
     injuryStatus: list[str]
     expectedDiagnosis: str
@@ -270,6 +287,9 @@ class PatientInfo(BaseModel):
     onset: Optional[str] = None
     chiefComplaint: Optional[str] = None
     requiredDepartment: Optional[str] = None
+    # 몇 번째 통화 요약인지(2026-10-05) — 1이면 현장 첫 통화. 2 이상이면 previousCalls에 앞선 요약이 있다.
+    callRound: int = 1
+    previousCalls: list[PatientUpdate] = Field(default_factory=list)
 
 
 class SpecialtyMatch(BaseModel):
@@ -405,6 +425,8 @@ class HospitalMatch(BaseModel):
     # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
     # "확인된 만실"로 보지 않는다(beds_full로 안 내림). bedCountUnknown과는 별개 축이다.
     bedDataStale: bool = False
+    # 이 사건에서 제외된 병원(2026-10-05) — 도착 후 수용 불가·이송 중 수용 철회. 같은 사건엔 다시 승인할 수 없다
+    excluded: bool = False
     # 전문성·등급 가산(2026-10-01, scoring.expertise_bonus_min). 이동시간에서 뺀 분과 그 이유.
     emergencyLevel: Optional[str] = None
     travelBonusMin: float = 0.0
@@ -464,8 +486,11 @@ class HubMatchResult(BaseModel):
 
 # arrival_accepted / arrival_refused(2026-10-01): 구급차가 확정 병원에 도착한 뒤 병원이 누르는 실제 수용
 # 결과. 신뢰도 모델의 독립 관측(G2 라벨, AIROOKIE-EGEN.md §7 ④)이 생기는 지점이다.
+# transport_withdraw(2026-10-05): 이송 확정 뒤 **도착 전**에 병원이 수용을 철회한다(환자 상태 변화·병원 사정).
+# 확정을 풀고 그 병원은 이 사건에서 제외 — 구급차는 그 자리에서 재선택 대기(도착 후 수용 불가와 같은 처리).
 ApprovalActionType = Literal[
-    "hospital_approve", "hospital_reject", "final_approval", "arrival_accepted", "arrival_refused"
+    "hospital_approve", "hospital_reject", "final_approval", "arrival_accepted", "arrival_refused",
+    "transport_withdraw",
 ]
 Actor = Literal["hospital", "paramedic"]
 
@@ -522,6 +547,8 @@ class CallSignal(BaseModel):
     # 않고, hub가 그 병원 대시보드에 "📞 통화 중"을 띄우고 첫 통화 병원을 기록한다(first_call_selected).
     hospitalId: Optional[str] = None
     device: Optional[Literal["phone", "tablet"]] = None
+    # 통화 취소(2026-10-05): call_ended와 함께 true면 이 통화 음성은 처리하지 않고 버린다(요약·전달 없음).
+    cancelled: Optional[bool] = None
 
 
 # ── feature/dashboard → feature/hub (입력, 소켓 연결 시 자기소개) ───────────
@@ -658,6 +685,8 @@ class MonitorCaseHospital(BaseModel):
     unavailableReason: Optional[str] = None
     # 이 병원이 든 존(1부터, 5km 간격). 존이 넓혀지면 바깥 존 병원들이 새로 들어온다.
     zone: int
+    # 이 병원이 이 사건에 응답(승인·불가·확정)한 시각(2026-10-04, case_history 기록) — 관제 지도의 응답 시각 칸
+    respondedAt: Optional[str] = None
 
 
 class MonitorCase(BaseModel):
@@ -672,6 +701,63 @@ class MonitorCase(BaseModel):
     zoneActive: list[int]
     zoneBandKm: float
     hospitals: list[MonitorCaseHospital]
+    # 관제 지도 개편(2026-10-04, case_history): 오늘의 사건 번호, 시작 시각(출동·통화·첫 매칭 중 가장 이른 것),
+    # 증상 한 줄(신고 1차 증상 또는 구조화된 주 호소), 진행 과정. 모두 Optional — 예전 dashboard는 무시한다.
+    num: Optional[int] = None
+    startedAt: Optional[str] = None
+    symptom: Optional[str] = None
+    events: list[dict] = []
+    # 시간 기반 존 확장(2026-10-04): 다음 자동 확장 예정 시각. 승인·확정 병원이 있거나 더 넓힐 수 없으면 None
+    zoneExpandAt: Optional[str] = None
+    # [정지] 중이면 멈춰 있는 남은 시간(초) — 이때 zoneExpandAt은 None(시간이 흐르지 않는다)
+    zonePausedLeftSec: Optional[int] = None
+    # 시연 일시정지 중(2026-10-05) — 콘솔·관제 화면이 조작을 막는다
+    paused: Optional[bool] = None
+    source: Literal["rule"] = "rule"
+
+
+class MciAllocate(BaseModel):
+    """시연 콘솔 → hub: 대량사고 [분배 확정](2026-10-05). 사상자 사건들을 **중증 → 중등증 → 경증** 순으로, 사건마다
+    승인 병원 중 hub 순위 1위로 이송 확정한다. 하나 확정할 때마다 다음 사건 순위를 다시 매겨 이송 중 부하 페널티가
+    반영된다(같은 병원으로 몰리면 다음 병원으로). 분배 규칙은 평시 hub 순위 그대로 — 콘솔이 따로 계산하지 않는다."""
+    type: Literal["mci_allocate"] = "mci_allocate"
+    caseIds: list[str]
+    timestamp: Optional[str] = None
+
+
+class MciPreview(BaseModel):
+    """시연 콘솔 → hub: 대량사고 자동 분배 미리 보기(2026-10-05) — 지금 승인 상태로 [분배 확정]하면 누가 어디로 가는지.
+    hub가 mci_plan으로 답한다. 확정은 하지 않는다."""
+    type: Literal["mci_preview"] = "mci_preview"
+    caseIds: list[str]
+
+
+class ZoneExpandNow(BaseModel):
+    """dashboard(시연 콘솔) → hub: [건너뛰기](2026-10-04) — 자동 존 확장 시각을 기다리지 않고 지금 한 단계 넓힌다."""
+    type: Literal["zone_expand_now"] = "zone_expand_now"
+    caseId: str
+    timestamp: Optional[str] = None
+
+
+class CaseMeta(BaseModel):
+    """매칭 전 사건(출동~현장 통화 전)의 번호·시작 시각·증상(2026-10-04) — 관제 지도 사건 목록용.
+    매칭되면 case_overview가 같은 값을 이어받는다."""
+    type: Literal["case_meta"] = "case_meta"
+    caseId: str
+    num: int
+    startedAt: str
+    symptom: Optional[str] = None
+    severity: Optional[str] = None
+    apid: Optional[str] = None
+    ambulanceName: Optional[str] = None
+    events: list[dict] = []
+    source: Literal["rule"] = "rule"
+
+
+class CaseHistory(BaseModel):
+    """오늘(KST) 종료된 사건 목록(2026-10-04) — 관제 지도 '지난 사건' 모달. 최근 종료 순."""
+    type: Literal["case_history"] = "case_history"
+    cases: list[dict]
     source: Literal["rule"] = "rule"
 
 
@@ -701,8 +787,9 @@ class SceneEnd(BaseModel):
 
 class SimControl(BaseModel):
     """dashboard → hub: [일시정지]·[상황 재개](2026-10-03) — 출동 중·현장·이송 중인 시연 상황을 멈추고 이어 간다.
+    [빨리감기](sim_fast_forward, 2026-10-04) — 병원으로 이송 중이면 남은 이동을 3초 안에 마친다.
     구급차는 apid로 가린다(한 대는 한 번에 한 사건). caseId는 로그용."""
-    type: Literal["sim_pause", "sim_resume"]
+    type: Literal["sim_pause", "sim_resume", "sim_fast_forward"]
     apid: str
     caseId: Optional[str] = None
     timestamp: str

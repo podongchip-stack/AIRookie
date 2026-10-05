@@ -13,7 +13,7 @@ const VITAL_FIELDS: [keyof Vital, string, string][] = [
   ["glucose", "혈당", ""],
 ];
 
-function formatVital(vital: Vital): string {
+export function formatVital(vital: Vital): string {
   const parts: string[] = [];
   if (vital.sbp != null || vital.dbp != null) parts.push(`혈압 ${vital.sbp ?? "?"}/${vital.dbp ?? "?"}`);
   for (const [key, label, unit] of VITAL_FIELDS) {

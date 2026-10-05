@@ -379,6 +379,11 @@ export function PhoneCallView({
   async function handleCall(h: SceneCandidate) {
     if (!caseId || myCall) return;
     setError(null);
+    // 시연 일시정지 중엔 통화를 시작하지 않는다(2026-10-05, hub도 거부한다)
+    if (sim?.paused && sim.pauseReason !== "call") {
+      setError("현재 시연 일시정지 중입니다.");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("이 브라우저는 마이크를 쓸 수 없습니다. https 주소(도메인)로 열었는지 확인하세요.");
       return;
@@ -700,6 +705,16 @@ export function PhoneCallView({
     return lightScreen(2, <>
         <StatusPanel icon={<PhoneIcon size={34} />} tone="mint" pulse title={`${callStatus.device === "phone" ? "다른 휴대폰" : "구급차 대시보드"}에서 통화 중`}>
           {callStatus.hospitalName ?? "병원"}과 통화하고 있습니다. 통화는 사건마다 한 번만 합니다.
+        </StatusPanel>
+      </>);
+  }
+
+  // ── 정해진 상황으로 이미 전달됨(2026-10-04) — 운영자가 시연 콘솔 ②에서 정해진 상황 카드를 골라 통화 없이
+  // 환자 정보가 나간 사건. 통화는 사건마다 한 번이고, 여기서 또 통화하면 음성 요약이 그 정보를 덮어쓴다.
+  if (caseId && !callStatus && sentHospitalCount != null) {
+    return lightScreen(4, <>
+        <StatusPanel icon={<CheckIcon />} tone="mint" title={`후보 병원 ${sentHospitalCount}곳에 전달됐습니다`}>
+          현장 확인을 정해진 상황(시연 콘솔)으로 마쳐 이 사건은 통화하지 않습니다. 병원 응답 확인·이송 승인은 구급차 대시보드에서 하세요.
         </StatusPanel>
       </>);
   }

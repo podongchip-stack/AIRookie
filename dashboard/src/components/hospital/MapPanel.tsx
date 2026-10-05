@@ -3,8 +3,7 @@
 import { useEffect, useRef } from "react";
 import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { css } from "styled-system/css";
-import { Panel } from "@/components/layout/Panel";
-import { Tag } from "@/components/hospital/Tag";
+import { HD } from "@/components/hospital/hospital-design";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { createColoredMarkerImage, createLabelOverlay } from "@/lib/kakao-map-markers";
 import { fetchRoadPath } from "@/lib/route";
@@ -16,15 +15,6 @@ const STATUS_LABEL: Record<HospitalStatus, string> = {
   rejected: "수용 불가",
   confirmed: "이송 확정",
 };
-
-const sideBoxStyle = css({
-  flex: "1",
-  borderWidth: "1px",
-  borderColor: "line",
-  borderRadius: "field",
-  paddingX: "3.5",
-  paddingY: "3",
-});
 
 // 구급차 위치는 hub가 내려주는 ambulanceGps(2026-09-24 신설)를 쓴다. 구버전 hub라 그
 // 값이 없을 때만 병원 좌표에서 살짝 떨어진 자리를 임시 표시 위치로 쓴다.
@@ -40,6 +30,9 @@ export function MapPanel({
   sim = null,
   selfGps = null,
   selfName = null,
+  unitName = null,
+  statusText = null,
+  statusInk = null,
 }: {
   hospital: HospitalCandidate | null;
   caseId: string | null;
@@ -50,6 +43,10 @@ export function MapPanel({
   // 본원 위치(identity_info.gps, 2026-10-04) — 사건이 없어도 본원 중심 지도를 그린다.
   selfGps?: { lat: number; lng: number } | null;
   selfName?: string | null;
+  // 선택한 요청의 구급대 이름·카드와 같은 상태 문구(2026-10-04 디자인 시안)
+  unitName?: string | null;
+  statusText?: string | null;
+  statusInk?: string | null;
 }) {
   const confirmed = hospital?.status === "confirmed";
   const { ready, error } = useKakaoMapScript();
@@ -235,109 +232,72 @@ export function MapPanel({
 
   const etaMin =
     sim?.phase === "transporting" && sim.etaSec != null ? Math.max(1, Math.ceil(sim.etaSec / 60)) : hospital?.etaMin ?? null;
+  const etaText = sim?.phase === "at_hospital" ? "도착" : etaMin != null ? `${etaMin}분` : "-";
+  const status = statusText ?? (hospital ? STATUS_LABEL[hospital.status] : "-");
 
+  // 2026-10-04 디자인 시안: 오른쪽 세로 칸 — 제목·배지, 선택한 요청의 구급대, 지도, 숫자 칸 셋, 안내 한 줄
   return (
-    <Panel
-      title="지도 · 네비게이션"
-      subtitle="구급차 현재 위치 및 본원까지 이동 시간"
-      badge={<Tag source="rule">GPS · 카카오내비</Tag>}
+    <aside
+      style={{
+        flex: "1 1 auto", width: "100%", minWidth: 0, minHeight: 0, overflow: "hidden", background: "#FFFFFF",
+        borderRadius: 14, border: `1px solid ${HD.line}`, padding: "12px 14px", display: "flex", flexDirection: "column",
+        gap: 8, boxSizing: "border-box",
+      }}
     >
-      <div className={css({ display: "flex", flexDirection: "column", gap: "3.5", flex: "1", minHeight: "0" })}>
-        <div
-          className={css({
-            position: "relative",
-            flex: "1",
-            minWidth: "240px",
-            minHeight: "160px",
-            borderWidth: "1px",
-            borderColor: "line",
-            borderRadius: "field",
-            backgroundColor: "#EDF2F7",
-            overflow: "hidden",
-          })}
-        >
-          {/* 카카오맵이 이 div 안쪽 DOM을 직접 그리므로, React가 관리하는 자식은
-              여기 안 두고 아래 오버레이 div를 형제로 절대배치한다 — 같이 두면
-              리렌더 시 React와 SDK가 서로 다른 DOM을 지우려다 충돌한다. */}
-          <div
-            ref={containerRef}
-            role="img"
-            aria-label="구급차 현재 위치와 본원까지의 경로를 표시한 지도"
-            // zIndex:0으로 이 div 스스로 별도 쌓임 맥락(stacking context)을 만들어야
-            // 카카오맵이 내부적으로 쓰는 z-index들이 바깥으로 새어나가 형제인 오버레이
-            // 위를 덮어버리는 걸 막을 수 있다(2026-08-12, 사건이 사라졌는데 지도가
-            // 안 지워지던 문제의 원인 중 하나 — 정리 로직 누락과 별개로 겪음).
-            className={css({ position: "absolute", inset: "0", zIndex: "0" })}
-          />
-          {(!ready || error || (!hospital && !selfGps)) && (
-            <div
-              className={css({
-                position: "absolute",
-                inset: "0",
-                zIndex: "1",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                textAlign: "center",
-                paddingX: "4",
-                fontSize: "xs",
-                color: error ? "coral" : "ink3",
-                backgroundColor: "#EDF2F7",
-              })}
-            >
-              {error ?? (!hospital && !selfGps ? "표시할 사건이 없습니다" : "지도를 불러오는 중...")}
-            </div>
-          )}
+      <div style={{ flex: "none", display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: HD.navy }}>지도 · 네비게이션</h2>
+          <span style={{ fontSize: 10.5, color: HD.ink3, background: HD.chip, borderRadius: 999, padding: "3px 9px" }}>GPS · 카카오 내비</span>
         </div>
-
-        <div className={css({ width: "100%", display: "flex", flexDirection: "row", gap: "2.5" })}>
+        <span style={{ fontSize: 11.5, color: HD.muted }}>구급차 현재 위치 및 본원까지 이동 시간</span>
+        {unitName && <span style={{ fontSize: 13, fontWeight: 700, color: HD.navy, overflow: "hidden", textOverflow: "ellipsis" }}>{unitName}</span>}
+      </div>
+      <div
+        style={{
+          position: "relative", flex: "1 1 140px", minHeight: 110, borderRadius: 12, border: "1px solid #DCE3EB",
+          background: "#EAF0F6", overflow: "hidden",
+        }}
+      >
+        {/* 카카오맵이 이 div 안쪽 DOM을 직접 그리므로 React 자식은 형제 오버레이로 둔다(리렌더 충돌 방지).
+            zIndex:0으로 쌓임 맥락을 만들어 카카오 내부 z-index가 바깥 오버레이를 덮지 않게 한다(2026-08-12). */}
+        <div
+          ref={containerRef}
+          role="img"
+          aria-label="구급차 현재 위치와 본원까지의 경로를 표시한 지도"
+          className={css({ position: "absolute", inset: "0", zIndex: "0" })}
+        />
+        {(!ready || error || (!hospital && !selfGps)) && (
           <div
-            className={css({
-              flex: "1",
-              borderWidth: "1px",
-              borderColor: confirmed ? "#B9E4D3" : "line",
-              backgroundColor: confirmed ? "mintSoft" : "surface",
-              borderRadius: "field",
-              paddingX: "3.5",
-              paddingY: "3",
-            })}
+            style={{
+              position: "absolute", inset: 0, zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              textAlign: "center", padding: "0 16px", fontSize: 12, color: error ? HD.red : HD.muted, background: "#EAF0F6",
+            }}
           >
-            <div className={css({ fontSize: "sm", fontWeight: "medium", color: confirmed ? "#0A7351" : "ink" })}>
-              본원 도착 예상
-            </div>
-            <div
-              className={css({
-                fontSize: "2xl",
-                fontWeight: "bold",
-                letterSpacing: "-0.02em",
-                color: confirmed ? "#0A7351" : "ink",
-              })}
-            >
-              {sim?.phase === "at_hospital" ? "도착" : etaMin != null ? `${etaMin}분` : "-"}
-            </div>
-            <div className={css({ fontSize: "xs", color: "ink", marginTop: "0.5" })}>
-              실시간 교통 반영
-            </div>
+            {error ?? (!hospital && !selfGps ? "표시할 사건이 없습니다" : "지도를 불러오는 중...")}
           </div>
-
-          <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>이동 거리</div>
-            <div
-              className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}
-              title={hospital ? distanceTitle(hospital) : undefined}
-            >
-              {hospital ? distanceLabel(hospital) : "-"}
-            </div>
-          </div>
-
-          <div className={sideBoxStyle}>
-            <div className={css({ fontSize: "sm", fontWeight: "medium", color: "ink" })}>현재 상태</div>
-            <div className={css({ fontSize: "2xl", fontWeight: "bold", letterSpacing: "-0.02em", color: "ink" })}>
-              {hospital ? STATUS_LABEL[hospital.status] : "-"}
-            </div>
-          </div>
+        )}
+      </div>
+      <div style={{ flex: "none", display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+        <div style={{ ...statBox, background: confirmed ? HD.greenSoft : "#FFFFFF" }}>
+          <span style={statLabel}>본원 도착 예상</span>
+          <span style={{ fontSize: 19, fontWeight: 900, lineHeight: 1.2, color: confirmed ? HD.green : HD.navy }}>{etaText}</span>
+          <span style={{ fontSize: 10.5, color: HD.muted }}>실시간 교통 반영</span>
+        </div>
+        <div style={statBox} title={hospital ? distanceTitle(hospital) : undefined}>
+          <span style={statLabel}>이동 거리</span>
+          <span style={{ fontSize: hospital?.roadDistanceKm != null ? 19 : 15, fontWeight: 900, lineHeight: 1.2, color: HD.navy, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hospital ? distanceLabel(hospital) : "-"}</span>
+        </div>
+        <div style={statBox}>
+          <span style={statLabel}>현재 상태</span>
+          <span style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.5, color: statusInk ?? HD.navy, overflow: "hidden", textOverflow: "ellipsis" }}>{status}</span>
         </div>
       </div>
-    </Panel>
+      <span style={{ flex: "none", fontSize: 11.5, color: HD.muted }}>카드의 도착 예상 시간을 누르면 경로가 표시됩니다.</span>
+    </aside>
   );
 }
+
+const statBox: React.CSSProperties = {
+  border: `1px solid ${HD.line}`, borderRadius: 10, padding: "6px 9px", display: "flex", flexDirection: "column", gap: 1, minWidth: 0,
+};
+const statLabel: React.CSSProperties = { fontSize: 11.5, color: HD.sub, overflow: "hidden", textOverflow: "ellipsis" };
