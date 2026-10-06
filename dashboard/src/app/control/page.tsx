@@ -42,7 +42,7 @@ import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 // - 운영자 전용·인증 없음(시연 범위). 가상 데이터에는 전부 가상 표시가 남는다.
 
 // 정해진 상황 카드(2026-10-06 시연 대사집 반영) — 환자·활력징후는 대사집 ② 현장 확인 대본과 같게 맞추고, transcript는 그 대본을
-// 압축한 것이다(버튼으로 부여할 때 병원에 가는 통화 문장). 대본 전문은 SCRIPTS(① ② ④ 화면의 대본 칸). 위 4개(key = report)는
+// 압축한 것이다(버튼으로 부여할 때 병원에 가는 통화 문장). 대본 전문은 SCRIPTS(② ④ 화면의 대본 칸). 위 4개(key = report)는
 // 신고 접수 증상이자 "신고대로" 현장 상황이고, 나머지는 같은 신고로 출동했는데 현장 평가가 달랐던 경우다 — ② 현장 확인은
 // 그 신고(report)에 딸린 상황만 보여 준다. mechanism은 hub 질환군 키워드(disease_group.py)에 맞췄다.
 // KTAS·활력징후·의식·발생 시점까지 넣어 통화 요약·병원 카드의 환자 패널(PatientVitals)이 그려지게 한다.
@@ -314,7 +314,7 @@ const TRANSPORT: Record<string, Transport> = {
 
 // ── 시연 대사집(2026-10-06, 팀 Claude Docs "골든링크 시연 대사집" 4종) — ①·②·④ 화면의 대본 칸에 그대로 보인다.
 // 대사집 원본은 ④ 이송 중 대본이 문서끼리 뒤바뀌어 있어(흉통 문서에 복통의 ④가 있는 식) 내용에 맞게 제자리로 옮겼다.
-// "서울시청 앞"은 화면에서 고른 발생 지점으로, ④의 병원 이름은 이송 확정 병원으로 바꿔 보인다.
+// ④의 병원 이름은 이송 확정 병원으로 바꿔 보인다. ① 신고 접수 대본(host·caller)은 2026-10-07 화면에서 뺐다(데이터만 남김).
 // 버튼으로 부여하는 정해진 상황은 이 대본을 압축한 문장이다(PATIENT_TEMPLATES.transcript, TRANSPORT 신고대로 4종 followups).
 type TransportScript = { label: string; note?: string; lines: string[] };
 type Script = {
@@ -324,7 +324,6 @@ type Script = {
   scene: Record<string, string>;
   transport: Record<MonitorKey, TransportScript>;
 };
-const SCRIPT_SPOT = "서울시청 앞";
 
 const SCRIPTS: Record<string, Script> = {
   cardiac: {
@@ -539,6 +538,9 @@ export default function ControlPage() {
   // 정해진 상황 카드(가상 환자). 어느 쪽으로 들어온 사건인지 이후 화면에 표시한다 — 음성 사건은 hub의
   // 통화 상태(call_status)로 알아보고, 정해진 상황은 보낼 때 templateCases에 기록한다.
   const [inputMode, setInputMode] = useState<"voice" | "template">("template");
+  // 개발 모드(2026-10-07) — 켜면 ② 현장 확인·④ 이송 중에 "정해진 상황 선택"(가상 환자·가상 상태 변화)이 보인다.
+  // 끄면(기본) 음성(대원 휴대폰 통화)만 남고 정해진 상황 버튼·부여 상황이 화면에서 사라진다. hub에도 음성으로 알린다.
+  const [devMode, setDevMode] = useState(false);
   const [templateCases, setTemplateCases] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   // sim이 꺼진 환경 전용 — 도착 게이팅이 없어 [도착 결과 입력]으로 수동 전환한다
@@ -611,7 +613,8 @@ export default function ControlPage() {
 
   // ② 현장 확인 방식을 hub에 알린다(2026-10-06) — "정해진 상황 선택"이면 그 구급차 휴대폰 앱의 전화 버튼이 막히고 hub도
   // 현장 통화 시작을 거부한다. 출동 중부터 알려, 현장에 도착한 휴대폰이 처음부터 맞는 상태로 뜨게 한다.
-  const sceneMode: "voice" | "template" = myCall ? "voice" : inputMode;
+  const sceneInput: "voice" | "template" = devMode ? inputMode : "voice";
+  const sceneMode: "voice" | "template" = myCall ? "voice" : sceneInput;
   useEffect(() => {
     if (!caseId || !apid || (screen !== "enroute" && screen !== "report")) return;
     sendSceneInputMode(caseId, apid, sceneMode);
@@ -620,7 +623,8 @@ export default function ControlPage() {
   // ④ 이송 중 통화 방식도 같은 방식으로 알린다(2026-10-06) — "정해진 상황 선택"이면 휴대폰 앱의 [목적지 병원과 통화]가
   // 막히고 hub도 이송 중 통화를 거부한다. 휴대폰이 이미 통화 중이면 음성으로 둔다(아래 ④ 화면과 같은 판정).
   const followupCalling = !!caseId && state.callStatus[caseId]?.state === "calling" && !!state.callStatus[caseId]?.followup;
-  const transportMode: "voice" | "template" = followupCalling ? "voice" : followupMode;
+  const transportInput: "voice" | "template" = devMode ? followupMode : "voice";
+  const transportMode: "voice" | "template" = followupCalling ? "voice" : transportInput;
   useEffect(() => {
     if (!caseId || !apid || screen !== "transport") return;
     sendSceneInputMode(caseId, apid, transportMode, "transport");
@@ -1108,7 +1112,7 @@ export default function ControlPage() {
   })();
 
   const verifyTemplate = templateOf(verifyKey ?? reportedTemplate?.key ?? "cardiac")!;
-  const voiceSelected = myCall != null || inputMode === "voice";
+  const voiceSelected = myCall != null || sceneInput === "voice";
 
   return (
     // 화면 전체는 끌리지 않게 고정(2026-10-05 요청) — 상단바·단계·상황 요약은 그대로 두고, 넘치는 내용은 단계 카드 안에서만
@@ -1183,6 +1187,15 @@ export default function ControlPage() {
             {/* 시연 영상 모드(2026-10-06) — 연결된 모든 화면(관제 지도·병원·콘솔·구급차)이 각자 영상으로. 영상 위 [시연 모드]로 돌아온다 */}
             <button type="button" style={headerButton} onClick={() => sendDemoMode("video") || note("hub와 연결이 끊겨 영상 모드로 바꾸지 못했습니다")}>
               영상 모드
+            </button>
+            <button
+              type="button"
+              aria-pressed={devMode}
+              title="켜면 ② 현장 확인·④ 이송 중에 '정해진 상황 선택'이 보입니다"
+              onClick={() => setDevMode((v) => !v)}
+              style={devMode ? { ...headerButton, background: C.orangeSoft, border: `1px solid ${C.orangeInk}`, color: C.orangeInk } : headerButton}
+            >
+              {devMode ? "개발 모드 켜짐" : "개발 모드"}
             </button>
             <Link href="/map" style={{ fontSize: 14, fontWeight: 700, color: C.blue, textDecoration: "none", padding: "0 4px" }}>관제 지도 →</Link>
             <ConnectionDot mode={connectionMode} />
@@ -1524,21 +1537,6 @@ export default function ControlPage() {
                       );
                     })()}
                   </div>
-                  {/* 대본(시연 대사집) — 진행자 안내 + 신고자 신고 전화. 신고 증상을 고르면 그 대본이 보인다 */}
-                  <ScriptBox title="① 환자 발생 · 진행자 → 신고 접수 · 신고자">
-                    {reportedKey ? (
-                      <>
-                        {SCRIPTS[reportedKey].host.map((line) => <ScriptLine key={line} who="진행자" text={atSpot(line, spot)} />)}
-                        <ScriptLine who="신고자" text={atSpot(SCRIPTS[reportedKey].caller, spot)} />
-                        <ScriptLine who="짧게" text={atSpot(SCRIPTS[reportedKey].callerShort, spot)} muted />
-                      </>
-                    ) : (
-                      <>
-                        <ScriptLine who="진행자" text={SCRIPTS.cardiac.host[0]} />
-                        <span style={{ fontSize: 13, color: C.muted }}>신고 증상을 고르면 그 상황의 진행자·신고자 대본이 이어서 보입니다.</span>
-                      </>
-                    )}
-                  </ScriptBox>
                 </ScreenCard>
               )}
 
@@ -1576,12 +1574,12 @@ export default function ControlPage() {
               {screen === "report" && (
                 <ScreenCard title="② 현장 확인 — 환자 상태를 확정하면 인근 병원에 동시 전달됩니다">
                   {/* 입력 방식(2026-10-04) — 실제 음성(전화 앱) 또는 정해진 상황. 통화가 시작되면 음성으로 고정된다 */}
-                  <div role="tablist" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                  <div role="tablist" style={{ display: "grid", gridTemplateColumns: devMode ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 10 }}>
                     {([
                       ["voice", "mic", "음성으로 확인", "대원 휴대폰 전화 앱 · 실제 통화 음성 → AI 구조화"],
                       ["template", "card", "정해진 상황 선택", "가상 환자 카드 · 음성 없이 바로 전달"],
-                    ] as const).map(([mode, icon, label, sub]) => {
-                      const selected = (myCall ? "voice" : inputMode) === mode;
+                    ] as const).filter(([mode]) => devMode || mode === "voice").map(([mode, icon, label, sub]) => {
+                      const selected = sceneMode === mode;
                       return (
                         <button
                           key={mode}
@@ -1623,7 +1621,7 @@ export default function ControlPage() {
                           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: C.ink3 }}>
                             <Pulse color="#7ba0cc" />휴대폰 통화를 기다리는 중…
                           </div>
-                          <div style={{ fontSize: 12, color: C.ink3 }}>통화가 어려우면 위의 <b>정해진 상황 선택</b> 탭으로 바꿔 진행하세요.</div>
+                          {devMode && <div style={{ fontSize: 12, color: C.ink3 }}>통화가 어려우면 위의 <b>정해진 상황 선택</b> 탭으로 바꿔 진행하세요.</div>}
                         </>
                       )}
                     </div>
@@ -1774,16 +1772,16 @@ export default function ControlPage() {
                       {(() => {
                         const call = caseId ? state.callStatus[caseId] : undefined;
                         const phoneCalling = call?.state === "calling" && call.followup;
-                        const mode = phoneCalling ? "voice" : followupMode;
+                        const mode = phoneCalling ? "voice" : transportInput;
                         const hospitalName = confirmedHospital?.name ?? "목적지 병원";
                         const sentList = caseId ? followupSent[caseId] ?? [] : [];
                         return (
                           <div style={{ flex: "1.3 1 440px", minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                            <div role="tablist" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                            <div role="tablist" style={{ display: "grid", gridTemplateColumns: devMode ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 8 }}>
                               {([
                                 ["voice", "mic", "음성으로 통화", "대원 휴대폰 전화 앱 [목적지 병원과 통화]"],
                                 ["template", "card", "정해진 상황 선택", "버튼 · 활력징후 재생 뒤 통화 내용 자동 전달"],
-                              ] as const).map(([m, icon, label, sub]) => {
+                              ] as const).filter(([m]) => devMode || m === "voice").map(([m, icon, label, sub]) => {
                                 const selected = mode === m;
                                 return (
                                   <button
@@ -2554,17 +2552,14 @@ function ScriptBox({ title, children }: { title: string; children: ReactNode }) 
   );
 }
 
-function ScriptLine({ who, text, muted = false }: { who: string; text: string; muted?: boolean }) {
+function ScriptLine({ who, text }: { who: string; text: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <span style={{ fontSize: 14, fontWeight: 700, color: C.ink3 }}>{who}</span>
-      <span style={{ fontSize: 18, lineHeight: 1.6, color: muted ? C.ink3 : C.ink, whiteSpace: "pre-line" }}>{text}</span>
+      <span style={{ fontSize: 18, lineHeight: 1.6, color: C.ink, whiteSpace: "pre-line" }}>{text}</span>
     </div>
   );
 }
-
-// 대사집의 "서울시청 앞"을 화면에서 고른 발생 지점으로
-const atSpot = (text: string, spot: Spot) => (spot ? text.replaceAll(SCRIPT_SPOT, spot.label) : text);
 
 const softBox: CSSProperties = { background: "#f8fafc", borderRadius: 12, padding: "12px 14px", fontSize: 14 };
 const headerButton: CSSProperties = {
