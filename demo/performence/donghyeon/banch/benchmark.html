@@ -76,6 +76,27 @@
   #s1 .t { left: 960px; top: 430px; font-size: 180px; font-weight: 900; letter-spacing: -0.05em; line-height: 1; white-space: nowrap; }
   #s1 .ul { left: 968px; top: 640px; height: 12px; width: 0; border-radius: 6px; background: var(--mf); }
 
+  /* X · 같은 시험지 100문제 (MF_BERT 성능 비교.html의 장면 그대로) */
+  #sx .t { left: 160px; top: 330px; font-size: 120px; font-weight: 900; letter-spacing: -0.045em; line-height: 1.05; }
+  #sx .t em { font-style: normal; color: var(--mf); }
+  #sx .sub { left: 166px; top: 610px; font-size: 40px; font-weight: 600; color: var(--dim); }
+  #sx .chips { left: 160px; top: 700px; display: flex; gap: 14px; }
+  #sx .chips span { font-size: 26px; font-weight: 700; padding: 10px 22px; border-radius: 999px; border: 2px solid rgba(255,255,255,.4); }
+  #sx .sheet { left: 1090px; top: 270px; width: 660px; height: 420px; }
+  #sx .sheet .bk { position: absolute; inset: 0; border-radius: 26px; border: 2px solid rgba(255,255,255,.22); background: #0b0b0b; opacity: 0; }
+  #sx .sheet .bk.b2 { transform: translate(44px, 44px); }
+  #sx .sheet .bk.b1 { transform: translate(22px, 22px); }
+  #sx .sheet .top { position: absolute; inset: 0; border-radius: 26px; border: 2px solid rgba(255,255,255,.55); background: #141414; padding: 30px 34px; opacity: 0; }
+  #sx .sheet .tag { font-size: 22px; font-weight: 800; color: var(--mf); letter-spacing: .04em; }
+  #sx .sheet .lab { font-size: 21px; font-weight: 700; color: var(--dim); margin: 22px 0 10px; }
+  #sx .sheet .call { border-radius: 16px; background: rgba(255,255,255,.1); padding: 14px 20px; font-size: 24px; font-weight: 700; line-height: 1.4; word-break: keep-all; }
+  #sx .sheet .call small { display: block; font-size: 15px; font-weight: 800; color: var(--ng); margin-bottom: 2px; }
+  #sx .sheet .ans { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  #sx .sheet .ans span { border-radius: 12px; border: 2px solid rgba(76,195,138,.7); padding: 9px 14px; font-size: 22px; font-weight: 800; }
+  #sx .sheet .ans span small { font-size: 17px; font-weight: 700; color: var(--dim); margin-right: 8px; }
+  #sx .sheetcap { left: 1090px; top: 770px; width: 700px; font-size: 34px; font-weight: 800; opacity: 0; }
+  #sx .sheetcap em { font-style: normal; color: var(--mf); font-size: 44px; font-weight: 900; }
+
   /* 2 · 과제 */
   #s2 .head { left: 120px; top: 150px; }
   #s2 .call { left: 120px; top: 330px; width: 820px; display: flex; flex-direction: column; gap: 14px; }
@@ -229,6 +250,24 @@
   <div class="abs ul"></div>
 </section>
 
+<!-- X · 같은 시험지 100문제 -->
+<section class="scene" id="sx">
+  <div class="abs t">같은 시험지<br><em>100문제</em></div>
+  <div class="abs sub">MF_BERT와 LLM, 누가 더 잘 채울까</div>
+  <div class="abs chips"><span>모델 22개</span><span>같은 PC</span><span>같은 채점 코드</span></div>
+  <div class="abs sheet">
+    <div class="bk b2"></div><div class="bk b1"></div>
+    <div class="top">
+      <div class="tag">시험 문제 1건</div>
+      <div class="lab">① 통화 원문</div>
+      <div class="call"><small>구급대</small>코피가 안멈추는 할아버지 한분 모시고 갈라구요 ⋯ 칠십칠세 남자분이요 ⋯ 혈압 백육십에 구십</div>
+      <div class="lab">② 정답지와 대조</div>
+      <div class="ans"><span><small>KTAS</small>3등급</span><span><small>주증상</small>코 · 코피</span><span><small>환자</small>남성 · 77세</span><span><small>발병</small>40분 전</span></div>
+    </div>
+  </div>
+  <div class="abs sheetcap">이런 문제가 <em>100건</em></div>
+</section>
+
 <!-- 2 · 과제 -->
 <section class="scene" id="s2">
   <div class="abs head"><div class="eyebrow">문제</div><div class="h2">통화를 읽고, 환자 정보를 채운다</div></div>
@@ -337,8 +376,8 @@
   const COL = { mf: "var(--mf)", lora: "var(--lora)", llm: "var(--llm)", base: "var(--base)" };
 
   // ── 장면 시간표(초): [시작, 길이] ──
-  const SCENES = [["s0", 0, 6.5], ["sj", 6.5, 11], ["s3", 17.5, 9], ["s5", 26.5, 13], ["s4", 39.5, 15], ["s6", 54.5, 10], ["s8", 64.5, 12]];
-  const DURATION = 76.5;
+  const SCENES = [["s0", 0, 6.5], ["sj", 6.5, 11], ["sx", 17.5, 6], ["s3", 23.5, 9], ["s5", 32.5, 13], ["s4", 45.5, 15], ["s6", 60.5, 10], ["s8", 70.5, 12]];
+  const DURATION = 82.5;
   window.DURATION = DURATION;
   const FADE = 0.35; // 장면 사이: 검정으로 내려갔다 올라온다(겹치지 않게)
 
@@ -436,6 +475,16 @@
       pencil.setAttribute("opacity", (seg(u, 0.1, 0.3) * (1 - seg(u, endW + 0.5, 0.4))).toFixed(3));
       const t = $("#s1 .t"); const tp = pop(u, 0.7, 0.7); t.style.opacity = clamp(tp); t.style.transform = `translateX(${((1 - clamp(tp)) * 60).toFixed(1)}px)`;
       $("#s1 .ul").style.width = `${620 * seg(u, 1.4, 0.7)}px`;
+    },
+    sx(u) {
+      const t = $("#sx .t"); t.style.opacity = seg(u, 0.1, 0.4); t.style.transform = `translateX(${((1 - seg(u, 0.1, 0.7)) * -60).toFixed(1)}px)`;
+      show($("#sx .sub"), seg(u, 0.8, 0.5));
+      $$("#sx .chips span").forEach((c, i) => { const p = pop(u, 1.4 + i * 0.2, 0.5); c.style.opacity = clamp(p); c.style.transform = `scale(${(0.7 + 0.3 * p).toFixed(3)})`; });
+      $$("#sx .sheet .bk").forEach((k, i) => { const p = seg(u, 0.5 + i * 0.15, 0.5); k.style.opacity = p; });
+      const tp = $("#sx .sheet .top"), tq = pop(u, 0.9, 0.7); tp.style.opacity = clamp(tq); tp.style.transform = `translateY(${((1 - clamp(tq)) * 24).toFixed(1)}px)`;
+      $$("#sx .sheet .lab, #sx .sheet .call, #sx .sheet .tag").forEach((el, i) => (el.style.opacity = seg(u, 1.4 + i * 0.35, 0.4)));
+      $$("#sx .sheet .ans span").forEach((el, i) => { const p = pop(u, 3.0 + i * 0.25, 0.4); el.style.opacity = clamp(p); el.style.transform = `scale(${(0.85 + 0.15 * p).toFixed(3)})`; });
+      const cp = pop(u, 4.2, 0.6), cap = $("#sx .sheetcap"); cap.style.opacity = clamp(cp); cap.style.transform = `scale(${(0.9 + 0.1 * clamp(cp, 0, 1.1)).toFixed(3)})`;
     },
     s2(u) {
       show($("#s2 .head"), seg(u, 0, 0.5));

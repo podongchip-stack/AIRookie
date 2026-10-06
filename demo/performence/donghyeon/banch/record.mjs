@@ -1,6 +1,6 @@
 // [demo 브랜치] 모델 성능 비교 영상 녹화 — benchmark.html의 render(t)를 1/fps초마다 부르고 한 장씩 찍어 mp4로 묶는다.
 // 실시간 녹화가 아니라 프레임 단위라 끊김·타이밍 흔들림이 없다.
-//   node demo/banch/record.mjs [--fps 60] [--page benchmark.html] [--out demo/banch/model_benchmark.mp4]
+//   node <이 폴더>/record.mjs [--fps 60] [--page benchmark.html] [--out model_benchmark.mp4]
 //   v1: --page benchmark_v1.html --out model_benchmark.mp4 · v2(성능 비교·문제 장면 뺀 것): --page benchmark.html --out model_benchmark_v2.mp4
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,7 +9,11 @@ import { once } from "node:events";
 import { createRequire } from "node:module";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(path.join(HERE, "..", "package.json")); // demo/node_modules를 쓴다
+// demo/node_modules를 쓴다: 이 파일에서 위로 올라가며 node_modules/playwright-core가 있는 폴더를 찾는다(폴더 위치가 바뀌어도 동작)
+import fs from "node:fs";
+let base = HERE;
+while (!fs.existsSync(path.join(base, "node_modules", "playwright-core")) && path.dirname(base) !== base) base = path.dirname(base);
+const require = createRequire(path.join(base, "package.json"));
 const { chromium } = require("playwright-core");
 const ffmpeg = require("ffmpeg-static");
 
