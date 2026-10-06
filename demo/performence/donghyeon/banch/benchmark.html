@@ -116,50 +116,33 @@
   #s2 .capL { left: 120px; top: 268px; font-size: 22px; font-weight: 700; color: var(--dim); }
 
   /* 3 · 시험지 */
-  #s3 .head { left: 120px; top: 150px; }
-  #s3 .grid { left: 120px; top: 360px; display: flex; gap: 26px; }
-  #s3 .col { width: 150px; }
-  #s3 .col b { display: block; font-size: 26px; font-weight: 800; }
-  #s3 .col span { display: block; font-size: 19px; color: var(--dim); margin-bottom: 14px; }
-  #s3 .cells { display: grid; grid-template-columns: repeat(4, 30px); gap: 8px; }
-  #s3 .cells i { width: 30px; height: 30px; border-radius: 6px; background: #fff; opacity: 0; }
-  #s3 .models { left: 1080px; top: 360px; width: 720px; }
-  #s3 .models .lab { font-size: 22px; font-weight: 700; color: var(--dim); margin-bottom: 16px; }
-  #s3 .grp { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; opacity: 0; }
-  #s3 .grp .dots { display: flex; flex-wrap: wrap; gap: 8px; width: 330px; }
-  #s3 .grp .dots i { width: 24px; height: 24px; border-radius: 50%; }
-  #s3 .grp .n { font-size: 40px; font-weight: 900; width: 60px; text-align: right; }
-  #s3 .grp .t { font-size: 24px; font-weight: 700; }
-  #s3 .facts { left: 1080px; top: 760px; width: 760px; display: flex; flex-direction: column; gap: 10px; }
-  #s3 .facts div { font-size: 22px; font-weight: 600; color: var(--dim); opacity: 0; }
-  #s3 .facts div b { color: #fff; }
 
   /* 4 · 속도 */
   #s4 .head { left: 120px; top: 150px; }
   #s4 .clock { right: 120px; top: 150px; text-align: right; }
   #s4 .clock small { display: block; font-size: 22px; font-weight: 700; color: var(--dim); }
   #s4 .clock b { display: block; font-size: 96px; font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; }
-  #s4 .lanes { left: 120px; right: 120px; top: 410px; display: flex; flex-direction: column; gap: 46px; }
+  #s4 .lanes { left: 120px; right: 120px; top: 330px; display: flex; flex-direction: column; gap: 24px; }
   #s4 .lane { display: grid; grid-template-columns: 420px 1fr 260px; align-items: center; gap: 30px; }
-  #s4 .lane .nm { font-size: 34px; font-weight: 800; }
-  #s4 .lane .nm small { display: block; font-size: 21px; font-weight: 600; color: var(--dim); margin-top: 2px; }
-  #s4 .lane .tr { height: 40px; border-radius: 999px; background: rgba(255,255,255,.08); position: relative; overflow: hidden; }
+  #s4 .lane .nm { font-size: 30px; font-weight: 800; }
+  #s4 .lane .nm small { display: block; font-size: 19px; font-weight: 600; color: var(--dim); margin-top: 2px; }
+  #s4 .lane .tr { height: 34px; border-radius: 999px; background: rgba(255,255,255,.08); position: relative; overflow: hidden; }
   #s4 .lane .tr b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 999px; }
-  #s4 .lane .ct { font-size: 34px; font-weight: 900; text-align: right; }
+  #s4 .lane .ct { font-size: 30px; font-weight: 900; text-align: right; }
   #s4 .lane.done .ct { color: var(--ok); }
-  #s4 .verdict { left: 0; right: 0; top: 820px; text-align: center; font-size: 40px; font-weight: 800; opacity: 0; }
+  #s4 .verdict { left: 0; right: 0; top: 890px; text-align: center; font-size: 40px; font-weight: 800; opacity: 0; }
   #s4 .verdict em { font-style: normal; color: var(--mf); font-size: 84px; font-weight: 900; letter-spacing: -0.03em; margin: 0 8px; }
 
   /* 5 · 정확도 */
   #s5 .head { left: 120px; top: 150px; }
-  #s5 .bars { left: 120px; top: 400px; width: 1180px; display: flex; flex-direction: column; gap: 46px; }
+  #s5 .bars { left: 120px; top: 360px; width: 1180px; display: flex; flex-direction: column; gap: 30px; }
   #s5 .row { display: grid; grid-template-columns: 430px 1fr; align-items: center; gap: 24px; position: relative; }
   #s5 .row .nm { font-size: 30px; font-weight: 800; }
   #s5 .row .nm small { display: block; font-size: 20px; font-weight: 600; color: var(--dim); }
-  #s5 .row .tr { height: 64px; position: relative; }
+  #s5 .row .tr { height: 54px; position: relative; }
   #s5 .row .tr b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 0 10px 10px 0; }
   #s5 .row .tr span { position: absolute; top: 50%; transform: translateY(-50%); font-size: 40px; font-weight: 900; margin-left: 16px; opacity: 0; }
-  #s5 .band { position: absolute; left: 454px; width: 0; top: -16px; height: 206px; border: 3px dashed rgba(255,255,255,.7); border-radius: 14px; opacity: 0; }
+  #s5 .band { position: absolute; left: 454px; width: 0; top: -14px; height: 240px; border: 3px dashed rgba(255,255,255,.7); border-radius: 14px; opacity: 0; }
   #s5 .side { left: 1380px; top: 380px; width: 440px; display: flex; flex-direction: column; gap: 30px; }
   #s5 .side .c { opacity: 0; }
   #s5 .side .c b { display: block; font-size: 64px; font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; }
@@ -168,13 +151,13 @@
   /* 6 · 크기 */
   #s6 .head { left: 120px; top: 150px; }
   #s6 svg { position: absolute; left: 80px; top: 300px; width: 1060px; height: 600px; overflow: visible; }
-  #s6 .meters { left: 1220px; top: 380px; width: 600px; display: flex; flex-direction: column; gap: 40px; }
+  #s6 .meters { left: 1220px; top: 340px; width: 600px; display: flex; flex-direction: column; gap: 30px; }
   #s6 .meters .lab { font-size: 22px; font-weight: 700; color: var(--dim); }
   #s6 .m .t { display: flex; justify-content: space-between; font-size: 26px; font-weight: 800; margin-bottom: 10px; }
   #s6 .m .bar { height: 30px; border-radius: 8px; background: rgba(255,255,255,.08); position: relative; }
   #s6 .m .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 8px; }
   #s6 .m .bar i { position: absolute; right: 0; top: -6px; bottom: -6px; border-right: 3px solid rgba(255,255,255,.6); }
-  #s6 .note { left: 1220px; top: 860px; width: 600px; font-size: 20px; font-weight: 600; color: var(--dim); opacity: 0; }
+  #s6 .note { left: 120px; top: 880px; font-size: 44px; font-weight: 900; color: var(--mf); opacity: 0; }
 
   /* 8 · 정리 */
   #s8 .cards { left: 120px; right: 120px; top: 330px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 34px; }
@@ -296,39 +279,11 @@
   </div>
 </section>
 
-<!-- 3 · 시험지 -->
-<section class="scene" id="s3">
-  <div class="abs head"><div class="eyebrow">시험지</div><div class="h2">처음 보는 통화 100건, KTAS 등급마다 20건</div></div>
-  <div class="abs grid">
-    <div class="col"><b>KTAS 1</b><span>소생</span><div class="cells"></div></div>
-    <div class="col"><b>KTAS 2</b><span>긴급</span><div class="cells"></div></div>
-    <div class="col"><b>KTAS 3</b><span>응급</span><div class="cells"></div></div>
-    <div class="col"><b>KTAS 4</b><span>준응급</span><div class="cells"></div></div>
-    <div class="col"><b>KTAS 5</b><span>비응급</span><div class="cells"></div></div>
-  </div>
-  <div class="abs models">
-    <div class="lab">시험 본 모델 22개</div>
-    <div class="grp" data-c="mf" data-n="14"><div class="dots"></div><span class="n num">14</span><span class="t">MF_BERT<br><small style="font-size:19px;color:var(--dim)">공개 모델 + 실험 모델</small></span></div>
-    <div class="grp" data-c="lora" data-n="2"><div class="dots"></div><span class="n num">2</span><span class="t">소형 LLM + 같은 과제로 학습</span></div>
-    <div class="grp" data-c="llm" data-n="4"><div class="dots"></div><span class="n num">4</span><span class="t">큰 LLM, 학습 없이 지시문만</span></div>
-    <div class="grp" data-c="base" data-n="2"><div class="dots"></div><span class="n num">2</span><span class="t">학습 전 소형 LLM (기준선)</span></div>
-  </div>
-  <div class="abs facts">
-    <div><b>학습 데이터와 겹치는 통화 0건</b></div>
-    <div>KTAS · 주증상 등 <b>15개 항목</b> + 원문 구간 5종을 채점</div>
-    <div>이 중 <b>대표 3개 모델</b>을 같은 기준으로 비교합니다</div>
-  </div>
-</section>
-
 <!-- 4 · 속도 -->
 <section class="scene" id="s4">
   <div class="abs head"><div class="eyebrow">걸린 시간</div><div class="h2">100건을 처리하는 데 걸린 시간</div></div>
   <div class="abs clock"><small>흐른 시간 · 실제 측정값으로 빨리 감기</small><b class="num" id="clk">0.0초</b></div>
-  <div class="abs lanes">
-    <div class="lane" data-lat="0.01502" data-c="mf"><div class="nm">MF_BERT<small>우리 모델</small></div><div class="tr"><b></b></div><div class="ct num">0 / 100</div></div>
-    <div class="lane" data-lat="5.5" data-c="lora"><div class="nm">Qwen2.5-1.5B + LoRA<small>소형 LLM + 학습</small></div><div class="tr"><b></b></div><div class="ct num">0 / 100</div></div>
-    <div class="lane" data-lat="26.0" data-c="llm"><div class="nm">Qwen3-14B<small>큰 LLM, 학습 없음 · 생각 켬</small></div><div class="tr"><b></b></div><div class="ct num">0 / 100</div></div>
-  </div>
+  <div class="abs lanes" id="lanes"></div>
   <div class="abs verdict">소형 LLM(1.5B)보다<em>약 370배</em>빠릅니다</div>
 </section>
 
@@ -337,9 +292,9 @@
   <div class="abs head"><div class="eyebrow">정답률</div><div class="h2">종합 점수 (0~100점, 모든 항목의 평균)</div></div>
   <div class="abs bars" id="bars"><div class="band"></div></div>
   <div class="abs side">
-    <div class="c"><b>차이 구분 안 됨</b><span>우리 모델과 학습한 소형 LLM의 차이(77.3점 대 79.9점)는 100건으로는 구분되지 않습니다 (95% 구간이 0을 포함)</span></div>
-    <div class="c"><b style="color:var(--mf)">+17.5점</b><span>학습 없는 큰 LLM(14B)보다 높습니다. 우연으로 볼 수 없는 차이입니다</span></div>
-    <div class="c"><b style="color:var(--mf)">91.0%</b><span>답이 하나인 8개 항목(KTAS, 주증상, 의식 등) 평균 정답률, 세 모델 중 가장 높음 (소형 LLM 88.1%, 큰 LLM 69.8%)</span></div>
+    <div class="c"><b>차이 구분 안 됨</b><span>학습한 소형 LLM과 100건으로는 차이가 구분되지 않습니다 (77.3점 대 79.9~81.5점)</span></div>
+    <div class="c"><b style="color:var(--mf)">+17.5점</b><span>학습 없는 큰 LLM(Qwen3-14B)보다 높습니다. 우연으로 볼 수 없는 차이입니다</span></div>
+    <div class="c"><b style="color:var(--mf)">91.0%</b><span>답이 하나인 8개 항목(KTAS, 주증상, 의식 등) 평균 정답률, 여섯 모델 중 가장 높음 (소형 LLM 88.1~90.2%, 큰 LLM 68.8~76.1%)</span></div>
   </div>
 </section>
 
@@ -347,13 +302,14 @@
 <section class="scene" id="s6">
   <div class="abs head"><div class="eyebrow">모델 크기 및 GPU 메모리</div><div class="h2">모델 크기와 GPU 메모리</div></div>
   <svg viewBox="0 0 1060 600" id="circ"></svg>
+  <div class="abs note">가장 작고, GPU 메모리도 가장 적게 씁니다</div>
   <div class="abs meters" id="meters"><div class="lab">GPU 메모리 (RTX 5080 16GB 한 장 기준)</div></div>
 </section>
 
 <!-- 8 · 정리 -->
 <section class="scene" id="s8">
   <div class="abs cards">
-    <div class="card"><b>≈</b><span class="k">정답률</span><span class="d">학습한 소형 LLM과 100건으로는 차이가 구분되지 않습니다 (77.3점 대 79.9점)</span></div>
+    <div class="card"><b>≈</b><span class="k">정답률</span><span class="d">학습한 소형 LLM과 100건으로는 차이가 구분되지 않습니다 (77.3점 대 79.9~81.5점)</span></div>
     <div class="card"><b>370×</b><span class="k">걸린 시간</span><span class="d">소형 LLM(1.5B)보다 약 370배 빠릅니다. 1건에 0.015초, 크기는 약 4분의 1입니다</span></div>
     <div class="card"><b>+17.5</b><span class="k">학습 없는 큰 LLM 대비</span><span class="d">확실히 정확하고, 크기는 약 40분의 1입니다</span></div>
   </div>
@@ -363,21 +319,27 @@
 <script>
 (() => {
   // ── 데이터: demo/explainer/benchmark_highlight.html(2026-10-03)과 같은 값 ──
-  const MODELS = [ // 정답률 · 걸린 시간 · 크기 장면에서 같은 3개 모델을 같은 순서(크기순)로 비교한다. 7B는 측정값이 생기면 1.5B와 14B 사이에 넣는다
-    { name: "MF_BERT", sub: "우리 모델", c: "mf", score: 77.3 },
-    { name: "Qwen2.5-1.5B + LoRA", sub: "소형 LLM + 학습", c: "lora", score: 79.9 },
-    { name: "Qwen3-14B", sub: "큰 LLM, 학습 없음 · 생각 켬", c: "llm", score: 59.8 },
+  const MODELS = [ // 정답률 · 걸린 시간 장면에서 같은 6개 모델을 같은 순서(크기순)로 비교한다. 값은 benchmark_highlight.html 표와 같다. 7B는 측정값이 생기면 1.5B 뒤에 넣는다
+    { name: "MF_BERT", sub: "우리 모델", c: "mf", score: 77.3, lat: 0.01502 },
+    { name: "Qwen2.5-1.5B + LoRA", sub: "소형 LLM + 학습", c: "lora", score: 79.9, lat: 5.5 },
+    { name: "Qwen3-1.7B + LoRA", sub: "소형 LLM + 학습", c: "lora", score: 81.5, lat: 6.9 },
+    { name: "Qwen3-14B", sub: "큰 LLM, 학습 없음 · 생각 켬", c: "llm", score: 59.8, lat: 26.0 },
+    { name: "gpt-oss-20B", sub: "큰 LLM, 학습 없음 · 생각 중간", c: "llm", score: 60.3, lat: 35.6 },
+    { name: "gpt-oss-20B", sub: "큰 LLM, 학습 없음 · 생각 적게", c: "llm", score: 46.1, lat: 8.1 },
   ];
+  // 크기 장면: 큰 모델부터 차례로 작아지며 보여준다(같은 모델의 생각 설정 2종은 한 개로)
   const SIZES = [
-    { name: "MF_BERT", c: "mf", params: 0.37, gb: 3.3 },
-    { name: "Qwen2.5-1.5B + LoRA", c: "lora", params: 1.56, gb: 6.3 },
+    { name: "gpt-oss-20B", c: "llm", params: 20.9, gb: 12.0 },
     { name: "Qwen3-14B", c: "llm", params: 14.8, gb: 13.1 },
+    { name: "Qwen3-1.7B + LoRA", c: "lora", params: 1.74, gb: 6.8 },
+    { name: "Qwen2.5-1.5B + LoRA", c: "lora", params: 1.56, gb: 6.3 },
+    { name: "MF_BERT", c: "mf", params: 0.37, gb: 3.3 },
   ];
   const COL = { mf: "var(--mf)", lora: "var(--lora)", llm: "var(--llm)", base: "var(--base)" };
 
   // ── 장면 시간표(초): [시작, 길이] ──
-  const SCENES = [["s0", 0, 6.5], ["sj", 6.5, 11], ["sx", 17.5, 6], ["s3", 23.5, 9], ["s5", 32.5, 13], ["s4", 45.5, 15], ["s6", 60.5, 10], ["s8", 70.5, 12]];
-  const DURATION = 82.5;
+  const SCENES = [["s0", 0, 6.5], ["sj", 6.5, 11], ["sx", 17.5, 6], ["s5", 23.5, 13], ["s4", 36.5, 15], ["s6", 51.5, 12], ["s8", 63.5, 12]];
+  const DURATION = 75.5;
   window.DURATION = DURATION;
   const FADE = 0.35; // 장면 사이: 검정으로 내려갔다 올라온다(겹치지 않게)
 
@@ -393,20 +355,23 @@
 
   // ── 정적인 부분 만들기 ──
   $(".steps").innerHTML = SCENES.slice(1).map(() => "<i><b></b></i>").join("");
-  $$("#s3 .cells").forEach((c) => (c.innerHTML = "<i></i>".repeat(20)));
-  $$("#s3 .grp").forEach((g) => ($(".dots", g).innerHTML = `<i style="background:${COL[g.dataset.c]}"></i>`.repeat(+g.dataset.n)));
+  $$("#s4 .lane").forEach((l) => ($(".tr b", l).style.background = COL[l.dataset.c]));
+  $("#lanes").innerHTML = MODELS.map((m) => `<div class="lane" data-lat="${m.lat}" data-c="${m.c}"><div class="nm">${m.name}<small>${m.sub}</small></div><div class="tr"><b></b></div><div class="ct num">0 / 100</div></div>`).join("");
   $$("#s4 .lane").forEach((l) => ($(".tr b", l).style.background = COL[l.dataset.c]));
   const bars = $("#bars");
   MODELS.forEach((m) => bars.insertAdjacentHTML("beforeend",
     `<div class="row"><div class="nm" style="color:${m.c === "mf" ? "var(--mf)" : "#fff"}">${m.name}<small>${m.sub}</small></div><div class="tr"><b style="background:${COL[m.c]}"></b><span class="num">${m.score.toFixed(1)}</span></div></div>`));
-  // 크기: 원의 넓이 = 파라미터 수
-  const R = (p) => Math.sqrt(p) * 50;
-  let cx = 40, svg = "";
+  // 크기: 원의 넓이 = 파라미터 수. 바닥선을 맞추고 큰 것부터 왼쪽에 놓는다
+  const R = (p) => Math.sqrt(p) * 30, BASE = 400;
+  const TOTAL = SIZES.reduce((a, m) => a + 2 * R(m.params), 0), GAP = (1060 - TOTAL) / (SIZES.length - 1);
+  let cx = 0, svg = "";
   SIZES.forEach((m, i) => {
-    const r = R(m.params); cx += (i ? R(SIZES[i - 1].params) : 0) + r + (i ? 60 : 0);
-    svg += `<g class="cg" data-r="${r}"><circle cx="${cx}" cy="${330 - 0}" r="0" fill="${COL[m.c]}" fill-opacity="${m.c === "mf" ? 1 : 0.85}"/>` +
-           `<text x="${cx}" y="${330 + r + 52}" text-anchor="middle" fill="#fff" font-size="40" font-weight="900">${m.params}B</text>` +
-           `<text x="${cx}" y="${330 + r + 88}" text-anchor="middle" fill="rgba(255,255,255,.62)" font-size="22" font-weight="700">${m.name}</text></g>`;
+    const r = R(m.params); cx += r; const last = i === SIZES.length - 1;
+    svg += `<g class="cg" data-r="${r}"><circle class="ring" cx="${cx}" cy="${BASE - r}" r="0" fill="none" stroke="var(--mf)" stroke-width="3"/><circle class="dsk" cx="${cx}" cy="${BASE - r}" r="0" fill="${COL[m.c]}" fill-opacity="${last ? 1 : 0.85}"/>` +
+           `<text x="${cx}" y="${BASE + 50}" text-anchor="middle" fill="#fff" font-size="38" font-weight="900">${m.params}B</text>` +
+           `<text x="${cx}" y="${BASE + 82}" text-anchor="middle" fill="rgba(255,255,255,.62)" font-size="19" font-weight="700">${m.name.replace(" + ", "\u0000").split("\u0000")[0]}</text>` +
+           `<text x="${cx}" y="${BASE + 106}" text-anchor="middle" fill="rgba(255,255,255,.62)" font-size="19" font-weight="700">${m.name.includes(" + ") ? "+ LoRA" : ""}</text></g>`;
+    cx += r + GAP;
   });
   $("#circ").innerHTML = svg;
   SIZES.forEach((m) => $("#meters").insertAdjacentHTML("beforeend",
@@ -414,7 +379,7 @@
 
   // 속도 경주: 흐른 시간 s(u)를 지수로 빨리 감는다. u=2.2초에 MF_BERT가 끝나고(1.5초), u=10초에 마지막이 끝난다(59분 18초)
   const lanes = $$("#s4 .lane").map((el, i) => ({ el, approx: i > 0, lat: +el.dataset.lat, fill: $(".tr b", el), ct: $(".ct", el) }));
-  const SMF = 100 * lanes[0].lat, SMAX = 100 * lanes[2].lat, U0 = 0.9, UMF = 2.2, UEND = 10;
+  const SMF = 100 * lanes[0].lat, SMAX = 100 * Math.max(...lanes.map((l) => l.lat)), U0 = 0.9, UMF = 2.2, UEND = 10;
   let lo = 0.01, hi = 5;
   for (let i = 0; i < 80; i++) { const k = (lo + hi) / 2; ((Math.exp(k * (UEND - U0)) - 1) / (Math.exp(k * (UMF - U0)) - 1) > SMAX / SMF) ? (hi = k) : (lo = k); }
   const K = (lo + hi) / 2, A = SMF / (Math.exp(K * (UMF - U0)) - 1);
@@ -502,15 +467,6 @@
         f.style.borderColor = r.classList.contains("ng") ? `rgba(255,107,111,${(0.9 * seg(u, 4.95 + i * 0.62, 0.3)).toFixed(3)})` : `rgba(76,195,138,${(0.9 * hit).toFixed(3)})`;
       });
     },
-    s3(u) {
-      show($("#s3 .head"), seg(u, 0, 0.5));
-      $$("#s3 .col").forEach((c, ci) => { show($("b", c), seg(u, 0.5 + ci * 0.1, 0.3), 8); show($("span", c), seg(u, 0.5 + ci * 0.1, 0.3), 8);
-        $$(".cells i", c).forEach((cell, j) => { const p = pop(u, 0.8 + (ci * 20 + j) * 0.016, 0.3); cell.style.opacity = clamp(p); cell.style.transform = `scale(${(0.3 + 0.7 * p).toFixed(3)})`; }); });
-      show($("#s3 .models .lab"), seg(u, 2.4, 0.4));
-      $$("#s3 .grp").forEach((g, i) => { show(g, seg(u, 2.7 + i * 0.45, 0.4), 12);
-        $$(".dots i", g).forEach((d, j) => { const p = pop(u, 2.8 + i * 0.45 + j * 0.04, 0.3); d.style.transform = `scale(${clamp(p, 0, 1.2).toFixed(3)})`; }); });
-      $$("#s3 .facts div").forEach((f, i) => show(f, seg(u, 5.0 + i * 0.5, 0.45)));
-    },
     s4(u) {
       show($("#s4 .head"), seg(u, 0, 0.5));
       show($("#s4 .clock"), seg(u, 0.4, 0.4));
@@ -546,9 +502,21 @@
     },
     s6(u) {
       show($("#s6 .head"), seg(u, 0, 0.5));
-      $$("#circ .cg").forEach((g, i) => { const p = pop(u, 0.6 + i * 0.7, 0.8); $("circle", g).setAttribute("r", (+g.dataset.r * clamp(p, 0, 1.15)).toFixed(2)); $$("text", g).forEach((t) => (t.style.opacity = seg(u, 0.9 + i * 0.7, 0.4))); });
-      show($("#s6 .meters .lab"), seg(u, 2.6, 0.4));
-      $$("#s6 .m").forEach((m, i) => { show(m, seg(u, 2.8 + i * 0.4, 0.4), 10); const b = $(".bar b", m); b.style.width = `${(+b.dataset.gb / 16) * 100 * seg(u, 3.0 + i * 0.4, 0.9)}%`; });
+      const T = (i) => 0.6 + i * 1.1, SPOT = 7.2, sp = seg(u, SPOT, 0.6), N = SIZES.length;
+      $$("#circ .cg").forEach((g, i) => {
+        const p = pop(u, T(i), 0.8), r = +g.dataset.r, last = i === N - 1;
+        $(".dsk", g).setAttribute("r", (r * clamp(p, 0, 1.12)).toFixed(2));
+        $$("text", g).forEach((t) => (t.style.opacity = seg(u, T(i) + 0.3, 0.4)));
+        g.style.opacity = last ? 1 : (1 - 0.72 * sp).toFixed(3);
+        if (last) $(".ring", g).setAttribute("r", (sp > 0 ? (r + 12 + 8 * Math.sin(u * 5)) * sp : 0).toFixed(2));
+      });
+      show($("#s6 .meters .lab"), seg(u, 0.3, 0.4));
+      $$("#s6 .m").forEach((m, i) => {
+        show(m, seg(u, T(i) + 0.1, 0.4), 10);
+        const b = $(".bar b", m); b.style.width = `${(+b.dataset.gb / 16) * 100 * seg(u, T(i) + 0.2, 0.9)}%`;
+        if (i < N - 1) m.style.opacity = (clamp(seg(u, T(i) + 0.1, 0.4)) * (1 - 0.7 * sp)).toFixed(3);
+      });
+      const cp = seg(u, SPOT + 0.4, 0.5), cap = $("#s6 .note"); cap.style.opacity = cp; cap.style.transform = `translateY(${((1 - cp) * 14).toFixed(1)}px)`;
     },
     s8(u) {
           $$("#s8 .card").forEach((c, i) => { const p = pop(u, 0.9 + i * 0.5, 0.7); c.style.opacity = clamp(p); c.style.transform = `translateY(${((1 - clamp(p, 0, 1.1)) * 40).toFixed(1)}px)`; });
@@ -565,7 +533,7 @@
       el.style.opacity = Math.min(clamp(u / FADE), last ? 1 : clamp((du - u) / FADE));
       DRAW[id](u);
     }
-    // 위 진행 표시: 오프닝 제외 8칸
+    // 위 진행 표시: 오프닝 제외
     $$(".steps i b").forEach((b, i) => { const [, st, du] = SCENES[i + 1]; b.style.width = `${clamp((t - st) / du) * 100}%`; });
     const chrome = seg(t, 6.5, 0.5);
     // 오프닝(s0)과 "AI 모델이 해야 하는 일"(sj) 장면에서는 아래 출처 줄을 숨기고, 다음 장면(s1)이 나올 때 서서히 나타난다
