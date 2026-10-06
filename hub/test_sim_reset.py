@@ -77,6 +77,10 @@ def main() -> None:
     app.sim.reset("A3")
     dispatch("A3", "c-dispatch2")
     assert set(app.engine.list_open_case_ids()) >= {"c-confirmed", "c-scene", "c-dispatch2"}
+    # 엔진엔 없는 사건의 흔적(2026-10-06 실서버에서 초기화 뒤에도 남아 새로 연 화면마다 다시 보내졌다) —
+    # 매칭 전에 끝난 사건의 예비 고지, 이미 끝난 사건의 통화 상태
+    app._pre_alerts["c-orphan"] = {"type": "pre_alert", "caseId": "c-orphan", "apid": "A2"}
+    app._case_call["c-old-call"] = {"type": "call_status", "caseId": "c-old-call", "apid": "A3", "state": "ended"}
 
     print("=== [시연 초기화] → 세 사건 모두 닫힘, 구급차 전부 기지 대기 ===")
     monitor.sent.clear()
@@ -87,7 +91,17 @@ def main() -> None:
     assert all(app.sim.phase_of(a) == "idle" for a in ("A1", "A2", "A3"))
     past = [m for m in monitor.sent if m.get("type") == "case_history"][-1]["cases"]
     assert {"c-confirmed", "c-scene"} <= {p["caseId"] for p in past}, "지난 사건에도 '시연 초기화'로 남는다"
+    assert {"c-orphan", "c-old-call"} <= closed, "엔진 밖 사건 흔적도 화면에 case_closed로 알린다"
+    assert "c-orphan" not in app._pre_alerts and "c-old-call" not in app._case_call
     print(f"  [확인] 닫힌 사건 {sorted(closed)}")
+
+    print("=== 초기화 뒤 관제 지도를 새로 열어도 예비 고지·통화 상태가 따라오지 않는다 ===")
+    monitor2 = _FakeSocket()
+    app._dashboard_sockets.add(monitor2)
+    app._handle_identify(monitor2, DashboardIdentify(role="monitor", id="map2"))
+    stale = [m for m in monitor2.sent if m.get("type") in ("pre_alert", "call_status", "case_overview", "case_meta")]
+    assert not stale, stale
+    print("  [확인] 따라잡기 흔적 0건")
 
     print("=== 초기화 뒤 구급차 탭을 열어도 남은 사건이 따라오지 않는다 ===")
     amb = _FakeSocket()

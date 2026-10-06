@@ -12,8 +12,10 @@ import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandi
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
 import { TransportMonitorPanel } from "@/components/ambulance/TransportMonitorPanel";
+import { HospitalApprovedModal } from "@/components/ambulance/HospitalApprovedModal";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import type { CallSignalType, DispatchTarget } from "@/types/dashboard";
+import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 
 // 이 프로세스(voice)는 구급차 1대 전용이라 사건도 한 번에 하나만 진행된다 —
 // 병원과 달리 여러 사건을 동시에 다룰 필요가 없다. 다만 hub가 어느 구급차·
@@ -73,16 +75,21 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
   // 나가 hub가 조용히 거부했다(버튼은 켜져 있는데 눌러도 안 되는 문제). hub가 사건을 알려 주면 그것을 쓰고,
   // 대기·복귀 중처럼 hub의 caseId가 비어 있을 때만 탭의 값([이동]으로 막 만든 caseId 포함)을 쓴다.
   const simCaseId = simOn ? mySim?.caseId ?? null : null;
-  const currentCaseId = simCaseId ?? myCaseId;
+  // hub가 이 구급대는 사건 없이 대기·복귀 중이라고 알려 주면(시연 종료·수용 완료·상황 취소·시연 초기화) 탭에 기억해 둔
+  // 지난 사건으로 되돌아가지 않는다(2026-10-06) — 예전엔 끝난 사건의 이송 병원·환자 정보가 다음 출동 전까지 계속 남았다.
+  const simIdle = simOn && mySim !== null && !mySim.caseId && (mySim.phase === "idle" || mySim.phase === "returning");
+  const currentCaseId = simIdle ? null : simCaseId ?? myCaseId;
 
   // 기본은 내가 연 통화(currentCaseId)의 결과다. 그 caseId조차 모를 때(새 탭 등)는 hub가 준
   // 결과 중 이 구급차(apid)의 가장 최근 사건을 되찾아 쓴다 — hub는 연결 때 이 구급차의
   // 진행 중인 사건을 따라잡기로 보내준다. myCaseId가 있으면(새 통화 진행 중) 예전
   // 사건으로 대체하지 않는다: 새 결과가 오기 전에 지난 환자 정보를 띄우면 안 된다.
   const ownResults = Object.values(state.matchResults).filter((r) => r.apid === apid);
-  const myResult = currentCaseId
-    ? state.matchResults[currentCaseId] ?? null
-    : ownResults[ownResults.length - 1] ?? null;
+  const myResult = simIdle
+    ? null
+    : currentCaseId
+      ? state.matchResults[currentCaseId] ?? null
+      : ownResults[ownResults.length - 1] ?? null;
   const activeCaseId = myResult?.caseId ?? currentCaseId;
   const hubConfirmedId = myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
   // 요청 중 표시는 누른 순간의 결과가 그대로일 때만 유효하다 — hub가 새 결과를 보내면(확정
@@ -97,6 +104,23 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
     const timer = setTimeout(() => setPendingConfirm(null), 5000);
     return () => clearTimeout(timer);
   }, [pendingConfirm, connectionMode]);
+
+  // 병원 수용 승인 알림(2026-10-06) — 직전 결과와 비교해 이 사건에서 방금 "승인"으로 바뀐 병원이 있으면 모달을 띄운다.
+  // 화면을 연 뒤 따라잡기로 받은 기존 승인·다른 사건으로 바뀐 경우·이미 이송 확정된 사건은 띄우지 않는다.
+  // (렌더 중 이전 결과와 비교하는 React의 '이전 렌더 정보 저장' 방식 — 효과 안에서 setState하지 않게)
+  const [prevResult, setPrevResult] = useState(myResult);
+  const [approvalModal, setApprovalModal] = useState<{ caseId: string; hospitalId: string } | null>(null);
+  if (myResult !== prevResult) {
+    setPrevResult(myResult);
+    if (prevResult && myResult && prevResult.caseId === myResult.caseId && !myResult.hospitals.some((h) => h.status === "confirmed")) {
+      const before = new Map(prevResult.hospitals.map((h) => [h.hospitalId, h.status]));
+      const fresh = myResult.hospitals.find((h) => h.status === "approved" && before.get(h.hospitalId) !== "approved");
+      if (fresh) setApprovalModal({ caseId: myResult.caseId, hospitalId: fresh.hospitalId });
+    }
+  }
+  const approvalHospital = approvalModal && myResult?.caseId === approvalModal.caseId && !hubConfirmedId
+    ? myResult.hospitals.find((h) => h.hospitalId === approvalModal.hospitalId && h.status === "approved") ?? null
+    : null;
 
   const [callActive, setCallActive] = useState(false);
   // 이 사건의 통화 상태(hub 기준) — 휴대폰으로 건 통화를 태블릿도 안다
@@ -223,6 +247,21 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
       <style>{PAGE_CSS}</style>
       <div className="amb-page">
         {pauseToast.node}
+        {approvalHospital && (
+          <HospitalApprovedModal
+            key={`${approvalModal!.caseId}:${approvalHospital.hospitalId}`}
+            hospital={approvalHospital}
+            paused={simPaused}
+            onApprove={() => {
+              if (simPaused) return; // 버튼도 막혀 있지만 겹쳐 눌려도 모달을 닫지 않는다
+              handleApprove(approvalHospital.hospitalId);
+              setApprovalModal(null);
+            }}
+            onClose={() => {
+              if (!simPaused) setApprovalModal(null);
+            }}
+          />
+        )}
         <AmbulanceTopBar
           confirmedName={confirmedName}
           connectionMode={connectionMode}
@@ -401,8 +440,11 @@ function AmbulancePageBody() {
 
 export default function AmbulanceDashboardPage() {
   return (
-    <Suspense fallback={null}>
-      <AmbulancePageBody />
-    </Suspense>
+    <>
+      <Suspense fallback={null}>
+        <AmbulancePageBody />
+      </Suspense>
+      <DemoVideoOverlay src="/demo-videos/ambulance.mp4" />
+    </>
   );
 }

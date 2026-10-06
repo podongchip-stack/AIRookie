@@ -24,6 +24,8 @@ final class PhoneModel {
     var sentCount: [String: Int] = [:]  // 매칭 결과의 후보 병원 수
     var matchVersion: [String: Int] = [:]  // 사건별로 매칭 결과를 받은 횟수 — 추가 통화가 반영됐는지 판단
     var destinations: [String: MatchResult.Hospital] = [:]  // 사건별 이송 확정 병원
+    var sceneInputMode: [String: String] = [:]  // 사건별 시연 콘솔 ② 현장 확인 방식("voice" | "template")
+    var transportInputMode: [String: String] = [:]  // 사건별 시연 콘솔 ④ 이송 중 통화 방식(2026-10-06)
 
     // 이 기기의 통화
     var call: LocalCall?
@@ -106,6 +108,10 @@ final class PhoneModel {
     /// 이송 중 추가 통화 동안 구급차 이동이 멈춰 있다(통화 내용이 반영되면 hub가 다시 출발시킨다)
     var transportHeld: Bool { mySim?.paused == true && mySim?.pauseReason == "call" }
     var sent: Bool { caseId.flatMap { sentCount[$0] } != nil }
+    /// 콘솔 ②가 "정해진 상황 선택" 중이면 현장 첫 통화를 못 한다(이송 중 통화는 ④ 방식을 따른다)
+    var sceneCallBlocked: Bool { !inTransport && !sent && caseId.map { sceneInputMode[$0] == "template" } == true }
+    /// 콘솔 ④가 "정해진 상황 선택" 중이면 이송 중 [목적지 병원과 통화]를 못 한다(2026-10-06)
+    var transportCallBlocked: Bool { phase == .transporting && caseId.map { transportInputMode[$0] == "template" } == true }
     var destination: MatchResult.Hospital? {
         guard let caseId else { return nil }
         if let d = destinations[caseId] { return d }
@@ -141,6 +147,10 @@ final class PhoneModel {
             if fromMonitor { autoSwitch() }
         case "scene_candidates" where !fromMonitor:
             if let s = try? dec.decode(SceneCandidates.self, from: data) { scenes[s.caseId] = s }
+        case "scene_input_mode" where !fromMonitor:
+            if let s = try? dec.decode(SceneInputMode.self, from: data) {
+                if s.stage == "transport" { transportInputMode[s.caseId] = s.mode } else { sceneInputMode[s.caseId] = s.mode }
+            }
         case "call_status" where !fromMonitor:
             if let s = try? dec.decode(CallStatus.self, from: data) { callStatus[s.caseId] = s }
         case "call_transcript" where !fromMonitor:
@@ -153,7 +163,8 @@ final class PhoneModel {
             }
         case "action_refused" where !fromMonitor:
             if let r = try? dec.decode(ActionRefused.self, from: data) {
-                show(r.reason == "paused" ? "현재 시연 일시정지 중입니다." : "지금은 통화를 시작할 수 없습니다.")
+                show(r.reason == "paused" ? "현재 시연 일시정지 중입니다."
+                     : r.reason == "template_mode" ? "콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다." : "지금은 통화를 시작할 수 없습니다.")
                 if call?.phase == .connecting { call = nil }
             }
         case "case_closed":
@@ -169,7 +180,8 @@ final class PhoneModel {
 
     private func forget(_ caseId: String) {
         scenes[caseId] = nil; callStatus[caseId] = nil; hubTranscripts[caseId] = nil; sentCount[caseId] = nil
-        matchVersion[caseId] = nil; destinations[caseId] = nil
+        matchVersion[caseId] = nil; destinations[caseId] = nil; sceneInputMode[caseId] = nil
+        transportInputMode[caseId] = nil
         if call?.caseId == caseId, session == nil || call?.phase == .ended { call = nil; session = nil }
     }
 
@@ -205,6 +217,10 @@ final class PhoneModel {
         error = nil
         if paused {
             show("현재 시연 일시정지 중입니다.")
+            return
+        }
+        if sceneCallBlocked || transportCallBlocked {
+            show("콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다.")
             return
         }
         guard await MicCapture.requestPermission() else { error = "마이크 권한이 꺼져 있습니다. 설정 앱에서 켜 주세요."; return }

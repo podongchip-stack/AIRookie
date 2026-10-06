@@ -18,6 +18,7 @@ import type {
   DashboardIdentify,
   DashboardIdentityInfo,
   DashboardState,
+  DemoMode,
   DispatchCommand,
   DispatchTarget,
   HospitalInfoConfirm,
@@ -76,6 +77,7 @@ const INITIAL_STATE: DashboardState = {
   actionRefused: null,
   mciAllocated: null,
   mciPlan: null,
+  sceneInputMode: {},
 };
 
 // 관제 지도 "병원 응답" 기록에 남길 최대 개수
@@ -122,7 +124,10 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
         !(caseId in prev.sceneCandidates) &&
         !(caseId in prev.monitorCases) &&
         !(caseId in prev.callStatus) &&
-        !(caseId in prev.caseMeta)
+        !(caseId in prev.caseMeta) &&
+        !(caseId in prev.preAlerts) &&
+        !(caseId in prev.callTranscripts) &&
+        !(caseId in prev.transportAssessments)
       ) {
         return prev;
       }
@@ -390,6 +395,10 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "mci_allocated":
               setState((prev) => ({ ...prev, mciAllocated: { at: Date.now(), results: parsed.results } }));
               break;
+            case "scene_input_mode":
+              if (parsed.stage === "transport") break; // 웹 전화 앱은 이송 중 통화가 없다 — ② 방식만 쓴다
+              setState((prev) => ({ ...prev, sceneInputMode: { ...prev.sceneInputMode, [parsed.caseId]: parsed.mode } }));
+              break;
             case "mci_plan":
               setState((prev) => ({ ...prev, mciPlan: { at: Date.now(), caseIds: parsed.caseIds, plan: parsed.plan } }));
               break;
@@ -615,7 +624,25 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview };
+  // 통화 방식(2026-10-06, 시연 콘솔 ② 현장 확인·④ 이송 중) — "template"(정해진 상황 선택)이면 hub가 그 단계의 휴대폰 통화를 막는다
+  const sendSceneInputMode = useCallback((
+    caseId: string, apid: string | null, mode: "voice" | "template", stage: "scene" | "transport" = "scene",
+  ): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "scene_input_mode", caseId, apid, mode, stage }));
+    return true;
+  }, []);
+
+  // 시연 영상 모드 전환(2026-10-06) — hub가 연결된 모든 화면에 알린다(이 화면도 그 알림으로 바뀐다)
+  const sendDemoMode = useCallback((mode: DemoMode): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "demo_mode", mode }));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.
