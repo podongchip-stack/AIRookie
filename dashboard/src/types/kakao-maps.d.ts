@@ -24,8 +24,10 @@ declare global {
 
     class Map {
       constructor(container: HTMLElement, options: MapOptions);
-      setBounds(bounds: LatLngBounds): void;
+      // 안쪽 여백(px)을 주면 범위를 그 안쪽 영역에 맞춘다
+      setBounds(bounds: LatLngBounds, paddingTop?: number, paddingRight?: number, paddingBottom?: number, paddingLeft?: number): void;
       setCenter(latlng: LatLng): void;
+      getProjection(): MapProjection;
       relayout(): void;
       getLevel(): number;
       setLevel(level: number): void;
@@ -72,6 +74,11 @@ declare global {
 
     class Point {
       constructor(x: number, y: number);
+    }
+
+    interface MapProjection {
+      coordsFromContainerPoint(point: Point): LatLng;
+      containerPointFromCoords(latlng: LatLng): Point;
     }
 
     interface MarkerImageOptions {

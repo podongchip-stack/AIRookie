@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { css } from "styled-system/css";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { escapeHtml } from "@/lib/kakao-map-markers";
+import { centerInView } from "@/lib/map-view";
 import {
   C, LEVEL_DEFAULT, LEVEL_DOT, ST_DOT, ST_LABEL, ST_PILL, ambState, shortAmb, shortHospital, zoneText, type Incident, type St,
 } from "@/lib/control-map";
@@ -162,11 +163,11 @@ export function ControlMapPanel({
     }
   }, [overview, selected, activeTab, hoverHospital]);
 
-  // ── 선택한 사건으로 지도 이동 ──
+  // ── 선택한 사건으로 지도 이동 — 하단 구급차 패널 등이 덮은 부분을 빼고 보이는 영역의 한가운데로 ──
   useEffect(() => {
     const map = ensureMap();
-    if (!map || !selected?.center) return;
-    map.setCenter(new window.kakao.maps.LatLng(selected.center.lat, selected.center.lng));
+    if (!map || !selected?.center || !containerRef.current) return;
+    centerInView(map, containerRef.current, selected.center);
     // 사건을 바꿀 때만 — 같은 사건을 보는 동안 지도 조작을 방해하지 않게
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, selected?.caseId]);
