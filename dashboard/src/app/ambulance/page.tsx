@@ -12,6 +12,7 @@ import { HospitalCandidateListPanel } from "@/components/ambulance/HospitalCandi
 import { CandidateMapPanel } from "@/components/ambulance/CandidateMapPanel";
 import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPanel";
 import { TransportMonitorPanel } from "@/components/ambulance/TransportMonitorPanel";
+import { HospitalApprovedModal } from "@/components/ambulance/HospitalApprovedModal";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import type { CallSignalType, DispatchTarget } from "@/types/dashboard";
 import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
@@ -103,6 +104,23 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
     const timer = setTimeout(() => setPendingConfirm(null), 5000);
     return () => clearTimeout(timer);
   }, [pendingConfirm, connectionMode]);
+
+  // 병원 수용 승인 알림(2026-10-06) — 직전 결과와 비교해 이 사건에서 방금 "승인"으로 바뀐 병원이 있으면 모달을 띄운다.
+  // 화면을 연 뒤 따라잡기로 받은 기존 승인·다른 사건으로 바뀐 경우·이미 이송 확정된 사건은 띄우지 않는다.
+  // (렌더 중 이전 결과와 비교하는 React의 '이전 렌더 정보 저장' 방식 — 효과 안에서 setState하지 않게)
+  const [prevResult, setPrevResult] = useState(myResult);
+  const [approvalModal, setApprovalModal] = useState<{ caseId: string; hospitalId: string } | null>(null);
+  if (myResult !== prevResult) {
+    setPrevResult(myResult);
+    if (prevResult && myResult && prevResult.caseId === myResult.caseId && !myResult.hospitals.some((h) => h.status === "confirmed")) {
+      const before = new Map(prevResult.hospitals.map((h) => [h.hospitalId, h.status]));
+      const fresh = myResult.hospitals.find((h) => h.status === "approved" && before.get(h.hospitalId) !== "approved");
+      if (fresh) setApprovalModal({ caseId: myResult.caseId, hospitalId: fresh.hospitalId });
+    }
+  }
+  const approvalHospital = approvalModal && myResult?.caseId === approvalModal.caseId && !hubConfirmedId
+    ? myResult.hospitals.find((h) => h.hospitalId === approvalModal.hospitalId && h.status === "approved") ?? null
+    : null;
 
   const [callActive, setCallActive] = useState(false);
   // 이 사건의 통화 상태(hub 기준) — 휴대폰으로 건 통화를 태블릿도 안다
@@ -229,6 +247,17 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
       <style>{PAGE_CSS}</style>
       <div className="amb-page">
         {pauseToast.node}
+        {approvalHospital && (
+          <HospitalApprovedModal
+            key={`${approvalModal!.caseId}:${approvalHospital.hospitalId}`}
+            hospital={approvalHospital}
+            onApprove={() => {
+              handleApprove(approvalHospital.hospitalId);
+              setApprovalModal(null);
+            }}
+            onClose={() => setApprovalModal(null)}
+          />
+        )}
         <AmbulanceTopBar
           confirmedName={confirmedName}
           connectionMode={connectionMode}
