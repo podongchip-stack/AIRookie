@@ -470,6 +470,26 @@ export interface DashboardState {
   mciAllocated: { at: number; results: MciAllocationResult[] } | null;
   // 마지막 대량사고 자동 분배 미리 보기(시연 콘솔 ③)
   mciPlan: { at: number; caseIds: string[]; plan: MciPlanItem[] } | null;
+  // caseId -> 시연 콘솔 ② 현장 확인 방식(2026-10-06, 구급차 탭만 받는다). "template"이면 휴대폰 앱은 현장 통화를 못 한다
+  sceneInputMode: Record<string, SceneInputMode>;
+}
+
+export type SceneInputMode = "voice" | "template";
+
+export interface SceneInputModeMessage {
+  type: "scene_input_mode";
+  caseId: string;
+  apid: string | null;
+  mode: SceneInputMode;
+}
+
+// 시연 영상 모드(2026-10-06) — hub가 연결된 모든 화면에 같은 값을 알린다. video면 화면마다 정해진 영상을 덮어 띄운다
+// (components/ui/DemoVideoOverlay가 자기 연결로 받는다)
+export type DemoMode = "live" | "video";
+
+export interface DemoModeMessage {
+  type: "demo_mode";
+  mode: DemoMode;
 }
 
 // ── 이송 중 활력징후 모니터링 (2.5단계, 2026-10-04) ─────────────────────────
@@ -829,4 +849,5 @@ export type InboundMessage =
   | CaseHistory
   | ActionRefused
   | MciAllocated
-  | MciPlan;
+  | MciPlan
+  | SceneInputModeMessage;

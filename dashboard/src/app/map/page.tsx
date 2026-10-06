@@ -11,6 +11,7 @@ import {
   type AmbKey, type Incident, type St,
 } from "@/lib/control-map";
 import type { CaseHistoryItem } from "@/types/dashboard";
+import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 
 // 관제 지도(2026-10-03 신설, 2026-10-04 디자인 시안 "골든링크 관제"로 전면 개편). hub에 role=monitor로 붙어
 // 사건 요약·구급차 위치만 받는다 — 통화 전문 등 환자 상세는 받지 않는다(증상은 한 줄뿐). 보기 전용이라 승인 같은
@@ -129,6 +130,8 @@ export default function MonitorMapPage() {
 
   return (
     <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: C.bg, color: C.ink, whiteSpace: "nowrap" }}>
+      {/* 시연 영상 모드(2026-10-06) — 영상(소리 있음)이 끝나면 /verify/stage 한 바퀴, 다시 영상 */}
+      <DemoVideoOverlay src="/demo-videos/map.mp4" withStage />
       <div style={{ position: "absolute", inset: 0, boxSizing: "border-box", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {/* 헤더 + 범례 */}
         <header style={{ flex: "none", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 20px", display: "flex", flexDirection: "column", gap: 10 }}>

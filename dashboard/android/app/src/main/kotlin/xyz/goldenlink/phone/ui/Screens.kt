@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.GraphicEq
@@ -343,15 +344,30 @@ private fun HospitalListView(m: PhoneModel) {
                 }
             }
         }
-        items(ordered, key = { it.hospitalId }) { h -> HospitalCard(h) { m.dial(h) } }
+        if (m.sceneCallBlocked) {
+            item {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AD.orangeSoft).padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Lock, null, tint = AD.orange, modifier = Modifier.size(18.dp))
+                    Text(buildAnnotatedString {
+                        append("시연 콘솔이 ")
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("정해진 상황 선택") }
+                        append(" 중이라 전화를 걸 수 없습니다. 콘솔에서 ")
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("음성으로 확인") }
+                        append("을 고르면 전화할 수 있습니다.")
+                    }, fontSize = 13.sp, color = AD.navy, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        items(ordered, key = { it.hospitalId }) { h -> HospitalCard(h, enabled = !m.sceneCallBlocked) { m.dial(h) } }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
 @Composable
-private fun HospitalCard(h: SceneCandidate, onCall: () -> Unit) {
+private fun HospitalCard(h: SceneCandidate, enabled: Boolean = true, onCall: () -> Unit) {
     val recommended = h.firstCallRecommended == true
-    Card(border = if (recommended) AD.green else AD.control, borderWidth = if (recommended) 2.dp else 1.dp) {
+    Card(modifier = Modifier.alpha(if (enabled) 1f else 0.45f), border = if (recommended) AD.green else AD.control, borderWidth = if (recommended) 2.dp else 1.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -386,7 +402,7 @@ private fun HospitalCard(h: SceneCandidate, onCall: () -> Unit) {
                 }
             }
             Row(Modifier.fillMaxWidth().heightIn(min = 46.dp).clip(RoundedCornerShape(14.dp)).background(if (recommended) AD.green else AD.blue)
-                .clickable(onClick = onCall), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                .clickable(enabled = enabled, onClick = onCall), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Call, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("전화 걸기", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)

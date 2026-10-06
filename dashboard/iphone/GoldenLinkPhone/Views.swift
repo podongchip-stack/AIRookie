@@ -275,8 +275,21 @@ struct HospitalListView: View {
                     .background(AD.orangeSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
+                if m.sceneCallBlocked {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "lock.fill").foregroundStyle(AD.orange)
+                        Text("시연 콘솔이 **정해진 상황 선택** 중이라 전화를 걸 수 없습니다. 콘솔에서 **음성으로 확인**을 고르면 전화할 수 있습니다.")
+                            .foregroundStyle(AD.navy)
+                    }
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .background(AD.orangeSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
                 ForEach(ordered) { h in
                     HospitalCard(h: h) { Task { await m.dial(h) } }
+                        .disabled(m.sceneCallBlocked)
+                        .opacity(m.sceneCallBlocked ? 0.45 : 1)
                 }
             }
             .padding(.bottom, 8)

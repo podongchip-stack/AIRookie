@@ -747,6 +747,66 @@ def _send_map_overview() -> None:
         _send_to_monitors_locked(overview)
 
 
+# ── 현장 확인 입력 방식(2026-10-06) ───────────────────────────────────────────
+# 시연 콘솔 ② 현장 확인에서 고른 방식(caseId -> "voice" | "template"). "template"(정해진 상황 선택)이면 그 사건의 현장 통화를
+# 휴대폰 앱으로 시작할 수 없다 — 정해진 상황 카드와 실제 음성 요약이 같은 사건에 겹쳐 들어가지 않게. 그 구급차 화면(휴대폰
+# 앱 포함)에 알려 전화 버튼을 막고, hub도 통화 시작을 거부한다(구버전 앱 대비). 콘솔이 알리지 않은 사건은 예전처럼 통화 가능.
+# 매칭 결과가 나온 뒤의 추가 통화(이송 중 목적지 병원)는 이 값과 무관하다.
+SCENE_INPUT_MODES = ("voice", "template")
+_scene_input_mode: dict[str, str] = {}
+
+
+def _send_scene_input_mode(case_id: str, apid: str | None, ws=None) -> None:
+    """그 구급차 소켓들에(ws를 주면 그 소켓 하나에) 사건의 현장 확인 방식을 알린다."""
+    mode = _scene_input_mode.get(case_id)
+    if mode is None:
+        return
+    payload = {"type": "scene_input_mode", "caseId": case_id, "apid": apid, "mode": mode}
+    if ws is not None:
+        _send_to_socket(ws, payload, "현장 확인 방식 따라잡기")
+        return
+    message = json.dumps(payload)
+    with _sockets_lock:
+        for sock, (role, id_) in list(_socket_identity.items()):
+            if role == "ambulance" and id_ == apid:
+                try:
+                    sock.send(message)
+                except Exception as e:  # noqa: BLE001
+                    print(f"  [통신] 현장 확인 방식 전송 실패: {e}")
+
+
+def _handle_scene_input_mode(payload: dict) -> None:
+    case_id, mode = payload.get("caseId"), payload.get("mode")
+    if not case_id or mode not in SCENE_INPUT_MODES or _scene_input_mode.get(case_id) == mode:
+        return
+    _scene_input_mode[case_id] = mode
+    apid = engine.get_case_apid(case_id) or payload.get("apid")
+    _send_scene_input_mode(case_id, apid)
+
+
+# ── 시연 영상 모드(2026-10-06) ─────────────────────────────────────────────────
+# 시연 사이사이에 화면마다 정해진 영상을 띄워 둔다. 콘솔 [영상 모드]·영상 위 [시연 모드] 버튼이 demo_mode를 보내면 연결된
+# 모든 화면(관제 지도·병원·콘솔·구급차, 맥·리눅스 구분 없이)에 같은 모드를 알린다. 화면은 시연 상태를 그대로 둔 채
+# 영상을 덮어 띄우므로, 시연 모드로 돌아오면 직전 상태 그대로다. 사건·로그와 무관한 화면 연출이라 저장하지 않는다.
+DEMO_MODES = ("live", "video")
+_demo_mode = "live"
+
+
+def _set_demo_mode(mode: str) -> None:
+    global _demo_mode
+    if mode not in DEMO_MODES:
+        return
+    _demo_mode = mode
+    message = json.dumps({"type": "demo_mode", "mode": mode})
+    with _sockets_lock:
+        for ws in list(_dashboard_sockets):
+            try:
+                ws.send(message)
+            except Exception as e:  # noqa: BLE001 — 끊긴 소켓은 수신 루프가 정리한다
+                print(f"  [통신] 영상 모드 전송 실패: {e}")
+    print(f"  [시연] {'영상 모드' if mode == 'video' else '시연 모드'}로 전환 — 화면 {len(_dashboard_sockets)}개")
+
+
 def _send_to_socket(ws, payload: dict, label: str) -> None:
     """소켓 하나에만 보낸다(따라잡기·신원 확인 응답). 브로드캐스트와 같은 락을 쓴다."""
     with _sockets_lock:
@@ -938,6 +998,13 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
             decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
                                                              "reason": "paused"})
             _notify_refused(ws, signal.caseId, "paused")
+            return
+        # 콘솔이 현장 확인을 "정해진 상황 선택"으로 두면 현장 통화는 받지 않는다(추가 통화는 매칭 뒤라 해당 없음)
+        if _scene_input_mode.get(signal.caseId) == "template" and engine.get_case_result(signal.caseId) is None:
+            print(f"  [통화] {signal.apid} 통화 시작 거부 — 콘솔이 정해진 상황 선택 중")
+            decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
+                                                             "reason": "template_mode"})
+            _notify_refused(ws, signal.caseId, "template_mode")
             return
         engine.register_case(signal.caseId, signal.apid)
         followup = engine.get_case_result(signal.caseId) is not None
@@ -1647,6 +1714,9 @@ def _handle_identify(ws, identify: DashboardIdentify) -> None:
     active = _send_catchup(ws, identify)
     if identify.role == "ambulance":  # 결과 전(출동·통화 중) 사건의 현장 후보·실시간 자막도 지우지 않게
         active = sorted(set(active) | set(engine.get_case_ids_for_apid(identify.id)))
+        sim_case = sim.case_of(identify.id) if sim is not None else None
+        for case_id in set(active) | ({sim_case} if sim_case else set()):
+            _send_scene_input_mode(case_id, identify.id, ws)
     # 탭은 hub가 꺼졌다 켜져도 자동 재연결하며 화면 상태를 그대로 들고 있다 — 그 사이 끝난 사건(재시작 정리·
     # 방치 정리 등)은 case_closed를 못 받았으니, 지금 진행 중인 목록을 알려 나머지를 지우게 한다(2026-10-03).
     _send_to_socket(ws, {"type": "case_sync", "caseIds": active}, "사건 목록 동기화")
@@ -1697,6 +1767,8 @@ def dashboard_socket(ws):
     """
     with _sockets_lock:
         _dashboard_sockets.add(ws)
+    # 시연 영상 모드는 화면마다 신원과 무관하게 따른다 — 연결되자마자(나중에 연 화면·재연결 포함) 지금 모드를 알린다
+    _send_to_socket(ws, {"type": "demo_mode", "mode": _demo_mode}, "영상 모드 따라잡기")
     try:
         while True:
             message = ws.receive()
@@ -1778,6 +1850,10 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 MciAllocate 수신: {exc.errors()}")
                     continue
                 _match_executor.submit(_mci_allocate, allocate.caseIds, ws)
+            elif payload.get("type") == "scene_input_mode":
+                _handle_scene_input_mode(payload)
+            elif payload.get("type") == "demo_mode":
+                _set_demo_mode(payload.get("mode", ""))
             elif payload.get("type") == "zone_expand_now":
                 try:
                     expand = ZoneExpandNow.model_validate(payload)

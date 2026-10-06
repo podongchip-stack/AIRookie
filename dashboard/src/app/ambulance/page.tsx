@@ -14,6 +14,7 @@ import { DispatchControlPanel } from "@/components/ambulance/DispatchControlPane
 import { TransportMonitorPanel } from "@/components/ambulance/TransportMonitorPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import type { CallSignalType, DispatchTarget } from "@/types/dashboard";
+import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 
 // 이 프로세스(voice)는 구급차 1대 전용이라 사건도 한 번에 하나만 진행된다 —
 // 병원과 달리 여러 사건을 동시에 다룰 필요가 없다. 다만 hub가 어느 구급차·
@@ -73,16 +74,21 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
   // 나가 hub가 조용히 거부했다(버튼은 켜져 있는데 눌러도 안 되는 문제). hub가 사건을 알려 주면 그것을 쓰고,
   // 대기·복귀 중처럼 hub의 caseId가 비어 있을 때만 탭의 값([이동]으로 막 만든 caseId 포함)을 쓴다.
   const simCaseId = simOn ? mySim?.caseId ?? null : null;
-  const currentCaseId = simCaseId ?? myCaseId;
+  // hub가 이 구급대는 사건 없이 대기·복귀 중이라고 알려 주면(시연 종료·수용 완료·상황 취소·시연 초기화) 탭에 기억해 둔
+  // 지난 사건으로 되돌아가지 않는다(2026-10-06) — 예전엔 끝난 사건의 이송 병원·환자 정보가 다음 출동 전까지 계속 남았다.
+  const simIdle = simOn && mySim !== null && !mySim.caseId && (mySim.phase === "idle" || mySim.phase === "returning");
+  const currentCaseId = simIdle ? null : simCaseId ?? myCaseId;
 
   // 기본은 내가 연 통화(currentCaseId)의 결과다. 그 caseId조차 모를 때(새 탭 등)는 hub가 준
   // 결과 중 이 구급차(apid)의 가장 최근 사건을 되찾아 쓴다 — hub는 연결 때 이 구급차의
   // 진행 중인 사건을 따라잡기로 보내준다. myCaseId가 있으면(새 통화 진행 중) 예전
   // 사건으로 대체하지 않는다: 새 결과가 오기 전에 지난 환자 정보를 띄우면 안 된다.
   const ownResults = Object.values(state.matchResults).filter((r) => r.apid === apid);
-  const myResult = currentCaseId
-    ? state.matchResults[currentCaseId] ?? null
-    : ownResults[ownResults.length - 1] ?? null;
+  const myResult = simIdle
+    ? null
+    : currentCaseId
+      ? state.matchResults[currentCaseId] ?? null
+      : ownResults[ownResults.length - 1] ?? null;
   const activeCaseId = myResult?.caseId ?? currentCaseId;
   const hubConfirmedId = myResult?.hospitals.find((h) => h.status === "confirmed")?.hospitalId ?? null;
   // 요청 중 표시는 누른 순간의 결과가 그대로일 때만 유효하다 — hub가 새 결과를 보내면(확정
@@ -401,8 +407,11 @@ function AmbulancePageBody() {
 
 export default function AmbulanceDashboardPage() {
   return (
-    <Suspense fallback={null}>
-      <AmbulancePageBody />
-    </Suspense>
+    <>
+      <Suspense fallback={null}>
+        <AmbulancePageBody />
+      </Suspense>
+      <DemoVideoOverlay src="/demo-videos/ambulance.mp4" />
+    </>
   );
 }

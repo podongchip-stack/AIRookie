@@ -29,6 +29,7 @@ import xyz.goldenlink.core.MatchHospital
 import xyz.goldenlink.core.MatchResult
 import xyz.goldenlink.core.SceneCandidate
 import xyz.goldenlink.core.SceneCandidates
+import xyz.goldenlink.core.SceneInputMode
 import xyz.goldenlink.core.hubJson
 import xyz.goldenlink.core.voiceSummaryMessage
 import java.io.File
@@ -55,6 +56,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     val sentCount = mutableStateMapOf<String, Int>()  // 매칭 결과의 후보 병원 수
     private val matchVersion = mutableStateMapOf<String, Int>()  // 사건별로 매칭 결과를 받은 횟수 — 추가 통화가 반영됐는지 판단
     private val destinations = mutableStateMapOf<String, MatchHospital?>()  // 사건별 이송 확정 병원
+    private val sceneInputMode = mutableStateMapOf<String, String>()  // 사건별 시연 콘솔 ② 현장 확인 방식("voice" | "template")
 
     // 이 기기의 통화
     var call by mutableStateOf<LocalCall?>(null)
@@ -142,6 +144,8 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     /** 이송 중 추가 통화 동안 구급차 이동이 멈춰 있다(통화 내용이 반영되면 hub가 다시 출발시킨다) */
     val transportHeld: Boolean get() = mySim?.paused == true && mySim?.pauseReason == "call"
     val sent: Boolean get() = caseId?.let { sentCount[it] } != null
+    /** 콘솔이 "정해진 상황 선택" 중이면 현장 첫 통화를 못 한다(매칭 뒤 추가 통화는 해당 없음) */
+    val sceneCallBlocked: Boolean get() = !sent && caseId?.let { sceneInputMode[it] } == "template"
     val destination: MatchHospital?
         get() {
             val id = caseId ?: return null
@@ -179,6 +183,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     if (fromMonitor) autoSwitch()
                 }
                 "scene_candidates" -> if (!fromMonitor) hubJson.decodeFromString(SceneCandidates.serializer(), text).let { scenes[it.caseId] = it }
+                "scene_input_mode" -> if (!fromMonitor) hubJson.decodeFromString(SceneInputMode.serializer(), text).let { sceneInputMode[it.caseId] = it.mode }
                 "call_status" -> if (!fromMonitor) hubJson.decodeFromString(CallStatus.serializer(), text).let { callStatus[it.caseId] = it }
                 "call_transcript" -> if (!fromMonitor) {
                     val l = hubJson.decodeFromString(CallTranscriptLine.serializer(), text)
@@ -193,7 +198,11 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                 }
                 "action_refused" -> if (!fromMonitor) {
                     val r = hubJson.decodeFromString(ActionRefused.serializer(), text)
-                    show(if (r.reason == "paused") "현재 시연 일시정지 중입니다." else "지금은 통화를 시작할 수 없습니다.")
+                    show(when (r.reason) {
+                        "paused" -> "현재 시연 일시정지 중입니다."
+                        "template_mode" -> "콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다."
+                        else -> "지금은 통화를 시작할 수 없습니다."
+                    })
                     if (call?.phase == LocalCall.Phase.CONNECTING) call = null
                 }
                 "case_closed" -> forget(hubJson.decodeFromString(CaseClosed.serializer(), text).caseId)
@@ -208,7 +217,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
 
     private fun forget(caseId: String) {
         scenes.remove(caseId); callStatus.remove(caseId); hubTranscripts.remove(caseId); sentCount.remove(caseId)
-        matchVersion.remove(caseId); destinations.remove(caseId)
+        matchVersion.remove(caseId); destinations.remove(caseId); sceneInputMode.remove(caseId)
         if (call?.caseId == caseId && (session == null || call?.phase == LocalCall.Phase.ENDED)) { call = null; session = null }
     }
 
@@ -239,6 +248,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         if (call != null) return
         error = null
         if (paused) { show("현재 시연 일시정지 중입니다."); return }
+        if (sceneCallBlocked) { show("콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다."); return }
         if (ContextCompat.checkSelfPermission(getApplication(), CallService.PERMISSION) != PackageManager.PERMISSION_GRANTED) {
             needsMicPermission += 1
             return

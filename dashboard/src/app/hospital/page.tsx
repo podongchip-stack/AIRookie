@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { css } from "styled-system/css";
 import { HospitalDashboard } from "@/components/hospital/HospitalDashboard";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
+import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 
 // 시연용 자동 로그인(2026-10-04): /hospital?id=auto — 특정 병원에 고정하지 않고, 사건이
 // 병원들에 수용 요청을 보내는 순간 **그 사건의 1순위 병원**(이송이 확정되면 확정 병원)
@@ -70,8 +71,11 @@ function HospitalDashboardContent() {
 
 export default function HospitalDashboardPage() {
   return (
-    <Suspense fallback={null}>
-      <HospitalDashboardContent />
-    </Suspense>
+    <>
+      <Suspense fallback={null}>
+        <HospitalDashboardContent />
+      </Suspense>
+      <DemoVideoOverlay src="/demo-videos/hospital.mp4" />
+    </>
   );
 }
