@@ -162,7 +162,13 @@ export default function StagePage() {
   useEffect(() => {
     const init = slideStartMs == null ? setTimeout(() => setSlideStartMs(Date.now()), 0) : null;
     const timer = setInterval(() => {
-      if (!paused && slideStartMs != null && Date.now() - slideStartMs > SLIDE_SEC[slide] * 1000) go(1);
+      if (!paused && slideStartMs != null && Date.now() - slideStartMs > SLIDE_SEC[slide] * 1000) {
+        // 한 바퀴를 다 돌았다 — 시연 영상 모드에서 관제 지도 화면에 끼워 띄웠을 때(iframe) 다시 영상으로 넘기라는 신호(2026-10-06)
+        if (slide === SLIDE_SEC.length - 1 && window.parent !== window) {
+          window.parent.postMessage({ type: "goldenlink-stage-cycle" }, window.location.origin);
+        }
+        go(1);
+      }
     }, 250);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") go(1);

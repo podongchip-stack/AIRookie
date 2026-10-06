@@ -277,6 +277,24 @@ export function LiveChart({ points, cutoffMs, lastPollMs }: { points: ChartPoint
             )}
           </g>
         ))}
+        {/* 창 전체에 경고 선이 한 점도 없을 때(2026-10-06) — 범례에서 "경고한 값"까지 사라져 선이 고장 난 것처럼 보였다.
+            병상 값이 차분한 기간엔 모델이 경고를 거의 내지 않아 6시간 합이 WARN_MIN_N에 못 미친다는 것을 범례로 남긴다. */}
+        {!lastWarn && lastVisible && (() => {
+          const warnTotal = visible.reduce((sum, p) => sum + p.raw.warnN, 0);
+          const yPos = Math.min((labelRows.length ? labelRows[labelRows.length - 1].yPos : T) + 22, H - B - 16);
+          return (
+            <g>
+              <circle cx={x(lastVisible.tMs) + 10} cy={yPos - 3} r="3.5" fill="none" stroke={SERIES.warn.color} strokeWidth="1.5" />
+              <text x={x(lastVisible.tMs) + 18} y={yPos} fontSize="12" fontWeight="600" fill="var(--colors-ink)">
+                {SERIES.warn.label} · 선 없음
+              </text>
+              <text x={x(lastVisible.tMs) + 18} y={yPos + 14} fontSize="11" fill={SERIES.warn.color}>
+                경고 {warnTotal}건 · 표본 부족
+              </text>
+              <title>{`이 기간 모델 경고(유효 확률 50% 미만) ${warnTotal}건 — 6시간 합이 ${WARN_MIN_N}건 이상일 때부터 선을 그립니다. 병상 값이 차분하면 경고가 거의 나오지 않습니다.`}</title>
+            </g>
+          );
+        })()}
         {warnGap && (
           <line
             x1={x(warnGap.tMs)} y1={y(warnGap.warn as number)} x2={x(lastVisible.tMs)} y2={y(warnGap.warn as number)}

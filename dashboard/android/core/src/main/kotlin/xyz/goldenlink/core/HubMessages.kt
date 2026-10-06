@@ -129,6 +129,11 @@ data class MatchResult(val caseId: String, val hospitals: List<MatchHospital> = 
 @Serializable
 data class ActionRefused(val caseId: String? = null, val reason: String = "")
 
+/** 시연 콘솔 통화 방식(2026-10-06) — "template"(정해진 상황 선택)이면 그 단계의 통화를 못 한다(hub도 거부).
+ *  stage: "scene"(② 현장 확인, 없으면 이것) | "transport"(④ 이송 중 — [목적지 병원과 통화]) */
+@Serializable
+data class SceneInputMode(val caseId: String, val mode: String, val stage: String? = null)
+
 @Serializable
 data class CaseClosed(val caseId: String)
 
