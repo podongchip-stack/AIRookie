@@ -13,6 +13,7 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -54,9 +55,10 @@ class Settings(context: Context) {
         get() = p.getBoolean("onDevice", true)
         set(v) = p.edit().putBoolean("onDevice", v).apply()
 
-    /** 무음 기준(VOICE_SILENCE_RMS). 휴대폰 마이크는 PC와 음량 특성이 달라 실측해서 맞춘다 */
+    /** 무음 기준(VOICE_SILENCE_RMS). 휴대폰 마이크는 PC와 음량 특성이 달라 실측해서 맞춘다 — 갤럭시 S26 실측(2026-10-06):
+     *  말소리 0.5초 RMS 0.004~0.011, 배경 0.001이라 서버 기본값 0.01이면 인식이 0줄. 자동 이득을 켜도 0.006 정도라 기준을 낮춘다 */
     var silenceRms: Float
-        get() = p.getFloat("silenceRMS", 0.01f)
+        get() = p.getFloat("silenceRMS", 0.003f)
         set(v) = p.edit().putFloat("silenceRMS", v).apply()
 
     /** 발화 끝 판정 무음 길이(VOICE_UTTERANCE_HOLD_SEC) */
@@ -155,12 +157,14 @@ class HubSocket(
 }
 
 /**
- * 마이크 -> 16kHz 모노 Float32. voice의 STT 입력과 같은 형식이다. VOICE_COMMUNICATION 소스는 자동 이득·잡음 억제가
- * 켜진다(아이폰 .voiceChat, 웹의 echoCancellation·noiseSuppression과 비슷) — 무음 기준은 실측해서 맞춘다.
+ * 마이크 -> 16kHz 모노 Float32. voice의 STT 입력과 같은 형식이다. VOICE_COMMUNICATION 소스는 잡음 억제가 켜지지만
+ * 갤럭시(S26 실측 2026-10-06)는 자동 이득이 안 걸려 말소리가 0.5초 RMS 0.004 이하로 들어와 무음 기준(0.01)에 전부 걸렸다 —
+ * 아이폰 .voiceChat처럼 자동 이득(AutomaticGainControl)을 따로 켠다.
  * onSamples는 녹음 스레드에서 불린다.
  */
 class MicCapture(private val onSamples: (FloatArray) -> Unit, private val onLevel: (Float) -> Unit) {
     private var record: AudioRecord? = null
+    private var agc: AutomaticGainControl? = null
     private var thread: Thread? = null
     @Volatile private var running = false
 
@@ -180,6 +184,9 @@ class MicCapture(private val onSamples: (FloatArray) -> Unit, private val onLeve
         val float = open(AudioFormat.ENCODING_PCM_FLOAT)
         val rec = float ?: open(AudioFormat.ENCODING_PCM_16BIT) ?: error("마이크를 열지 못했습니다")
         record = rec
+        if (AutomaticGainControl.isAvailable()) {
+            agc = runCatching { AutomaticGainControl.create(rec.audioSessionId)?.apply { enabled = true } }.getOrNull()
+        }
         running = true
         rec.startRecording()
         thread = Thread({
@@ -206,6 +213,8 @@ class MicCapture(private val onSamples: (FloatArray) -> Unit, private val onLeve
     fun stop() {
         running = false
         thread?.join(500)
+        agc?.release()
+        agc = null
         record?.run { runCatching { stop() }; release() }
         record = null
     }

@@ -167,6 +167,14 @@ public struct ActionRefused: Decodable {
     public let reason: String
 }
 
+/// scene_input_mode(2026-10-06) — 시연 콘솔 통화 방식. "template"(정해진 상황 선택)이면 그 단계의 통화를 못 한다(hub도 거부)
+public struct SceneInputMode: Decodable {
+    public let caseId: String
+    public let mode: String  // "voice" | "template"
+    /// "scene"(② 현장 확인, 없으면 이것) | "transport"(④ 이송 중 — [목적지 병원과 통화])
+    public let stage: String?
+}
+
 public struct CaseClosed: Decodable { public let caseId: String }
 public struct CaseSync: Decodable { public let caseIds: [String] }
 

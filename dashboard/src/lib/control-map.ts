@@ -111,6 +111,8 @@ export interface Incident {
   zoneExpandAt: number | null;
   // [정지] 중 멈춰 있는 남은 시간(초)
   zonePausedLeft: number | null;
+  // 관제 지도 [자동 시연]이 화면 안에서만 만든 가짜 사건(2026-10-06) — hub·로그와 무관
+  fake?: boolean;
 }
 
 // 화면용 짧은 이름(2026-10-04) — 실제 이름이 길어("회현119안전센터 구급 1", "학교법인 고려중앙학원 고려대학교…")
