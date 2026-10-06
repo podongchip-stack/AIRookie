@@ -24,6 +24,7 @@ import type {
   RejectionReason,
   VitalObservationIn,
 } from "@/types/dashboard";
+import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 
 // 시연 시나리오 콘솔 (2026-10-04, 3차 — 위저드형 / 2026-10-05 디자인 시안 적용). 한 화면에 다 깔지 않고
 // **앱처럼 한 번에 한 단계만** 보여준다: 버튼을 누르면 다음 화면으로 넘어가고, 출동·매칭처럼 기다리는
@@ -40,167 +41,167 @@ import type {
 // - 모든 조작은 기존 hub 메시지 그대로. 가짜 환자 전송만 Next 프록시(/api/demo/voice).
 // - 운영자 전용·인증 없음(시연 범위). 가상 데이터에는 전부 가상 표시가 남는다.
 
+// 정해진 상황 카드(2026-10-06 시연 대사집 반영) — 환자·활력징후는 대사집 ② 현장 확인 대본과 같게 맞추고, transcript는 그 대본을
+// 압축한 것이다(버튼으로 부여할 때 병원에 가는 통화 문장). 대본 전문은 SCRIPTS(② ④ 화면의 대본 칸). 위 4개(key = report)는
+// 신고 접수 증상이자 "신고대로" 현장 상황이고, 나머지는 같은 신고로 출동했는데 현장 평가가 달랐던 경우다 — ② 현장 확인은
+// 그 신고(report)에 딸린 상황만 보여 준다. mechanism은 hub 질환군 키워드(disease_group.py)에 맞췄다.
+// KTAS·활력징후·의식·발생 시점까지 넣어 통화 요약·병원 카드의 환자 패널(PatientVitals)이 그려지게 한다.
 const PATIENT_TEMPLATES = [
   {
     key: "cardiac", report: "cardiac", label: "흉통 · 경색 의심", severity: "중증" as const,
-    detail: "62세 남성 · 흉통, 호흡 곤란 · 필요 진료과 순환기내과",
-    symText: "흉통, 호흡 곤란",
-    // KTAS·활력징후·의식·발생 시점까지 — 음성 요약(MF_BERT v2)이 실제로 뽑는 표시용
-    // 값들을 데모 요약에도 넣어, 통화 요약·병원 카드의 환자 패널(PatientVitals)이 그려지게 한다.
+    detail: "62세 남성 · 쥐어짜는 흉통, 호흡 곤란, 식은땀 · 필요 진료과 순환기내과",
+    symText: "쥐어짜는 흉통, 호흡 곤란, 왼팔 방사통, 식은땀",
     summary: {
       patient: "62세 남성", mechanism: "흉통(심장성) — 경색 의심",
-      symptoms: ["흉통", "호흡 곤란"], treatment: ["산소 공급", "ECG"],
+      symptoms: ["흉통", "호흡 곤란", "식은땀"], treatment: ["산소 공급", "ECG"],
       severity_tag: "high", required_department: "순환기내과",
       ktas_level: 2, consciousness: "A", onset: "30분 전부터", chief_complaint: "흉통(심장성)",
-      vitals: [{ sequence: 1, sbp: 150, dbp: 90, hr: 110, spo2: 96 }],
+      vitals: [{ sequence: 1, sbp: 100, dbp: 60, hr: 110, spo2: 93 }],
     },
-    transcript: "환자 62세 남성, 흉통 호소. 혈압 150에 90, 맥박 110, 산소포화도 96.",
+    transcript: "62세 남성, 30분 전부터 쥐어짜는 흉통과 호흡곤란, 왼팔 방사통·식은땀. 혈압 100에 60, 맥박 110, 산소포화도 93. 심근경색 의심입니다.",
   },
   {
     key: "trauma", report: "trauma", label: "교통사고 다발성 외상", severity: "중증" as const,
-    detail: "35세 남성 · 흉부·복부 충격, 의식 혼미 · 필요 진료과 외과",
-    symText: "흉부·복부 충격, 의식 혼미",
+    detail: "35세 남성 · 흉부·복부 충격, 의식 혼미, 복부 강직 · 필요 진료과 외과",
+    symText: "흉부·복부 충격, 의식 혼미, 복부 강직·압통",
     summary: {
       patient: "35세 남성", mechanism: "교통사고 — 흉부·복부 충격, 다발성 외상 의심",
       symptoms: ["흉부 통증", "복부 압통", "의식 혼미"], treatment: ["경추 고정", "산소 공급"],
       severity_tag: "high", required_department: "외과",
       ktas_level: 2, consciousness: "V", onset: "사고 직후", chief_complaint: "다발성 외상",
-      vitals: [{ sequence: 1, sbp: 100, hr: 115, rr: 22, spo2: 94 }],
+      vitals: [{ sequence: 1, sbp: 90, dbp: 55, hr: 125, rr: 28, spo2: 91 }],
     },
-    transcript: "30대 남성 교통사고입니다. 흉부 복부 충격, 의식이 혼미합니다.",
+    transcript: "35세 남성, 승용차 충돌로 흉부·복부 충격, 의식 혼미(부르면 눈 뜸). 혈압 90에 55, 맥박 125, 호흡 28, 산소포화도 91. 복부 강직·압통, 다발성 외상 의심입니다.",
   },
   {
     key: "abdominal", report: "abdominal", label: "복통 · 복부 압통", severity: "중등증" as const,
-    detail: "48세 여성 · 지속되는 복통, 구토 · 필요 진료과 외과",
-    symText: "지속되는 복통, 구토",
+    detail: "48세 여성 · 복통, 구토, 우하복부 압통·반발통 · 필요 진료과 외과",
+    symText: "복통, 구토 2회, 우하복부 압통·반발통",
     summary: {
       patient: "48세 여성", mechanism: "급성 복통 — 복부 압통, 장폐색·충수염 의심",
-      symptoms: ["복통", "구토"], treatment: ["금식", "수액"],
+      symptoms: ["복통", "구토", "우하복부 압통"], treatment: ["금식", "수액"],
       severity_tag: "medium", required_department: "외과",
-      ktas_level: 3, consciousness: "A", onset: "6시간 전부터", chief_complaint: "급성 복통",
-      vitals: [{ sequence: 1, sbp: 125, hr: 95, bt: 37.8 }],
+      ktas_level: 3, consciousness: "A", onset: "어제 저녁부터", chief_complaint: "급성 복통",
+      vitals: [{ sequence: 1, sbp: 125, dbp: 80, hr: 98, spo2: 98, bt: 37.8 }],
     },
-    transcript: "40대 여성, 복통이 심하고 구토가 있습니다. 복부 압통이 뚜렷합니다.",
+    transcript: "48세 여성, 어제 저녁부터 복통·구토 2회, 우하복부 압통·반발통. 혈압 125에 80, 맥박 98, 체온 37.8, 산소포화도 98, 의식 명료. 복부 압통 소견입니다.",
   },
   {
     key: "mild", report: "mild", label: "발목 염좌", severity: "경증" as const,
-    detail: "24세 여성 · 발목 통증·부종 · 필요 진료과 정형외과",
-    symText: "발목 통증·부종",
+    detail: "24세 여성 · 발목 바깥쪽 부종·통증, 보행 가능 · 필요 진료과 정형외과",
+    symText: "발목 바깥쪽 부종·통증, 체중 부하 가능",
     summary: {
       patient: "24세 여성", mechanism: "보행 중 접질림 — 발목 염좌 의심",
       symptoms: ["발목 통증", "부종"], treatment: ["부목 고정"],
       severity_tag: "low", required_department: "정형외과",
-      ktas_level: 4, consciousness: "A", onset: "1시간 전부터", chief_complaint: "발목 통증",
-      vitals: [{ sequence: 1, sbp: 120, hr: 78 }],
+      ktas_level: 4, consciousness: "A", onset: "방금 전", chief_complaint: "발목 통증",
+      vitals: [{ sequence: 1, sbp: 118, dbp: 72, hr: 80, spo2: 99 }],
     },
-    transcript: "20대 여성, 발목을 접질렸습니다. 통증과 부종 외 특이사항 없습니다.",
+    transcript: "24세 여성, 보도 턱에서 발목 접질림. 바깥쪽 부종·통증, 체중 부하·보행 가능, 피부 손상 없음. 혈압 118에 72, 맥박 80, 산소포화도 99. 발목 염좌 소견입니다.",
   },
-  // ── 신고별 현장 상황(2026-10-06) — 위 4개는 신고 접수 증상이자 "신고대로" 현장 상황이고, 아래는 같은 신고로
-  // 출동했는데 현장 평가가 달랐던 경우다. ② 현장 확인은 그 신고(report)에 딸린 상황만 보여 준다 — 흉통 신고로 나가서
-  // 발목 염좌를 고르는 것처럼 신고와 무관한 현장이 나오지 않게. mechanism은 hub 질환군 키워드(disease_group.py)에 맞췄다.
   {
     key: "cardiac_aortic", report: "cardiac", label: "흉통 · 대동맥 박리 의심", severity: "중증" as const,
-    detail: "58세 남성 · 찢어지는 흉통, 등으로 뻗침 · 필요 진료과 심장혈관흉부외과",
+    detail: "58세 남성 · 찢어지는 흉통, 등으로 뻗침, 양팔 혈압 차 · 필요 진료과 심장혈관흉부외과",
     symText: "찢어지는 흉통, 등으로 뻗침, 양팔 혈압 차",
     summary: {
       patient: "58세 남성", mechanism: "대동맥질환 · 찢어지는 흉통 · 대동맥 박리 의심",
       symptoms: ["흉통", "등 통증"], treatment: ["산소 공급", "ECG"],
       severity_tag: "high", required_department: "심장혈관흉부외과",
-      ktas_level: 2, consciousness: "A", onset: "20분 전부터", chief_complaint: "흉통(찢어지는 양상)",
-      vitals: [{ sequence: 1, sbp: 182, dbp: 104, hr: 104, spo2: 95 }],
+      ktas_level: 2, consciousness: "A", onset: "갑자기", chief_complaint: "흉통(찢어지는 양상)",
+      vitals: [{ sequence: 1, sbp: 150, dbp: 90, hr: 105 }],
     },
-    transcript: "50대 남성, 가슴이 찢어지는 것처럼 아프고 등으로 뻗친답니다. 혈압 182에 104, 양팔 혈압 차이가 있습니다.",
+    transcript: "58세 남성, 갑자기 찢어지는 흉통이 등으로 뻗침. 양팔 혈압 차(오른팔 150에 90, 왼팔 110에 70), 맥박 105, 의식 명료. 대동맥 박리 의심입니다.",
   },
   {
     key: "cardiac_wall", report: "cardiac", label: "흉통 · 비심장성(흉벽 통증)", severity: "경증" as const,
-    detail: "45세 남성 · 누르면 아픈 흉벽 통증, 활력징후 안정 · 필요 진료과 내과",
-    symText: "누르면 아픈 흉벽 통증, 심전도 이상 없음",
+    detail: "45세 남성 · 누르면 아픈 흉벽 통증, 심전도 정상 · 필요 진료과 내과",
+    symText: "누르면·몸 비틀면 아픈 흉통, 심전도 이상 없음",
     summary: {
       patient: "45세 남성", mechanism: "흉벽 통증 — 근골격성 흉통 의심, 심전도 이상 없음",
       symptoms: ["흉벽 통증"], treatment: ["ECG"],
       severity_tag: "low", required_department: "내과",
-      ktas_level: 4, consciousness: "A", onset: "어제부터", chief_complaint: "흉벽 통증",
-      vitals: [{ sequence: 1, sbp: 128, dbp: 82, hr: 80, spo2: 98 }],
+      ktas_level: 4, consciousness: "A", onset: "어제 짐 옮긴 뒤부터", chief_complaint: "흉벽 통증",
+      vitals: [{ sequence: 1, sbp: 125, dbp: 80, hr: 78, spo2: 98 }],
     },
-    transcript: "40대 남성, 가슴 통증 신고였는데 누르면 아픈 흉벽 통증입니다. 심전도 이상 없고 활력징후 안정적입니다.",
+    transcript: "45세 남성, 왼쪽 가슴 통증이 누르거나 숨 쉬고 몸 비틀 때 심해짐, 어제 무거운 짐 옮김. 혈압 125에 80, 맥박 78, 산소포화도 98, 심전도 이상 없음. 흉벽 통증 소견입니다.",
   },
   {
     key: "trauma_head", report: "trauma", label: "교통사고 두부 손상", severity: "중증" as const,
-    detail: "41세 남성 · 머리 충격, 의식 저하, 구토 · 필요 진료과 신경외과",
-    symText: "머리 충격, 의식 저하, 구토",
+    detail: "41세 남성 · 머리 충격, 의식 저하, 구토 2회 · 필요 진료과 신경외과",
+    symText: "머리 충격, 의식 저하, 구토 2회, 뒤통수 열상",
     summary: {
       patient: "41세 남성", mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심",
-      symptoms: ["두부 손상", "의식 저하", "구토"], treatment: ["경추 고정", "산소 공급"],
+      symptoms: ["두부 손상", "의식 저하", "구토", "두피 열상"], treatment: ["경추 고정", "지혈", "산소 공급"],
       severity_tag: "high", required_department: "신경외과",
-      ktas_level: 2, consciousness: "P", onset: "사고 직후", chief_complaint: "두부 손상",
-      vitals: [{ sequence: 1, sbp: 164, dbp: 92, hr: 58, rr: 12, spo2: 95 }],
+      ktas_level: 2, consciousness: "V", onset: "사고 직후", chief_complaint: "두부 손상",
+      vitals: [{ sequence: 1, sbp: 150, dbp: 95, hr: 58, spo2: 96 }],
     },
-    transcript: "40대 남성 교통사고, 머리를 부딪쳤고 통증에만 반응합니다. 구토 한 번 했고 혈압 164에 92, 맥박 58입니다.",
+    transcript: "41세 남성, 차량 충돌로 머리 부딪힘, 의식 저하(부르면 겨우 눈 뜸), 구토 2회, 뒤통수 열상 압박 지혈 중. 혈압 150에 95, 맥박 58, 산소포화도 96. 두부 손상 의심입니다.",
   },
   {
     key: "trauma_minor", report: "trauma", label: "교통사고 경상", severity: "경증" as const,
-    detail: "29세 여성 · 목·어깨 통증, 찰과상 · 필요 진료과 정형외과",
-    symText: "목·어깨 통증, 찰과상, 보행 가능",
+    detail: "29세 남성 · 목·어깨 통증, 팔 찰과상, 보행 가능 · 필요 진료과 정형외과",
+    symText: "목·어깨 통증, 팔 찰과상, 혼자 보행",
     summary: {
-      patient: "29세 여성", mechanism: "교통사고 — 경추 염좌·찰과상, 경상",
-      symptoms: ["목 통증", "찰과상"], treatment: ["경추 고정", "상처 소독"],
+      patient: "29세 남성", mechanism: "교통사고 — 경추 염좌·찰과상, 경상",
+      symptoms: ["목 통증", "어깨 통증", "찰과상"], treatment: ["경추 고정", "상처 소독"],
       severity_tag: "low", required_department: "정형외과",
       ktas_level: 4, consciousness: "A", onset: "사고 직후", chief_complaint: "목 통증",
-      vitals: [{ sequence: 1, sbp: 118, dbp: 76, hr: 84, spo2: 99 }],
+      vitals: [{ sequence: 1, sbp: 120, dbp: 78, hr: 82, spo2: 99 }],
     },
-    transcript: "20대 여성 교통사고 동승자, 목과 어깨 통증과 팔 찰과상입니다. 걸을 수 있고 의식 명료합니다.",
+    transcript: "29세 남성, 접촉 사고·안전벨트 착용. 목·어깨 통증, 팔 찰과상, 혼자 걸어서 탑승. 혈압 120에 78, 맥박 82, 산소포화도 99, 의식 명료. 경상입니다.",
   },
   {
     key: "abdominal_gi", report: "abdominal", label: "복통 · 위장관 출혈", severity: "중증" as const,
-    detail: "67세 남성 · 토혈, 흑색변, 어지러움 · 필요 진료과 내과",
-    symText: "토혈, 흑색변, 어지러움",
+    detail: "67세 여성 · 토혈, 흑색변, 어지러움·창백 · 필요 진료과 내과",
+    symText: "토혈, 흑색변, 어지러움, 창백",
     summary: {
-      patient: "67세 남성", mechanism: "위장관 출혈 — 토혈·흑색변, 출혈성 쇼크 우려",
-      symptoms: ["복통", "토혈", "흑색변"], treatment: ["산소 공급", "수액"],
+      patient: "67세 여성", mechanism: "위장관 출혈 — 토혈·흑색변, 출혈성 쇼크 우려",
+      symptoms: ["복통", "토혈", "흑색변", "어지러움"], treatment: ["산소 공급", "수액"],
       severity_tag: "high", required_department: "내과",
-      ktas_level: 2, consciousness: "A", onset: "2시간 전부터", chief_complaint: "토혈",
-      vitals: [{ sequence: 1, sbp: 92, dbp: 58, hr: 122, spo2: 95 }],
+      ktas_level: 2, consciousness: "A", onset: "오늘 아침", chief_complaint: "토혈",
+      vitals: [{ sequence: 1, sbp: 90, dbp: 55, hr: 118, spo2: 96 }],
     },
-    transcript: "60대 남성, 복통으로 신고했는데 피를 토했고 검은 변을 봤습니다. 혈압 92에 58, 맥박 122입니다.",
+    transcript: "67세 여성, 오늘 아침 토혈, 어제부터 흑색변, 어지러움·창백. 혈압 90에 55, 맥박 118, 산소포화도 96. 위장관 출혈 의심입니다.",
   },
   {
     key: "abdominal_mild", report: "abdominal", label: "복통 · 급성 위장염", severity: "경증" as const,
-    detail: "31세 여성 · 복통, 설사, 활력징후 안정 · 필요 진료과 내과",
-    symText: "복통, 설사, 압통 경미",
+    detail: "31세 여성 · 외식 후 복통·설사, 압통 경미 · 필요 진료과 내과",
+    symText: "외식 후 복통·설사, 배 전체 가벼운 통증",
     summary: {
       patient: "31세 여성", mechanism: "급성 위장염 의심 — 복통·설사, 탈수 경미",
       symptoms: ["복통", "설사"], treatment: ["수액"],
       severity_tag: "low", required_department: "내과",
-      ktas_level: 4, consciousness: "A", onset: "어젯밤부터", chief_complaint: "복통",
-      vitals: [{ sequence: 1, sbp: 116, hr: 88, bt: 37.4 }],
+      ktas_level: 4, consciousness: "A", onset: "어제 저녁부터", chief_complaint: "복통",
+      vitals: [{ sequence: 1, sbp: 118, dbp: 74, hr: 84, spo2: 99, bt: 37.2 }],
     },
-    transcript: "30대 여성, 어젯밤부터 복통과 설사입니다. 압통은 경미하고 활력징후 안정적입니다.",
+    transcript: "31세 여성, 어제 저녁 외식 후 복통·설사, 배 전체 가벼운 통증·압통 경미. 혈압 118에 74, 맥박 84, 체온 37.2, 산소포화도 99, 의식 명료. 급성 위장염 소견입니다.",
   },
   {
     key: "mild_fracture", report: "mild", label: "발목 골절 의심", severity: "중등증" as const,
-    detail: "52세 여성 · 발목 변형, 체중 부하 불가 · 필요 진료과 정형외과",
-    symText: "발목 변형·부종, 체중 부하 불가",
+    detail: "52세 여성 · 발목 변형·심한 부종, 체중 부하 불가 · 필요 진료과 정형외과",
+    symText: "발목 변형·심한 부종, 체중 부하 불가",
     summary: {
       patient: "52세 여성", mechanism: "낙상 — 발목 변형, 골절 의심",
       symptoms: ["발목 통증", "변형", "부종"], treatment: ["부목 고정"],
       severity_tag: "medium", required_department: "정형외과",
-      ktas_level: 3, consciousness: "A", onset: "30분 전부터", chief_complaint: "발목 통증",
-      vitals: [{ sequence: 1, sbp: 132, hr: 92 }],
+      ktas_level: 3, consciousness: "A", onset: "방금 전", chief_complaint: "발목 통증",
+      vitals: [{ sequence: 1, sbp: 130, dbp: 82, hr: 96, spo2: 98 }],
     },
-    transcript: "50대 여성, 발목 접질림 신고였는데 발목이 변형됐고 체중을 못 싣습니다. 골절 의심되어 부목 고정했습니다.",
+    transcript: "52세 여성, 계단에서 헛디뎌 발목 꺾임. 변형·심한 부종, 체중 부하 불가, 피부 닫힘·발가락 감각 있음. 혈압 130에 82, 맥박 96, 산소포화도 98. 발목 골절 의심입니다.",
   },
   {
     key: "mild_open", report: "mild", label: "개방성 발목 골절", severity: "중증" as const,
-    detail: "38세 남성 · 뼈 노출, 출혈 · 필요 진료과 정형외과",
-    symText: "발목 뼈 노출, 출혈",
+    detail: "38세 여성 · 뼈 노출, 출혈, 발등 맥박 약함 · 필요 진료과 정형외과",
+    symText: "발목 뼈 노출, 출혈 압박 중, 발가락 차가움",
     summary: {
-      patient: "38세 남성", mechanism: "추락 — 개방성 발목 골절, 출혈",
+      patient: "38세 여성", mechanism: "추락 — 개방성 발목 골절, 출혈",
       symptoms: ["발목 통증", "개방성 상처", "출혈"], treatment: ["지혈", "부목 고정"],
       severity_tag: "high", required_department: "정형외과",
       ktas_level: 2, consciousness: "A", onset: "사고 직후", chief_complaint: "개방성 골절",
-      vitals: [{ sequence: 1, sbp: 108, dbp: 70, hr: 112 }],
+      vitals: [{ sequence: 1, sbp: 105, dbp: 65, hr: 112, spo2: 97 }],
     },
-    transcript: "30대 남성, 계단에서 떨어져 발목뼈가 밖으로 나왔습니다. 출혈 있어 지혈하고 부목 고정했습니다.",
+    transcript: "38세 여성, 높은 곳에서 추락, 발목 뼈 노출·출혈 거즈 압박 중, 발등 맥박 약하고 발가락 차가움. 혈압 105에 65, 맥박 112, 산소포화도 97. 개방성 발목 골절입니다.",
   },
 ] as const;
 
@@ -214,188 +215,223 @@ type SevLabel = Template["severity"];
 // monitor: 이송 중 활력징후 시나리오 5종(TransportMonitorPanel SCENARIOS)의 **이름만** 환자에 맞게 바꾼다. 수치·판정은
 //   hub 규칙 엔진 시연(기록·보류·전달·대체 병원 제안·헬기 권고·오경보 거름)이라 hub/test_transport_triage.py와 같은 값으로
 //   고정 — 숫자는 건드리지 않는다.
-// followups: 목적지 병원과 추가 통화(2차 통화 요약). 그 환자에게 일어날 법한 변화 3가지(악화 2 + 호전). hub가 환자 정보에
-//   덧붙인다(앞선 요약은 previousCalls로 남음). severity_tag·ktas_level이 null이면 현장 값 그대로.
+// 상황 버튼 하나(2026-10-06 통합) = 위 활력징후 시나리오를 재생하고, 끝나면 목적지 병원에 추가 통화(2차 통화 요약)를 보낸다.
+//   예전엔 활력징후 버튼과 추가 통화 버튼이 따로 있어 같은 상황을 두 번 골라야 했다. 추가 통화의 활력징후는 재생한 시나리오의
+//   마지막 측정값이라 hub 판정(추가 통화 활력징후도 측정 1회로 들어감)은 그대로다. calls = 신고대로 4종의 통화 문장(시연 대사집
+//   ④를 숫자 빼고 압축), 없으면 상황 이름으로 만든다. hub가 환자 정보에 덧붙인다(앞선 요약은 previousCalls로 남음).
 type MonitorKey = "stable" | "shock" | "mismatch" | "consciousness" | "spike";
-type Vitals = { sbp?: number; dbp?: number; hr?: number; rr?: number; spo2?: number; bt?: number };
-type Followup = {
-  key: string; label: string; sev: SevLabel | null; symText: string;
-  severity_tag: "high" | "medium" | "low" | null; ktas_level: number | null; consciousness: string;
-  mechanism: string; symptoms: string[]; vitals: Vitals; transcript: string;
-};
-type Transport = { monitor: Record<MonitorKey, string>; followups: Followup[] };
+// 추가 통화 문장. 숫자는 넣지 않는다 — 활력징후는 재생한 시나리오의 마지막 측정값으로 함께 보내 화면·판정과 어긋나지 않게
+type FollowupText = { mechanism: string; symptoms: string[]; transcript: string };
+type Transport = { monitor: Record<MonitorKey, string>; calls?: Record<MonitorKey, FollowupText> };
 const MONITOR_NUM: Record<MonitorKey, string> = { stable: "①", shock: "②", mismatch: "③", consciousness: "④", spike: "⑤" };
 
 const TRANSPORT: Record<string, Transport> = {
   cardiac: {
     monitor: { stable: "통증 조절 · 활력 안정", shock: "심인성 쇼크 진행", mismatch: "흉통 악화·부정맥 — 목적지 부적합", consciousness: "심정지 전조 — 의식 저하", spike: "측정값 일시적 튐(전극 흔들림)" },
-    followups: [
-      { key: "shock", label: "심인성 쇼크 — 혈압 저하", sev: "중증", symText: "혈압 84/52, 맥박 128, 식은땀", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "흉통(심장성) — 경색 의심, 이송 중 심인성 쇼크", symptoms: ["혈압 저하", "식은땀"], vitals: { sbp: 84, dbp: 52, hr: 128, rr: 26, spo2: 90 },
-        transcript: "이송 중 상태 변화입니다. 혈압 84에 52로 떨어졌고 맥박 128, 식은땀 흘리며 반응이 처집니다." },
-      { key: "arrhythmia", label: "부정맥 · 실신", sev: "중증", symText: "맥박 168 빈맥, 순간 의식 소실", severity_tag: "high", ktas_level: 1, consciousness: "P",
-        mechanism: "흉통(심장성) — 경색 의심, 이송 중 심실빈맥·실신", symptoms: ["부정맥", "실신"], vitals: { sbp: 96, dbp: 60, hr: 168, rr: 24, spo2: 93 },
-        transcript: "모니터상 맥박 168 빈맥이 나오고 잠깐 의식을 잃었습니다. 지금 통증에만 반응합니다." },
-      { key: "stable", label: "통증 감소 · 안정", sev: null, symText: "니트로글리세린 후 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "흉통(심장성) — 경색 의심, 이송 중 통증 감소", symptoms: [], vitals: { sbp: 128, dbp: 80, hr: 86, rr: 18, spo2: 97 },
-        transcript: "니트로글리세린 투여 후 흉통이 줄었습니다. 혈압 128에 80, 맥박 86으로 안정적입니다." },
-    ],
+    calls: {
+      stable: { mechanism: "흉통(심장성) — 경색 의심, 이송 중 통증 조절", symptoms: [],
+        transcript: "흉통은 처음보다 줄었고 니트로글리세린 투여 후 통증 점수 3점입니다. 의식 명료, 변화 없이 안정적입니다." },
+      shock: { mechanism: "흉통(심장성) — 경색 의심, 이송 중 심인성 쇼크", symptoms: ["혈압 저하", "식은땀"],
+        transcript: "재측정에서 저혈압·빈맥이 계속되고 식은땀이 심하며 피부가 차갑습니다. 심인성 쇼크 진행 중입니다." },
+      mismatch: { mechanism: "흉통(심장성) — 경색 의심, 이송 중 흉통 악화·부정맥(심혈관 중재술 병원 재확인)", symptoms: ["흉통 악화", "부정맥"],
+        transcript: "흉통이 다시 심해졌고 심전도상 심한 부정맥, 불규칙한 빈맥입니다. 심혈관 중재술 가능 여부 재확인 부탁드립니다. 어려우면 다른 병원을 찾겠습니다." },
+      consciousness: { mechanism: "흉통(심장성) — 경색 의심, 이송 중 의식 저하(심정지 전조)", symptoms: ["의식 저하", "불규칙한 맥박"],
+        transcript: "의식이 떨어져 부르면 눈만 뜨고 말이 어눌합니다. 맥박이 약하고 불규칙하며 산소 투여 중입니다. 심정지 전조 소견입니다." },
+      spike: { mechanism: "흉통(심장성) — 경색 의심, 이송 중 일시적 측정 오류(재측정 정상)", symptoms: [],
+        transcript: "전극이 흔들려 부정맥이 한 번 찍혔으나 전극을 다시 붙이고 재측정하니 정상입니다. 일시적 측정 오류였습니다." },
+    },
   },
   cardiac_aortic: {
     monitor: { stable: "통증 조절 · 혈압 목표 유지", shock: "박리 진행 — 혈압 저하", mismatch: "흉통 악화·하지 맥박 약화 — 목적지 부적합", consciousness: "뇌 관류 저하 — 의식 저하", spike: "측정값 일시적 튐(커프 위치)" },
-    followups: [
-      { key: "rupture", label: "파열 의심 — 쇼크", sev: "중증", symText: "혈압 78/44, 맥박 134, 창백", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "대동맥질환 · 대동맥 박리 의심, 이송 중 파열 의심 쇼크", symptoms: ["혈압 저하", "창백"], vitals: { sbp: 78, dbp: 44, hr: 134, rr: 28, spo2: 91 },
-        transcript: "혈압이 78에 44로 급격히 떨어졌습니다. 맥박 134, 얼굴이 창백하고 반응이 둔해졌습니다." },
-      { key: "neuro", label: "편측 마비 · 의식 저하", sev: "중증", symText: "왼쪽 팔다리 힘 빠짐, 말 어눌", severity_tag: "high", ktas_level: 1, consciousness: "P",
-        mechanism: "대동맥질환 · 대동맥 박리 의심, 이송 중 편측 마비(경동맥 침범 의심)", symptoms: ["편측 마비", "의식 저하"], vitals: { sbp: 168, dbp: 96, hr: 98, rr: 20, spo2: 95 },
-        transcript: "왼쪽 팔다리에 힘이 빠지고 말이 어눌해졌습니다. 지금은 통증에만 반응합니다." },
-      { key: "stable", label: "혈압 조절 · 통증 지속", sev: null, symText: "혈압 132/80으로 조절", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "대동맥질환 · 대동맥 박리 의심, 이송 중 혈압 조절됨", symptoms: [], vitals: { sbp: 132, dbp: 80, hr: 88, rr: 18, spo2: 96 },
-        transcript: "혈압 132에 80으로 조절되고 있습니다. 등 통증은 여전하지만 활력징후는 안정적입니다." },
-    ],
   },
   cardiac_wall: {
     monitor: { stable: "통증 지속 · 활력 안정", shock: "실제 심장 원인 — 혈압 저하", mismatch: "심전도 변화 동반 흉통 악화 — 목적지 부적합", consciousness: "실신 — 의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "acs", label: "심전도 ST 변화 — 관상동맥증후군 전환", sev: "중증", symText: "흉통 악화, 심전도 ST 상승", severity_tag: "high", ktas_level: 2, consciousness: "A",
-        mechanism: "흉통 재평가 — 심전도 ST 상승, 급성 관상동맥증후군 의심", symptoms: ["흉통 악화"], vitals: { sbp: 138, dbp: 86, hr: 102, rr: 22, spo2: 96 },
-        transcript: "이송 중 흉통이 심해져 심전도를 다시 봤더니 ST 상승이 보입니다. 관상동맥증후군 의심됩니다." },
-      { key: "pneumo", label: "호흡곤란 — 기흉 의심", sev: "중증", symText: "산소포화도 89, 한쪽 호흡음 감소", severity_tag: "high", ktas_level: 2, consciousness: "A",
-        mechanism: "흉통 재평가 — 갑작스러운 호흡곤란, 기흉 의심", symptoms: ["호흡곤란"], vitals: { sbp: 124, dbp: 78, hr: 112, rr: 28, spo2: 89 },
-        transcript: "갑자기 숨이 차다고 합니다. 산소포화도 89, 오른쪽 호흡음이 줄었습니다. 기흉 의심됩니다." },
-      { key: "stable", label: "통증 감소 · 안정", sev: null, symText: "자세 바꾸니 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "흉벽 통증 — 근골격성 흉통 의심, 이송 중 통증 감소", symptoms: [], vitals: { sbp: 124, dbp: 80, hr: 78, rr: 16, spo2: 98 },
-        transcript: "자세를 바꾸니 통증이 줄었다고 합니다. 활력징후 안정적이고 심전도 변화 없습니다." },
-    ],
   },
   trauma: {
     monitor: { stable: "고정 후 활력 안정", shock: "출혈성 쇼크 진행", mismatch: "복강 내 출혈 악화 — 목적지 부적합", consciousness: "두부 손상 동반 — 의식 저하", spike: "측정값 일시적 튐(차량 진동)" },
-    followups: [
-      { key: "bleed", label: "복강 내 출혈 — 쇼크 진행", sev: "중증", symText: "혈압 82/50, 맥박 136, 복부 팽만", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "교통사고 — 다발성 외상, 이송 중 복강 내 출혈 쇼크 의심", symptoms: ["복부 팽만", "혈압 저하"], vitals: { sbp: 82, dbp: 50, hr: 136, rr: 28, spo2: 92 },
-        transcript: "배가 점점 부풀고 혈압이 82에 50으로 떨어졌습니다. 맥박 136, 복강 내 출혈 의심됩니다." },
-      { key: "tension", label: "긴장성 기흉 의심 — 호흡곤란", sev: "중증", symText: "산소포화도 86, 기관 편위", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "교통사고 — 다발성 외상, 이송 중 긴장성 기흉 의심", symptoms: ["호흡곤란", "기관 편위"], vitals: { sbp: 90, dbp: 56, hr: 128, rr: 32, spo2: 86 },
-        transcript: "호흡이 32회로 가쁘고 산소포화도 86입니다. 왼쪽 호흡음이 안 들리고 기관이 밀려 있습니다." },
-      { key: "stable", label: "수액 후 안정", sev: null, symText: "혈압 112/72로 회복", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "교통사고 — 다발성 외상, 이송 중 수액 후 안정", symptoms: [], vitals: { sbp: 112, dbp: 72, hr: 102, rr: 20, spo2: 96 },
-        transcript: "수액 들어가면서 혈압 112에 72로 올라왔고 의식도 명료해졌습니다." },
-    ],
+    calls: {
+      stable: { mechanism: "교통사고 — 다발성 외상, 이송 중 고정 후 안정", symptoms: [],
+        transcript: "척추 고정과 부목 고정을 마쳤습니다. 변화 없이 안정적입니다." },
+      shock: { mechanism: "교통사고 — 다발성 외상, 이송 중 출혈성 쇼크", symptoms: ["혈압 저하", "창백"],
+        transcript: "재측정에서 저혈압·빈맥이 계속되고 피부가 차갑고 창백합니다. 출혈성 쇼크 진행 중입니다." },
+      mismatch: { mechanism: "교통사고 — 다발성 외상, 이송 중 복강 내 출혈 악화(응급 수술·수혈 병원 재확인)", symptoms: ["복부 팽만", "혈압 저하"],
+        transcript: "배가 점점 부풀고 단단해지며 혈압이 계속 떨어집니다. 복강 내 출혈 악화로 판단되어 응급 수술·수혈 가능 여부 재확인 부탁드립니다. 어려우면 다른 병원을 찾겠습니다." },
+      consciousness: { mechanism: "교통사고 — 다발성 외상, 이송 중 두부 손상 동반 의식 저하·동공 부등(뇌출혈 의심)", symptoms: ["의식 저하", "동공 부등"],
+        transcript: "머리를 부딪친 환자 의식이 떨어져 부르면 눈만 뜨고 지남력이 없습니다. 한쪽 동공이 커졌고 산소 투여 중입니다." },
+      spike: { mechanism: "교통사고 — 다발성 외상, 이송 중 일시적 측정 오류(재측정 정상)", symptoms: [],
+        transcript: "차량이 흔들려 맥박이 한 번 높게 찍혔으나 재측정하니 정상입니다. 일시적 측정 오류였습니다." },
+    },
   },
   trauma_head: {
     monitor: { stable: "의식 유지 · 활력 안정", shock: "다발 손상 동반 — 혈압 저하", mismatch: "두개내압 상승 징후 — 목적지 부적합", consciousness: "의식 악화 — GCS 하락", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "herniation", label: "동공 부등 · 의식 악화", sev: "중증", symText: "오른쪽 동공 확대, 무반응", severity_tag: "high", ktas_level: 1, consciousness: "U",
-        mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심, 이송 중 동공 부등(뇌탈출 의심)", symptoms: ["동공 부등", "무반응"], vitals: { sbp: 182, dbp: 98, hr: 50, rr: 10, spo2: 93 },
-        transcript: "오른쪽 동공이 커졌고 자극에 반응이 없습니다. 혈압 182에 98, 맥박 50, 호흡 10회입니다." },
-      { key: "seizure", label: "경련 발생", sev: "중증", symText: "전신 경련 1분, 이후 반응 저하", severity_tag: "high", ktas_level: 1, consciousness: "U",
-        mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심, 이송 중 경련", symptoms: ["경련"], vitals: { sbp: 170, dbp: 94, hr: 112, rr: 22, spo2: 90 },
-        transcript: "이송 중 1분가량 전신 경련이 있었습니다. 멈췄는데 반응이 없고 산소포화도 90입니다." },
-      { key: "stable", label: "의식 호전", sev: null, symText: "부르면 눈 뜸, 구토 없음", severity_tag: null, ktas_level: null, consciousness: "V",
-        mechanism: "교통사고 — 두부 충격, 외상성 뇌출혈 의심, 이송 중 의식 호전", symptoms: [], vitals: { sbp: 148, dbp: 86, hr: 72, rr: 16, spo2: 97 },
-        transcript: "부르면 눈을 뜨고 추가 구토는 없습니다. 혈압 148에 86, 맥박 72입니다." },
-    ],
   },
   trauma_minor: {
     monitor: { stable: "통증 외 특이사항 없음", shock: "숨은 내부 출혈 — 혈압 저하", mismatch: "복통 새로 발생 — 목적지 부적합", consciousness: "지연성 두부 손상 — 의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "occult", label: "복통·혈압 저하 — 비장 손상 의심", sev: "중증", symText: "왼쪽 윗배 통증, 혈압 94/60", severity_tag: "high", ktas_level: 2, consciousness: "A",
-        mechanism: "교통사고 — 이송 중 왼쪽 윗배 통증·혈압 저하, 비장 손상 의심", symptoms: ["복통", "혈압 저하"], vitals: { sbp: 94, dbp: 60, hr: 118, rr: 22, spo2: 96 },
-        transcript: "괜찮다던 환자가 왼쪽 윗배가 아프다고 합니다. 혈압 94에 60, 맥박 118로 바뀌었습니다." },
-      { key: "head", label: "두통·구토 — 지연성 두부 손상", sev: "중등증", symText: "두통 심해짐, 구토 1회", severity_tag: "medium", ktas_level: 3, consciousness: "A",
-        mechanism: "교통사고 — 이송 중 두통·구토, 지연성 두부 손상 의심", symptoms: ["두통", "구토"], vitals: { sbp: 136, dbp: 84, hr: 82, rr: 18, spo2: 98 },
-        transcript: "두통이 심해지고 한 번 토했습니다. 의식은 명료하지만 머리 손상 확인이 필요해 보입니다." },
-      { key: "stable", label: "통증 감소 · 안정", sev: null, symText: "목 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "교통사고 — 경추 염좌·찰과상, 이송 중 안정", symptoms: [], vitals: { sbp: 118, dbp: 76, hr: 80, rr: 16, spo2: 99 },
-        transcript: "목 통증이 조금 줄었고 다른 증상 없습니다. 활력징후 안정적입니다." },
-    ],
   },
   abdominal: {
     monitor: { stable: "통증 지속 · 활력 안정", shock: "패혈성 쇼크 진행", mismatch: "복막염 악화 — 목적지 부적합", consciousness: "패혈증 — 의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "perforation", label: "천공 의심 — 복부 강직", sev: "중증", symText: "배가 판자처럼 단단, 고열", severity_tag: "high", ktas_level: 2, consciousness: "A",
-        mechanism: "급성 복통 — 이송 중 복부 강직, 장천공·복막염 의심", symptoms: ["복부 강직", "고열"], vitals: { sbp: 98, dbp: 60, hr: 124, rr: 24, spo2: 95, bt: 38.9 },
-        transcript: "배가 판자처럼 단단해졌고 열이 38.9도입니다. 맥박 124, 천공에 의한 복막염 의심됩니다." },
-      { key: "sepsis", label: "고열 · 혈압 저하", sev: "중증", symText: "체온 39.4, 혈압 88/54", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "급성 복통 — 장폐색·충수염 의심, 이송 중 고열·혈압 저하(패혈증 의심)", symptoms: ["고열", "혈압 저하"], vitals: { sbp: 88, dbp: 54, hr: 126, rr: 26, spo2: 94, bt: 39.4 },
-        transcript: "체온 39.4도에 혈압 88에 54로 떨어졌습니다. 반응이 처지고 패혈증이 의심됩니다." },
-      { key: "stable", label: "진통 후 안정", sev: null, symText: "통증 조금 감소, 구토 멈춤", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "급성 복통 — 복부 압통, 장폐색·충수염 의심, 이송 중 안정", symptoms: [], vitals: { sbp: 124, dbp: 78, hr: 90, rr: 18, spo2: 98, bt: 37.6 },
-        transcript: "구토는 멈췄고 통증이 조금 줄었습니다. 활력징후는 안정적입니다." },
-    ],
+    calls: {
+      stable: { mechanism: "급성 복통 — 복부 압통, 장폐색·충수염 의심, 이송 중 안정", symptoms: [],
+        transcript: "복통은 계속되지만 악화는 없습니다. 의식 명료, 변화 없이 안정적입니다." },
+      shock: { mechanism: "급성 복통 — 장폐색·충수염 의심, 이송 중 패혈성 쇼크", symptoms: ["혈압 저하", "고열"],
+        transcript: "재측정에서 저혈압·빈맥이 계속되고 고열에 피부가 차갑고 축축합니다. 패혈성 쇼크 진행 중입니다." },
+      mismatch: { mechanism: "급성 복통 — 장폐색·충수염 의심, 이송 중 복막염 악화(응급 수술 병원 재확인)", symptoms: ["복부 강직", "반발통"],
+        transcript: "배가 판자처럼 단단해졌고 반발통이 뚜렷해 복막염으로 판단됩니다. 응급 수술 가능 여부 재확인 부탁드립니다. 어려우면 다른 병원을 찾겠습니다." },
+      consciousness: { mechanism: "급성 복통 — 장폐색·충수염 의심, 이송 중 패혈증 의식 저하", symptoms: ["의식 저하", "고열"],
+        transcript: "의식이 떨어져 부르면 눈만 뜨고 지남력이 없습니다. 고열이 있고 산소 투여 중입니다. 패혈증으로 의식 저하가 왔습니다." },
+      spike: { mechanism: "급성 복통 — 복부 압통, 장폐색·충수염 의심, 이송 중 일시적 측정 오류(재측정 정상)", symptoms: [],
+        transcript: "센서가 움직여 맥박이 한 번 높게 찍혔으나 재측정하니 정상입니다. 일시적 측정 오류였습니다." },
+    },
   },
   abdominal_gi: {
     monitor: { stable: "출혈 멈춤 · 활력 안정", shock: "재출혈 — 출혈성 쇼크", mismatch: "대량 토혈 — 목적지 부적합", consciousness: "쇼크로 의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "rebleed", label: "대량 재토혈 — 쇼크", sev: "중증", symText: "선홍색 토혈, 혈압 76/40", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "위장관 출혈 — 이송 중 대량 재토혈, 출혈성 쇼크", symptoms: ["대량 토혈", "혈압 저하"], vitals: { sbp: 76, dbp: 40, hr: 138, rr: 28, spo2: 93 },
-        transcript: "선홍색 피를 다시 많이 토했습니다. 혈압 76에 40, 맥박 138입니다." },
-      { key: "airway", label: "토혈 흡인 — 산소포화도 저하", sev: "중증", symText: "기침·그르렁거림, 산소포화도 87", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "위장관 출혈 — 이송 중 토혈 흡인, 호흡 곤란", symptoms: ["흡인", "호흡곤란"], vitals: { sbp: 100, dbp: 62, hr: 124, rr: 30, spo2: 87 },
-        transcript: "토하면서 흡인한 것 같습니다. 그르렁거리고 산소포화도 87, 호흡 30회입니다." },
-      { key: "stable", label: "수액 후 혈압 회복", sev: null, symText: "혈압 108/68, 추가 토혈 없음", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "위장관 출혈 — 토혈·흑색변, 이송 중 혈압 회복", symptoms: [], vitals: { sbp: 108, dbp: 68, hr: 100, rr: 18, spo2: 97 },
-        transcript: "수액 후 혈압 108에 68로 올라왔고 추가 토혈은 없습니다." },
-    ],
   },
   abdominal_mild: {
     monitor: { stable: "증상 호전 · 활력 안정", shock: "탈수 진행 — 혈압 저하", mismatch: "통증 우하복부 국한 — 목적지 부적합", consciousness: "탈수 — 어지러움·의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "appendicitis", label: "우하복부 통증 국한 — 충수염 의심", sev: "중등증", symText: "오른쪽 아랫배 압통·반발통", severity_tag: "medium", ktas_level: 3, consciousness: "A",
-        mechanism: "복통 재평가 — 우하복부 국한 압통·반발통, 충수염 의심", symptoms: ["우하복부 압통"], vitals: { sbp: 122, dbp: 78, hr: 98, rr: 18, spo2: 98, bt: 38.1 },
-        transcript: "통증이 오른쪽 아랫배로 모였고 누르다 뗄 때 더 아파합니다. 열 38.1도, 충수염 의심됩니다." },
-      { key: "dehydration", label: "구토 지속 — 탈수 진행", sev: "중등증", symText: "구토 반복, 어지러움, 혈압 102/64", severity_tag: "medium", ktas_level: 3, consciousness: "A",
-        mechanism: "급성 위장염 의심 — 이송 중 구토 지속, 탈수 진행", symptoms: ["구토", "어지러움"], vitals: { sbp: 102, dbp: 64, hr: 112, rr: 20, spo2: 98 },
-        transcript: "구토가 계속되고 어지럽다고 합니다. 혈압 102에 64, 맥박 112로 탈수 진행 중입니다." },
-      { key: "stable", label: "증상 호전", sev: null, symText: "복통 감소, 설사 멈춤", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "급성 위장염 의심 — 이송 중 증상 호전", symptoms: [], vitals: { sbp: 118, dbp: 76, hr: 84, rr: 16, spo2: 99 },
-        transcript: "복통이 줄고 설사는 멈췄습니다. 활력징후 안정적입니다." },
-    ],
   },
   mild: {
     monitor: { stable: "부목 고정 후 안정", shock: "숨은 손상 — 혈압 저하·빈맥", mismatch: "통증 급증·발 저림 — 목적지 부적합", consciousness: "실신 — 의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "fracture", label: "변형 발견 — 골절 의심", sev: "중등증", symText: "부종 심해지고 발목 변형", severity_tag: "medium", ktas_level: 3, consciousness: "A",
-        mechanism: "발목 염좌 재평가 — 변형·체중 부하 불가, 골절 의심", symptoms: ["변형"], vitals: { sbp: 128, dbp: 80, hr: 96, rr: 18, spo2: 99 },
-        transcript: "부종이 심해지면서 발목 모양이 틀어져 보입니다. 골절 의심되어 부목 다시 고정했습니다." },
-      { key: "syncope", label: "실신 — 일시적 의식 소실", sev: "중등증", symText: "통증 후 잠깐 의식 잃음", severity_tag: "medium", ktas_level: 3, consciousness: "V",
-        mechanism: "발목 염좌 — 이송 중 통증 후 실신, 혈관미주신경성 의심", symptoms: ["실신"], vitals: { sbp: 92, dbp: 58, hr: 52, rr: 16, spo2: 98 },
-        transcript: "통증이 심하다더니 잠깐 의식을 잃었습니다. 지금은 부르면 반응하고 혈압 92에 58, 맥박 52입니다." },
-      { key: "stable", label: "냉찜질 후 통증 감소", sev: null, symText: "부종 그대로, 통증 감소", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "보행 중 접질림 — 발목 염좌 의심, 이송 중 안정", symptoms: [], vitals: { sbp: 118, dbp: 74, hr: 76, rr: 16, spo2: 99 },
-        transcript: "냉찜질 후 통증이 줄었습니다. 다른 증상 없습니다." },
-    ],
+    calls: {
+      stable: { mechanism: "보행 중 접질림 — 발목 염좌 의심, 이송 중 안정", symptoms: [],
+        transcript: "부목 고정하고 냉찜질 해 통증이 많이 줄었습니다. 변화 없이 안정적입니다." },
+      shock: { mechanism: "발목 염좌 — 이송 중 저혈압·빈맥, 숨은 손상 의심", symptoms: ["혈압 저하", "창백"],
+        transcript: "재측정에서 저혈압·빈맥이 계속되고 얼굴이 창백합니다. 숨은 손상이 의심됩니다." },
+      mismatch: { mechanism: "발목 손상 — 이송 중 통증 급증·발 저림, 신경·혈관 손상 의심(수술 병원 재확인)", symptoms: ["통증 급증", "저림", "말단 허혈"],
+        transcript: "발목 통증이 급증하고 발가락이 저리며 발등이 창백하고 맥박이 약합니다. 신경·혈관 손상 의심되어 수술 가능 여부 재확인 부탁드립니다. 어려우면 다른 병원을 찾겠습니다." },
+      consciousness: { mechanism: "발목 염좌 — 이송 중 실신·의식 저하", symptoms: ["실신", "의식 저하"],
+        transcript: "환자가 갑자기 쓰러졌고 부르면 눈만 뜨고 말이 어눌합니다. 산소 투여 중입니다. 실신 후 의식 저하입니다." },
+      spike: { mechanism: "보행 중 접질림 — 발목 염좌 의심, 이송 중 일시적 측정 오류(재측정 정상)", symptoms: [],
+        transcript: "센서가 움직여 맥박이 한 번 높게 찍혔으나 재측정하니 정상입니다. 일시적 측정 오류였습니다." },
+    },
   },
   mild_fracture: {
     monitor: { stable: "부목 고정 후 안정", shock: "출혈·통증 — 혈압 저하", mismatch: "발 저림·창백(혈관 손상 의심) — 목적지 부적합", consciousness: "실신 — 의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "vascular", label: "발 창백·맥박 약화 — 혈관 손상", sev: "중증", symText: "발등 맥박 약함, 발 차고 창백", severity_tag: "high", ktas_level: 2, consciousness: "A",
-        mechanism: "낙상 — 발목 골절, 이송 중 발등 맥박 약화·창백(혈관 손상 의심)", symptoms: ["발 창백", "맥박 약화"], vitals: { sbp: 134, dbp: 82, hr: 104, rr: 20, spo2: 98 },
-        transcript: "다친 쪽 발등 맥박이 약하게 잡히고 발이 차고 창백합니다. 혈관 손상 의심됩니다." },
-      { key: "compartment", label: "통증 급증·저림 — 구획증후군 의심", sev: "중증", symText: "진통에도 통증 급증, 발가락 저림", severity_tag: "high", ktas_level: 2, consciousness: "A",
-        mechanism: "낙상 — 발목 골절, 이송 중 통증 급증·저림(구획증후군 의심)", symptoms: ["통증 급증", "저림"], vitals: { sbp: 142, dbp: 88, hr: 108, rr: 20, spo2: 98 },
-        transcript: "진통제에도 통증이 계속 심해지고 발가락이 저리다고 합니다. 구획증후군 의심됩니다." },
-      { key: "stable", label: "진통 후 안정", sev: null, symText: "통증 감소, 발 색깔 정상", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "낙상 — 발목 변형, 골절 의심, 이송 중 안정", symptoms: [], vitals: { sbp: 126, dbp: 80, hr: 84, rr: 16, spo2: 99 },
-        transcript: "통증이 줄었고 발 색깔과 맥박은 정상입니다." },
-    ],
   },
   mild_open: {
     monitor: { stable: "지혈 후 안정", shock: "출혈 지속 — 출혈성 쇼크", mismatch: "말단 허혈 — 목적지 부적합", consciousness: "출혈로 의식 저하", spike: "측정값 일시적 튐" },
-    followups: [
-      { key: "hemorrhage", label: "재출혈 — 쇼크 진행", sev: "중증", symText: "드레싱 흠뻑 젖음, 혈압 86/52", severity_tag: "high", ktas_level: 1, consciousness: "V",
-        mechanism: "추락 — 개방성 발목 골절, 이송 중 재출혈 출혈성 쇼크", symptoms: ["재출혈", "혈압 저하"], vitals: { sbp: 86, dbp: 52, hr: 132, rr: 26, spo2: 95 },
-        transcript: "드레싱이 다시 피로 흠뻑 젖었습니다. 혈압 86에 52, 맥박 132입니다." },
-      { key: "ischemia", label: "발 맥박 소실 — 혈관 손상", sev: "중증", symText: "발등 맥박 안 잡힘, 발 차가움", severity_tag: "high", ktas_level: 1, consciousness: "A",
-        mechanism: "추락 — 개방성 발목 골절, 이송 중 발등 맥박 소실(혈관 손상)", symptoms: ["말단 허혈"], vitals: { sbp: 112, dbp: 70, hr: 118, rr: 22, spo2: 97 },
-        transcript: "다친 발 발등 맥박이 안 잡히고 발이 차갑습니다. 혈관 손상이 의심됩니다." },
-      { key: "stable", label: "지혈 유지 · 안정", sev: null, symText: "출혈 멈춤, 혈압 118/74", severity_tag: null, ktas_level: null, consciousness: "A",
-        mechanism: "추락 — 개방성 발목 골절, 이송 중 지혈 유지", symptoms: [], vitals: { sbp: 118, dbp: 74, hr: 96, rr: 18, spo2: 98 },
-        transcript: "지혈 잘 되고 있고 혈압 118에 74로 안정적입니다." },
-    ],
   },
 };
+
+// ── 시연 대사집(2026-10-06, 팀 Claude Docs "골든링크 시연 대사집" 4종) — ①·②·④ 화면의 대본 칸에 그대로 보인다.
+// 대사집 원본은 ④ 이송 중 대본이 문서끼리 뒤바뀌어 있어(흉통 문서에 복통의 ④가 있는 식) 내용에 맞게 제자리로 옮겼다.
+// ④의 병원 이름은 이송 확정 병원으로 바꿔 보인다. ① 신고 접수 대본(host·caller)은 2026-10-07 화면에서 뺐다(데이터만 남김).
+// 버튼으로 부여하는 정해진 상황은 이 대본을 압축한 문장이다(PATIENT_TEMPLATES.transcript, TRANSPORT 신고대로 4종 followups).
+type TransportScript = { label: string; note?: string; lines: string[] };
+type Script = {
+  host: string[];
+  caller: string;
+  callerShort: string;
+  scene: Record<string, string>;
+  transport: Record<MonitorKey, TransportScript>;
+};
+
+const SCRIPTS: Record<string, Script> = {
+  cardiac: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 흉통 환자가 발생한 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞입니다. 50대, 60대쯤 되어 보이는 남자분이 갑자기 가슴을 움켜쥐고 주저앉았어요. 가슴이 너무 아프다고 하고 숨쉬기도 힘들어합니다. 식은땀도 흘리고 있어요. 빨리 와주세요.",
+    callerShort: "서울시청 앞입니다. 50~60대 남자분이 가슴이 아프다며 쓰러지듯 주저앉았어요. 숨도 못 쉬겠다고 합니다. 빨리 와주세요.",
+    scene: {
+      cardiac: "62세 남성입니다. 30분 전부터 가슴을 쥐어짜는 흉통이 있고 숨이 찹니다. 왼팔로 뻗치고 식은땀을 흘립니다. 혈압 100에 60, 맥박 110, 산소포화도 93퍼센트. 심근경색 의심입니다.",
+      cardiac_aortic: "58세 남성입니다. 갑자기 가슴이 찢어지는 듯한 통증이 시작됐고 등으로 뻗칩니다. 양팔 혈압을 재보니 오른팔 150에 90, 왼팔 110에 70으로 차이가 큽니다. 맥박 105, 의식은 명료합니다. 대동맥 박리 의심입니다.",
+      cardiac_wall: "45세 남성입니다. 가슴 왼쪽이 아픈데 손으로 누르면 더 아프고, 숨 쉴 때와 몸을 비틀 때 아픕니다. 어제 무거운 짐을 옮겼다고 합니다. 혈압 125에 80, 맥박 78, 산소포화도 98퍼센트이고 심전도 이상은 없습니다. 흉벽 통증 소견입니다.",
+    },
+    transport: {
+      stable: { label: "통증 조절, 활력 안정", lines: ["흉통은 처음보다 줄었습니다. 니트로글리세린 투여 후 통증 점수 3점입니다. 혈압 118에 74, 맥박 82, 산소포화도 98퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "심인성 쇼크 진행", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 86에 54로 떨어졌고 맥박 120입니다. 식은땀이 심하고 피부가 차갑습니다.",
+        "2차 다시 재측정했습니다. 혈압 80에 50, 맥박 126으로 계속 저혈압과 빈맥입니다. 심인성 쇼크가 진행 중입니다.",
+      ] },
+      mismatch: { label: "흉통 악화, 부정맥", note: "병원 변경 필요", lines: ["흉통이 다시 심해졌고 심전도에서 심한 부정맥이 보입니다. 맥박이 불규칙하고 빠릅니다. 심혈관 중재술이 가능한지 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "심정지 전조, 의식 저하", lines: ["환자 의식이 떨어졌습니다. 부르면 눈만 뜨고 말이 어눌합니다. 맥박이 약하고 불규칙하며 혈압 78에 48, 호흡 28회, 산소포화도 88퍼센트로 산소 투여 중입니다. 심정지 전조 소견입니다."] },
+      spike: { label: "측정값 일시적 튐 (전극 흔들림)", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 심전도 모니터에 심한 부정맥이 한 번 찍혔습니다. 전극이 흔들려서 그런 것 같습니다.",
+        "2차 전극을 다시 붙이고 측정했더니 맥박 84, 산소포화도 98퍼센트, 혈압 120에 76으로 정상입니다. 환자는 편안하고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  trauma: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 교통사고가 난 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞 도로입니다. 차 두 대가 크게 부딪혔어요. 30대, 40대쯤 되어 보이는 남자분이 도로에 쓰러져 있는데 가슴이랑 배를 부여잡고 있고 정신이 오락가락해요. 빨리 와주세요.",
+    callerShort: "서울시청 앞 도로에서 교통사고예요. 30~40대 남자분이 쓰러져 있고 가슴과 배가 아프다는데 정신이 흐릿해요. 빨리 와주세요.",
+    scene: {
+      trauma: "35세 남성입니다. 승용차와 충돌한 사고로 흉부와 복부를 세게 부딪혔고 의식이 혼미합니다. 부르면 눈은 뜨지만 대답이 느립니다. 혈압 90에 55, 맥박 125, 호흡 28회, 산소포화도 91퍼센트. 복부가 단단하고 누르면 심하게 아파합니다. 다발성 외상 의심입니다.",
+      trauma_head: "41세 남성입니다. 차량 충돌 때 머리를 부딪혔고 의식이 떨어졌습니다. 부르면 겨우 눈을 뜨고 구토를 두 번 했습니다. 뒤통수에 열상이 있고 출혈은 압박으로 조절됩니다. 혈압 150에 95, 맥박 58, 산소포화도 96퍼센트. 두부 손상 의심입니다.",
+      trauma_minor: "29세 남성입니다. 접촉 사고였고 안전벨트를 착용했습니다. 목과 어깨가 아프다고 하고 팔에 찰과상이 있습니다. 혼자 걸어서 구급차에 탔습니다. 혈압 120에 78, 맥박 82, 산소포화도 99퍼센트, 의식 명료합니다. 경상입니다.",
+    },
+    transport: {
+      stable: { label: "고정 후 활력 안정", lines: ["척추 고정과 부목 고정을 마쳤습니다. 혈압 122에 78, 맥박 90, 산소포화도 98퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "출혈성 쇼크 진행", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 88에 52로 떨어졌고 맥박 130입니다. 피부가 차갑고 창백합니다.",
+        "2차 다시 재측정했습니다. 혈압 82에 48, 맥박 138로 계속 저혈압과 빈맥입니다. 출혈성 쇼크가 진행 중입니다.",
+      ] },
+      mismatch: { label: "복강 내 출혈 악화", note: "병원 변경 필요", lines: ["배가 점점 부풀어 오르고 단단해졌고, 혈압도 계속 떨어지고 있습니다. 복강 내 출혈이 악화된 것으로 판단됩니다. 응급 수술과 수혈 준비가 가능한지 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "두부 손상 동반, 의식 저하", lines: ["머리를 부딪친 환자의 의식이 떨어졌습니다. 부르면 눈만 뜨고 말이 어눌하며 지남력이 없습니다. 한쪽 동공이 커져 있습니다. 호흡 26회, 산소포화도 90퍼센트로 산소 투여 중이고, 혈압 85에 50, 맥박 130입니다. 두부 손상 동반 의식 저하입니다."] },
+      spike: { label: "측정값 일시적 튐 (차량 진동)", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 170으로 한 번 찍혔습니다. 차량이 심하게 흔들려서 센서가 흔들린 것 같습니다.",
+        "2차 다시 측정했더니 맥박 88, 산소포화도 98퍼센트, 혈압 122에 78로 정상입니다. 환자는 안정적이고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  abdominal: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 복통 환자가 발생한 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞입니다. 40대, 50대쯤 되어 보이는 여자분이 배를 움켜쥐고 쪼그려 앉아 계세요. 배가 계속 아프다고 하고 구토도 했어요. 빨리 와주세요.",
+    callerShort: "서울시청 앞입니다. 40~50대 여자분이 배가 너무 아프다며 주저앉았어요. 구토도 했어요. 빨리 와주세요.",
+    scene: {
+      abdominal: "48세 여성입니다. 어제 저녁부터 배가 계속 아프고 구토를 두 번 했습니다. 배 오른쪽 아래를 누르면 심하게 아파하고, 손을 떼면 더 아파합니다. 혈압 125에 80, 맥박 98, 체온 37.8도, 산소포화도 98퍼센트, 의식 명료합니다. 복부 압통 소견입니다.",
+      abdominal_gi: "67세 여성입니다. 오늘 아침 피를 토했고 어제부터 까만 변을 봤습니다. 어지러워하고 얼굴이 창백합니다. 혈압 90에 55, 맥박 118, 산소포화도 96퍼센트입니다. 위장관 출혈 의심입니다.",
+      abdominal_mild: "31세 여성입니다. 어제 저녁 외식 후부터 복통과 설사를 했습니다. 배 전체가 가볍게 아프고, 누르면 약간 불편한 정도입니다. 혈압 118에 74, 맥박 84, 체온 37.2도, 산소포화도 99퍼센트, 의식 명료합니다. 급성 위장염 소견입니다.",
+    },
+    transport: {
+      stable: { label: "통증 지속, 활력 안정", lines: ["복통은 계속되고 있지만 악화는 없습니다. 혈압 125에 80, 맥박 88, 산소포화도 98퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "패혈성 쇼크 진행", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 82에 50으로 떨어졌고 맥박 128, 체온 39.2도입니다. 피부가 차갑고 축축합니다.",
+        "2차 다시 재측정했습니다. 혈압 80에 48, 맥박 132로 여전히 저혈압과 빈맥입니다. 패혈성 쇼크가 진행 중입니다.",
+      ] },
+      mismatch: { label: "복막염 악화", note: "병원 변경 필요", lines: ["복부 상태가 악화됐습니다. 배가 판자처럼 단단해졌고 살짝 눌렀다 떼도 심하게 아파합니다. 반발통이 뚜렷해서 복막염으로 판단됩니다. 응급 수술이 필요해 보여, 수술 가능 여부를 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "패혈증, 의식 저하", lines: ["환자 의식이 떨어졌습니다. 부르면 눈만 뜨고 말이 어눌하며 지남력이 없습니다. 호흡 28회, 산소포화도 88퍼센트로 산소 투여 중입니다. 혈압 85에 55, 맥박 135, 체온 39.5도입니다. 패혈증으로 의식 저하가 왔습니다."] },
+      spike: { label: "측정값 일시적 튐", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 160으로 한 번 찍혔습니다. 손가락 센서가 움직여서 그런 것 같습니다.",
+        "2차 다시 측정했더니 맥박 86, 산소포화도 98퍼센트, 혈압 124에 78로 정상입니다. 환자는 편안하고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  mild: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 발목을 다친 환자가 발생한 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞입니다. 30대, 40대쯤 되어 보이는 여자분이 길에서 발목을 접질려서 못 걷고 있어요. 발목이 아프다고 하고 점점 붓고 있어요. 와주세요.",
+    callerShort: "서울시청 앞입니다. 여자분이 발목을 삐끗해서 걷기 힘들어해요. 와주세요.",
+    scene: {
+      mild: "24세 여성입니다. 보도 턱에서 발목을 접질렸습니다. 발목 바깥쪽이 붓고 아프지만 체중을 실을 수 있고 조금 걸을 수 있습니다. 피부 손상은 없습니다. 혈압 118에 72, 맥박 80, 산소포화도 99퍼센트, 의식 명료합니다. 발목 염좌 소견입니다.",
+      mild_fracture: "52세 여성입니다. 계단에서 발을 헛디뎌 발목이 꺾였습니다. 발목이 눈에 띄게 변형되고 심하게 부었으며 체중을 전혀 실을 수 없습니다. 피부는 닫혀 있고 발가락 감각은 있습니다. 혈압 130에 82, 맥박 96, 산소포화도 98퍼센트, 의식 명료합니다. 발목 골절 의심입니다.",
+      mild_open: "38세 여성입니다. 높은 곳에서 떨어져 발목을 크게 다쳤습니다. 발목 뼈가 피부 밖으로 노출되어 있고 출혈이 있어서 거즈로 압박 중입니다. 발등 맥박은 약하게 만져지고 발가락이 차갑습니다. 혈압 105에 65, 맥박 112, 산소포화도 97퍼센트입니다. 개방성 발목 골절입니다.",
+    },
+    transport: {
+      stable: { label: "부목 고정 후 안정", lines: ["발목에 부목 고정하고 냉찜질 했습니다. 통증은 많이 줄었습니다. 혈압 122에 76, 맥박 78, 산소포화도 99퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "숨은 손상, 혈압 저하와 빈맥", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 92에 58로 떨어졌고 맥박 118입니다. 환자는 괜찮다고 하는데 얼굴이 창백합니다.",
+        "2차 다시 재측정했습니다. 혈압 88에 54, 맥박 124로 계속 저혈압과 빈맥입니다. 숨은 손상이 의심됩니다.",
+      ] },
+      mismatch: { label: "통증 급증, 발 저림", note: "병원 변경 필요", lines: ["발목 통증이 갑자기 심해졌습니다. 발가락이 저리고 감각이 둔해졌고, 발등이 창백하며 맥박이 약하게 만져집니다. 신경과 혈관 손상이 의심돼서 수술 가능 여부를 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "실신, 의식 저하", lines: ["환자가 갑자기 쓰러졌습니다. 부르면 눈만 뜨고 말이 어눌합니다. 혈압 85에 50, 맥박 130, 호흡 26회, 산소포화도 90퍼센트로 산소 투여 중입니다. 실신 후 의식 저하 상태입니다."] },
+      spike: { label: "측정값 일시적 튐", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 170으로 한 번 찍혔습니다. 손가락 센서가 움직여서 그런 것 같습니다.",
+        "2차 다시 측정했더니 맥박 80, 산소포화도 99퍼센트, 혈압 120에 76으로 정상입니다. 환자는 편안하고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+};
+
 const templateOf = (key: string | null | undefined): Template | null =>
   PATIENT_TEMPLATES.find((t) => t.key === key) ?? null;
 // ① 신고 접수 증상(4종) — 신고대로 현장 상황과 같은 카드
@@ -467,7 +503,7 @@ const LEVEL_SHORT: Record<string, string> = {
 type MciCasualty = { no: number; caseId: string; apid: string; templateKey: string };
 
 export default function ControlPage() {
-  const { state, connectionMode, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview } =
+  const { state, connectionMode, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode } =
     useDashboardSocket({ role: "monitor", id: "control" });
   const simOn = state.identity.simDispatch === true;
   const ambulances = state.mapOverview?.ambulances ?? [];
@@ -502,6 +538,9 @@ export default function ControlPage() {
   // 정해진 상황 카드(가상 환자). 어느 쪽으로 들어온 사건인지 이후 화면에 표시한다 — 음성 사건은 hub의
   // 통화 상태(call_status)로 알아보고, 정해진 상황은 보낼 때 templateCases에 기록한다.
   const [inputMode, setInputMode] = useState<"voice" | "template">("template");
+  // 개발 모드(2026-10-07) — 켜면 ② 현장 확인·④ 이송 중에 "정해진 상황 선택"(가상 환자·가상 상태 변화)이 보인다.
+  // 끄면(기본) 음성(대원 휴대폰 통화)만 남고 정해진 상황 버튼·부여 상황이 화면에서 사라진다. hub에도 음성으로 알린다.
+  const [devMode, setDevMode] = useState(false);
   const [templateCases, setTemplateCases] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   // sim이 꺼진 환경 전용 — 도착 게이팅이 없어 [도착 결과 입력]으로 수동 전환한다
@@ -524,7 +563,6 @@ export default function ControlPage() {
   type RejectAction = "hospital_reject" | "transport_withdraw" | "arrival_refused";
   // ④ 목적지 병원과의 추가 통화(2026-10-05) — 음성(대원 휴대폰 전화 앱) / 정해진 상황(가상 상태 변화)
   const [followupMode, setFollowupMode] = useState<"voice" | "template">("template");
-  const [followupKey, setFollowupKey] = useState<string>("shock");
   const [followupSent, setFollowupSent] = useState<Record<string, string[]>>({});
   // caseIds: 대량사고 병원 행은 그 병원이 후보인 사건 여러 건에 한 번에 응답한다
   const [rejectTarget, setRejectTarget] = useState<{ caseIds: string[]; hospitalId: string; name: string; action: RejectAction } | null>(null);
@@ -572,6 +610,25 @@ export default function ControlPage() {
     if (!confirmedId) return "respond";
     return manualArrival ? "arrival" : "transport";
   })();
+
+  // ② 현장 확인 방식을 hub에 알린다(2026-10-06) — "정해진 상황 선택"이면 그 구급차 휴대폰 앱의 전화 버튼이 막히고 hub도
+  // 현장 통화 시작을 거부한다. 출동 중부터 알려, 현장에 도착한 휴대폰이 처음부터 맞는 상태로 뜨게 한다.
+  const sceneInput: "voice" | "template" = devMode ? inputMode : "voice";
+  const sceneMode: "voice" | "template" = myCall ? "voice" : sceneInput;
+  useEffect(() => {
+    if (!caseId || !apid || (screen !== "enroute" && screen !== "report")) return;
+    sendSceneInputMode(caseId, apid, sceneMode);
+  }, [caseId, apid, screen, sceneMode, sendSceneInputMode, connectionMode]);
+
+  // ④ 이송 중 통화 방식도 같은 방식으로 알린다(2026-10-06) — "정해진 상황 선택"이면 휴대폰 앱의 [목적지 병원과 통화]가
+  // 막히고 hub도 이송 중 통화를 거부한다. 휴대폰이 이미 통화 중이면 음성으로 둔다(아래 ④ 화면과 같은 판정).
+  const followupCalling = !!caseId && state.callStatus[caseId]?.state === "calling" && !!state.callStatus[caseId]?.followup;
+  const transportInput: "voice" | "template" = devMode ? followupMode : "voice";
+  const transportMode: "voice" | "template" = followupCalling ? "voice" : transportInput;
+  useEffect(() => {
+    if (!caseId || !apid || screen !== "transport") return;
+    sendSceneInputMode(caseId, apid, transportMode, "transport");
+  }, [caseId, apid, screen, transportMode, sendSceneInputMode, connectionMode]);
 
   // ── 조작 ──
   // 지점이 정해지면 기지가 가장 가까운 대기(복귀 중 포함) 구급차를 고른다 — 실무에선 발생
@@ -659,13 +716,18 @@ export default function ControlPage() {
     }
   }
 
-  // 이송 중 목적지 병원과 2차 통화(정해진 상황) — 2차 통화 요약을 보내면 hub가 환자 정보에 덧붙인다(병원 목록·확정은 그대로)
-  async function handleFollowup(key: string) {
-    if (!caseId || sending) return;
+  // 이송 중 목적지 병원과 2차 통화(정해진 상황) — 2차 통화 요약을 보내면 hub가 환자 정보에 덧붙인다(병원 목록·확정은 그대로).
+  // 상황 버튼이 활력징후 시나리오를 다 재생한 뒤 부른다(playScenario의 onDone). 활력징후는 그 시나리오의 마지막 측정값.
+  async function handleFollowup(key: MonitorKey) {
+    if (!caseId) return;
     const base = transportBase;
-    const followup = TRANSPORT[base.key].followups.find((f) => f.key === key);
-    if (!followup) return;
-    const change = followup;
+    const label = transport.monitor[key];
+    const call: FollowupText = transport.calls?.[key] ?? {
+      mechanism: `${base.summary.mechanism} — 이송 중 ${label}`, symptoms: [], transcript: `이송 중 상태 보고드립니다. ${label}.`,
+    };
+    const scenario = SCENARIOS.find((sc) => sc.key === key);
+    const last = scenario?.steps[scenario.steps.length - 1];
+    const worse = key === "shock" || key === "mismatch" || key === "consciousness";
     setSending(true);
     try {
       const response = await fetch("/api/demo/voice", {
@@ -673,20 +735,23 @@ export default function ControlPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           caseId,
-          transcript: { raw_text: change.transcript, filtered_text: change.transcript },
+          transcript: { raw_text: call.transcript, filtered_text: call.transcript },
           summary: {
             ...base.summary,
-            mechanism: change.mechanism, severity_tag: change.severity_tag ?? base.summary.severity_tag,
-            ktas_level: change.ktas_level ?? base.summary.ktas_level, consciousness: change.consciousness,
-            symptoms: [...base.summary.symptoms, ...change.symptoms], vitals: [{ sequence: 2, ...change.vitals }],
+            mechanism: call.mechanism,
+            severity_tag: worse ? "high" : base.summary.severity_tag,
+            ktas_level: worse ? (key === "consciousness" ? 1 : Math.min(2, base.summary.ktas_level)) : base.summary.ktas_level,
+            consciousness: last?.avpu ?? base.summary.consciousness,
+            symptoms: [...base.summary.symptoms, ...call.symptoms],
+            vitals: last ? [{ sequence: 2, sbp: last.sbp, hr: last.hr, rr: last.rr, spo2: last.spo2, ...(last.bt != null ? { bt: last.bt } : {}) }] : base.summary.vitals,
           },
           source: "ai",
           model_used: { stt: "scenario-template", llm: "scenario-template" },
         }),
       });
       if (response.ok) {
-        setFollowupSent((prev) => ({ ...prev, [caseId]: [...(prev[caseId] ?? []), followup.label] }));
-        note(`이송 중 추가 통화(정해진 상황) — ${followup.label} · ${confirmedHospital?.name ?? "목적지 병원"}에 덧붙여 전달`);
+        setFollowupSent((prev) => ({ ...prev, [caseId]: [...(prev[caseId] ?? []), label] }));
+        note(`이송 중 추가 통화(정해진 상황) — ${label} · ${confirmedHospital?.name ?? "목적지 병원"}에 덧붙여 전달`);
       } else {
         note(`추가 통화 전송 실패 (${response.status})`);
       }
@@ -876,7 +941,6 @@ export default function ControlPage() {
     setTemplateCases({});
     setSending(false);
     setFollowupMode("template");
-    setFollowupKey("shock");
     setFollowupSent({});
     setRejectTarget(null);
     setTripStart({});
@@ -897,7 +961,8 @@ export default function ControlPage() {
     setPlaying((prev) => ({ ...prev, [targetCaseId]: null }));
   }
 
-  function playScenario(key: string) {
+  // onDone: 마지막 측정까지 다 보낸 뒤 한 번(중간에 [정지]로 멈추면 부르지 않는다)
+  function playScenario(key: string, onDone?: () => void) {
     const scenario = SCENARIOS.find((s) => s.key === key);
     if (!scenario || !caseId || !apid) return;
     stopScenario(caseId);
@@ -907,6 +972,7 @@ export default function ControlPage() {
       const vitals = scenario.steps[stepIndex];
       if (!vitals) {
         stopScenario(caseId);
+        onDone?.();
         return;
       }
       stepIndex += 1;
@@ -979,7 +1045,6 @@ export default function ControlPage() {
   // 이송 중 상황은 현장 확인한 환자(카드) 기준 — 음성으로 들어온 사건은 신고 증상의 "신고대로" 상황으로
   const transportBase: Template = caseTemplate ?? reportedTemplate ?? PATIENT_TEMPLATES[0];
   const transport = TRANSPORT[transportBase.key];
-  const activeFollowup = transport.followups.find((f) => f.key === followupKey) ?? transport.followups[0];
   const rank = SCREEN_STEP[screen];
   const zoneMax = myCase ? Math.max(1, ...myCase.zoneActive) : 1;
   type SummaryRow = { label: string; value: string; muted?: boolean; chip?: SevLabel | "대량" | null; sub?: string | null };
@@ -1047,7 +1112,7 @@ export default function ControlPage() {
   })();
 
   const verifyTemplate = templateOf(verifyKey ?? reportedTemplate?.key ?? "cardiac")!;
-  const voiceSelected = myCall != null || inputMode === "voice";
+  const voiceSelected = myCall != null || sceneInput === "voice";
 
   return (
     // 화면 전체는 끌리지 않게 고정(2026-10-05 요청) — 상단바·단계·상황 요약은 그대로 두고, 넘치는 내용은 단계 카드 안에서만
@@ -1056,6 +1121,7 @@ export default function ControlPage() {
       <div style={{ width: "100%", maxWidth: 1500, height: "100%", minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
         <style>{CONSOLE_CSS}</style>
         {pauseToast.node}
+        <DemoVideoOverlay src="/demo-videos/console.mp4" />
         {mciRefuseTarget && (
           <RejectReasonModal
             title={`${mciRefuseTarget.name} — 도착 후 수용 불가 사유`}
@@ -1118,6 +1184,19 @@ export default function ControlPage() {
                 시연 초기화
               </button>
             )}
+            {/* 시연 영상 모드(2026-10-06) — 연결된 모든 화면(관제 지도·병원·콘솔·구급차)이 각자 영상으로. 영상 위 [시연 모드]로 돌아온다 */}
+            <button type="button" style={headerButton} onClick={() => sendDemoMode("video") || note("hub와 연결이 끊겨 영상 모드로 바꾸지 못했습니다")}>
+              영상 모드
+            </button>
+            <button
+              type="button"
+              aria-pressed={devMode}
+              title="켜면 ② 현장 확인·④ 이송 중에 '정해진 상황 선택'이 보입니다"
+              onClick={() => setDevMode((v) => !v)}
+              style={devMode ? { ...headerButton, background: C.orangeSoft, border: `1px solid ${C.orangeInk}`, color: C.orangeInk } : headerButton}
+            >
+              {devMode ? "개발 모드 켜짐" : "개발 모드"}
+            </button>
             <Link href="/map" style={{ fontSize: 14, fontWeight: 700, color: C.blue, textDecoration: "none", padding: "0 4px" }}>관제 지도 →</Link>
             <ConnectionDot mode={connectionMode} />
           </div>
@@ -1495,12 +1574,12 @@ export default function ControlPage() {
               {screen === "report" && (
                 <ScreenCard title="② 현장 확인 — 환자 상태를 확정하면 인근 병원에 동시 전달됩니다">
                   {/* 입력 방식(2026-10-04) — 실제 음성(전화 앱) 또는 정해진 상황. 통화가 시작되면 음성으로 고정된다 */}
-                  <div role="tablist" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                  <div role="tablist" style={{ display: "grid", gridTemplateColumns: devMode ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 10 }}>
                     {([
                       ["voice", "mic", "음성으로 확인", "대원 휴대폰 전화 앱 · 실제 통화 음성 → AI 구조화"],
                       ["template", "card", "정해진 상황 선택", "가상 환자 카드 · 음성 없이 바로 전달"],
-                    ] as const).map(([mode, icon, label, sub]) => {
-                      const selected = (myCall ? "voice" : inputMode) === mode;
+                    ] as const).filter(([mode]) => devMode || mode === "voice").map(([mode, icon, label, sub]) => {
+                      const selected = sceneMode === mode;
                       return (
                         <button
                           key={mode}
@@ -1542,7 +1621,7 @@ export default function ControlPage() {
                           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: C.ink3 }}>
                             <Pulse color="#7ba0cc" />휴대폰 통화를 기다리는 중…
                           </div>
-                          <div style={{ fontSize: 12, color: C.ink3 }}>통화가 어려우면 위의 <b>정해진 상황 선택</b> 탭으로 바꿔 진행하세요.</div>
+                          {devMode && <div style={{ fontSize: 12, color: C.ink3 }}>통화가 어려우면 위의 <b>정해진 상황 선택</b> 탭으로 바꿔 진행하세요.</div>}
                         </>
                       )}
                     </div>
@@ -1568,6 +1647,14 @@ export default function ControlPage() {
                         {sending ? "환자 정보 전송 중…" : `환자 상태 확정 — ${verifyTemplate.label} · 인근 병원에 동시 전달`}
                       </button>
                     </div>
+                  )}
+                  {/* 대본(시연 대사집 ②) — 이 신고에 딸린 현장 상황 대본(음성이면 대원이 읽고, 버튼이면 압축본이 전달) */}
+                  {reportedTemplate && (
+                    <ScriptBox title="② 현장 확인 · 구급대원 — 상황 하나를 골라 읽습니다">
+                      {sceneOptions(reportedTemplate.key).map((t, i) => (
+                        <ScriptLine key={t.key} who={`${"ABC"[i] ?? ""}. ${t.label}`} text={SCRIPTS[t.report].scene[t.key]} />
+                      ))}
+                    </ScriptBox>
                   )}
                 </ScreenCard>
               )}
@@ -1621,11 +1708,10 @@ export default function ControlPage() {
                         info={hospitalInfo.get(hospital.hospitalId)}
                         onApprove={g(() => sendAction({ caseId: myCase.caseId, action: "hospital_approve", hospital_id: hospital.hospitalId, actor: "hospital", timestamp: now() }))}
                         onReject={g(() => setRejectTarget({ caseIds: [myCase.caseId], hospitalId: hospital.hospitalId, name: hospital.name, action: "hospital_reject" }))}
-                        onConfirm={g(() => sendAction({ caseId: myCase.caseId, action: "final_approval", hospital_id: hospital.hospitalId, actor: "paramedic", timestamp: now() }))}
                       />
                     ))}
                   </div>
-                  <div style={{ fontSize: 12, color: C.ink3 }}>승인 병원 중 한 곳에 [이송 확정]을 누르면 이송이 시작됩니다. 목록 순서는 hub 순위(이동 시간·진료과·등급)입니다.</div>
+                  <div style={{ fontSize: 12, color: C.ink3 }}>병원이 승인하면 구급차 대시보드에 승인 병원 정보가 뜹니다 — 구급대원이 [이송 승인]을 누르면 이송이 시작됩니다. 목록 순서는 hub 순위(이동 시간·진료과·등급)입니다.</div>
                 </ScreenCard>
               )}
 
@@ -1681,125 +1767,113 @@ export default function ControlPage() {
                           </div>
                         )}
                       </div>
-                      <div style={{ flex: "1.3 1 440px", minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                        {SCENARIOS.map((scenario) => {
-                          const sel = playingKey === scenario.key;
-                          const disabled = playingKey !== null && !sel;
-                          return (
-                            <button
-                              key={scenario.key}
-                              type="button"
-                              disabled={disabled}
-                              onClick={() => (locked ? pauseToast.notify() : sel ? stopScenario(caseId!) : playScenario(scenario.key))}
-                              style={{
-                                flex: "1 1 60px", maxHeight: 100, textAlign: "left", borderRadius: 10, padding: "10px 16px", display: "flex", flexDirection: "column",
-                                justifyContent: "center", gap: 3, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
-                                background: sel ? C.blueSoft : C.bg, border: sel ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
-                              }}
-                            >
-                              <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: C.ink }}>
-                                <Icon name={sel ? "stop" : "play"} size={10} color={C.ink} />
-                                {MONITOR_NUM[scenario.key as MonitorKey]} {transport.monitor[scenario.key as MonitorKey] ?? scenario.label}
-                              </span>
-                              <span style={{ fontSize: 13, color: C.ink3 }}>{scenario.expects}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      {/* 상황 부여(2026-10-06 통합) — 방식을 먼저 고른다. 음성: 대원 휴대폰 추가 통화를 기다린다.
+                          정해진 상황: 버튼 하나 = 활력징후 시나리오 재생(hub 판정) → 끝나면 목적지 병원에 추가 통화 내용 전달. */}
+                      {(() => {
+                        const call = caseId ? state.callStatus[caseId] : undefined;
+                        const phoneCalling = call?.state === "calling" && call.followup;
+                        const mode = phoneCalling ? "voice" : transportInput;
+                        const hospitalName = confirmedHospital?.name ?? "목적지 병원";
+                        const sentList = caseId ? followupSent[caseId] ?? [] : [];
+                        return (
+                          <div style={{ flex: "1.3 1 440px", minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                            <div role="tablist" style={{ display: "grid", gridTemplateColumns: devMode ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 8 }}>
+                              {([
+                                ["voice", "mic", "음성으로 통화", "대원 휴대폰 전화 앱 [목적지 병원과 통화]"],
+                                ["template", "card", "정해진 상황 선택", "버튼 · 활력징후 재생 뒤 통화 내용 자동 전달"],
+                              ] as const).filter(([m]) => devMode || m === "voice").map(([m, icon, label, sub]) => {
+                                const selected = mode === m;
+                                return (
+                                  <button
+                                    key={m}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={selected}
+                                    disabled={!!phoneCalling || playingKey !== null}
+                                    onClick={() => setFollowupMode(m)}
+                                    style={{
+                                      textAlign: "left", display: "flex", flexDirection: "column", gap: 2, padding: "8px 12px", borderRadius: 10, cursor: "pointer",
+                                      color: C.ink, background: selected ? C.blueSoft : "#ffffff", border: selected ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
+                                    }}
+                                  >
+                                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700 }}><Icon name={icon} size={14} color={C.ink} />{label}</span>
+                                    <span style={{ fontSize: 11, color: C.ink3 }}>{sub}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {mode === "voice" ? (
+                              phoneCalling ? (
+                                <div style={{ ...softBox, display: "flex", alignItems: "center", gap: 10 }}>
+                                  <Pulse color={C.green} />
+                                  <span><b>{call?.hospitalName ?? hospitalName}</b>과 추가 통화 중 — 대원이 [전송]을 누르면 인식·구조화해 환자 정보에 덧붙입니다.</span>
+                                </div>
+                              ) : (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                  <div style={softBox}>대원 휴대폰 전화 앱(이송 중 화면)에서 <b>[목적지 병원과 통화]</b>를 누르세요. 통화 음성이 2차 통화 요약이 됩니다.</div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: C.ink3 }}>
+                                    <Pulse color="#7ba0cc" />
+                                    {call?.followup && call.state === "ended"
+                                      ? call.cancelled ? "대원이 통화를 취소했습니다 — 전달된 내용 없음" : "통화 종료 — 음성을 인식해 환자 정보에 덧붙이는 중…"
+                                      : "음성 인식 대기 중 — 휴대폰 추가 통화를 기다리는 중…"}
+                                  </div>
+                                </div>
+                              )
+                            ) : (
+                              SCENARIOS.map((scenario) => {
+                                const key = scenario.key as MonitorKey;
+                                const sel = playingKey === key;
+                                const disabled = (playingKey !== null && !sel) || sending;
+                                return (
+                                  <button
+                                    key={key}
+                                    type="button"
+                                    disabled={disabled}
+                                    onClick={() => (locked ? pauseToast.notify() : sel ? stopScenario(caseId!) : playScenario(key, () => void handleFollowup(key)))}
+                                    style={{
+                                      flex: "1 1 56px", maxHeight: 92, textAlign: "left", borderRadius: 10, padding: "8px 16px", display: "flex", flexDirection: "column",
+                                      justifyContent: "center", gap: 3, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+                                      background: sel ? C.blueSoft : C.bg, border: sel ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
+                                    }}
+                                  >
+                                    <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: C.ink }}>
+                                      <Icon name={sel ? "stop" : "play"} size={10} color={C.ink} />
+                                      {MONITOR_NUM[key]} {transport.monitor[key]}
+                                    </span>
+                                    <span style={{ fontSize: 13, color: C.ink3 }}>
+                                      {sel ? `활력징후 재생 중 — 끝나면 ${hospitalName}에 추가 통화 내용 전달` : scenario.expects}
+                                    </span>
+                                  </button>
+                                );
+                              })
+                            )}
+                            {sentList.length > 0 && (
+                              <div style={{ fontSize: 12, color: C.greenInk }}>
+                                {hospitalName}에 전달한 추가 통화: {sentList.map((label, i) => `${i + 2}차 ${label}`).join(" · ")}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
-                    {/* 목적지 병원과 통화(2026-10-05) — 이송 중 환자 상태가 바뀌면 다시 통화해 환자 정보를 덧붙인다. 병원이 못 받게
-                        되면 병원 대시보드(또는 위 [목적지 병원 수용 철회])로 확정이 풀려 다른 병원으로 재선택한다. */}
-                    {confirmedHospital && caseId && (() => {
-                      const call = state.callStatus[caseId];
-                      const phoneCalling = call?.state === "calling" && call.followup;
-                      const sentList = followupSent[caseId] ?? [];
+                    {/* 대본(시연 대사집 ④) — 목적지 병원에 재통화. 활력징후 시나리오 ①~⑤·추가 통화 버튼과 같은 순서(A~E) */}
+                    {(() => {
+                      const script = SCRIPTS[transportBase.report];
                       return (
-                        <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
-                          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 10px" }}>
-                            <span style={{ fontSize: 15, fontWeight: 700 }}>목적지 병원과 통화 — {confirmedHospital.name}</span>
-                            <span style={{ fontSize: 12, color: C.ink3 }}>환자 상태가 바뀌면 다시 통화합니다. 새 내용은 기존 환자 정보에 덧붙어 병원 화면에 반영됩니다.</span>
-                          </div>
-                          <div role="tablist" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
-                            {([
-                              ["voice", "mic", "음성으로 통화", "대원 휴대폰 전화 앱 [목적지 병원과 통화]"],
-                              ["template", "card", "정해진 상황 선택", "가상 상태 변화 · 음성 없이 바로 전달"],
-                            ] as const).map(([mode, icon, label, sub]) => {
-                              const selected = (phoneCalling ? "voice" : followupMode) === mode;
-                              return (
-                                <button
-                                  key={mode}
-                                  type="button"
-                                  role="tab"
-                                  aria-selected={selected}
-                                  onClick={() => setFollowupMode(mode)}
-                                  style={{
-                                    textAlign: "left", display: "flex", flexDirection: "column", gap: 2, padding: "8px 12px", borderRadius: 10, cursor: "pointer",
-                                    color: C.ink, background: selected ? C.blueSoft : "#ffffff", border: selected ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
-                                  }}
-                                >
-                                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700 }}><Icon name={icon} size={14} color={C.ink} />{label}</span>
-                                  <span style={{ fontSize: 11, color: C.ink3 }}>{sub}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {phoneCalling || followupMode === "voice" ? (
-                            phoneCalling ? (
-                              <div style={{ ...softBox, display: "flex", alignItems: "center", gap: 10 }}>
-                                <Pulse color={C.green} />
-                                <span><b>{call?.hospitalName ?? confirmedHospital.name}</b>과 추가 통화 중 — 대원이 [전송]을 누르면 인식·구조화해 환자 정보에 덧붙입니다.</span>
-                              </div>
-                            ) : (
-                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                <div style={softBox}>대원 휴대폰 전화 앱(이송 중 화면)에서 <b>[목적지 병원과 통화]</b>를 누르세요. 통화 음성이 2차 통화 요약이 됩니다.</div>
-                                <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: C.ink3 }}>
-                                  <Pulse color="#7ba0cc" />
-                                  {call?.followup && call.state === "ended"
-                                    ? call.cancelled ? "대원이 통화를 취소했습니다 — 전달된 내용 없음" : "통화 종료 — 환자 정보를 정리해 덧붙이는 중…"
-                                    : "휴대폰 추가 통화를 기다리는 중…"}
-                                </div>
-                              </div>
-                            )
-                          ) : (
-                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
-                                {transport.followups.map((f) => {
-                                  const sel = activeFollowup.key === f.key;
-                                  return (
-                                    <button
-                                      key={f.key}
-                                      type="button"
-                                      onClick={() => setFollowupKey(f.key)}
-                                      style={{
-                                        textAlign: "left", display: "flex", flexDirection: "column", gap: 4, padding: "9px 12px", borderRadius: 10, cursor: "pointer",
-                                        background: sel ? C.blueSoft : "#ffffff", border: sel ? `2px solid ${C.blue}` : `1px solid ${C.line}`,
-                                      }}
-                                    >
-                                      <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: C.ink }}>
-                                        {f.sev && <SevChip sev={f.sev} />}{f.label}
-                                      </span>
-                                      <span style={{ fontSize: 12, color: C.ink3 }}>{f.symText}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              <button
-                                type="button"
-                                disabled={sending}
-                                onClick={g(() => void handleFollowup(activeFollowup.key))}
-                                style={{ minHeight: 42, background: C.blue, border: "none", borderRadius: 10, color: "#ffffff", fontSize: 14, fontWeight: 700, cursor: sending ? "wait" : "pointer", opacity: sending ? 0.6 : 1 }}
-                              >
-                                {sending ? "전달 중…" : `${confirmedHospital.name}에 추가 통화 내용 전달 — ${activeFollowup.label}`}
-                              </button>
-                            </div>
-                          )}
-                          {sentList.length > 0 && (
-                            <div style={{ fontSize: 12, color: C.greenInk }}>
-                              전달한 추가 통화: {sentList.map((label, i) => `${i + 2}차 ${label}`).join(" · ")}
-                            </div>
-                          )}
-                        </div>
+                        <ScriptBox title="④ 이송 중 · 구급대원 — 상황 하나를 골라 병원에 재통화합니다">
+                          <span style={{ fontSize: 15, color: C.ink2 }}>
+                            맨 앞에 <b>“{confirmedHospital?.name ?? "목적지 병원"} 응급실, 이송 중 상태 보고드립니다”</b>를 붙여 시작하세요.
+                            {transportBase.key !== transportBase.report && ` (대사집 ④는 '${templateOf(transportBase.report)?.label}' 기준입니다)`}
+                          </span>
+                          {(Object.keys(MONITOR_NUM) as MonitorKey[]).map((k, i) => (
+                            <ScriptLine
+                              key={k}
+                              who={`${"ABCDE"[i]}. ${script.transport[k].label}${script.transport[k].note ? ` (${script.transport[k].note})` : ""}`}
+                              text={script.transport[k].lines.join("\n")}
+                            />
+                          ))}
+                        </ScriptBox>
                       );
                     })()}
                   </ScreenCard>
@@ -2467,6 +2541,26 @@ function RejectReasonModal({ title, note, onPick, onClose }: {
 
 // ── 공용 조각 ──
 const panel: CSSProperties = { background: "#ffffff", border: `1px solid ${C.line}`, borderRadius: 14, boxSizing: "border-box" };
+
+// 시연 대본 칸(2026-10-06) — 진행자·신고자·구급대원이 읽을 대사. 접어 둘 수 있다(기본 펼침). 서서 읽도록 본문 18px
+function ScriptBox({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details open style={{ background: "#fffdf4", border: "1px solid #eadfb8", borderRadius: 12, padding: "10px 14px" }}>
+      <summary style={{ cursor: "pointer", fontSize: 15, fontWeight: 700, color: C.amberInk }}>대본 · {title}</summary>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>{children}</div>
+    </details>
+  );
+}
+
+function ScriptLine({ who, text }: { who: string; text: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 14, fontWeight: 700, color: C.ink3 }}>{who}</span>
+      <span style={{ fontSize: 18, lineHeight: 1.6, color: C.ink, whiteSpace: "pre-line" }}>{text}</span>
+    </div>
+  );
+}
+
 const softBox: CSSProperties = { background: "#f8fafc", borderRadius: 12, padding: "12px 14px", fontSize: 14 };
 const headerButton: CSSProperties = {
   minHeight: 30, padding: "0 10px", background: "#ffffff", border: `1px solid ${C.control}`, borderRadius: 8,
@@ -2619,14 +2713,13 @@ function ProgressTrack({ p, start, end, endIcon }: { p: number; start: string; e
   );
 }
 
-// ③ 병원 한 줄 — 상태 칩 + 승인/불가/이송 확정. 적합 여부 칸은 시안의 가상 '적합' 대신 실제 E-Gen 병상(미상 ≠ 만실)과
+// ③ 병원 한 줄 — 상태 칩 + 승인/불가(이송 확정은 구급차 대시보드에서 — 2026-10-06 콘솔 버튼 삭제). 적합 여부 칸은 시안의 가상 '적합' 대신 실제 E-Gen 병상(미상 ≠ 만실)과
 // 병원이 고른 거절 사유를 보인다.
-function HospitalRow({ hospital, info, onApprove, onReject, onConfirm }: {
+function HospitalRow({ hospital, info, onApprove, onReject }: {
   hospital: MonitorCaseHospital;
   info: MapHospital | undefined;
   onApprove: () => void;
   onReject: () => void;
-  onConfirm: () => void;
 }) {
   const status = hospital.status;
   const chip = STATUS_CHIP[status];
@@ -2672,14 +2765,6 @@ function HospitalRow({ hospital, info, onApprove, onReject, onConfirm }: {
         </button>
         <button type="button" disabled={lock} onClick={onReject} style={{ ...btnBase, border: `1px solid ${C.red}`, color: C.redInk }}>
           <Icon name="x" size={12} color={C.red} stroke={3.2} />불가
-        </button>
-        <button
-          type="button"
-          disabled={status !== "approved"}
-          onClick={onConfirm}
-          style={{ minHeight: 32, padding: "0 12px", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, color: "#ffffff", cursor: status === "approved" ? "pointer" : "not-allowed", background: status === "approved" ? C.blue : C.blueOff }}
-        >
-          이송 확정
         </button>
       </div>
     </div>

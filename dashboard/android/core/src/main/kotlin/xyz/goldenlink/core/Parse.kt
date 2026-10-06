@@ -43,7 +43,11 @@ internal class RxMatch(private val m: Matcher) {
 }
 
 private val rxCache = ConcurrentHashMap<String, Pattern>()
-private fun rx(pattern: String): Pattern = rxCache.getOrPut(pattern) { Pattern.compile(pattern, Pattern.UNICODE_CHARACTER_CLASS) }
+// 안드로이드(ICU 정규식)는 UNICODE_CHARACTER_CLASS를 받지 않고 IllegalArgumentException을 던진다(2026-10-06 실기기에서 구조화가
+// 전부 실패) — ICU는 플래그 없이도 \s·\d·\w가 유니코드 기준이라 그때만 플래그를 뺀다. PC(JVM) 테스트는 그대로 플래그를 쓴다.
+// ponytail: ICU \s는 \x0b·\x1c~\x1f를 공백으로 안 본다(Python은 본다) — STT 문장엔 안 나오는 제어 문자라 무시
+private val rxFlags: Int = runCatching { Pattern.compile("a", Pattern.UNICODE_CHARACTER_CLASS); Pattern.UNICODE_CHARACTER_CLASS }.getOrDefault(0)
+private fun rx(pattern: String): Pattern = rxCache.getOrPut(pattern) { Pattern.compile(pattern, rxFlags) }
 
 internal fun search(pattern: String, s: String): RxMatch? = rx(pattern).matcher(s).let { if (it.find()) RxMatch(it) else null }
 internal fun match(pattern: String, s: String): RxMatch? = rx(pattern).matcher(s).let { if (it.lookingAt()) RxMatch(it) else null }

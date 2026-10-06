@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ControlMapPanel } from "@/components/map/ControlMapPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
@@ -11,6 +11,8 @@ import {
   type AmbKey, type Incident, type St,
 } from "@/lib/control-map";
 import type { CaseHistoryItem } from "@/types/dashboard";
+import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
+import { useAutoDemo } from "@/lib/auto-demo";
 
 // 관제 지도(2026-10-03 신설, 2026-10-04 디자인 시안 "골든링크 관제"로 전면 개편). hub에 role=monitor로 붙어
 // 사건 요약·구급차 위치만 받는다 — 통화 전문 등 환자 상세는 받지 않는다(증상은 한 줄뿐). 보기 전용이라 승인 같은
@@ -49,13 +51,18 @@ export default function MonitorMapPage() {
     return () => clearInterval(timer);
   }, []);
 
-  const incidents = useMemo(
+  const realIncidents = useMemo(
     () => buildIncidents({
       monitorCases: state.monitorCases, caseMeta: state.caseMeta, preAlerts: state.preAlerts,
       ambulanceSim: state.ambulanceSim, overview,
     }),
     [state.monitorCases, state.caseMeta, state.preAlerts, state.ambulanceSim, overview],
   );
+  // 자동 시연(2026-10-06) — 콘솔로 실제 시연을 하지 않는 동안(실제 사건이 없을 때)만 이 화면 안에서 가짜 사건을 돌린다.
+  // hub·다른 대시보드·로그와 무관하고, 실제 사건이 생기면 가짜 사건은 바로 모두 사라진다(lib/auto-demo.ts).
+  const demo = useAutoDemo(realIncidents.length === 0, overview, state.ambulanceSim);
+  const incidents = useMemo(() => [...realIncidents, ...demo.incidents], [realIncidents, demo.incidents]);
+  const ambulanceSim = useMemo(() => ({ ...state.ambulanceSim, ...demo.sims }), [state.ambulanceSim, demo.sims]);
   const selected = incidents.find((i) => i.caseId === selId) ?? incidents[0] ?? null;
 
   const selectCase = useCallback((caseId: string) => {
@@ -63,6 +70,17 @@ export default function MonitorMapPage() {
     setTab("all");
     setSeenAt((prev) => ({ ...prev, [caseId]: Date.now() }));
   }, []);
+
+  // 콘솔로 새 실제 사건이 생기면 그 사건을 바로 고른다 — 지도도 그 사건 단계에 맞춰 자동으로 맞춰진다(ControlMapPanel)
+  const knownRealRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const ids = realIncidents.map((i) => i.caseId);
+    const known = knownRealRef.current;
+    knownRealRef.current = new Set(ids);
+    if (!known) return; // 처음 열 때 이미 있던 사건은 고르지 않는다
+    const fresh = ids.filter((id) => !known.has(id));
+    if (fresh.length) selectCase(fresh[fresh.length - 1]);
+  }, [realIncidents, selectCase]);
 
   // 선택한 사건은 보는 중이므로 새 응답을 바로 본 것으로 친다
   const selectedId = selected?.caseId;
@@ -77,13 +95,13 @@ export default function MonitorMapPage() {
   const center = selected?.center ?? null;
   const ambRows = useMemo(() => {
     return ambulances.map((a) => {
-      const sim = state.ambulanceSim[a.apid];
+      const sim = ambulanceSim[a.apid];
       const st = ambState(sim);
       const gps = sim?.gps ?? a.gps;
       const km = center ? haversineKm(center, gps) : null;
       return { apid: a.apid, name: a.name, key: st.key, text: st.text, km };
     });
-  }, [ambulances, state.ambulanceSim, center]);
+  }, [ambulances, ambulanceSim, center]);
   const ambCount: Record<AmbKey, number> = { s: 0, d: 0, t: 0, b: 0 };
   for (const r of ambRows) ambCount[r.key]++;
   const inAmbTab = useCallback(
@@ -129,6 +147,8 @@ export default function MonitorMapPage() {
 
   return (
     <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: C.bg, color: C.ink, whiteSpace: "nowrap" }}>
+      {/* 시연 영상 모드(2026-10-06) — 영상(소리 있음)이 끝나면 /verify/stage 한 바퀴, 다시 영상 */}
+      <DemoVideoOverlay src="/demo-videos/map.mp4" withStage />
       <div style={{ position: "absolute", inset: 0, boxSizing: "border-box", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {/* 헤더 + 범례 */}
         <header style={{ flex: "none", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -204,7 +224,7 @@ export default function MonitorMapPage() {
                           ...irowStyle,
                           // 선택 표시는 연한 테두리 1px + 옅은 배경(2026-10-04) — 진한 이중선(테두리+그림자)은 스크롤
                           // 영역 가장자리에서 잘려 두께가 들쭉날쭉해 보였다
-                          ...(on ? { borderColor: "#C9D4E6", background: "#F5F8FF" } : {}),
+                          ...(on ? { border: "1px solid #C9D4E6", background: "#F5F8FF" } : {}),
                         }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -354,7 +374,7 @@ export default function MonitorMapPage() {
             incidents={incidents}
             selected={selected}
             activeTab={activeTab}
-            ambulanceSim={state.ambulanceSim}
+            ambulanceSim={ambulanceSim}
             hoverHospital={hoverHospital}
             hoverAmb={hoverAmb}
             ambInTab={ambInTab}
@@ -474,7 +494,7 @@ function PastModal({ past, selId, onPick, onClose }: {
                     type="button"
                     aria-pressed={on}
                     onClick={() => onPick(p.caseId)}
-                    style={{ ...prowStyle, ...(on ? { background: "#F5F8FF", borderColor: "#C9D4E6" } : {}) }}
+                    style={{ ...prowStyle, ...(on ? { background: "#F5F8FF", border: "1px solid #C9D4E6" } : {}) }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                       {sev && <SevChip sev={sev} />}
