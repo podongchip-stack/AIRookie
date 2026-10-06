@@ -160,12 +160,18 @@
   #s6 .note { left: 120px; top: 880px; font-size: 44px; font-weight: 900; color: var(--mf); opacity: 0; }
 
   /* 8 · 정리 */
-  #s8 .cards { left: 120px; right: 120px; top: 330px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 34px; }
-  #s8 .card { border-radius: 28px; padding: 40px 38px; background: rgba(255,255,255,.06); border: 2px solid var(--line); opacity: 0; }
-  #s8 .card b { display: block; font-size: 104px; font-weight: 900; letter-spacing: -0.045em; line-height: 1; color: var(--mf); }
-  #s8 .card .k { display: block; font-size: 34px; font-weight: 800; margin-top: 26px; }
-  #s8 .card .d { display: block; font-size: 23px; font-weight: 600; color: var(--dim); margin-top: 12px; line-height: 1.45; }
-  #s8 .end { left: 0; right: 0; top: 790px; text-align: center; font-size: 30px; font-weight: 700; opacity: 0; }
+  #s8 .hl { left: 120px; top: 150px; font-size: 60px; font-weight: 900; letter-spacing: -0.03em; opacity: 0; }
+  #s8 .hl em { font-style: normal; color: var(--mf); }
+  #s8 .tb { left: 120px; right: 120px; top: 300px; display: grid; grid-template-columns: 330px repeat(3, 1fr); }
+  #s8 .tb > div { height: 118px; display: flex; flex-direction: column; justify-content: center; padding: 0 30px; border-top: 1px solid var(--line); opacity: 0; }
+  #s8 .tb > .h { height: 92px; border-top: none; font-size: 30px; font-weight: 800; }
+  #s8 .tb > .h small { font-size: 20px; font-weight: 600; color: var(--dim); margin-top: 2px; }
+  #s8 .tb > .k { font-size: 30px; font-weight: 800; padding-left: 0; }
+  #s8 .tb > .v { font-size: 40px; font-weight: 800; color: rgba(255,255,255,.7); }
+  #s8 .tb > .v.mf { font-size: 48px; font-weight: 900; color: var(--mf); }
+  #s8 .tb > .v.mf span { display: inline-block; align-self: flex-start; margin-top: 6px; font-size: 20px; font-weight: 800; color: #0B0B0B; background: var(--ok); border-radius: 999px; padding: 3px 14px; opacity: 0; }
+  #s8 .col { left: 0; top: 284px; width: 0; height: 590px; border: 3px solid var(--mf); border-radius: 22px; opacity: 0; }
+  #s8 .end { left: 0; right: 0; top: 920px; text-align: center; font-size: 28px; font-weight: 700; color: var(--dim); opacity: 0; }
 </style>
 </head>
 <body>
@@ -308,10 +314,14 @@
 
 <!-- 8 · 정리 -->
 <section class="scene" id="s8">
-  <div class="abs cards">
-    <div class="card"><b>≈</b><span class="k">정답률</span><span class="d">학습한 소형 LLM과 100건으로는 차이가 구분되지 않습니다 (77.3점 대 79.9~81.5점)</span></div>
-    <div class="card"><b>370×</b><span class="k">걸린 시간</span><span class="d">소형 LLM(1.5B)보다 약 370배 빠릅니다. 1건에 0.015초, 크기는 약 4분의 1입니다</span></div>
-    <div class="card"><b>+17.5</b><span class="k">학습 없는 큰 LLM 대비</span><span class="d">확실히 정확하고, 크기는 약 40분의 1입니다</span></div>
+  <div class="abs hl">학습한 소형 LLM만큼 맞히고, <em>훨씬 빠르고 가볍습니다</em></div>
+  <div class="abs col"></div>
+  <div class="abs tb">
+    <div class="h"></div><div class="h" style="color:var(--mf)">MF_BERT<small>우리 모델</small></div><div class="h">소형 LLM + 학습<small>Qwen 1.5B · 1.7B</small></div><div class="h">큰 LLM, 학습 없음<small>Qwen3-14B · gpt-oss-20B</small></div>
+    <div class="k">정답률<small style="font-size:20px;font-weight:600;color:var(--dim)">종합 점수</small></div><div class="v mf num">77.3점<span>큰 LLM보다 높음</span></div><div class="v num">79.9~81.5점</div><div class="v num">46.1~60.3점</div>
+    <div class="k">걸린 시간<small style="font-size:20px;font-weight:600;color:var(--dim)">1건 처리</small></div><div class="v mf num">0.015초<span>가장 빠름</span></div><div class="v num">5.5~6.9초</div><div class="v num">8.1~35.6초</div>
+    <div class="k">모델 크기<small style="font-size:20px;font-weight:600;color:var(--dim)">파라미터 수</small></div><div class="v mf num">0.37B<span>가장 작음</span></div><div class="v num">1.56~1.74B</div><div class="v num">14.8~20.9B</div>
+    <div class="k">GPU 메모리<small style="font-size:20px;font-weight:600;color:var(--dim)">RTX 5080 기준</small></div><div class="v mf num">3.3GB<span>가장 적음</span></div><div class="v num">6.3~6.8GB</div><div class="v num">12.0~13.1GB</div>
   </div>
   <div class="abs end">MF_BERT · KLUE RoBERTa-large 다중과제 모델 · 생성형이 아니라 없는 말을 지어내지 않습니다</div>
 </section>
@@ -338,8 +348,8 @@
   const COL = { mf: "var(--mf)", lora: "var(--lora)", llm: "var(--llm)", base: "var(--base)" };
 
   // ── 장면 시간표(초): [시작, 길이] ──
-  const SCENES = [["s0", 0, 6.5], ["sj", 6.5, 11], ["sx", 17.5, 6], ["s5", 23.5, 13], ["s4", 36.5, 15], ["s6", 51.5, 12], ["s8", 63.5, 12]];
-  const DURATION = 75.5;
+  const SCENES = [["s0", 0, 6.5], ["sj", 6.5, 11], ["sx", 17.5, 6], ["s5", 23.5, 13], ["s4", 36.5, 15], ["s6", 51.5, 15], ["s8", 66.5, 12]];
+  const DURATION = 78.5;
   window.DURATION = DURATION;
   const FADE = 0.35; // 장면 사이: 검정으로 내려갔다 올라온다(겹치지 않게)
 
@@ -361,17 +371,25 @@
   const bars = $("#bars");
   MODELS.forEach((m) => bars.insertAdjacentHTML("beforeend",
     `<div class="row"><div class="nm" style="color:${m.c === "mf" ? "var(--mf)" : "#fff"}">${m.name}<small>${m.sub}</small></div><div class="tr"><b style="background:${COL[m.c]}"></b><span class="num">${m.score.toFixed(1)}</span></div></div>`));
-  // 크기: 원의 넓이 = 파라미터 수. 바닥선을 맞추고 큰 것부터 왼쪽에 놓는다
-  const R = (p) => Math.sqrt(p) * 30, BASE = 400;
-  const TOTAL = SIZES.reduce((a, m) => a + 2 * R(m.params), 0), GAP = (1060 - TOTAL) / (SIZES.length - 1);
-  let cx = 0, svg = "";
+  // 크기: 원의 넓이 = 파라미터 수. 1) 큰 모델부터 한 개씩 가운데에 크게 보여 주고(앞 모델은 점선 윤곽으로 남김, 행성 크기 비교처럼)
+  // 2) 모두 한 줄로 내려놓은 뒤 3) MF_BERT만 강조한다
+  const RF = (p) => Math.sqrt(p) * 48, RR = (p) => Math.sqrt(p) * 30, BASEF = 470, BASE = 400, FCX = 530;
+  const TOTAL = SIZES.reduce((a, m) => a + 2 * RR(m.params), 0), GAP = (1060 - TOTAL) / (SIZES.length - 1);
+  let rx = 0, svg = "";
+  const splitName = (n) => (n.includes(" + ") ? n.split(" + ") : [n, ""]);
+  const T = (c, x, y, sz, fill, cls) => `<text class="${cls}" x="${x}" y="${y}" text-anchor="middle" fill="${fill}" font-size="${sz}" font-weight="${sz > 30 ? 900 : 700}" opacity="0">`;
   SIZES.forEach((m, i) => {
-    const r = R(m.params); cx += r; const last = i === SIZES.length - 1;
-    svg += `<g class="cg" data-r="${r}"><circle class="ring" cx="${cx}" cy="${BASE - r}" r="0" fill="none" stroke="var(--mf)" stroke-width="3"/><circle class="dsk" cx="${cx}" cy="${BASE - r}" r="0" fill="${COL[m.c]}" fill-opacity="${last ? 1 : 0.85}"/>` +
-           `<text x="${cx}" y="${BASE + 50}" text-anchor="middle" fill="#fff" font-size="38" font-weight="900">${m.params}B</text>` +
-           `<text x="${cx}" y="${BASE + 82}" text-anchor="middle" fill="rgba(255,255,255,.62)" font-size="19" font-weight="700">${m.name.replace(" + ", "\u0000").split("\u0000")[0]}</text>` +
-           `<text x="${cx}" y="${BASE + 106}" text-anchor="middle" fill="rgba(255,255,255,.62)" font-size="19" font-weight="700">${m.name.includes(" + ") ? "+ LoRA" : ""}</text></g>`;
-    cx += r + GAP;
+    const rr = RR(m.params); rx += rr; const last = i === SIZES.length - 1, [n1, n2] = splitName(m.name);
+    svg += `<g class="cg" data-i="${i}" data-rf="${RF(m.params)}" data-rr="${rr}" data-rx="${rx}">` +
+      `<circle class="ring" cx="${rx}" cy="${BASE - rr}" r="0" fill="none" stroke="var(--mf)" stroke-width="3"/>` +
+      `<circle class="gh" cx="${FCX}" cy="${BASEF - RF(m.params)}" r="${RF(m.params)}" fill="none" stroke="rgba(255,255,255,.4)" stroke-width="2" stroke-dasharray="8 8" opacity="0"/>` +
+      `<circle class="dsk" cx="${FCX}" cy="${BASEF}" r="0" fill="${COL[m.c]}" fill-opacity="${last ? 1 : 0.88}"/>` +
+      `${T(0, FCX, BASEF + 58, 52, "#fff", "fl")}${m.params}B</text>` +
+      `${T(0, FCX, BASEF + 92, 26, "rgba(255,255,255,.7)", "fl")}${m.name}</text>` +
+      `${T(0, rx, BASE + 50, 38, "#fff", "rl")}${m.params}B</text>` +
+      `${T(0, rx, BASE + 82, 19, "rgba(255,255,255,.62)", "rl")}${n1}</text>` +
+      `${T(0, rx, BASE + 106, 19, "rgba(255,255,255,.62)", "rl")}${n2 ? "+ " + n2 : ""}</text></g>`;
+    rx += rr + GAP;
   });
   $("#circ").innerHTML = svg;
   SIZES.forEach((m) => $("#meters").insertAdjacentHTML("beforeend",
@@ -502,25 +520,41 @@
     },
     s6(u) {
       show($("#s6 .head"), seg(u, 0, 0.5));
-      const T = (i) => 0.6 + i * 1.1, SPOT = 7.2, sp = seg(u, SPOT, 0.6), N = SIZES.length;
+      const N = SIZES.length, Tf = (i) => 0.5 + i * 1.6, P2 = Tf(N - 1) + 1.9, D2 = 1.2, SPOT = P2 + D2 + 0.4;
+      const p2 = seg(u, P2, D2), sp = seg(u, SPOT, 0.6), baseT = BASEF + (BASE - BASEF) * p2;
       $$("#circ .cg").forEach((g, i) => {
-        const p = pop(u, T(i), 0.8), r = +g.dataset.r, last = i === N - 1;
-        $(".dsk", g).setAttribute("r", (r * clamp(p, 0, 1.12)).toFixed(2));
-        $$("text", g).forEach((t) => (t.style.opacity = seg(u, T(i) + 0.3, 0.4)));
+        const rf = +g.dataset.rf, rr = +g.dataset.rr, rx = +g.dataset.rx, last = i === N - 1;
+        const t0 = Tf(i), t1 = last ? P2 : Tf(i + 1), prf = i ? +$$("#circ .cg")[i - 1].dataset.rf : 0;
+        let rad = 0, vis = 0, gh = 0;
+        if (u >= t0) { rad = i === 0 ? rf * clamp(pop(u, t0, 0.8), 0, 1.12) : prf + (rf - prf) * seg(u, t0, 0.7); vis = 1; }
+        if (u >= t1 && u < P2 && !last) { vis = 0; gh = 0.45; }
+        if (u >= P2) { rad = rf + (rr - rf) * p2; vis = last ? 1 : p2; gh = last ? 0 : 0.45 * (1 - p2); }
+        const dsk = $(".dsk", g); dsk.setAttribute("r", rad.toFixed(2)); dsk.setAttribute("cx", (FCX + (rx - FCX) * p2).toFixed(2)); dsk.setAttribute("cy", (baseT - rad).toFixed(2)); dsk.style.opacity = vis;
+        $(".gh", g).style.opacity = gh;
+        const fl = $$(".fl", g), flOp = last ? seg(u, t0 + 0.3, 0.4) * (1 - seg(u, P2 - 0.2, 0.4)) : seg(u, t0 + 0.3, 0.4) * (1 - seg(u, t1, 0.3));
+        fl.forEach((t) => (t.style.opacity = flOp.toFixed(3)));
+        $$(".rl", g).forEach((t) => (t.style.opacity = seg(u, P2 + 0.6, 0.5).toFixed(3)));
         g.style.opacity = last ? 1 : (1 - 0.72 * sp).toFixed(3);
-        if (last) $(".ring", g).setAttribute("r", (sp > 0 ? (r + 12 + 8 * Math.sin(u * 5)) * sp : 0).toFixed(2));
+        if (last) $(".ring", g).setAttribute("r", (sp > 0 ? (rr + 12 + 8 * Math.sin(u * 5)) * sp : 0).toFixed(2));
       });
       show($("#s6 .meters .lab"), seg(u, 0.3, 0.4));
       $$("#s6 .m").forEach((m, i) => {
-        show(m, seg(u, T(i) + 0.1, 0.4), 10);
-        const b = $(".bar b", m); b.style.width = `${(+b.dataset.gb / 16) * 100 * seg(u, T(i) + 0.2, 0.9)}%`;
-        if (i < N - 1) m.style.opacity = (clamp(seg(u, T(i) + 0.1, 0.4)) * (1 - 0.7 * sp)).toFixed(3);
+        show(m, seg(u, Tf(i) + 0.1, 0.4), 10);
+        const b = $(".bar b", m); b.style.width = `${(+b.dataset.gb / 16) * 100 * seg(u, Tf(i) + 0.2, 0.9)}%`;
+        if (i < N - 1) m.style.opacity = (clamp(seg(u, Tf(i) + 0.1, 0.4)) * (1 - 0.7 * sp)).toFixed(3);
       });
       const cp = seg(u, SPOT + 0.4, 0.5), cap = $("#s6 .note"); cap.style.opacity = cp; cap.style.transform = `translateY(${((1 - cp) * 14).toFixed(1)}px)`;
     },
     s8(u) {
-          $$("#s8 .card").forEach((c, i) => { const p = pop(u, 0.9 + i * 0.5, 0.7); c.style.opacity = clamp(p); c.style.transform = `translateY(${((1 - clamp(p, 0, 1.1)) * 40).toFixed(1)}px)`; });
-      show($("#s8 .end"), seg(u, 3.4, 0.6));
+      show($("#s8 .hl"), seg(u, 0.2, 0.5));
+      const cells = $$("#s8 .tb > div");
+      cells.slice(0, 4).forEach((c, i) => show(c, seg(u, 0.8 + i * 0.15, 0.4), 10));
+      for (let r = 0; r < 4; r++) cells.slice(4 + r * 4, 8 + r * 4).forEach((c) => show(c, seg(u, 1.6 + r * 0.45, 0.4), 12));
+      // MF_BERT 칸을 노란 테두리로 묶고, 칸마다 판정 꼬리표를 붙인다
+      const h = cells[1], tb = $("#s8 .tb"), col = $("#s8 .col");
+      col.style.left = `${tb.offsetLeft + h.offsetLeft - 6}px`; col.style.width = `${h.offsetWidth + 12}px`; col.style.opacity = seg(u, 3.8, 0.5);
+      $$("#s8 .v.mf span").forEach((t, i) => { const p = pop(u, 4.2 + i * 0.3, 0.5); t.style.opacity = clamp(p); t.style.transform = `scale(${(0.7 + 0.3 * p).toFixed(3)})`; });
+      show($("#s8 .end"), seg(u, 5.8, 0.6));
     },
   };
 
