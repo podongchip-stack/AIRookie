@@ -160,8 +160,7 @@
   #s6 .note { left: 120px; top: 880px; font-size: 44px; font-weight: 900; color: var(--mf); opacity: 0; }
 
   /* 8 · 정리 */
-  #s8 .hl { left: 120px; top: 150px; font-size: 60px; font-weight: 900; letter-spacing: -0.03em; opacity: 0; }
-  #s8 .hl em { font-style: normal; color: var(--mf); }
+  #s8 .hl { left: 120px; top: 150px; font-size: 64px; font-weight: 900; letter-spacing: -0.03em; color: var(--mf); opacity: 0; }
   #s8 .tb { left: 120px; right: 120px; top: 300px; display: grid; grid-template-columns: 330px repeat(3, 1fr); }
   #s8 .tb > div { height: 118px; display: flex; flex-direction: column; justify-content: center; padding: 0 30px; border-top: 1px solid var(--line); opacity: 0; }
   #s8 .tb > .h { height: 92px; border-top: none; font-size: 30px; font-weight: 800; }
@@ -170,13 +169,13 @@
   #s8 .tb > .v { font-size: 40px; font-weight: 800; color: rgba(255,255,255,.7); }
   #s8 .tb > .v.mf { font-size: 48px; font-weight: 900; color: var(--mf); }
   #s8 .tb > .v.mf span { display: inline-block; align-self: flex-start; margin-top: 6px; font-size: 20px; font-weight: 800; color: #0B0B0B; background: var(--ok); border-radius: 999px; padding: 3px 14px; opacity: 0; }
-  #s8 .col { left: 0; top: 284px; width: 0; height: 590px; border: 3px solid var(--mf); border-radius: 22px; opacity: 0; }
-  #s8 .end { left: 0; right: 0; top: 920px; text-align: center; font-size: 28px; font-weight: 700; color: var(--dim); opacity: 0; }
+  #s8 .col { left: 0; top: 284px; width: 0; height: 472px; border: 3px solid var(--mf); border-radius: 22px; opacity: 0; }
+  #s8 .end { left: 0; right: 0; top: 820px; text-align: center; font-size: 28px; font-weight: 700; color: var(--dim); opacity: 0; }
 </style>
 </head>
 <body>
 <div id="top"><div class="brand">GOLDENLINK · 모델 성능 비교</div><div class="steps"></div></div>
-<div id="foot">2026-10-03 측정 · 시험지는 Claude Opus 5.5로 만든 합성 통화 100건(학습에 쓰지 않음) · 정답도 AI가 만들었고 사람 검수 전 · 같은 PC(RTX 5080 16GB), 같은 채점 코드</div>
+<div id="foot">2026-10-03 측정 · 시험지는 Claude Opus 5.5로 만든 합성 통화 100건(학습에 쓰지 않음) · 같은 PC(RTX 5080 16GB), 같은 채점 코드</div>
 
 <!-- 0 · 오프닝 -->
 <section class="scene" id="s0">
@@ -314,14 +313,13 @@
 
 <!-- 8 · 정리 -->
 <section class="scene" id="s8">
-  <div class="abs hl">학습한 소형 LLM만큼 맞히고, <em>훨씬 빠르고 가볍습니다</em></div>
+  <div class="abs hl">훨씬 작고, 훨씬 빠릅니다</div>
   <div class="abs col"></div>
   <div class="abs tb">
     <div class="h"></div><div class="h" style="color:var(--mf)">MF_BERT<small>우리 모델</small></div><div class="h">소형 LLM + 학습<small>Qwen 1.5B · 1.7B</small></div><div class="h">큰 LLM, 학습 없음<small>Qwen3-14B · gpt-oss-20B</small></div>
     <div class="k">정답률<small style="font-size:20px;font-weight:600;color:var(--dim)">종합 점수</small></div><div class="v mf num">77.3점<span>큰 LLM보다 높음</span></div><div class="v num">79.9~81.5점</div><div class="v num">46.1~60.3점</div>
     <div class="k">걸린 시간<small style="font-size:20px;font-weight:600;color:var(--dim)">1건 처리</small></div><div class="v mf num">0.015초<span>가장 빠름</span></div><div class="v num">5.5~6.9초</div><div class="v num">8.1~35.6초</div>
     <div class="k">모델 크기<small style="font-size:20px;font-weight:600;color:var(--dim)">파라미터 수</small></div><div class="v mf num">0.37B<span>가장 작음</span></div><div class="v num">1.56~1.74B</div><div class="v num">14.8~20.9B</div>
-    <div class="k">GPU 메모리<small style="font-size:20px;font-weight:600;color:var(--dim)">RTX 5080 기준</small></div><div class="v mf num">3.3GB<span>가장 적음</span></div><div class="v num">6.3~6.8GB</div><div class="v num">12.0~13.1GB</div>
   </div>
   <div class="abs end">MF_BERT · KLUE RoBERTa-large 다중과제 모델 · 생성형이 아니라 없는 말을 지어내지 않습니다</div>
 </section>
@@ -549,7 +547,7 @@
       show($("#s8 .hl"), seg(u, 0.2, 0.5));
       const cells = $$("#s8 .tb > div");
       cells.slice(0, 4).forEach((c, i) => show(c, seg(u, 0.8 + i * 0.15, 0.4), 10));
-      for (let r = 0; r < 4; r++) cells.slice(4 + r * 4, 8 + r * 4).forEach((c) => show(c, seg(u, 1.6 + r * 0.45, 0.4), 12));
+      for (let r = 0; r < 3; r++) cells.slice(4 + r * 4, 8 + r * 4).forEach((c) => show(c, seg(u, 1.6 + r * 0.45, 0.4), 12));
       // MF_BERT 칸을 노란 테두리로 묶고, 칸마다 판정 꼬리표를 붙인다
       const h = cells[1], tb = $("#s8 .tb"), col = $("#s8 .col");
       col.style.left = `${tb.offsetLeft + h.offsetLeft - 6}px`; col.style.width = `${h.offsetWidth + 12}px`; col.style.opacity = seg(u, 3.8, 0.5);
