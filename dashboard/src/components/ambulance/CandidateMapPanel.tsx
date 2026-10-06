@@ -5,6 +5,7 @@ import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { AD, cardStyle } from "@/components/ambulance/ambulance-design";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { createColoredMarkerImage, createLabelOverlay } from "@/lib/kakao-map-markers";
+import { centerInView, fitAroundInView } from "@/lib/map-view";
 import { fetchRoadPath } from "@/lib/route";
 import type { AmbulanceSimState, DispatchTarget, HospitalCandidate, HubMatchResult, SceneCandidates } from "@/types/dashboard";
 
@@ -248,7 +249,8 @@ export function CandidateMapPanel({
       simPinsRef.current.push({ marker, label });
     };
     pin(sim.base, "기지", "#66778A");
-    if (sim.incident && (sim.phase === "dispatching" || sim.phase === "on_scene")) pin(sim.incident, "환자 발생 위치", "#E5484D");
+    const incidentShown = !!sim.incident && (sim.phase === "dispatching" || sim.phase === "on_scene");
+    if (incidentShown && sim.incident) pin(sim.incident, "환자 발생 위치", "#E5484D");
     if (sim.path && SIM_MOVING_PHASES.has(sim.phase)) {
       const path = sim.path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng));
       path.forEach((p) => bounds.extend(p));
@@ -261,7 +263,15 @@ export function CandidateMapPanel({
       });
       simPathRef.current.setMap(map);
     }
-    if (hospitals.length === 0 || SIM_MOVING_PHASES.has(sim.phase)) map.setBounds(bounds);
+    if (hospitals.length === 0 || SIM_MOVING_PHASES.has(sim.phase)) {
+      // 사고 발생(출동·현장 도착): 환자 발생 위치를 범례·버튼·하단 칩을 뺀 보이는 영역의 한가운데에 두고 기지·경로도 보이게
+      if (incidentShown && sim.incident && containerRef.current) {
+        const others = [sim.base, ...(sim.path && SIM_MOVING_PHASES.has(sim.phase) ? sim.path.map(([lat, lng]) => ({ lat, lng })) : [])];
+        fitAroundInView(map, containerRef.current, sim.incident, others);
+      } else {
+        map.setBounds(bounds);
+      }
+    }
     // 상태·사건·확정 병원·경로가 바뀔 때만 다시 그린다(1초 위치 갱신엔 반응하지 않음).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, sim?.phase, sim?.caseId, sim?.hospitalId, sim?.path?.length]);
@@ -281,7 +291,7 @@ export function CandidateMapPanel({
       label: createLabelOverlay(pos, target.mode === "map" ? "출동 위치(지도)" : `출동 위치 · ${target.label}`),
     };
     targetPinRef.current.label.setMap(map);
-    map.setCenter(pos);
+    if (containerRef.current) centerInView(map, containerRef.current, target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, target?.lat, target?.lng, target?.label]);
 
