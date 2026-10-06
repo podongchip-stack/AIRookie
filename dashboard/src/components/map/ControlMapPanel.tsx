@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { css } from "styled-system/css";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { escapeHtml } from "@/lib/kakao-map-markers";
-import { centerInView } from "@/lib/map-view";
+import { centerInView, focusInView, inView } from "@/lib/map-view";
 import {
   C, LEVEL_DEFAULT, LEVEL_DOT, ST_DOT, ST_LABEL, ST_PILL, ambState, shortAmb, shortHospital, zoneText, type Incident, type St,
 } from "@/lib/control-map";
@@ -163,14 +163,75 @@ export function ControlMapPanel({
     }
   }, [overview, selected, activeTab, hoverHospital]);
 
-  // ── 선택한 사건으로 지도 이동 — 하단 구급차 패널 등이 덮은 부분을 빼고 보이는 영역의 한가운데로 ──
+  // ── 선택한 사건 자동 포커스(2026-10-06) — 하단 구급차 패널 등이 덮은 부분을 빼고 보이는 영역에 맞춘다 ──
+  // 실제 사건(콘솔 시연)은 단계가 바뀔 때마다 맞춘다: 출동(구급차~현장) → 현장(현장 확대) → 병원 요청(요청 병원이 다
+  // 보이게) → 이송(구급차~확정 병원) → 병원 도착(병원 확대). 움직이는 동안 구급차가 화면 밖으로 나가려 하면 다시 맞춘다.
+  // 사람이 지도를 끌거나 휠로 확대하면 다음 단계가 바뀔 때까지 따라가지 않는다. 자동 시연(가짜) 사건은 고를 때 한 번만 옮긴다.
+  const followRef = useRef(true);
+  const lastCaseRef = useRef("");
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const stop = () => { followRef.current = false; };
+    el.addEventListener("pointerdown", stop);
+    el.addEventListener("wheel", stop, { passive: true });
+    return () => {
+      el.removeEventListener("pointerdown", stop);
+      el.removeEventListener("wheel", stop);
+    };
+  }, []);
+
+  const selSim = selected?.apid ? ambulanceSim[selected.apid] : undefined;
+  const confirmedId = selected?.hospitals.find((h) => h.st === "t")?.hospitalId ?? null;
+  const focusKey = selected
+    ? `${selected.caseId}|${selSim?.phase ?? ""}|${selected.matched}|${confirmedId ?? ""}|${selected.zone}`
+    : "";
+
+  function focusTarget(): { center: { lat: number; lng: number }; others: { lat: number; lng: number }[] } | null {
+    if (!selected?.center) return null;
+    const scene = selected.center;
+    const amb = selSim?.gps ?? null;
+    const gpsOf = (id: string) => overview?.hospitals.find((h) => h.hospitalId === id)?.gps ?? null;
+    const phase = selSim?.phase;
+    const dest = confirmedId ? gpsOf(confirmedId) : null;
+    if (phase === "at_hospital" && dest) return { center: dest, others: [] };
+    if (phase === "transporting" && dest && amb) {
+      return { center: { lat: (amb.lat + dest.lat) / 2, lng: (amb.lng + dest.lng) / 2 }, others: [amb, dest] };
+    }
+    if (phase === "dispatching" && amb) return { center: scene, others: [amb] };
+    if (selected.matched && !dest) {
+      const requested = selected.hospitals.map((h) => gpsOf(h.hospitalId)).filter((g): g is { lat: number; lng: number } => g != null);
+      return { center: scene, others: requested };
+    }
+    return { center: scene, others: [] };
+  }
+
   useEffect(() => {
     const map = ensureMap();
-    if (!map || !selected?.center || !containerRef.current) return;
-    centerInView(map, containerRef.current, selected.center);
-    // 사건을 바꿀 때만 — 같은 사건을 보는 동안 지도 조작을 방해하지 않게
+    const el = containerRef.current;
+    if (!map || !el || !selected) return;
+    const caseChanged = lastCaseRef.current !== selected.caseId;
+    lastCaseRef.current = selected.caseId;
+    if (selected.fake) {
+      if (caseChanged && selected.center) centerInView(map, el, selected.center);
+      return;
+    }
+    followRef.current = true;
+    const target = focusTarget();
+    if (target) focusInView(map, el, target.center, target.others);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, selected?.caseId]);
+  }, [ready, focusKey]);
+
+  // 움직이는 동안 구급차가 보이는 영역 밖으로 나가려 하면 다시 맞춘다(사람이 지도를 만졌으면 안 함)
+  useEffect(() => {
+    const map = mapRef.current;
+    const el = containerRef.current;
+    if (!map || !el || !selected || selected.fake || !followRef.current) return;
+    if (!selSim?.gps || !MOVING.has(selSim.phase) || inView(map, el, selSim.gps)) return;
+    const target = focusTarget();
+    if (target) focusInView(map, el, target.center, target.others);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selSim?.gps?.lat, selSim?.gps?.lng]);
 
   // ── 구급차 사각형·번호·이름표·이동 경로 ──
   useEffect(() => {

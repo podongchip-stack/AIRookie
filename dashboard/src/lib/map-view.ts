@@ -60,3 +60,28 @@ export function fitAroundInView(
   const i = coveredInsets(mapEl);
   map.setBounds(bounds, i.top + margin, i.right + margin, i.bottom + margin, i.left + margin);
 }
+
+/** 단계에 맞춰 지도를 맞춘다(관제 지도 자동 포커스, 2026-10-06). others가 없으면 soloLevel로 확대해 center를 가운데에,
+ *  있으면 모두 보이게 맞추되 너무 가까이 붙은 점들 때문에 지나치게 확대되지 않게 minLevel에서 멈춘다. */
+export function focusInView(
+  map: kakao.maps.Map, mapEl: HTMLElement, center: LatLngLike, others: LatLngLike[], minLevel = 3, soloLevel = 5,
+): void {
+  if (others.length === 0) {
+    map.setLevel(soloLevel);
+    centerInView(map, mapEl, center);
+    return;
+  }
+  fitAroundInView(map, mapEl, center, others);
+  if (map.getLevel() < minLevel) {
+    map.setLevel(minLevel);
+    centerInView(map, mapEl, center);
+  }
+}
+
+/** point가 패널에 가리지 않은 보이는 영역 안(가장자리에서 margin px 안쪽)에 있는가 */
+export function inView(map: kakao.maps.Map, mapEl: HTMLElement, point: LatLngLike, margin = 40): boolean {
+  const i = coveredInsets(mapEl);
+  const p = map.getProjection().containerPointFromCoords(new window.kakao.maps.LatLng(point.lat, point.lng));
+  return p.x >= i.left + margin && p.x <= mapEl.clientWidth - i.right - margin &&
+    p.y >= i.top + margin && p.y <= mapEl.clientHeight - i.bottom - margin;
+}
