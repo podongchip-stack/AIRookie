@@ -481,6 +481,8 @@ export interface SceneInputModeMessage {
   caseId: string;
   apid: string | null;
   mode: SceneInputMode;
+  // 어느 단계의 방식인지(2026-10-06) — scene: ② 현장 확인, transport: ④ 이송 중(휴대폰 앱 [목적지 병원과 통화]). 없으면 scene
+  stage?: "scene" | "transport";
 }
 
 // 시연 영상 모드(2026-10-06) — hub가 연결된 모든 화면에 같은 값을 알린다. video면 화면마다 정해진 영상을 덮어 띄운다

@@ -751,17 +751,24 @@ def _send_map_overview() -> None:
 # 시연 콘솔 ② 현장 확인에서 고른 방식(caseId -> "voice" | "template"). "template"(정해진 상황 선택)이면 그 사건의 현장 통화를
 # 휴대폰 앱으로 시작할 수 없다 — 정해진 상황 카드와 실제 음성 요약이 같은 사건에 겹쳐 들어가지 않게. 그 구급차 화면(휴대폰
 # 앱 포함)에 알려 전화 버튼을 막고, hub도 통화 시작을 거부한다(구버전 앱 대비). 콘솔이 알리지 않은 사건은 예전처럼 통화 가능.
-# 매칭 결과가 나온 뒤의 추가 통화(이송 중 목적지 병원)는 이 값과 무관하다.
+# 이송 중(④)도 같은 방식이다(stage "transport") — "정해진 상황 선택"이면 휴대폰 앱의 [목적지 병원과 통화]가 막히고
+# hub도 이송 중 추가 통화를 거부한다. 두 단계의 방식은 따로 보관한다(② 방식이 ④ 통화를 막지 않게).
 SCENE_INPUT_MODES = ("voice", "template")
-_scene_input_mode: dict[str, str] = {}
+INPUT_MODE_STAGES = ("scene", "transport")
+_input_modes: dict[str, dict[str, str]] = {stage: {} for stage in INPUT_MODE_STAGES}  # stage -> caseId -> mode
+_scene_input_mode = _input_modes["scene"]
 
 
 def _send_scene_input_mode(case_id: str, apid: str | None, ws=None) -> None:
-    """그 구급차 소켓들에(ws를 주면 그 소켓 하나에) 사건의 현장 확인 방식을 알린다."""
-    mode = _scene_input_mode.get(case_id)
-    if mode is None:
-        return
-    payload = {"type": "scene_input_mode", "caseId": case_id, "apid": apid, "mode": mode}
+    """그 구급차 소켓들에(ws를 주면 그 소켓 하나에) 사건의 현장 확인·이송 중 통화 방식을 알린다."""
+    for stage in INPUT_MODE_STAGES:
+        mode = _input_modes[stage].get(case_id)
+        if mode is not None:
+            _send_input_mode(case_id, apid, stage, mode, ws)
+
+
+def _send_input_mode(case_id: str, apid: str | None, stage: str, mode: str, ws=None) -> None:
+    payload = {"type": "scene_input_mode", "caseId": case_id, "apid": apid, "mode": mode, "stage": stage}
     if ws is not None:
         _send_to_socket(ws, payload, "현장 확인 방식 따라잡기")
         return
@@ -776,12 +783,13 @@ def _send_scene_input_mode(case_id: str, apid: str | None, ws=None) -> None:
 
 
 def _handle_scene_input_mode(payload: dict) -> None:
-    case_id, mode = payload.get("caseId"), payload.get("mode")
-    if not case_id or mode not in SCENE_INPUT_MODES or _scene_input_mode.get(case_id) == mode:
+    case_id, mode, stage = payload.get("caseId"), payload.get("mode"), payload.get("stage") or "scene"
+    if not case_id or mode not in SCENE_INPUT_MODES or stage not in INPUT_MODE_STAGES \
+            or _input_modes[stage].get(case_id) == mode:
         return
-    _scene_input_mode[case_id] = mode
+    _input_modes[stage][case_id] = mode
     apid = engine.get_case_apid(case_id) or payload.get("apid")
-    _send_scene_input_mode(case_id, apid)
+    _send_input_mode(case_id, apid, stage, mode)
 
 
 # ── 시연 영상 모드(2026-10-06) ─────────────────────────────────────────────────
@@ -999,8 +1007,12 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
                                                              "reason": "paused"})
             _notify_refused(ws, signal.caseId, "paused")
             return
-        # 콘솔이 현장 확인을 "정해진 상황 선택"으로 두면 현장 통화는 받지 않는다(추가 통화는 매칭 뒤라 해당 없음)
-        if _scene_input_mode.get(signal.caseId) == "template" and engine.get_case_result(signal.caseId) is None:
+        # 콘솔이 "정해진 상황 선택"으로 두면 그 단계의 통화는 받지 않는다 — 현장 첫 통화(매칭 전)는 ② 방식,
+        # 이송 중 추가 통화는 ④ 방식(2026-10-06). 재선택 대기(rerouting)의 통화는 콘솔 ④와 무관해 막지 않는다.
+        in_transport = sim is not None and sim.phase_of(signal.apid) == "transporting"
+        blocked = (_input_modes["transport"].get(signal.caseId) == "template" if in_transport
+                   else _scene_input_mode.get(signal.caseId) == "template" and engine.get_case_result(signal.caseId) is None)
+        if blocked:
             print(f"  [통화] {signal.apid} 통화 시작 거부 — 콘솔이 정해진 상황 선택 중")
             decision_log.log_decision("call_start_refused", {"apid": signal.apid, "caseId": signal.caseId,
                                                              "reason": "template_mode"})
@@ -1347,6 +1359,14 @@ def _close_case(case_id: str, reason: str, include_confirmed: bool = False) -> b
     include_confirmed=True면 이송 확정 사건도 닫는다(시연 초기화)."""
     if not engine.close_case(case_id, include_confirmed=include_confirmed):
         return False
+    _forget_case(case_id, reason)
+    return True
+
+
+def _forget_case(case_id: str, reason: str) -> None:
+    """사건에 딸린 hub 쪽 기록(통화 상태·현장 후보·예비 고지 등)을 지우고 대시보드에 case_closed를 보낸다.
+    엔진에 없는 사건(출동만 했거나 통화가 취소돼 매칭 전인 사건)도 이걸로 닫는다 — 시연 초기화가 엔진 사건만
+    닫아 이런 기록이 남으면, 따라잡기로 새로 연 화면에까지 다시 보내져 초기화가 안 된 것처럼 보였다(2026-10-06)."""
     with _sockets_lock:
         _case_audience.pop(case_id, None)
         _case_call.pop(case_id, None)
@@ -1355,11 +1375,12 @@ def _close_case(case_id: str, reason: str, include_confirmed: bool = False) -> b
     with _triage_lock:
         _transport_triage.pop(case_id, None)
     _pre_alerts.pop(case_id, None)
+    for modes in _input_modes.values():
+        modes.pop(case_id, None)
     _record_case_closed(case_id, reason)
     decision_log.log_decision("case_closed", {"caseId": case_id, "reason": reason})
     _send_to_dashboard({"type": "case_closed", "caseId": case_id, "reason": reason})
     print(f"  [정리] caseId={case_id} 사건 종료({reason}) — 캐시에서 제거, 대시보드에 알림")
-    return True
 
 
 #: 출동 시뮬레이션에서 통화를 시작할 수 있는 단계 — 현장(첫 통화·추가 통화), 이송 중·재선택 대기(추가 통화, 2026-10-05)
@@ -1933,8 +1954,12 @@ def _handle_sim_command(payload: dict) -> None:
         for case_id in engine.list_open_case_ids():
             if _close_case(case_id, "sim_reset", include_confirmed=True):
                 closed.append(case_id)
-        for case_id in case_tracker.open_case_ids():  # 출동만 하고 엔진엔 없는 사건까지
-            _record_case_closed(case_id, "sim_reset")
+        # 엔진엔 없는 사건까지(출동만 했거나 매칭 전) — 남은 통화 상태·예비 고지·현장 후보도 지우고 화면에 알린다
+        with _sockets_lock:
+            leftover = set(_case_call) | set(_case_scene) | set(_case_audience) | set(_case_recommended)
+        leftover |= set(case_tracker.open_case_ids()) | set(_pre_alerts)
+        for case_id in leftover - set(closed):
+            _forget_case(case_id, "sim_reset")
         engine.clear_bed_overlay()
         decision_log.log_decision("sim_reset", {"closedCases": closed, "simulated": True})
         _send_map_overview()

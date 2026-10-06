@@ -42,7 +42,7 @@ import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 // - 운영자 전용·인증 없음(시연 범위). 가상 데이터에는 전부 가상 표시가 남는다.
 
 // 정해진 상황 카드(2026-10-06 시연 대사집 반영) — 환자·활력징후는 대사집 ② 현장 확인 대본과 같게 맞추고, transcript는 그 대본을
-// 압축한 것이다(버튼으로 부여할 때 병원에 가는 통화 문장). 위 4개(key = report)는
+// 압축한 것이다(버튼으로 부여할 때 병원에 가는 통화 문장). 대본 전문은 SCRIPTS(① ② ④ 화면의 대본 칸). 위 4개(key = report)는
 // 신고 접수 증상이자 "신고대로" 현장 상황이고, 나머지는 같은 신고로 출동했는데 현장 평가가 달랐던 경우다 — ② 현장 확인은
 // 그 신고(report)에 딸린 상황만 보여 준다. mechanism은 hub 질환군 키워드(disease_group.py)에 맞췄다.
 // KTAS·활력징후·의식·발생 시점까지 넣어 통화 요약·병원 카드의 환자 패널(PatientVitals)이 그려지게 한다.
@@ -312,6 +312,127 @@ const TRANSPORT: Record<string, Transport> = {
   },
 };
 
+// ── 시연 대사집(2026-10-06, 팀 Claude Docs "골든링크 시연 대사집" 4종) — ①·②·④ 화면의 대본 칸에 그대로 보인다.
+// 대사집 원본은 ④ 이송 중 대본이 문서끼리 뒤바뀌어 있어(흉통 문서에 복통의 ④가 있는 식) 내용에 맞게 제자리로 옮겼다.
+// "서울시청 앞"은 화면에서 고른 발생 지점으로, ④의 병원 이름은 이송 확정 병원으로 바꿔 보인다.
+// 버튼으로 부여하는 정해진 상황은 이 대본을 압축한 문장이다(PATIENT_TEMPLATES.transcript, TRANSPORT 신고대로 4종 followups).
+type TransportScript = { label: string; note?: string; lines: string[] };
+type Script = {
+  host: string[];
+  caller: string;
+  callerShort: string;
+  scene: Record<string, string>;
+  transport: Record<MonitorKey, TransportScript>;
+};
+const SCRIPT_SPOT = "서울시청 앞";
+
+const SCRIPTS: Record<string, Script> = {
+  cardiac: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 흉통 환자가 발생한 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞입니다. 50대, 60대쯤 되어 보이는 남자분이 갑자기 가슴을 움켜쥐고 주저앉았어요. 가슴이 너무 아프다고 하고 숨쉬기도 힘들어합니다. 식은땀도 흘리고 있어요. 빨리 와주세요.",
+    callerShort: "서울시청 앞입니다. 50~60대 남자분이 가슴이 아프다며 쓰러지듯 주저앉았어요. 숨도 못 쉬겠다고 합니다. 빨리 와주세요.",
+    scene: {
+      cardiac: "62세 남성입니다. 30분 전부터 가슴을 쥐어짜는 흉통이 있고 숨이 찹니다. 왼팔로 뻗치고 식은땀을 흘립니다. 혈압 100에 60, 맥박 110, 산소포화도 93퍼센트. 심근경색 의심입니다.",
+      cardiac_aortic: "58세 남성입니다. 갑자기 가슴이 찢어지는 듯한 통증이 시작됐고 등으로 뻗칩니다. 양팔 혈압을 재보니 오른팔 150에 90, 왼팔 110에 70으로 차이가 큽니다. 맥박 105, 의식은 명료합니다. 대동맥 박리 의심입니다.",
+      cardiac_wall: "45세 남성입니다. 가슴 왼쪽이 아픈데 손으로 누르면 더 아프고, 숨 쉴 때와 몸을 비틀 때 아픕니다. 어제 무거운 짐을 옮겼다고 합니다. 혈압 125에 80, 맥박 78, 산소포화도 98퍼센트이고 심전도 이상은 없습니다. 흉벽 통증 소견입니다.",
+    },
+    transport: {
+      stable: { label: "통증 조절, 활력 안정", lines: ["흉통은 처음보다 줄었습니다. 니트로글리세린 투여 후 통증 점수 3점입니다. 혈압 118에 74, 맥박 82, 산소포화도 98퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "심인성 쇼크 진행", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 86에 54로 떨어졌고 맥박 120입니다. 식은땀이 심하고 피부가 차갑습니다.",
+        "2차 다시 재측정했습니다. 혈압 80에 50, 맥박 126으로 계속 저혈압과 빈맥입니다. 심인성 쇼크가 진행 중입니다.",
+      ] },
+      mismatch: { label: "흉통 악화, 부정맥", note: "병원 변경 필요", lines: ["흉통이 다시 심해졌고 심전도에서 심한 부정맥이 보입니다. 맥박이 불규칙하고 빠릅니다. 심혈관 중재술이 가능한지 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "심정지 전조, 의식 저하", lines: ["환자 의식이 떨어졌습니다. 부르면 눈만 뜨고 말이 어눌합니다. 맥박이 약하고 불규칙하며 혈압 78에 48, 호흡 28회, 산소포화도 88퍼센트로 산소 투여 중입니다. 심정지 전조 소견입니다."] },
+      spike: { label: "측정값 일시적 튐 (전극 흔들림)", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 심전도 모니터에 심한 부정맥이 한 번 찍혔습니다. 전극이 흔들려서 그런 것 같습니다.",
+        "2차 전극을 다시 붙이고 측정했더니 맥박 84, 산소포화도 98퍼센트, 혈압 120에 76으로 정상입니다. 환자는 편안하고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  trauma: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 교통사고가 난 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞 도로입니다. 차 두 대가 크게 부딪혔어요. 30대, 40대쯤 되어 보이는 남자분이 도로에 쓰러져 있는데 가슴이랑 배를 부여잡고 있고 정신이 오락가락해요. 빨리 와주세요.",
+    callerShort: "서울시청 앞 도로에서 교통사고예요. 30~40대 남자분이 쓰러져 있고 가슴과 배가 아프다는데 정신이 흐릿해요. 빨리 와주세요.",
+    scene: {
+      trauma: "35세 남성입니다. 승용차와 충돌한 사고로 흉부와 복부를 세게 부딪혔고 의식이 혼미합니다. 부르면 눈은 뜨지만 대답이 느립니다. 혈압 90에 55, 맥박 125, 호흡 28회, 산소포화도 91퍼센트. 복부가 단단하고 누르면 심하게 아파합니다. 다발성 외상 의심입니다.",
+      trauma_head: "41세 남성입니다. 차량 충돌 때 머리를 부딪혔고 의식이 떨어졌습니다. 부르면 겨우 눈을 뜨고 구토를 두 번 했습니다. 뒤통수에 열상이 있고 출혈은 압박으로 조절됩니다. 혈압 150에 95, 맥박 58, 산소포화도 96퍼센트. 두부 손상 의심입니다.",
+      trauma_minor: "29세 남성입니다. 접촉 사고였고 안전벨트를 착용했습니다. 목과 어깨가 아프다고 하고 팔에 찰과상이 있습니다. 혼자 걸어서 구급차에 탔습니다. 혈압 120에 78, 맥박 82, 산소포화도 99퍼센트, 의식 명료합니다. 경상입니다.",
+    },
+    transport: {
+      stable: { label: "고정 후 활력 안정", lines: ["척추 고정과 부목 고정을 마쳤습니다. 혈압 122에 78, 맥박 90, 산소포화도 98퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "출혈성 쇼크 진행", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 88에 52로 떨어졌고 맥박 130입니다. 피부가 차갑고 창백합니다.",
+        "2차 다시 재측정했습니다. 혈압 82에 48, 맥박 138로 계속 저혈압과 빈맥입니다. 출혈성 쇼크가 진행 중입니다.",
+      ] },
+      mismatch: { label: "복강 내 출혈 악화", note: "병원 변경 필요", lines: ["배가 점점 부풀어 오르고 단단해졌고, 혈압도 계속 떨어지고 있습니다. 복강 내 출혈이 악화된 것으로 판단됩니다. 응급 수술과 수혈 준비가 가능한지 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "두부 손상 동반, 의식 저하", lines: ["머리를 부딪친 환자의 의식이 떨어졌습니다. 부르면 눈만 뜨고 말이 어눌하며 지남력이 없습니다. 한쪽 동공이 커져 있습니다. 호흡 26회, 산소포화도 90퍼센트로 산소 투여 중이고, 혈압 85에 50, 맥박 130입니다. 두부 손상 동반 의식 저하입니다."] },
+      spike: { label: "측정값 일시적 튐 (차량 진동)", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 170으로 한 번 찍혔습니다. 차량이 심하게 흔들려서 센서가 흔들린 것 같습니다.",
+        "2차 다시 측정했더니 맥박 88, 산소포화도 98퍼센트, 혈압 122에 78로 정상입니다. 환자는 안정적이고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  abdominal: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 복통 환자가 발생한 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞입니다. 40대, 50대쯤 되어 보이는 여자분이 배를 움켜쥐고 쪼그려 앉아 계세요. 배가 계속 아프다고 하고 구토도 했어요. 빨리 와주세요.",
+    callerShort: "서울시청 앞입니다. 40~50대 여자분이 배가 너무 아프다며 주저앉았어요. 구토도 했어요. 빨리 와주세요.",
+    scene: {
+      abdominal: "48세 여성입니다. 어제 저녁부터 배가 계속 아프고 구토를 두 번 했습니다. 배 오른쪽 아래를 누르면 심하게 아파하고, 손을 떼면 더 아파합니다. 혈압 125에 80, 맥박 98, 체온 37.8도, 산소포화도 98퍼센트, 의식 명료합니다. 복부 압통 소견입니다.",
+      abdominal_gi: "67세 여성입니다. 오늘 아침 피를 토했고 어제부터 까만 변을 봤습니다. 어지러워하고 얼굴이 창백합니다. 혈압 90에 55, 맥박 118, 산소포화도 96퍼센트입니다. 위장관 출혈 의심입니다.",
+      abdominal_mild: "31세 여성입니다. 어제 저녁 외식 후부터 복통과 설사를 했습니다. 배 전체가 가볍게 아프고, 누르면 약간 불편한 정도입니다. 혈압 118에 74, 맥박 84, 체온 37.2도, 산소포화도 99퍼센트, 의식 명료합니다. 급성 위장염 소견입니다.",
+    },
+    transport: {
+      stable: { label: "통증 지속, 활력 안정", lines: ["복통은 계속되고 있지만 악화는 없습니다. 혈압 125에 80, 맥박 88, 산소포화도 98퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "패혈성 쇼크 진행", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 82에 50으로 떨어졌고 맥박 128, 체온 39.2도입니다. 피부가 차갑고 축축합니다.",
+        "2차 다시 재측정했습니다. 혈압 80에 48, 맥박 132로 여전히 저혈압과 빈맥입니다. 패혈성 쇼크가 진행 중입니다.",
+      ] },
+      mismatch: { label: "복막염 악화", note: "병원 변경 필요", lines: ["복부 상태가 악화됐습니다. 배가 판자처럼 단단해졌고 살짝 눌렀다 떼도 심하게 아파합니다. 반발통이 뚜렷해서 복막염으로 판단됩니다. 응급 수술이 필요해 보여, 수술 가능 여부를 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "패혈증, 의식 저하", lines: ["환자 의식이 떨어졌습니다. 부르면 눈만 뜨고 말이 어눌하며 지남력이 없습니다. 호흡 28회, 산소포화도 88퍼센트로 산소 투여 중입니다. 혈압 85에 55, 맥박 135, 체온 39.5도입니다. 패혈증으로 의식 저하가 왔습니다."] },
+      spike: { label: "측정값 일시적 튐", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 160으로 한 번 찍혔습니다. 손가락 센서가 움직여서 그런 것 같습니다.",
+        "2차 다시 측정했더니 맥박 86, 산소포화도 98퍼센트, 혈압 124에 78로 정상입니다. 환자는 편안하고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  mild: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 서울시청 앞에서 발목을 다친 환자가 발생한 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "서울시청 앞입니다. 30대, 40대쯤 되어 보이는 여자분이 길에서 발목을 접질려서 못 걷고 있어요. 발목이 아프다고 하고 점점 붓고 있어요. 와주세요.",
+    callerShort: "서울시청 앞입니다. 여자분이 발목을 삐끗해서 걷기 힘들어해요. 와주세요.",
+    scene: {
+      mild: "24세 여성입니다. 보도 턱에서 발목을 접질렸습니다. 발목 바깥쪽이 붓고 아프지만 체중을 실을 수 있고 조금 걸을 수 있습니다. 피부 손상은 없습니다. 혈압 118에 72, 맥박 80, 산소포화도 99퍼센트, 의식 명료합니다. 발목 염좌 소견입니다.",
+      mild_fracture: "52세 여성입니다. 계단에서 발을 헛디뎌 발목이 꺾였습니다. 발목이 눈에 띄게 변형되고 심하게 부었으며 체중을 전혀 실을 수 없습니다. 피부는 닫혀 있고 발가락 감각은 있습니다. 혈압 130에 82, 맥박 96, 산소포화도 98퍼센트, 의식 명료합니다. 발목 골절 의심입니다.",
+      mild_open: "38세 여성입니다. 높은 곳에서 떨어져 발목을 크게 다쳤습니다. 발목 뼈가 피부 밖으로 노출되어 있고 출혈이 있어서 거즈로 압박 중입니다. 발등 맥박은 약하게 만져지고 발가락이 차갑습니다. 혈압 105에 65, 맥박 112, 산소포화도 97퍼센트입니다. 개방성 발목 골절입니다.",
+    },
+    transport: {
+      stable: { label: "부목 고정 후 안정", lines: ["발목에 부목 고정하고 냉찜질 했습니다. 통증은 많이 줄었습니다. 혈압 122에 76, 맥박 78, 산소포화도 99퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "숨은 손상, 혈압 저하와 빈맥", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 92에 58로 떨어졌고 맥박 118입니다. 환자는 괜찮다고 하는데 얼굴이 창백합니다.",
+        "2차 다시 재측정했습니다. 혈압 88에 54, 맥박 124로 계속 저혈압과 빈맥입니다. 숨은 손상이 의심됩니다.",
+      ] },
+      mismatch: { label: "통증 급증, 발 저림", note: "병원 변경 필요", lines: ["발목 통증이 갑자기 심해졌습니다. 발가락이 저리고 감각이 둔해졌고, 발등이 창백하며 맥박이 약하게 만져집니다. 신경과 혈관 손상이 의심돼서 수술 가능 여부를 다시 확인 부탁드립니다. 어려우시면 다른 병원을 알아보겠습니다."] },
+      consciousness: { label: "실신, 의식 저하", lines: ["환자가 갑자기 쓰러졌습니다. 부르면 눈만 뜨고 말이 어눌합니다. 혈압 85에 50, 맥박 130, 호흡 26회, 산소포화도 90퍼센트로 산소 투여 중입니다. 실신 후 의식 저하 상태입니다."] },
+      spike: { label: "측정값 일시적 튐", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 170으로 한 번 찍혔습니다. 손가락 센서가 움직여서 그런 것 같습니다.",
+        "2차 다시 측정했더니 맥박 80, 산소포화도 99퍼센트, 혈압 120에 76으로 정상입니다. 환자는 편안하고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+};
+
 const templateOf = (key: string | null | undefined): Template | null =>
   PATIENT_TEMPLATES.find((t) => t.key === key) ?? null;
 // ① 신고 접수 증상(4종) — 신고대로 현장 상황과 같은 카드
@@ -495,6 +616,15 @@ export default function ControlPage() {
     if (!caseId || !apid || (screen !== "enroute" && screen !== "report")) return;
     sendSceneInputMode(caseId, apid, sceneMode);
   }, [caseId, apid, screen, sceneMode, sendSceneInputMode, connectionMode]);
+
+  // ④ 이송 중 통화 방식도 같은 방식으로 알린다(2026-10-06) — "정해진 상황 선택"이면 휴대폰 앱의 [목적지 병원과 통화]가
+  // 막히고 hub도 이송 중 통화를 거부한다. 휴대폰이 이미 통화 중이면 음성으로 둔다(아래 ④ 화면과 같은 판정).
+  const followupCalling = !!caseId && state.callStatus[caseId]?.state === "calling" && !!state.callStatus[caseId]?.followup;
+  const transportMode: "voice" | "template" = followupCalling ? "voice" : followupMode;
+  useEffect(() => {
+    if (!caseId || !apid || screen !== "transport") return;
+    sendSceneInputMode(caseId, apid, transportMode, "transport");
+  }, [caseId, apid, screen, transportMode, sendSceneInputMode, connectionMode]);
 
   // ── 조작 ──
   // 지점이 정해지면 기지가 가장 가까운 대기(복귀 중 포함) 구급차를 고른다 — 실무에선 발생
@@ -1394,6 +1524,21 @@ export default function ControlPage() {
                       );
                     })()}
                   </div>
+                  {/* 대본(시연 대사집) — 진행자 안내 + 신고자 신고 전화. 신고 증상을 고르면 그 대본이 보인다 */}
+                  <ScriptBox title="① 환자 발생 · 진행자 → 신고 접수 · 신고자">
+                    {reportedKey ? (
+                      <>
+                        {SCRIPTS[reportedKey].host.map((line) => <ScriptLine key={line} who="진행자" text={atSpot(line, spot)} />)}
+                        <ScriptLine who="신고자" text={atSpot(SCRIPTS[reportedKey].caller, spot)} />
+                        <ScriptLine who="짧게" text={atSpot(SCRIPTS[reportedKey].callerShort, spot)} muted />
+                      </>
+                    ) : (
+                      <>
+                        <ScriptLine who="진행자" text={SCRIPTS.cardiac.host[0]} />
+                        <span style={{ fontSize: 13, color: C.muted }}>신고 증상을 고르면 그 상황의 진행자·신고자 대본이 이어서 보입니다.</span>
+                      </>
+                    )}
+                  </ScriptBox>
                 </ScreenCard>
               )}
 
@@ -1505,6 +1650,14 @@ export default function ControlPage() {
                       </button>
                     </div>
                   )}
+                  {/* 대본(시연 대사집 ②) — 이 신고에 딸린 현장 상황 대본(음성이면 대원이 읽고, 버튼이면 압축본이 전달) */}
+                  {reportedTemplate && (
+                    <ScriptBox title="② 현장 확인 · 구급대원 — 상황 하나를 골라 읽습니다">
+                      {sceneOptions(reportedTemplate.key).map((t, i) => (
+                        <ScriptLine key={t.key} who={`${"ABC"[i] ?? ""}. ${t.label}`} text={SCRIPTS[t.report].scene[t.key]} />
+                      ))}
+                    </ScriptBox>
+                  )}
                 </ScreenCard>
               )}
 
@@ -1557,11 +1710,10 @@ export default function ControlPage() {
                         info={hospitalInfo.get(hospital.hospitalId)}
                         onApprove={g(() => sendAction({ caseId: myCase.caseId, action: "hospital_approve", hospital_id: hospital.hospitalId, actor: "hospital", timestamp: now() }))}
                         onReject={g(() => setRejectTarget({ caseIds: [myCase.caseId], hospitalId: hospital.hospitalId, name: hospital.name, action: "hospital_reject" }))}
-                        onConfirm={g(() => sendAction({ caseId: myCase.caseId, action: "final_approval", hospital_id: hospital.hospitalId, actor: "paramedic", timestamp: now() }))}
                       />
                     ))}
                   </div>
-                  <div style={{ fontSize: 12, color: C.ink3 }}>승인 병원 중 한 곳에 [이송 확정]을 누르면 이송이 시작됩니다. 목록 순서는 hub 순위(이동 시간·진료과·등급)입니다.</div>
+                  <div style={{ fontSize: 12, color: C.ink3 }}>병원이 승인하면 구급차 대시보드에 승인 병원 정보가 뜹니다 — 구급대원이 [이송 승인]을 누르면 이송이 시작됩니다. 목록 순서는 hub 순위(이동 시간·진료과·등급)입니다.</div>
                 </ScreenCard>
               )}
 
@@ -1707,6 +1859,25 @@ export default function ControlPage() {
                       })()}
                     </div>
 
+                    {/* 대본(시연 대사집 ④) — 목적지 병원에 재통화. 활력징후 시나리오 ①~⑤·추가 통화 버튼과 같은 순서(A~E) */}
+                    {(() => {
+                      const script = SCRIPTS[transportBase.report];
+                      return (
+                        <ScriptBox title="④ 이송 중 · 구급대원 — 상황 하나를 골라 병원에 재통화합니다">
+                          <span style={{ fontSize: 15, color: C.ink2 }}>
+                            맨 앞에 <b>“{confirmedHospital?.name ?? "목적지 병원"} 응급실, 이송 중 상태 보고드립니다”</b>를 붙여 시작하세요.
+                            {transportBase.key !== transportBase.report && ` (대사집 ④는 '${templateOf(transportBase.report)?.label}' 기준입니다)`}
+                          </span>
+                          {(Object.keys(MONITOR_NUM) as MonitorKey[]).map((k, i) => (
+                            <ScriptLine
+                              key={k}
+                              who={`${"ABCDE"[i]}. ${script.transport[k].label}${script.transport[k].note ? ` (${script.transport[k].note})` : ""}`}
+                              text={script.transport[k].lines.join("\n")}
+                            />
+                          ))}
+                        </ScriptBox>
+                      );
+                    })()}
                   </ScreenCard>
               )}
 
@@ -2373,6 +2544,28 @@ function RejectReasonModal({ title, note, onPick, onClose }: {
 // ── 공용 조각 ──
 const panel: CSSProperties = { background: "#ffffff", border: `1px solid ${C.line}`, borderRadius: 14, boxSizing: "border-box" };
 
+// 시연 대본 칸(2026-10-06) — 진행자·신고자·구급대원이 읽을 대사. 접어 둘 수 있다(기본 펼침). 서서 읽도록 본문 18px
+function ScriptBox({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details open style={{ background: "#fffdf4", border: "1px solid #eadfb8", borderRadius: 12, padding: "10px 14px" }}>
+      <summary style={{ cursor: "pointer", fontSize: 15, fontWeight: 700, color: C.amberInk }}>대본 · {title}</summary>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>{children}</div>
+    </details>
+  );
+}
+
+function ScriptLine({ who, text, muted = false }: { who: string; text: string; muted?: boolean }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 14, fontWeight: 700, color: C.ink3 }}>{who}</span>
+      <span style={{ fontSize: 18, lineHeight: 1.6, color: muted ? C.ink3 : C.ink, whiteSpace: "pre-line" }}>{text}</span>
+    </div>
+  );
+}
+
+// 대사집의 "서울시청 앞"을 화면에서 고른 발생 지점으로
+const atSpot = (text: string, spot: Spot) => (spot ? text.replaceAll(SCRIPT_SPOT, spot.label) : text);
+
 const softBox: CSSProperties = { background: "#f8fafc", borderRadius: 12, padding: "12px 14px", fontSize: 14 };
 const headerButton: CSSProperties = {
   minHeight: 30, padding: "0 10px", background: "#ffffff", border: `1px solid ${C.control}`, borderRadius: 8,
@@ -2525,14 +2718,13 @@ function ProgressTrack({ p, start, end, endIcon }: { p: number; start: string; e
   );
 }
 
-// ③ 병원 한 줄 — 상태 칩 + 승인/불가/이송 확정. 적합 여부 칸은 시안의 가상 '적합' 대신 실제 E-Gen 병상(미상 ≠ 만실)과
+// ③ 병원 한 줄 — 상태 칩 + 승인/불가(이송 확정은 구급차 대시보드에서 — 2026-10-06 콘솔 버튼 삭제). 적합 여부 칸은 시안의 가상 '적합' 대신 실제 E-Gen 병상(미상 ≠ 만실)과
 // 병원이 고른 거절 사유를 보인다.
-function HospitalRow({ hospital, info, onApprove, onReject, onConfirm }: {
+function HospitalRow({ hospital, info, onApprove, onReject }: {
   hospital: MonitorCaseHospital;
   info: MapHospital | undefined;
   onApprove: () => void;
   onReject: () => void;
-  onConfirm: () => void;
 }) {
   const status = hospital.status;
   const chip = STATUS_CHIP[status];
@@ -2578,14 +2770,6 @@ function HospitalRow({ hospital, info, onApprove, onReject, onConfirm }: {
         </button>
         <button type="button" disabled={lock} onClick={onReject} style={{ ...btnBase, border: `1px solid ${C.red}`, color: C.redInk }}>
           <Icon name="x" size={12} color={C.red} stroke={3.2} />불가
-        </button>
-        <button
-          type="button"
-          disabled={status !== "approved"}
-          onClick={onConfirm}
-          style={{ minHeight: 32, padding: "0 12px", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, color: "#ffffff", cursor: status === "approved" ? "pointer" : "not-allowed", background: status === "approved" ? C.blue : C.blueOff }}
-        >
-          이송 확정
         </button>
       </div>
     </div>

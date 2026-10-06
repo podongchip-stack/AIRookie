@@ -124,7 +124,10 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
         !(caseId in prev.sceneCandidates) &&
         !(caseId in prev.monitorCases) &&
         !(caseId in prev.callStatus) &&
-        !(caseId in prev.caseMeta)
+        !(caseId in prev.caseMeta) &&
+        !(caseId in prev.preAlerts) &&
+        !(caseId in prev.callTranscripts) &&
+        !(caseId in prev.transportAssessments)
       ) {
         return prev;
       }
@@ -393,6 +396,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
               setState((prev) => ({ ...prev, mciAllocated: { at: Date.now(), results: parsed.results } }));
               break;
             case "scene_input_mode":
+              if (parsed.stage === "transport") break; // 웹 전화 앱은 이송 중 통화가 없다 — ② 방식만 쓴다
               setState((prev) => ({ ...prev, sceneInputMode: { ...prev.sceneInputMode, [parsed.caseId]: parsed.mode } }));
               break;
             case "mci_plan":
@@ -620,11 +624,13 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
-  // 현장 확인 입력 방식(2026-10-06, 시연 콘솔 ②) — "template"(정해진 상황 선택)이면 hub가 그 사건의 휴대폰 현장 통화를 막는다
-  const sendSceneInputMode = useCallback((caseId: string, apid: string | null, mode: "voice" | "template"): boolean => {
+  // 통화 방식(2026-10-06, 시연 콘솔 ② 현장 확인·④ 이송 중) — "template"(정해진 상황 선택)이면 hub가 그 단계의 휴대폰 통화를 막는다
+  const sendSceneInputMode = useCallback((
+    caseId: string, apid: string | null, mode: "voice" | "template", stage: "scene" | "transport" = "scene",
+  ): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify({ type: "scene_input_mode", caseId, apid, mode }));
+    socket.send(JSON.stringify({ type: "scene_input_mode", caseId, apid, mode, stage }));
     return true;
   }, []);
 

@@ -643,9 +643,23 @@ private fun TransportCallView(m: PhoneModel) {
                     }
                     Text("이송 중 환자 상태가 바뀌면 목적지 병원과 통화하세요. 통화 내용은 환자 정보에 덧붙어 병원 화면에 바로 반영됩니다.",
                         fontSize = 12.5.sp, color = AD.ink3)
+                    if (m.transportCallBlocked) {
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AD.orangeSoft).padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Filled.Lock, null, tint = AD.orange, modifier = Modifier.size(18.dp))
+                            Text(buildAnnotatedString {
+                                append("시연 콘솔이 ")
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("정해진 상황 선택") }
+                                append(" 중이라 전화를 걸 수 없습니다. 콘솔에서 ")
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("음성으로 통화") }
+                                append("를 고르면 전화할 수 있습니다.")
+                            }, fontSize = 13.sp, color = AD.navy, modifier = Modifier.weight(1f))
+                        }
+                    }
                     if (dest != null) {
                         Row(Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(14.dp)).background(if (m.paused) AD.control else AD.green)
-                            .clickable { m.dial(dest.hospitalId, dest.name) }, horizontalArrangement = Arrangement.Center,
+                            .alpha(if (m.transportCallBlocked) 0.45f else 1f)
+                            .clickable(enabled = !m.transportCallBlocked) { m.dial(dest.hospitalId, dest.name) }, horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.Call, null, tint = Color.White, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))

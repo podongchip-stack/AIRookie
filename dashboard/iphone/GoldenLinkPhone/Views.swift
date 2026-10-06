@@ -709,6 +709,17 @@ struct TransportCallView: View {
                         }
                         Text("이송 중 환자 상태가 바뀌면 목적지 병원과 통화하세요. 통화 내용은 환자 정보에 덧붙어 병원 화면에 바로 반영됩니다.")
                             .font(.system(size: 12.5)).foregroundStyle(AD.ink3).fixedSize(horizontal: false, vertical: true)
+                        if m.transportCallBlocked {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "lock.fill").foregroundStyle(AD.orange)
+                                Text("시연 콘솔이 **정해진 상황 선택** 중이라 전화를 걸 수 없습니다. 콘솔에서 **음성으로 통화**를 고르면 전화할 수 있습니다.")
+                                    .foregroundStyle(AD.navy)
+                            }
+                            .font(.system(size: 13))
+                            .padding(.horizontal, 12).padding(.vertical, 9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(AD.orangeSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
                         if let dest {
                             Button { Task { await m.dial(hospitalId: dest.hospitalId, name: dest.name) } } label: {
                                 HStack(spacing: 8) {
@@ -721,6 +732,8 @@ struct TransportCallView: View {
                                 .background(m.paused ? AD.control : AD.green, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             }
                             .buttonStyle(.plain)
+                            .disabled(m.transportCallBlocked)
+                            .opacity(m.transportCallBlocked ? 0.45 : 1)
                         }
                     }
                 }
