@@ -261,6 +261,7 @@ export function PhoneCallView({
   callStatus,
   voiceLines,
   sentHospitalCount,
+  callBlocked,
   onCallSignal,
   onAudioChunk,
 }: {
@@ -277,6 +278,8 @@ export function PhoneCallView({
   voiceLines: CallTranscriptLine[];
   // 통화 요약으로 매칭돼 전달된 병원 수(매칭 결과가 오면)
   sentHospitalCount: number | null;
+  // 시연 콘솔이 현장 확인을 "정해진 상황 선택"으로 두면(2026-10-06) 현장 통화를 시작하지 못한다(hub도 거부)
+  callBlocked: boolean;
   onCallSignal: (signal: CallSignalType, caseId: string, hospitalId: string | null) => boolean;
   onAudioChunk: (chunk: ArrayBuffer) => void;
 }) {
@@ -377,7 +380,7 @@ export function PhoneCallView({
   }
 
   async function handleCall(h: SceneCandidate) {
-    if (!caseId || myCall) return;
+    if (!caseId || myCall || callBlocked) return;
     setError(null);
     // 시연 일시정지 중엔 통화를 시작하지 않는다(2026-10-05, hub도 거부한다)
     if (sim?.paused && sim.pauseReason !== "call") {
@@ -761,6 +764,11 @@ export function PhoneCallView({
             {error}
           </p>
         )}
+        {callBlocked && (
+          <p className={css({ marginTop: "2", padding: "2.5", borderRadius: "field", fontSize: "sm", color: "ink", backgroundColor: "#FDF0D5", lineHeight: "1.5" })}>
+            시연 콘솔이 <b>정해진 상황 선택</b> 중이라 전화를 걸 수 없습니다. 콘솔에서 <b>음성으로 확인</b>을 고르면 전화할 수 있습니다.
+          </p>
+        )}
       </div>
       {!scene ? (
         <StatusPanel icon="⋯" tone="ink" pulse title="병원 목록을 불러오는 중…" />
@@ -775,8 +783,10 @@ export function PhoneCallView({
               <li key={h.hospitalId}>
                 <button
                   type="button"
+                  disabled={callBlocked}
                   onClick={() => handleCall(h)}
                   className={css({
+                    _disabled: { opacity: 0.45, cursor: "not-allowed", _active: { transform: "none" } },
                     width: "100%",
                     minHeight: "76px",
                     display: "flex",

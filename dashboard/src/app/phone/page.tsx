@@ -83,6 +83,7 @@ function PhoneForApid({ apid }: { apid: string | null }) {
       callStatus={caseId ? state.callStatus[caseId] ?? null : null}
       voiceLines={caseId ? state.callTranscripts[caseId] ?? [] : []}
       sentHospitalCount={matched ? matched.hospitals.length : null}
+      callBlocked={caseId ? state.sceneInputMode[caseId] === "template" : false}
       onCallSignal={(signal, id, hospitalId) => sendCallSignal(signal, apid, id, { hospitalId, device: "phone" })}
       onAudioChunk={sendAudioChunk}
     />
