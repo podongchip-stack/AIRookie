@@ -5,8 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 TOOLS="${GOLDENLINK_ANDROID_TOOLS:-$HOME/.goldenlink-android}"
 if [ -z "${JAVA_HOME:-}" ]; then JAVA_HOME="$(ls -d "$TOOLS"/jdk-17* 2>/dev/null | head -1)"; export JAVA_HOME; fi
+[ -d "$JAVA_HOME/Contents/Home" ] && JAVA_HOME="$JAVA_HOME/Contents/Home" && export JAVA_HOME  # macOS
 SDK="${ANDROID_HOME:-$TOOLS/sdk}"
-[ -f local.properties ] || echo "sdk.dir=$(cd "$SDK" && pwd -W 2>/dev/null || pwd)" | sed 's#\#/#g' > local.properties
+[ -f local.properties ] || echo "sdk.dir=$(cd "$SDK" && pwd -W 2>/dev/null || pwd)" | tr '\\' '/' > local.properties
 GRADLEW=./gradlew; [ -f gradlew.bat ] && [ "${OS:-}" = "Windows_NT" ] && GRADLEW=./gradlew.bat
 $GRADLEW :core:test :app:assembleRelease --console=plain
 cp app/build/outputs/apk/release/app-release.apk GoldenLink.apk
