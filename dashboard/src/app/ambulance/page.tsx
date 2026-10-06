@@ -251,11 +251,15 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
           <HospitalApprovedModal
             key={`${approvalModal!.caseId}:${approvalHospital.hospitalId}`}
             hospital={approvalHospital}
+            paused={simPaused}
             onApprove={() => {
+              if (simPaused) return; // 버튼도 막혀 있지만 겹쳐 눌려도 모달을 닫지 않는다
               handleApprove(approvalHospital.hospitalId);
               setApprovalModal(null);
             }}
-            onClose={() => setApprovalModal(null)}
+            onClose={() => {
+              if (!simPaused) setApprovalModal(null);
+            }}
           />
         )}
         <AmbulanceTopBar
