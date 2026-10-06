@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>MF_BERT 성능 비교</title>
+<!--
+  [demo 브랜치] 모델 성능 비교 영상 — MF_BERT vs LLM (2026-10-03 벤치마크, demo/explainer/benchmark_highlight.html의 숫자 그대로).
+  render(t)는 시각 t(초)만으로 화면 전체를 그리는 순수 함수다. record.mjs가 1/60초마다 render를 부르고 한 장씩 찍어 mp4로 묶는다.
+  브라우저로 그냥 열면 실시간으로 재생된다(?t=12 처럼 주면 그 시각에 멈춘 화면).
+  화면 규칙: Pretendard · 검은 배경 · 흰 글자 · 줄표 문자 금지 · 짙은 남색 금지.
+-->
+<style>
+  @font-face { font-family: "Pretendard"; font-weight: 45 920; font-display: block; src: url("fonts/PretendardVariable.woff2") format("woff2-variations"); }
+  :root {
+    --mf: #FFD166;    /* 우리 모델 */
+    --lora: #FF8A5B;  /* 소형 LLM + 학습 */
+    --llm: #A7B0BC;   /* 큰 LLM, 학습 없음 */
+    --base: #5E6670;  /* 학습 전 기준선 */
+    --ok: #4CC38A; --ng: #FF6B6F;
+    --dim: rgba(255,255,255,.62); --line: rgba(255,255,255,.16);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; color: #fff; font-family: "Pretendard", sans-serif; }
+  .scene { position: absolute; inset: 0; opacity: 0; will-change: opacity; }
+  .abs { position: absolute; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* 공통: 위 장면 번호 · 아래 출처 */
+  #top { position: absolute; left: 80px; right: 80px; top: 48px; display: flex; align-items: center; gap: 18px; z-index: 5; }
+  #top .brand { font-size: 18px; font-weight: 800; letter-spacing: .22em; }
+  #top .steps { margin-left: auto; display: flex; gap: 8px; }
+  #top .steps i { display: block; width: 46px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; position: relative; }
+  #top .steps i b { position: absolute; inset: 0; width: 0; background: #fff; }
+  #foot { position: absolute; left: 80px; right: 80px; bottom: 40px; font-size: 17px; font-weight: 500; color: rgba(255,255,255,.55); z-index: 5; }
+  .eyebrow { font-size: 22px; font-weight: 700; letter-spacing: .08em; color: var(--mf); }
+  .h2 { font-size: 64px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin-top: 14px; }
+
+  /* 0 · 오프닝 */
+  #s0 .l1 { left: 0; right: 0; top: 300px; text-align: center; font-size: 46px; font-weight: 700; color: var(--dim); }
+  #s0 .big { left: 0; right: 0; top: 380px; text-align: center; font-size: 260px; font-weight: 900; letter-spacing: -0.05em; line-height: 1; color: var(--mf); }
+  #s0 .big small { font-size: 110px; font-weight: 800; margin-left: 10px; }
+  #s0 .who { left: 0; right: 0; top: 660px; text-align: center; font-size: 34px; font-weight: 700; }
+  #s0 .vs { left: 0; right: 0; top: 760px; text-align: center; font-size: 34px; font-weight: 600; color: var(--dim); }
+  #s0 .vs b { color: #fff; }
+
+  /* J · AI 모델이 해야 하는 일 */
+  #sj .eb { left: 120px; top: 132px; }
+  #sj .chain { left: 120px; right: 120px; top: 178px; height: 170px; display: flex; align-items: center; justify-content: center; gap: 0; }
+  #sj .node { width: 220px; text-align: center; opacity: 0; }
+  #sj .node svg { width: 108px; height: 108px; display: block; margin: 0 auto; }
+  #sj .node b { display: block; font-size: 26px; font-weight: 800; margin-top: 8px; }
+  #sj .link { width: 300px; height: 4px; position: relative; }
+  #sj .link i { position: absolute; left: 0; top: 0; height: 4px; width: 0; border-radius: 2px; background: repeating-linear-gradient(90deg, rgba(255,255,255,.55) 0 14px, transparent 14px 24px); }
+  #sj .link em { position: absolute; top: -6px; width: 16px; height: 16px; border-radius: 50%; background: var(--mf); opacity: 0; }
+  #sj .say { left: 0; right: 0; top: 372px; text-align: center; font-size: 50px; font-weight: 800; letter-spacing: -0.03em; opacity: 0; }
+  #sj .say mark { background: none; color: var(--mf); position: relative; padding: 0 4px; }
+  #sj .say mark::after { content: ""; position: absolute; left: 0; right: var(--r, 100%); bottom: 2px; height: 14px; border-radius: 4px; background: rgba(255,209,102,.32); }
+  #sj .calls { left: 120px; top: 478px; width: 600px; display: flex; flex-direction: column; gap: 12px; }
+  #sj .b { align-self: flex-start; max-width: 600px; font-size: 23px; font-weight: 600; line-height: 1.35; padding: 10px 20px; border-radius: 20px 20px 20px 6px; background: rgba(255,255,255,.09); opacity: 0; }
+  #sj .b i { display: block; font-style: normal; font-size: 15px; font-weight: 700; color: var(--ng); margin-bottom: 2px; }
+  #sj .ai { left: 790px; top: 560px; width: 280px; height: 180px; border-radius: 28px; border: 3px solid var(--mf); display: grid; place-items: center; text-align: center; opacity: 0; }
+  #sj .ai b { display: block; font-size: 42px; font-weight: 900; color: var(--mf); }
+  #sj .ai span { display: block; font-size: 20px; font-weight: 600; color: var(--dim); margin-top: 6px; }
+  #sj .flow { position: absolute; top: 648px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, rgba(255,209,102,0), var(--mf)); width: 0; }
+  #sj .form { left: 1130px; top: 486px; width: 670px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #sj .slot { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-radius: 14px; border: 2px dashed rgba(255,255,255,.3); opacity: 0; }
+  #sj .slot b { font-size: 23px; font-weight: 800; }
+  #sj .slot span { font-size: 23px; font-weight: 900; color: var(--mf); }
+  #sj .more { left: 1130px; top: 800px; width: 670px; font-size: 23px; font-weight: 700; color: var(--dim); opacity: 0; }
+  #sj .more b { color: #fff; }
+  #sj .hard { left: 120px; right: 120px; top: 900px; display: flex; gap: 14px; flex-wrap: wrap; }
+  #sj .hard span { font-size: 23px; font-weight: 700; padding: 9px 20px; border-radius: 999px; border: 2px solid rgba(255,107,111,.75); opacity: 0; }
+
+  /* 1 · 제목: 왼쪽 시험지에 연필이 비교 항목 네 가지를 쓰고, 오른쪽에 "성능 비교" */
+  #s1 svg.paper { position: absolute; left: 200px; top: 250px; width: 600px; height: 560px; overflow: visible; }
+  #s1 .t { left: 960px; top: 430px; font-size: 180px; font-weight: 900; letter-spacing: -0.05em; line-height: 1; white-space: nowrap; }
+  #s1 .ul { left: 968px; top: 640px; height: 12px; width: 0; border-radius: 6px; background: var(--mf); }
+
+  /* 2 · 과제 */
+  #s2 .head { left: 120px; top: 150px; }
+  #s2 .call { left: 120px; top: 330px; width: 820px; display: flex; flex-direction: column; gap: 14px; }
+  #s2 .turn { display: flex; gap: 18px; font-size: 25px; line-height: 1.45; }
+  #s2 .turn .w { flex: none; width: 82px; font-size: 18px; font-weight: 700; padding-top: 5px; color: var(--dim); }
+  #s2 .turn.ems .w { color: var(--ng); }
+  #s2 .turn mark { background: none; color: inherit; border-radius: 6px; padding: 0 4px; box-shadow: inset 0 -0.5em 0 rgba(255,209,102,0); }
+  #s2 .skip { font-size: 22px; color: rgba(255,255,255,.35); padding-left: 100px; }
+  #s2 .fields { left: 1020px; top: 330px; width: 780px; display: flex; flex-direction: column; gap: 10px; }
+  #s2 .f { display: grid; grid-template-columns: 150px 1fr 140px; align-items: center; gap: 14px; padding: 13px 20px; border-radius: 16px; background: rgba(255,255,255,.06); border: 2px solid transparent; }
+  #s2 .f .k { font-size: 20px; font-weight: 700; color: var(--dim); }
+  #s2 .f .v { font-size: 27px; font-weight: 800; letter-spacing: -0.01em; }
+  #s2 .f .v small { font-size: 19px; font-weight: 600; color: var(--dim); margin-left: 6px; }
+  #s2 .f .r { font-size: 20px; font-weight: 800; text-align: right; }
+  #s2 .f .r.ok { color: var(--ok); } #s2 .f .r.ng { color: var(--ng); }
+  #s2 .cap { left: 1020px; top: 268px; font-size: 22px; font-weight: 700; color: var(--mf); }
+  #s2 .capL { left: 120px; top: 268px; font-size: 22px; font-weight: 700; color: var(--dim); }
+
+  /* 3 · 시험지 */
+  #s3 .head { left: 120px; top: 150px; }
+  #s3 .grid { left: 120px; top: 360px; display: flex; gap: 26px; }
+  #s3 .col { width: 150px; }
+  #s3 .col b { display: block; font-size: 26px; font-weight: 800; }
+  #s3 .col span { display: block; font-size: 19px; color: var(--dim); margin-bottom: 14px; }
+  #s3 .cells { display: grid; grid-template-columns: repeat(4, 30px); gap: 8px; }
+  #s3 .cells i { width: 30px; height: 30px; border-radius: 6px; background: #fff; opacity: 0; }
+  #s3 .models { left: 1080px; top: 360px; width: 720px; }
+  #s3 .models .lab { font-size: 22px; font-weight: 700; color: var(--dim); margin-bottom: 16px; }
+  #s3 .grp { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; opacity: 0; }
+  #s3 .grp .dots { display: flex; flex-wrap: wrap; gap: 8px; width: 330px; }
+  #s3 .grp .dots i { width: 24px; height: 24px; border-radius: 50%; }
+  #s3 .grp .n { font-size: 40px; font-weight: 900; width: 60px; text-align: right; }
+  #s3 .grp .t { font-size: 24px; font-weight: 700; }
+  #s3 .facts { left: 1080px; top: 760px; width: 760px; display: flex; flex-direction: column; gap: 10px; }
+  #s3 .facts div { font-size: 22px; font-weight: 600; color: var(--dim); opacity: 0; }
+  #s3 .facts div b { color: #fff; }
+
+  /* 4 · 속도 */
+  #s4 .head { left: 120px; top: 150px; }
+  #s4 .clock { right: 120px; top: 150px; text-align: right; }
+  #s4 .clock small { display: block; font-size: 22px; font-weight: 700; color: var(--dim); }
+  #s4 .clock b { display: block; font-size: 96px; font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; }
+  #s4 .lanes { left: 120px; right: 120px; top: 410px; display: flex; flex-direction: column; gap: 46px; }
+  #s4 .lane { display: grid; grid-template-columns: 420px 1fr 260px; align-items: center; gap: 30px; }
+  #s4 .lane .nm { font-size: 34px; font-weight: 800; }
+  #s4 .lane .nm small { display: block; font-size: 21px; font-weight: 600; color: var(--dim); margin-top: 2px; }
+  #s4 .lane .tr { height: 40px; border-radius: 999px; background: rgba(255,255,255,.08); position: relative; overflow: hidden; }
+  #s4 .lane .tr b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 999px; }
+  #s4 .lane .ct { font-size: 34px; font-weight: 900; text-align: right; }
+  #s4 .lane.done .ct { color: var(--ok); }
+  #s4 .verdict { left: 0; right: 0; top: 820px; text-align: center; font-size: 40px; font-weight: 800; opacity: 0; }
+  #s4 .verdict em { font-style: normal; color: var(--mf); font-size: 84px; font-weight: 900; letter-spacing: -0.03em; margin: 0 8px; }
+
+  /* 5 · 정확도 */
+  #s5 .head { left: 120px; top: 150px; }
+  #s5 .bars { left: 120px; top: 400px; width: 1180px; display: flex; flex-direction: column; gap: 46px; }
+  #s5 .row { display: grid; grid-template-columns: 430px 1fr; align-items: center; gap: 24px; position: relative; }
+  #s5 .row .nm { font-size: 30px; font-weight: 800; }
+  #s5 .row .nm small { display: block; font-size: 20px; font-weight: 600; color: var(--dim); }
+  #s5 .row .tr { height: 64px; position: relative; }
+  #s5 .row .tr b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 0 10px 10px 0; }
+  #s5 .row .tr span { position: absolute; top: 50%; transform: translateY(-50%); font-size: 40px; font-weight: 900; margin-left: 16px; opacity: 0; }
+  #s5 .band { position: absolute; left: 454px; width: 0; top: -16px; height: 206px; border: 3px dashed rgba(255,255,255,.7); border-radius: 14px; opacity: 0; }
+  #s5 .side { left: 1380px; top: 380px; width: 440px; display: flex; flex-direction: column; gap: 30px; }
+  #s5 .side .c { opacity: 0; }
+  #s5 .side .c b { display: block; font-size: 64px; font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; }
+  #s5 .side .c span { display: block; font-size: 23px; font-weight: 600; color: var(--dim); margin-top: 6px; line-height: 1.4; }
+
+  /* 6 · 크기 */
+  #s6 .head { left: 120px; top: 150px; }
+  #s6 svg { position: absolute; left: 80px; top: 300px; width: 1060px; height: 600px; overflow: visible; }
+  #s6 .meters { left: 1220px; top: 380px; width: 600px; display: flex; flex-direction: column; gap: 40px; }
+  #s6 .meters .lab { font-size: 22px; font-weight: 700; color: var(--dim); }
+  #s6 .m .t { display: flex; justify-content: space-between; font-size: 26px; font-weight: 800; margin-bottom: 10px; }
+  #s6 .m .bar { height: 30px; border-radius: 8px; background: rgba(255,255,255,.08); position: relative; }
+  #s6 .m .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 8px; }
+  #s6 .m .bar i { position: absolute; right: 0; top: -6px; bottom: -6px; border-right: 3px solid rgba(255,255,255,.6); }
+  #s6 .note { left: 1220px; top: 860px; width: 600px; font-size: 20px; font-weight: 600; color: var(--dim); opacity: 0; }
+
+  /* 8 · 정리 */
+  #s8 .cards { left: 120px; right: 120px; top: 330px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 34px; }
+  #s8 .card { border-radius: 28px; padding: 40px 38px; background: rgba(255,255,255,.06); border: 2px solid var(--line); opacity: 0; }
+  #s8 .card b { display: block; font-size: 104px; font-weight: 900; letter-spacing: -0.045em; line-height: 1; color: var(--mf); }
+  #s8 .card .k { display: block; font-size: 34px; font-weight: 800; margin-top: 26px; }
+  #s8 .card .d { display: block; font-size: 23px; font-weight: 600; color: var(--dim); margin-top: 12px; line-height: 1.45; }
+  #s8 .end { left: 0; right: 0; top: 790px; text-align: center; font-size: 30px; font-weight: 700; opacity: 0; }
+</style>
+</head>
+<body>
+<div id="top"><div class="brand">GOLDENLINK · 모델 성능 비교</div><div class="steps"></div></div>
+<div id="foot">2026-10-03 측정 · 시험지는 Claude Opus 5.5로 만든 합성 통화 100건(학습에 쓰지 않음) · 정답도 AI가 만들었고 사람 검수 전 · 같은 PC(RTX 5080 16GB), 같은 채점 코드</div>
+
+<!-- 0 · 오프닝 -->
+<section class="scene" id="s0">
+  <div class="abs l1">119 통화 한 건을 읽고 환자 정보를 채우는 데</div>
+  <div class="abs big num"><span id="s0n">0.000</span><small>초</small></div>
+  <div class="abs who">골든링크</div>
+</section>
+
+<!-- J · AI 모델이 해야 하는 일 -->
+<section class="scene" id="sj">
+  <div class="abs eb eyebrow">AI 모델이 해야 하는 일</div>
+  <div class="abs chain">
+    <div class="node"><svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 44V24a4 4 0 0 1 4-4h26v24"/><path d="M36 28h10l10 10v6H36"/><path d="M6 44h50"/><circle cx="18" cy="46" r="5" fill="#000"/><circle cx="46" cy="46" r="5" fill="#000"/><path d="M21 26v12M15 32h12" stroke="#FF6B6F" stroke-width="3.5"/><path d="M14 20v-5h8v5" /></svg><b>구급대</b></div>
+    <div class="link"><i></i><em></em></div>
+    <div class="node"><svg viewBox="0 0 64 64" fill="none" stroke="#FFD166" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10l6 12-5 4a26 26 0 0 0 15 15l4-5 12 6-2 9c-1 3-3 4-6 4C26 55 9 38 9 18c0-3 1-5 4-6z" fill="rgba(255,209,102,.12)"/><path class="w1" d="M40 12a12 12 0 0 1 12 12"/><path class="w2" d="M40 4a20 20 0 0 1 20 20"/></svg><b>통화</b></div>
+    <div class="link"><i></i><em></em></div>
+    <div class="node"><svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 56V22h48v34"/><path d="M4 56h56"/><path d="M20 22V10h24v12"/><path d="M32 13v8M28 17h8" stroke="#FF6B6F" stroke-width="3.5"/><path d="M26 56V44h12v12"/><path d="M14 30h8v6h-8zM42 30h8v6h-8z"/></svg><b>응급실</b></div>
+  </div>
+  <div class="abs say">구급대와 병원의 통화를 듣고, <mark>중요한 정보로 요약</mark>합니다</div>
+  <div class="abs calls">
+    <div class="b"><i>구급대</i>코피가 안멈추는 할아버지 한분 모시고 갈라구요</div>
+    <div class="b"><i>구급대</i>한 사십분 전에 티비 보시다가 갑자기 났대요</div>
+    <div class="b"><i>구급대</i>칠십칠세 남자분이요</div>
+    <div class="b"><i>구급대</i>혈압 백육십에 구십 맥박 88 불규칙하구요</div>
+  </div>
+  <div class="flow" style="left:730px"></div>
+  <div class="abs ai"><div><b>AI 모델</b><span>통화 전문을 읽는다</span></div></div>
+  <div class="flow" style="left:1070px"></div>
+  <div class="abs form">
+    <div class="slot"><b>KTAS 등급</b><span>?</span></div>
+    <div class="slot"><b>주증상</b><span>?</span></div>
+    <div class="slot"><b>나이 · 성별</b><span>?</span></div>
+    <div class="slot"><b>발생 시점</b><span>?</span></div>
+    <div class="slot"><b>활력징후</b><span>?</span></div>
+    <div class="slot"><b>의식</b><span>?</span></div>
+    <div class="slot"><b>증상</b><span>?</span></div>
+    <div class="slot"><b>처치</b><span>?</span></div>
+  </div>
+  <div class="abs more">외 9개 · 모두 <b>17개 항목</b>을 채워 병원에 보낸다</div>
+</section>
+
+<!-- 1 · 제목 -->
+<section class="scene" id="s1">
+  <svg class="paper" viewBox="0 0 600 560">
+    <rect x="0" y="0" width="600" height="560" rx="22" fill="#F4F5F7"/>
+    <rect x="40" y="44" width="210" height="18" rx="9" fill="#C9CED6"/>
+    <rect x="40" y="78" width="340" height="12" rx="6" fill="#DDE1E7"/>
+    <circle cx="62" cy="188" r="19" fill="none" stroke="#C9CED6" stroke-width="3"/><text x="62" y="195" text-anchor="middle" font-size="22" font-weight="800" fill="#8A929E">1</text><line x1="104" y1="216" x2="560" y2="216" stroke="#E2E6EC" stroke-width="2"/><clipPath id="hc0"><rect class="hcr" x="100" y="150" width="0" height="74"/></clipPath><text class="hw" clip-path="url(#hc0)" x="116" y="200" font-size="36" font-weight="800" fill="#1B1F24">문제</text><circle cx="62" cy="288" r="19" fill="none" stroke="#C9CED6" stroke-width="3"/><text x="62" y="295" text-anchor="middle" font-size="22" font-weight="800" fill="#8A929E">2</text><line x1="104" y1="316" x2="560" y2="316" stroke="#E2E6EC" stroke-width="2"/><clipPath id="hc1"><rect class="hcr" x="100" y="250" width="0" height="74"/></clipPath><text class="hw" clip-path="url(#hc1)" x="116" y="300" font-size="36" font-weight="800" fill="#1B1F24">정답률</text><circle cx="62" cy="388" r="19" fill="none" stroke="#C9CED6" stroke-width="3"/><text x="62" y="395" text-anchor="middle" font-size="22" font-weight="800" fill="#8A929E">3</text><line x1="104" y1="416" x2="560" y2="416" stroke="#E2E6EC" stroke-width="2"/><clipPath id="hc2"><rect class="hcr" x="100" y="350" width="0" height="74"/></clipPath><text class="hw" clip-path="url(#hc2)" x="116" y="400" font-size="36" font-weight="800" fill="#1B1F24">걸린 시간</text><circle cx="62" cy="488" r="19" fill="none" stroke="#C9CED6" stroke-width="3"/><text x="62" y="495" text-anchor="middle" font-size="22" font-weight="800" fill="#8A929E">4</text><line x1="104" y1="516" x2="560" y2="516" stroke="#E2E6EC" stroke-width="2"/><clipPath id="hc3"><rect class="hcr" x="100" y="450" width="0" height="74"/></clipPath><text class="hw" clip-path="url(#hc3)" x="116" y="500" font-size="36" font-weight="800" fill="#1B1F24">모델 크기 및 GPU 메모리</text>
+    <g class="pencil" opacity="0">
+      <g transform="rotate(-38)">
+        <rect x="0" y="-11" width="150" height="22" rx="3" fill="#FFD166"/>
+        <rect x="150" y="-11" width="24" height="22" rx="3" fill="#FF8A9A"/>
+        <rect x="144" y="-11" width="8" height="22" fill="#B9BEC6"/>
+        <path d="M0 -11 L-30 0 L0 11 Z" fill="#E9C9A0"/>
+        <path d="M-20 -4 L-30 0 L-20 4 Z" fill="#1B1F24"/>
+      </g>
+    </g>
+  </svg>
+  <div class="abs t">성능 비교</div>
+  <div class="abs ul"></div>
+</section>
+
+<!-- 2 · 과제 -->
+<section class="scene" id="s2">
+  <div class="abs head"><div class="eyebrow">문제</div><div class="h2">통화를 읽고, 환자 정보를 채운다</div></div>
+  <div class="abs capL">시험 문제 bench_026 · 통화 원문 일부</div>
+  <div class="abs call">
+    <div class="turn ems"><span class="w">구급대</span><span>아 네 수고하십니다 일일구 구급대에요 <mark data-k="0">코피가 안멈추는</mark> 할아버지 한분 모시고 갈라구요</span></div>
+    <div class="turn"><span class="w">병원</span><span>네 언제부터 났어요</span></div>
+    <div class="turn ems"><span class="w">구급대</span><span><mark data-k="2">한 사십분 전에</mark> 티비 보시다가 갑자기 났대요</span></div>
+    <div class="skip">⋯</div>
+    <div class="turn"><span class="w">병원</span><span>연세가요</span></div>
+    <div class="turn ems"><span class="w">구급대</span><span><mark data-k="1">칠십칠세 남자분이요</mark></span></div>
+    <div class="skip">⋯</div>
+    <div class="turn"><span class="w">병원</span><span>활력징후는요</span></div>
+    <div class="turn ems"><span class="w">구급대</span><span><mark data-k="3">혈압 백육십에 구십 맥박 88 불규칙하구요 호흡 십팔 산소포화도 97 체온 36.4요</mark></span></div>
+  </div>
+  <div class="abs cap">MF_BERT가 채운 답 · 실제 출력</div>
+  <div class="abs fields">
+    <div class="f"><span class="k">주증상</span><span class="v">코 · 코피</span><span class="r ok">정답</span></div>
+    <div class="f"><span class="k">환자</span><span class="v">남성 · 77세</span><span class="r ok">정답</span></div>
+    <div class="f"><span class="k">발병 시점</span><span class="v">40분 전</span><span class="r ok">정답</span></div>
+    <div class="f"><span class="k">활력징후</span><span class="v">혈압 160/90 · 맥박 88 · SpO₂ 97</span><span class="r ok">정답</span></div>
+    <div class="f"><span class="k">KTAS</span><span class="v">3등급<small>응급</small></span><span class="r ok">정답</span></div>
+    <div class="f"><span class="k">처치</span><span class="v">상처처치 · 지혈</span><span class="r ok">정답</span></div>
+    <div class="f"><span class="k">의식</span><span class="v">A<small>명료</small></span><span class="r ok">정답</span></div>
+    <div class="f"><span class="k">증상</span><span class="v">비출혈 있음<small>+ 없는 증상 몇 개</small></span><span class="r ng">일부 틀림</span></div>
+  </div>
+</section>
+
+<!-- 3 · 시험지 -->
+<section class="scene" id="s3">
+  <div class="abs head"><div class="eyebrow">시험지</div><div class="h2">처음 보는 통화 100건, KTAS 등급마다 20건</div></div>
+  <div class="abs grid">
+    <div class="col"><b>KTAS 1</b><span>소생</span><div class="cells"></div></div>
+    <div class="col"><b>KTAS 2</b><span>긴급</span><div class="cells"></div></div>
+    <div class="col"><b>KTAS 3</b><span>응급</span><div class="cells"></div></div>
+    <div class="col"><b>KTAS 4</b><span>준응급</span><div class="cells"></div></div>
+    <div class="col"><b>KTAS 5</b><span>비응급</span><div class="cells"></div></div>
+  </div>
+  <div class="abs models">
+    <div class="lab">시험 본 모델 22개</div>
+    <div class="grp" data-c="mf" data-n="14"><div class="dots"></div><span class="n num">14</span><span class="t">MF_BERT<br><small style="font-size:19px;color:var(--dim)">공개 모델 + 실험 모델</small></span></div>
+    <div class="grp" data-c="lora" data-n="2"><div class="dots"></div><span class="n num">2</span><span class="t">소형 LLM + 같은 과제로 학습</span></div>
+    <div class="grp" data-c="llm" data-n="4"><div class="dots"></div><span class="n num">4</span><span class="t">큰 LLM, 학습 없이 지시문만</span></div>
+    <div class="grp" data-c="base" data-n="2"><div class="dots"></div><span class="n num">2</span><span class="t">학습 전 소형 LLM (기준선)</span></div>
+  </div>
+  <div class="abs facts">
+    <div><b>학습 데이터와 겹치는 통화 0건</b></div>
+    <div>KTAS · 주증상 등 <b>15개 항목</b> + 원문 구간 5종을 채점</div>
+    <div>이 중 <b>대표 3개 모델</b>을 같은 기준으로 비교합니다</div>
+  </div>
+</section>
+
+<!-- 4 · 속도 -->
+<section class="scene" id="s4">
+  <div class="abs head"><div class="eyebrow">걸린 시간</div><div class="h2">100건을 처리하는 데 걸린 시간</div></div>
+  <div class="abs clock"><small>흐른 시간 · 실제 측정값으로 빨리 감기</small><b class="num" id="clk">0.0초</b></div>
+  <div class="abs lanes">
+    <div class="lane" data-lat="0.01502" data-c="mf"><div class="nm">MF_BERT<small>우리 모델</small></div><div class="tr"><b></b></div><div class="ct num">0 / 100</div></div>
+    <div class="lane" data-lat="5.5" data-c="lora"><div class="nm">Qwen2.5-1.5B + LoRA<small>소형 LLM + 학습</small></div><div class="tr"><b></b></div><div class="ct num">0 / 100</div></div>
+    <div class="lane" data-lat="26.0" data-c="llm"><div class="nm">Qwen3-14B<small>큰 LLM, 학습 없음 · 생각 켬</small></div><div class="tr"><b></b></div><div class="ct num">0 / 100</div></div>
+  </div>
+  <div class="abs verdict">소형 LLM(1.5B)보다<em>약 370배</em>빠릅니다</div>
+</section>
+
+<!-- 5 · 정확도 -->
+<section class="scene" id="s5">
+  <div class="abs head"><div class="eyebrow">정답률</div><div class="h2">종합 점수 (0~100점, 모든 항목의 평균)</div></div>
+  <div class="abs bars" id="bars"><div class="band"></div></div>
+  <div class="abs side">
+    <div class="c"><b>차이 구분 안 됨</b><span>우리 모델과 학습한 소형 LLM의 차이(77.3점 대 79.9점)는 100건으로는 구분되지 않습니다 (95% 구간이 0을 포함)</span></div>
+    <div class="c"><b style="color:var(--mf)">+17.5점</b><span>학습 없는 큰 LLM(14B)보다 높습니다. 우연으로 볼 수 없는 차이입니다</span></div>
+    <div class="c"><b style="color:var(--mf)">91.0%</b><span>답이 하나인 8개 항목(KTAS, 주증상, 의식 등) 평균 정답률, 세 모델 중 가장 높음 (소형 LLM 88.1%, 큰 LLM 69.8%)</span></div>
+  </div>
+</section>
+
+<!-- 6 · 크기 -->
+<section class="scene" id="s6">
+  <div class="abs head"><div class="eyebrow">모델 크기 및 GPU 메모리</div><div class="h2">모델 크기와 GPU 메모리</div></div>
+  <svg viewBox="0 0 1060 600" id="circ"></svg>
+  <div class="abs meters" id="meters"><div class="lab">GPU 메모리 (RTX 5080 16GB 한 장 기준)</div></div>
+</section>
+
+<!-- 8 · 정리 -->
+<section class="scene" id="s8">
+  <div class="abs cards">
+    <div class="card"><b>≈</b><span class="k">정답률</span><span class="d">학습한 소형 LLM과 100건으로는 차이가 구분되지 않습니다 (77.3점 대 79.9점)</span></div>
+    <div class="card"><b>370×</b><span class="k">걸린 시간</span><span class="d">소형 LLM(1.5B)보다 약 370배 빠릅니다. 1건에 0.015초, 크기는 약 4분의 1입니다</span></div>
+    <div class="card"><b>+17.5</b><span class="k">학습 없는 큰 LLM 대비</span><span class="d">확실히 정확하고, 크기는 약 40분의 1입니다</span></div>
+  </div>
+  <div class="abs end">MF_BERT · KLUE RoBERTa-large 다중과제 모델 · 생성형이 아니라 없는 말을 지어내지 않습니다</div>
+</section>
+
+<script>
+(() => {
+  // ── 데이터: demo/explainer/benchmark_highlight.html(2026-10-03)과 같은 값 ──
+  const MODELS = [ // 정답률 · 걸린 시간 · 크기 장면에서 같은 3개 모델을 같은 순서(크기순)로 비교한다. 7B는 측정값이 생기면 1.5B와 14B 사이에 넣는다
+    { name: "MF_BERT", sub: "우리 모델", c: "mf", score: 77.3 },
+    { name: "Qwen2.5-1.5B + LoRA", sub: "소형 LLM + 학습", c: "lora", score: 79.9 },
+    { name: "Qwen3-14B", sub: "큰 LLM, 학습 없음 · 생각 켬", c: "llm", score: 59.8 },
+  ];
+  const SIZES = [
+    { name: "MF_BERT", c: "mf", params: 0.37, gb: 3.3 },
+    { name: "Qwen2.5-1.5B + LoRA", c: "lora", params: 1.56, gb: 6.3 },
+    { name: "Qwen3-14B", c: "llm", params: 14.8, gb: 13.1 },
+  ];
+  const COL = { mf: "var(--mf)", lora: "var(--lora)", llm: "var(--llm)", base: "var(--base)" };
+
+  // ── 장면 시간표(초): [시작, 길이] ──
+  const SCENES = [["s0", 0, 6.5], ["sj", 6.5, 11], ["s1", 17.5, 6], ["s2", 23.5, 14], ["s3", 37.5, 9], ["s5", 46.5, 13], ["s4", 59.5, 15], ["s6", 74.5, 10], ["s8", 84.5, 12]];
+  const DURATION = 96.5;
+  window.DURATION = DURATION;
+  const FADE = 0.35; // 장면 사이: 검정으로 내려갔다 올라온다(겹치지 않게)
+
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const ease = (x) => 1 - Math.pow(1 - x, 3);
+  const back = (x) => { const c = 1.7; const y = x - 1; return 1 + (c + 1) * y * y * y + c * y * y; };
+  const seg = (u, s, d) => ease(clamp((u - s) / d));
+  const pop = (u, s, d) => { const x = clamp((u - s) / d); return x >= 1 ? 1 : back(x); };
+  const show = (el, p, dy = 18) => { el.style.opacity = clamp(p); el.style.transform = p >= 1 ? "" : `translateY(${((1 - clamp(p)) * dy).toFixed(2)}px)`; };
+  const fmt = (s) => s < 60 ? `${s.toFixed(1)}초` : `${Math.floor(s / 60)}분 ${String(Math.floor(s % 60)).padStart(2, "0")}초`;
+
+  // ── 정적인 부분 만들기 ──
+  $(".steps").innerHTML = SCENES.slice(1).map(() => "<i><b></b></i>").join("");
+  $$("#s3 .cells").forEach((c) => (c.innerHTML = "<i></i>".repeat(20)));
+  $$("#s3 .grp").forEach((g) => ($(".dots", g).innerHTML = `<i style="background:${COL[g.dataset.c]}"></i>`.repeat(+g.dataset.n)));
+  $$("#s4 .lane").forEach((l) => ($(".tr b", l).style.background = COL[l.dataset.c]));
+  const bars = $("#bars");
+  MODELS.forEach((m) => bars.insertAdjacentHTML("beforeend",
+    `<div class="row"><div class="nm" style="color:${m.c === "mf" ? "var(--mf)" : "#fff"}">${m.name}<small>${m.sub}</small></div><div class="tr"><b style="background:${COL[m.c]}"></b><span class="num">${m.score.toFixed(1)}</span></div></div>`));
+  // 크기: 원의 넓이 = 파라미터 수
+  const R = (p) => Math.sqrt(p) * 50;
+  let cx = 40, svg = "";
+  SIZES.forEach((m, i) => {
+    const r = R(m.params); cx += (i ? R(SIZES[i - 1].params) : 0) + r + (i ? 60 : 0);
+    svg += `<g class="cg" data-r="${r}"><circle cx="${cx}" cy="${330 - 0}" r="0" fill="${COL[m.c]}" fill-opacity="${m.c === "mf" ? 1 : 0.85}"/>` +
+           `<text x="${cx}" y="${330 + r + 52}" text-anchor="middle" fill="#fff" font-size="40" font-weight="900">${m.params}B</text>` +
+           `<text x="${cx}" y="${330 + r + 88}" text-anchor="middle" fill="rgba(255,255,255,.62)" font-size="22" font-weight="700">${m.name}</text></g>`;
+  });
+  $("#circ").innerHTML = svg;
+  SIZES.forEach((m) => $("#meters").insertAdjacentHTML("beforeend",
+    `<div class="m"><div class="t"><span>${m.name}</span><span class="num">${m.gb.toFixed(1)}GB</span></div><div class="bar"><b style="background:${COL[m.c]}" data-gb="${m.gb}"></b><i></i></div></div>`));
+
+  // 속도 경주: 흐른 시간 s(u)를 지수로 빨리 감는다. u=2.2초에 MF_BERT가 끝나고(1.5초), u=10초에 마지막이 끝난다(59분 18초)
+  const lanes = $$("#s4 .lane").map((el, i) => ({ el, approx: i > 0, lat: +el.dataset.lat, fill: $(".tr b", el), ct: $(".ct", el) }));
+  const SMF = 100 * lanes[0].lat, SMAX = 100 * lanes[2].lat, U0 = 0.9, UMF = 2.2, UEND = 10;
+  let lo = 0.01, hi = 5;
+  for (let i = 0; i < 80; i++) { const k = (lo + hi) / 2; ((Math.exp(k * (UEND - U0)) - 1) / (Math.exp(k * (UMF - U0)) - 1) > SMAX / SMF) ? (hi = k) : (lo = k); }
+  const K = (lo + hi) / 2, A = SMF / (Math.exp(K * (UMF - U0)) - 1);
+  const clockAt = (u) => u <= U0 ? 0 : Math.min(SMAX, A * (Math.exp(K * (u - U0)) - 1));
+
+  // ── 장면별 그리기(u = 장면 안의 시각) ──
+  const DRAW = {
+    s0(u) {
+      show($("#s0 .l1"), seg(u, 0.2, 0.6));
+      const p = clamp((u - 1.1) / 0.9);
+      $("#s0n").textContent = (0.015 * ease(p)).toFixed(3);
+      const big = $("#s0 .big"); big.style.opacity = seg(u, 1.0, 0.3); big.style.transform = `scale(${(0.86 + 0.14 * pop(u, 1.0, 0.9)).toFixed(4)})`;
+      show($("#s0 .who"), seg(u, 2.3, 0.5));
+    },
+    sj(u) {
+      show($("#sj .eb"), seg(u, 0, 0.4));
+      const nodes = $$("#sj .node"), links = $$("#sj .link");
+      nodes.forEach((n, i) => { const p = pop(u, 0.25 + i * 0.55, 0.6); n.style.opacity = clamp(p); n.style.transform = `translateY(${((1 - clamp(p, 0, 1.1)) * 24).toFixed(1)}px)`; });
+      links.forEach((l, i) => {
+        $("i", l).style.width = `${100 * seg(u, 0.5 + i * 0.55, 0.45)}%`;
+        // 신호 점이 구급대 → 응급실로 계속 흐른다
+        const em = $("em", l), k = ((u - 1.4 - i * 0.35) % 1.4 + 1.4) % 1.4 / 1.4;
+        em.style.opacity = (u > 1.4 ? Math.sin(Math.PI * k) : 0).toFixed(3); em.style.left = `${(k * 284).toFixed(1)}px`;
+      });
+      // 전화 아이콘이 울린다
+      const ph = nodes[1].querySelector("svg"); const ring = u > 0.9 && u < 2.6 ? Math.sin(u * 40) * 6 * (1 - seg(u, 1.6, 1.0)) : 0;
+      ph.style.transform = `rotate(${ring.toFixed(2)}deg)`;
+      ph.querySelectorAll(".w1,.w2").forEach((w, j) => (w.style.opacity = (0.3 + 0.7 * Math.abs(Math.sin(u * 3 - j))).toFixed(3)));
+      show($("#sj .say"), seg(u, 1.9, 0.5));
+      $("#sj .say mark").style.setProperty("--r", `${(100 * (1 - seg(u, 2.6, 0.7))).toFixed(1)}%`);
+      $$("#sj .b").forEach((b, i) => show(b, seg(u, 3.3 + i * 0.4, 0.35), 14));
+      const ai = $("#sj .ai"); const p = pop(u, 4.1, 0.6); ai.style.opacity = clamp(p); ai.style.transform = `scale(${(0.8 + 0.2 * p).toFixed(3)})`;
+      const fl = $$("#sj .flow"); fl[0].style.width = `${55 * seg(u, 4.3, 0.5)}px`; fl[1].style.width = `${60 * seg(u, 4.9, 0.5)}px`;
+      ai.style.boxShadow = `0 0 ${(30 * (0.5 + 0.5 * Math.sin(u * 4))).toFixed(1)}px rgba(255,209,102,${(0.35 * seg(u, 4.5, 0.4)).toFixed(3)})`;
+      $$("#sj .slot").forEach((sl, i) => { show(sl, seg(u, 5.1 + i * 0.16, 0.35), 10); $("span", sl).style.opacity = (0.45 + 0.55 * Math.abs(Math.sin(u * 2.4 + i * 0.6))).toFixed(3); });
+      show($("#sj .more"), seg(u, 6.6, 0.45));
+    },
+    s1(u) {
+      const paper = $("#s1 .paper"); const pp = seg(u, 0, 0.45); paper.style.opacity = pp; paper.style.transform = `translateY(${((1 - pp) * 30).toFixed(1)}px) rotate(${(-2 * (1 - pp)).toFixed(2)}deg)`;
+      // 연필이 한 줄씩 비교 항목을 쓴다: 글자가 왼쪽에서 오른쪽으로 드러나고 연필 끝이 그 끝을 따라간다
+      const rows = $$("#s1 .hw"), crs = $$("#s1 .hcr"), pencil = $("#s1 .pencil");
+      const T0 = 0.6, PER = 1.0, N = rows.length;
+      const geo = rows.map((t) => { const b = t.getBBox(); return { x: b.x, w: b.width, y: +t.getAttribute("y") + 4 }; });
+      const q = rows.map((_, i) => clamp((u - T0 - i * PER) / (PER * 0.8)));
+      q.forEach((v, i) => crs[i].setAttribute("width", (geo[i].w * v + (v >= 1 ? 30 : 6 * (v > 0 ? 1 : 0))+ 16).toFixed(1)));
+      const done = q.filter((v) => v >= 1).length, active = q.findIndex((v) => v > 0 && v < 1);
+      let tip;
+      if (active >= 0) tip = { x: geo[active].x + geo[active].w * q[active], y: geo[active].y };
+      else if (done === N) tip = { x: geo[N - 1].x + geo[N - 1].w, y: geo[N - 1].y };
+      else if (done === 0) { const k = seg(u, 0.1, 0.5); tip = { x: geo[0].x + 90 * (1 - k), y: geo[0].y - 70 * (1 - k) }; }
+      else { // 다음 줄로 넘어가는 사이: 연필을 들어 옮긴다
+        const k = clamp((u - T0 - (done - 1) * PER - PER * 0.8) / (PER * 0.2)), a0 = geo[done - 1], b0 = geo[done];
+        tip = { x: a0.x + a0.w + (b0.x - a0.x - a0.w) * k, y: a0.y + (b0.y - a0.y) * k - 18 * Math.sin(Math.PI * k) };
+      }
+      const endW = T0 + (N - 1) * PER + PER * 0.8;
+      const away = seg(u, endW + 0.3, 0.5), wob = active >= 0 ? Math.sin(u * 52) * 2.2 : 0;
+      pencil.setAttribute("transform", `translate(${(tip.x + 23.6 + 160 * away).toFixed(1)} ${(tip.y - 18.5 - 70 * away + wob).toFixed(1)})`);
+      pencil.setAttribute("opacity", (seg(u, 0.1, 0.3) * (1 - seg(u, endW + 0.5, 0.4))).toFixed(3));
+      const t = $("#s1 .t"); const tp = pop(u, 0.7, 0.7); t.style.opacity = clamp(tp); t.style.transform = `translateX(${((1 - clamp(tp)) * 60).toFixed(1)}px)`;
+      $("#s1 .ul").style.width = `${620 * seg(u, 1.4, 0.7)}px`;
+    },
+    s2(u) {
+      show($("#s2 .head"), seg(u, 0, 0.5));
+      show($("#s2 .capL"), seg(u, 0.5, 0.4));
+      const kids = [...$("#s2 .call").children];
+      kids.forEach((k, i) => show(k, seg(u, 0.7 + i * 0.32, 0.4), 10));
+      // 표시한 구간에 노란 밑줄 → 오른쪽 칸이 차례로 채워진다
+      $$("#s2 mark").forEach((m) => { const k = +m.dataset.k; const p = seg(u, 4.4 + k * 0.7, 0.4); m.style.boxShadow = `inset 0 -0.5em 0 rgba(255,209,102,${(0.38 * p).toFixed(3)})`; });
+      show($("#s2 .cap"), seg(u, 4.2, 0.4));
+      $$("#s2 .f").forEach((f, i) => {
+        const p = seg(u, 4.6 + i * 0.62, 0.45);
+        f.style.opacity = p; f.style.transform = p >= 1 ? "" : `translateX(${((1 - p) * 40).toFixed(1)}px)`;
+        const r = $(".r", f); const q = pop(u, 4.95 + i * 0.62, 0.4); r.style.opacity = clamp(q); r.style.transform = `scale(${(0.6 + 0.4 * q).toFixed(3)})`;
+        const hit = seg(u, 4.95 + i * 0.62, 0.15) * (1 - seg(u, 5.5 + i * 0.62, 0.6));
+        f.style.borderColor = r.classList.contains("ng") ? `rgba(255,107,111,${(0.9 * seg(u, 4.95 + i * 0.62, 0.3)).toFixed(3)})` : `rgba(76,195,138,${(0.9 * hit).toFixed(3)})`;
+      });
+    },
+    s3(u) {
+      show($("#s3 .head"), seg(u, 0, 0.5));
+      $$("#s3 .col").forEach((c, ci) => { show($("b", c), seg(u, 0.5 + ci * 0.1, 0.3), 8); show($("span", c), seg(u, 0.5 + ci * 0.1, 0.3), 8);
+        $$(".cells i", c).forEach((cell, j) => { const p = pop(u, 0.8 + (ci * 20 + j) * 0.016, 0.3); cell.style.opacity = clamp(p); cell.style.transform = `scale(${(0.3 + 0.7 * p).toFixed(3)})`; }); });
+      show($("#s3 .models .lab"), seg(u, 2.4, 0.4));
+      $$("#s3 .grp").forEach((g, i) => { show(g, seg(u, 2.7 + i * 0.45, 0.4), 12);
+        $$(".dots i", g).forEach((d, j) => { const p = pop(u, 2.8 + i * 0.45 + j * 0.04, 0.3); d.style.transform = `scale(${clamp(p, 0, 1.2).toFixed(3)})`; }); });
+      $$("#s3 .facts div").forEach((f, i) => show(f, seg(u, 5.0 + i * 0.5, 0.45)));
+    },
+    s4(u) {
+      show($("#s4 .head"), seg(u, 0, 0.5));
+      show($("#s4 .clock"), seg(u, 0.4, 0.4));
+      const s = clockAt(u);
+      $("#clk").textContent = (s >= SMAX ? "약 " : "") + fmt(s);
+      lanes.forEach((l) => {
+        const n = Math.min(100, Math.floor(s / l.lat + 1e-9));
+        l.fill.style.width = `${n}%`;
+        l.ct.textContent = n >= 100 ? (l.approx ? "약 " : "") + fmt(100 * l.lat) : `${n} / 100`; // 소형·큰 LLM은 1건 평균(소수 첫째 자리)에 100을 곱한 값이라 "약"
+        l.el.classList.toggle("done", n >= 100);
+        l.el.style.opacity = seg(u, 0.3, 0.4);
+      });
+      // MF_BERT가 끝나는 순간 그 줄이 한 번 번쩍
+      const flash = seg(u, UMF, 0.1) * (1 - seg(u, UMF + 0.1, 0.8));
+      lanes[0].el.style.filter = `drop-shadow(0 0 ${(28 * flash).toFixed(1)}px rgba(255,209,102,${(0.9 * flash).toFixed(2)}))`;
+      const v = $("#s4 .verdict"); v.style.opacity = seg(u, 10.6, 0.4); v.style.transform = `scale(${(0.85 + 0.15 * pop(u, 10.6, 0.7)).toFixed(4)})`;
+    },
+    s5(u) {
+      show($("#s5 .head"), seg(u, 0, 0.5));
+      $$("#s5 .row").forEach((r, i) => {
+        const m = MODELS[i]; const p = seg(u, 0.6 + i * 0.22, 1.0);
+        show($(".nm", r), seg(u, 0.4 + i * 0.22, 0.4), 8);
+        // 막대: 0~100점을 750px에
+        $(".tr b", r).style.width = `${(m.score / 100) * 750 * p}px`;
+        const sp = $(".tr span", r); sp.style.left = `${(m.score / 100) * 750 * p}px`; sp.style.opacity = seg(u, 0.9 + i * 0.22, 0.4);
+        // 위 세 모델을 묶어 볼 때는 큰 LLM 줄을 흐리게, "+17~31점"을 말할 때는 다시 밝게
+        const dimLlm = seg(u, 3.0, 0.4) - seg(u, 7.2, 0.4);
+        r.style.opacity = m.c === "llm" ? (1 - 0.6 * dimLlm).toFixed(3) : 1;
+      });
+      // 위 세 모델을 점선으로 묶는다(차이 구분 안 됨)
+      const band = $("#s5 .band"); band.style.opacity = seg(u, 3.0, 0.4) * (1 - seg(u, 7.2, 0.4)); band.style.width = `${(81.5 / 100) * 750 + 470}px`; band.style.left = `-14px`;
+      $$("#s5 .side .c").forEach((c, i) => show(c, seg(u, [3.2, 7.4, 9.6][i], 0.5)));
+    },
+    s6(u) {
+      show($("#s6 .head"), seg(u, 0, 0.5));
+      $$("#circ .cg").forEach((g, i) => { const p = pop(u, 0.6 + i * 0.7, 0.8); $("circle", g).setAttribute("r", (+g.dataset.r * clamp(p, 0, 1.15)).toFixed(2)); $$("text", g).forEach((t) => (t.style.opacity = seg(u, 0.9 + i * 0.7, 0.4))); });
+      show($("#s6 .meters .lab"), seg(u, 2.6, 0.4));
+      $$("#s6 .m").forEach((m, i) => { show(m, seg(u, 2.8 + i * 0.4, 0.4), 10); const b = $(".bar b", m); b.style.width = `${(+b.dataset.gb / 16) * 100 * seg(u, 3.0 + i * 0.4, 0.9)}%`; });
+    },
+    s8(u) {
+          $$("#s8 .card").forEach((c, i) => { const p = pop(u, 0.9 + i * 0.5, 0.7); c.style.opacity = clamp(p); c.style.transform = `translateY(${((1 - clamp(p, 0, 1.1)) * 40).toFixed(1)}px)`; });
+      show($("#s8 .end"), seg(u, 3.4, 0.6));
+    },
+  };
+
+  function render(t) {
+    for (const [id, st, du] of SCENES) {
+      const el = document.getElementById(id), u = t - st;
+      if (u < 0 || u > du) { el.style.opacity = 0; el.style.visibility = "hidden"; continue; }
+      el.style.visibility = "visible";
+      const last = id === SCENES[SCENES.length - 1][0];
+      el.style.opacity = Math.min(clamp(u / FADE), last ? 1 : clamp((du - u) / FADE));
+      DRAW[id](u);
+    }
+    // 위 진행 표시: 오프닝 제외 8칸
+    $$(".steps i b").forEach((b, i) => { const [, st, du] = SCENES[i + 1]; b.style.width = `${clamp((t - st) / du) * 100}%`; });
+    const chrome = seg(t, 6.5, 0.5);
+    // 오프닝(s0)과 "AI 모델이 해야 하는 일"(sj) 장면에서는 아래 출처 줄을 숨기고, 다음 장면(s1)이 나올 때 서서히 나타난다
+    const sjS = SCENES.find((x) => x[0] === "sj"), hideEnd = sjS[1] + sjS[2];
+    const hideFoot = t < hideEnd ? 1 : 1 - clamp((t - hideEnd) / FADE);
+    $("#top").style.opacity = chrome; $("#foot").style.opacity = (0.35 + 0.65 * chrome) * (1 - hideFoot);
+  }
+  window.render = render;
+
+  const q = new URLSearchParams(location.search);
+  if (q.has("t")) { document.fonts.ready.then(() => render(+q.get("t"))); }
+  else if (!q.has("record")) {
+    document.fonts.ready.then(() => { const t0 = performance.now(); const loop = () => { render(((performance.now() - t0) / 1000) % DURATION); requestAnimationFrame(loop); }; loop(); });
+  } else render(0);
+})();
+</script>
+</body>
+</html>
