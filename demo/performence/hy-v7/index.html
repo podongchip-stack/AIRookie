@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>정보의 유효기간</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:"Apple SD Gothic Neo",sans-serif;overflow:hidden}
+  #wrap{position:absolute;inset:0 0 56px 0;display:flex;align-items:center;justify-content:center}
+  canvas{background:#000;max-width:100%;max-height:100%;aspect-ratio:16/9}
+  #bar{position:absolute;left:0;right:0;bottom:0;height:56px;display:flex;gap:12px;align-items:center;padding:0 16px;box-sizing:border-box;background:#0a0a0a;font:13px Menlo,monospace}
+  #bar input{flex:1;accent-color:#fff}
+  #bar button{background:#111;color:#fff;border:1px solid #333;padding:6px 12px;font:inherit;cursor:pointer}
+  body.render #bar{display:none} body.render #wrap{inset:0}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="bar"><button id="play">▶ 재생</button><input id="scrub" type="range" min="0" max="1000" value="0"><span id="tc">0.00</span></div>
+<script src="film.js"></script>
+</body>
+</html>
