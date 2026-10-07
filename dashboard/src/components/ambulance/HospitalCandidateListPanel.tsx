@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { AD, pill } from "@/components/ambulance/ambulance-design";
+import { BackupCapacityButton } from "@/components/ambulance/BackupCapacityButton";
 import { formatDeclarationAge, liveBedReliability } from "@/lib/bedReliability";
 import type { AcceptanceMessage, HospitalCandidate, HospitalStatus, HubMatchResult, ReliabilityConfidence, SceneCandidates } from "@/types/dashboard";
 
@@ -236,6 +237,7 @@ export function HospitalCandidateListPanel({
                   </Chip>
                 )}
                 {h.emergencyLevel && h.emergencyLevel.endsWith("센터") && <Chip>{h.emergencyLevel}</Chip>}
+                <BackupCapacityButton hospitalId={h.hospitalId} name={h.name} />
               </div>
               <button type="button" disabled style={approveButton("disabled")}>통화 후 병원 응답을 받으면 승인</button>
             </div>
@@ -422,6 +424,7 @@ function CandidateCard({
           </Chip>
         )}
         {hospital.emergencyLevel && hospital.emergencyLevel.endsWith("센터") && <Chip>{hospital.emergencyLevel}</Chip>}
+        <BackupCapacityButton hospitalId={hospital.hospitalId} name={hospital.name} />
         {/* 수용 불가 신고(declared_no 강등) — 제외하지 않고 순위만 내리는 원칙의 가시화(2026-10-04) */}
         {hospital.demoteReasons?.includes("declared_no") && (
           <Chip bg={AD.redSoft} fg={AD.red} title="이 질환군은 수용 불가라고 병원이 E-Gen에 신고한 상태 — 후보에서 빼지 않고 순위만 뒤로 내립니다">

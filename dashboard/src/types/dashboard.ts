@@ -230,6 +230,42 @@ export interface HospitalCandidate {
   acceptanceMessages?: AcceptanceMessage[] | null;
 }
 
+// hub GET /hospital-backup(2026-10-08) — [배후역량] 버튼. 보유(심평원, 월 단위)·정원/운영(E-Gen)·지금 가용(E-Gen 5분,
+// 이송 확정 차감 반영)을 나란히. 장비는 지금 남은 대수가 공개 정보에 없어 보유·운영만 온다. 순위와 무관한 열람용(규칙).
+export interface BackupBedRow {
+  key: string;
+  label: string;
+  hiraCapacity?: number | null;
+  egenCapacity?: number | null;
+  available?: number | null;
+  authority?: number | null; // 지금 이 가용 숫자를 믿어도 될 확률(AI)
+  note?: string | null;
+}
+
+export interface BackupEquipmentRow {
+  key: string;
+  label: string;
+  hiraCount?: number | null;
+  egenOperating?: "Y" | "N" | "N1" | null;
+  note?: string | null;
+}
+
+export interface HospitalBackupView {
+  hospitalId: string;
+  name: string;
+  emergencyLevel?: string | null;
+  beds: BackupBedRow[];
+  equipment: BackupEquipmentRow[];
+  specialties: { department: string; doctorCount: number }[];
+  nursingGrade?: string | null;
+  severeDeclarations?: SevereDeclarations | null;
+  acceptanceMessages: Omit<AcceptanceMessage, "matched">[];
+  inFlightCount: number;
+  egenUpdatedAt?: string | null;
+  hiraCollectedAt?: string | null;
+  source: "rule";
+}
+
 export interface AcceptanceMessage {
   kind: "er" | "severe"; // er = 응급실 메시지(진료과 단위), severe = 중증질환 차단(질환군 있음)
   message: string;
