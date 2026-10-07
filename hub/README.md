@@ -656,13 +656,14 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 > `has_pending_bed_update()`, `hub/schema.py`의 `HospitalBedUpdate` 전부
 > 삭제됐다.
 >
-> 대신 병상 차감은 **hub 혼자 자기 메모리에서 짧게(TTL)만 처리**한다.
-> `HubEngine._bed_overlay`(hpid -> 만료 시각 목록)에 `final_approval`마다
-> 기록 하나가 쌓이고, `effective_bed_count()`가 조회 시점에 만료 안 된
+> 대신 병상 차감은 **hub 혼자 자기 메모리에서 한시적으로만 처리**한다.
+> `HubEngine._bed_overlay`(hpid -> `BedHold` 목록)에 `final_approval`마다
+> 기록 하나가 쌓이고, `effective_bed_count()`가 조회 시점에 아직 유효한
 > 개수만큼만 원본(`HospitalInfo.availableBedCount`)에서 빼서 보여준다.
-> `BED_OVERLAY_TTL_MIN=15`(분)는 `hvidate` 갱신 간격 실측(중앙값 5분,
-> 88.7%가 10분 이내)에서 여유를 둔 값 — 그 안에는 E-Gen 자신도 아직 안
-> 바뀌었을 가능성이 높아 오버레이가 유효한 근거가 된다. 예전 대기열 방어
+> 언제 푸는가(2026-10-08, 예전 고정 15분 대체): 확정 + 예상 이동시간 + 20분은 무조건 유지 → 그 뒤 E-Gen 응급실 원값이 확정 당시보다 줄면 해제(줄어든 만큼만) → 끝까지 안 줄면 도착 예상 + 60분에 해제, 수용 완료 시 기준을 실제 도착으로 재설정.
+> 15분의 근거였던 "hvidate 갱신 간격 중앙값 5분"은 병원 입력 주기가 아니라 E-Gen의
+> 5분 묶음 주기였고, 15분이면 구급차가 도착하기도 전에 차감이 풀렸다. 해제 이유는
+> 의사결정 로그 `bed_hold_released`로 남는다. 검증 `test_bed_hold.py`. 예전 대기열 방어
 > 로직(`HubEngine.update_hospital_info()`가 재시도 중인 병원은 upsert
 > 건너뛰기)도 필요 없어졌다 — 오버레이가 read-time에 적용되므로 info가
 > 보내는 최신 원본값을 매번 그대로 덮어써도 안전하다.

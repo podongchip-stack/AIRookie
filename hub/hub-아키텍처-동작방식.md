@@ -62,7 +62,7 @@ geo/specialty_matcher/scoring은 서로를 전혀 모르고 hub_engine에서만 
 dashboard "통화 시작/종료" 버튼 → 같은 WebSocket으로 수신 → hub가 **그 apid의 voice 주소로 HTTP 중계**. voice 주소 = voice 자가등록 IP(`POST /voice/register`) + info가 보낸 `AmbulanceInfo.voicePort`. 오디오는 hub를 거치지 않는다(브라우저 마이크 프레임은 받고 버림 — 실제 STT는 voice 로컬 마이크).
 
 ### 3-5. 병상 차감 — TTL 오버레이
-`final_approval`마다 `_bed_overlay`(hpid → 만료 시각 목록)에 기록 하나를 쌓고, `effective_bed_count()`가 **조회 시점에** 만료 안 된 개수만큼 원본에서 빼서 보여준다. `BED_OVERLAY_TTL_MIN=15`분 — hvidate 갱신 간격 실측(중앙값 5분, 88.7%가 10분 이내)에 여유를 둔 값. 원본 `HospitalInfo`는 mutate하지 않으므로 info의 최신값을 매번 덮어써도 안전하다. **info로 되돌려 쓰는 병상 갱신은 2026-08-13 완전 폐지** (E-Gen이 조회 전용이라 왕복 불가).
+`final_approval`마다 `_bed_overlay`(hpid → `BedHold` 목록)에 기록 하나를 쌓고, `effective_bed_count()`가 **조회 시점에** 아직 유효한 개수만큼 원본에서 빼서 보여준다. 2026-10-08부터 고정 15분이 아니라 확정 + 예상 이동시간 + 20분은 무조건 유지 → 그 뒤 E-Gen 응급실 원값이 확정 당시보다 줄면 해제(줄어든 만큼만) → 끝까지 안 줄면 도착 예상 + 60분에 해제, 수용 완료 시 기준을 실제 도착으로 재설정. 원본 `HospitalInfo`는 mutate하지 않으므로 info의 최신값을 매번 덮어써도 안전하다. **info로 되돌려 쓰는 병상 갱신은 2026-08-13 완전 폐지** (E-Gen이 조회 전용이라 왕복 불가).
 
 ### 3-6. 거절 로그 중계 (hub → info)
 `hospital_reject`마다 `_rejection_payload()`로 아래를 만들어 `HUB_REJECTION_URL`(기본 `http://127.0.0.1:5003/hub/rejection`)에 POST. **fire-and-forget** — 수신구가 안 떠 있어도 승인 처리는 계속.

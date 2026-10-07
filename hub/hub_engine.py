@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -54,11 +55,51 @@ if TYPE_CHECKING:
 # 병상 차감을 지속시키는 방식(2026-08-13 변경). 예전엔 hub가 깎은 값을
 # feature/info의 Supabase에 써서 다음 재조회 때도 유지시켰는데, info가 이제
 # Supabase 없이 E-Gen 실 API만 쓰면서(조회 전용이라 쓰기 자체가 불가능) 그
-# 경로가 사라졌다. 대신 hub가 짧은 시간만 자기 메모리에 차감분을 얹어 보여주는
-# TTL 오버레이로 대체한다 — 그 시간이 지나면 E-Gen 자신이 갱신한 진짜 값을
-# 그대로 믿는다. 15분은 hvidate 갱신 간격 실측(중앙값 5분, 88.7%가 10분
-# 이내)에서 여유를 둔 값이다.
-BED_OVERLAY_TTL_MIN = 15
+# 경로가 사라졌다. 대신 hub가 자기 메모리에 차감분을 얹어 보여주는 오버레이로 대체한다.
+#
+# 언제 푸는가(2026-10-08 재설계 — 예전엔 확정 뒤 고정 15분). 15분의 근거였던 "hvidate 갱신 간격
+# 중앙값 5분"은 병원 입력 주기가 아니라 E-Gen 시스템의 5분 묶음 주기였다. hub가 "병원이 우리 환자를
+# 반영한 값"을 보려면 이송 + 병원 입력 + E-Gen 묶음(≤5분) + info 수집(≤5분)이 지나야 해서, 15분이면
+# 구급차가 도착하기도 전에 차감이 풀려 같은 병상이 다시 비어 보이고 부하 페널티도 꺼졌다.
+# 반대로 무작정 길게 두면 병원이 이미 고친 뒤 이중 차감이 돼 작은 응급실이 "확인된 만실"로 떨어진다.
+#   1) 최소 유지: 확정 + 예상 이동시간 + BED_HOLD_GRACE_MIN까지는 무조건 유지
+#   2) 조기 해제: 그 뒤 E-Gen 응급실 원값이 확정 당시(baseline)보다 줄었으면 병원이 반영한 것으로 보고 해제
+#   3) 상한: 끝까지 안 줄어도 도착 예상 + BED_HOLD_MAX_AFTER_ARRIVAL_MIN에 해제
+#   4) 병원이 수용 완료(arrival_accepted)를 누르면 1)·3)의 기준을 예상 도착이 아니라 실제 도착 시각으로 다시 잡는다
+# 2)는 다른 환자의 입원으로 값이 줄어도 해제되는 근사다 — 그때는 E-Gen 값 자체가 현실에 가까워진 뒤라 받아들인다.
+# 숫자는 정답 데이터 없이 정한 초기값이다(도착 결과 로그가 쌓이면 다시 맞춘다).
+BED_HOLD_GRACE_MIN = 20  # E-Gen 묶음 5 + info 수집 5 + 병원 입력 여유 10
+BED_HOLD_MAX_AFTER_ARRIVAL_MIN = 60
+BED_HOLD_DEFAULT_TRAVEL_MIN = 15  # 확정 병원의 이동시간을 모를 때
+
+
+@dataclass(eq=False)
+class BedHold:
+    """이송 확정 하나가 얹은 병상 차감(eq=False — 같은 값의 두 확정을 서로 다른 차감으로 센다)."""
+
+    case_id: str | None
+    confirmed_at: datetime
+    hold_until: datetime  # 이때까지는 무조건 유지
+    expires_at: datetime  # 이때는 무조건 해제(상한)
+    baseline: int | None  # 확정 순간 E-Gen 응급실 원값(info.availableBedCount). None이면 조기 해제 안 함
+
+    def to_json(self) -> dict:
+        return {
+            "caseId": self.case_id,
+            "confirmedAt": self.confirmed_at.isoformat(),
+            "holdUntil": self.hold_until.isoformat(),
+            "expiresAt": self.expires_at.isoformat(),
+            "baseline": self.baseline,
+        }
+
+
+def _bed_hold_window(anchor: datetime, travel_min: float) -> tuple[datetime, datetime]:
+    """(최소 유지 끝, 상한). anchor는 확정 시각(travel_min = 예상 이동시간) 또는 실제 도착 시각(travel_min = 0)."""
+    arrival = anchor + timedelta(minutes=max(travel_min, 0.0))
+    return (
+        arrival + timedelta(minutes=BED_HOLD_GRACE_MIN),
+        arrival + timedelta(minutes=BED_HOLD_MAX_AFTER_ARRIVAL_MIN),
+    )
 
 # 이송이 확정(final_approval)된 사건을 인메모리 캐시에 얼마나 더 들고 있을지.
 # hub는 상시 정리 스레드가 없는 순수 요청-응답 구조라, 사건별 dict
@@ -287,6 +328,21 @@ def _er_capacity(info: HospitalInfo, effective_beds: int, bed_unknown: bool, bed
     return capacity, max(0, min(100, round(100 * occupied / capacity)))
 
 
+def _hold_from_state(raw: Any) -> BedHold | None:
+    """상태 파일의 병상 차감 하나. 예전 형식(만료 시각 문자열 하나, 고정 15분 TTL 시절)은 그 시각에 풀리는
+    차감으로 옮긴다(확정 당시 값을 몰라 조기 해제는 안 함)."""
+    if isinstance(raw, str):
+        expires = _parse_iso(raw)
+        return None if expires is None else BedHold(None, expires - timedelta(minutes=15), expires, expires, None)
+    if not isinstance(raw, dict):
+        return None
+    times = [_parse_iso(raw.get(k) or "") for k in ("confirmedAt", "holdUntil", "expiresAt")]
+    if any(t is None for t in times):
+        return None
+    baseline = raw.get("baseline")
+    return BedHold(raw.get("caseId"), *times, baseline if isinstance(baseline, int) else None)
+
+
 def _active_messages(info: HospitalInfo, now: datetime) -> list[AcceptanceMessage]:
     """E-Gen 수용 제한 메시지 중 지금 유효한 것(시작 ≤ 지금 < 종료). info는 30분마다 보내므로 그 사이에
     끝나거나 시작되는 메시지를 여기서 다시 거른다. 시각이 없거나 깨진 쪽은 열린 구간으로 본다."""
@@ -480,12 +536,12 @@ class HubEngine:
         self._case_group: dict[str, str | None] = {}
         # 사건별로 구급차 좌표가 기본 좌표로 대체됐는지. 재계산 결과에도 같은 표시를 싣는다.
         self._case_gps_fallback: dict[str, bool] = {}
-        # (caseId, hospitalId) -> 그 확정이 얹은 병상 차감의 만료 시각. 이송 병원을 다시
-        # 고르면 이전 병원의 차감을 이것으로 찾아 회수한다(2026-09-28).
-        self._case_overlay: dict[tuple[str, str], datetime] = {}
-        # hospitalId -> 아직 유효한 차감 만료 시각 목록. final_approval마다 하나씩
-        # 추가되고, effective_bed_count()가 조회 시점에 만료분을 걸러낸다.
-        self._bed_overlay: dict[str, list[datetime]] = {}
+        # (caseId, hospitalId) -> 그 확정이 얹은 병상 차감. 이송 병원을 다시 고르면 이전 병원의
+        # 차감을 이것으로 찾아 회수하고(2026-09-28), 수용 완료 때 기준 시각을 다시 잡는다(2026-10-08).
+        self._case_overlay: dict[tuple[str, str], BedHold] = {}
+        # hospitalId -> 아직 유효한 병상 차감 목록. final_approval마다 하나씩 추가되고,
+        # _prune_and_count_overlay()가 조회 시점에 풀 것을 걸러낸다(BED_HOLD_* 규칙).
+        self._bed_overlay: dict[str, list[BedHold]] = {}
         # caseId -> 이송이 확정된 시각(UTC). 위 dict들과 달리 이건 정리용이다 —
         # process_voice_summary()/apply_approval_action() 진입 때마다 여기서
         # CASE_RETENTION_MIN이 지난 사건을 골라 모든 사건 dict에서 걷어낸다
@@ -543,10 +599,11 @@ class HubEngine:
             return removed, kept
 
     def clear_bed_overlay(self) -> None:
-        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감(TTL 오버레이)을 비운다.
-        실운영 경로에서는 부르지 않는다(차감은 TTL로만 풀리는 게 원칙)."""
+        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감을 비운다.
+        실운영 경로에서는 부르지 않는다(차감은 BED_HOLD_* 규칙으로만 풀리는 게 원칙)."""
         with self._lock:
             self._bed_overlay.clear()
+            self._case_overlay.clear()
             self._dirty = True
 
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
@@ -750,7 +807,7 @@ class HubEngine:
         (2026-10-01). 예전엔 확정된 사건만 60분 뒤 지워서, 취소·중단된 사건이 병원 대시보드
         따라잡기 목록에 영원히 떴다. 이송 확정된 사건은 기본적으로 지우지 않는다(기존 60분 정리를
         따른다). include_confirmed=True면 확정 사건도 지운다(출동 시뮬레이션 재시작, 2026-10-03) —
-        병상 차감(_bed_overlay)은 병원 단위로 따로 남아 TTL대로 풀리므로 사건을 지워도 그대로다.
+        병상 차감(_bed_overlay)은 병원 단위로 따로 남아 BED_HOLD_* 규칙대로 풀리므로 사건을 지워도 그대로다.
         지웠으면 True."""
         with self._lock:
             if case_id in self._case_confirmed_at and not include_confirmed:
@@ -762,16 +819,47 @@ class HubEngine:
             return existed
 
     def _prune_and_count_overlay(self, hospital_id: str, now: datetime) -> int:
-        """만료된 차감 기록을 걷어내고, 아직 유효한 개수를 돌려준다."""
-        expirations = self._bed_overlay.get(hospital_id)
-        if not expirations:
+        """풀 차감을 걷어내고 아직 유효한 개수를 돌려준다(락 안에서만 호출). 상한이 지났거나, 최소 유지가 끝났고
+        E-Gen 응급실 원값이 확정 당시(baseline)보다 줄어 있으면 푼다. 줄어든 만큼만 푼다 — 먼저 확정된 것부터 풀고,
+        풀 때마다 그 1석을 "써 버린" 것으로 남은 차감들의 baseline을 1 낮춘다(다음 조회 때 같은 감소로 또 풀리지
+        않게). 단 지금 E-Gen 값 아래로는 낮추지 않는다 — 이미 줄어든 값으로 확정된 차감까지 깎으면 그 환자가
+        반영돼도 풀리지 않는다."""
+        holds = self._bed_overlay.get(hospital_id)
+        if not holds:
             return 0
-        active = [expires_at for expires_at in expirations if expires_at > now]
-        if active:
-            self._bed_overlay[hospital_id] = active
+        info = self._hospitals.get(hospital_id)
+        current = None if info is None or _is_bed_count_unknown(info) else info.availableBedCount
+        kept: list[BedHold] = []
+        ordered = sorted(holds, key=lambda h: h.confirmed_at)
+        for i, hold in enumerate(ordered):
+            if now >= hold.expires_at:
+                self._log_hold_released(hospital_id, hold, "max_age", current)
+            elif (
+                current is not None and hold.baseline is not None and now >= hold.hold_until
+                and hold.baseline - current >= 1
+            ):
+                self._log_hold_released(hospital_id, hold, "egen_reflected", current)
+                for later in ordered[i + 1:]:
+                    if later.baseline is not None:
+                        later.baseline = max(current, later.baseline - 1)
+            else:
+                kept.append(hold)
+                continue
+            for key in [k for k, v in self._case_overlay.items() if v is hold]:
+                del self._case_overlay[key]
+            self._dirty = True
+        if kept:
+            self._bed_overlay[hospital_id] = kept
         else:
             del self._bed_overlay[hospital_id]
-        return len(active)
+        return len(kept)
+
+    @staticmethod
+    def _log_hold_released(hospital_id: str, hold: BedHold, cause: str, current: int | None) -> None:
+        """차감이 풀린 이유를 남긴다 — 유지 시간 상수를 도착 결과 로그와 대조해 다시 맞출 재료다."""
+        decision_log.log_decision("bed_hold_released", {
+            "hospitalId": hospital_id, "cause": cause, "egenNow": current, "hold": hold.to_json(),
+        })
 
     def effective_bed_count(self, info: HospitalInfo) -> int:
         """TTL 오버레이가 적용된 실제 표시용 병상 수. 0 미만으로는 안 내려간다
@@ -895,6 +983,11 @@ class HubEngine:
                 # 실제 수용 — 이송이 끝났다. status는 confirmed 그대로, 결과만 기록한다.
                 arrival = ArrivalResult(hospitalId=action.hospital_id, result="accepted", at=action.timestamp)
                 self._case_arrival[action.caseId] = arrival
+                # 병상 차감의 기준을 예상 도착에서 실제 도착(지금)으로 다시 잡는다 — 병원은 이제부터 입력한다
+                hold = self._case_overlay.get(status_key)
+                if hold is not None:
+                    hold.hold_until, hold.expires_at = _bed_hold_window(_utcnow(), 0.0)
+                    self._dirty = True
                 cached = self._case_results.get(action.caseId)
                 if cached is not None:
                     self._case_results[action.caseId] = cached.model_copy(update={"arrival": arrival})
@@ -961,9 +1054,14 @@ class HubEngine:
                 )
                 return True
 
-            expires_at = _utcnow() + timedelta(minutes=BED_OVERLAY_TTL_MIN)
-            self._bed_overlay.setdefault(info.hospitalId, []).append(expires_at)
-            self._case_overlay[status_key] = expires_at
+            now = _utcnow()
+            cached = self._case_results.get(action.caseId)
+            match = next((h for h in cached.hospitals if h.hospitalId == info.hospitalId), None) if cached else None
+            travel_min = match.travelMin if match is not None and match.travelMin is not None else BED_HOLD_DEFAULT_TRAVEL_MIN
+            hold_until, expires_at = _bed_hold_window(now, travel_min)
+            hold = BedHold(action.caseId, now, hold_until, expires_at, info.availableBedCount)
+            self._bed_overlay.setdefault(info.hospitalId, []).append(hold)
+            self._case_overlay[status_key] = hold
             # 병상 차감(오버레이)이 실제로 얹힌 뒤에 패치해야 dashboard 캐시에도 새
             # 병상 수가 반영된다 — 얹기 전에 패치하면 status만 바뀌고 병상 배지는
             # 옛날 값 그대로 남는다.
@@ -976,7 +1074,8 @@ class HubEngine:
                     "bedOverlay": {
                         "hospitalId": info.hospitalId,
                         "effectiveBedCount": self.effective_bed_count(info),
-                        "expiresAt": expires_at.isoformat(),
+                        "travelMin": travel_min,
+                        **hold.to_json(),
                     },
                 },
             )
@@ -993,11 +1092,11 @@ class HubEngine:
         """
         new_status = "rejected" if cause in _EXCLUDING_CAUSES else "approved"
         self._approval_status[(case_id, hospital_id)] = new_status
-        expires_at = self._case_overlay.pop((case_id, hospital_id), None)
+        hold = self._case_overlay.pop((case_id, hospital_id), None)
         overlay = self._bed_overlay.get(hospital_id, [])
-        reclaimed = expires_at in overlay  # 이미 만료돼 정리됐으면 회수할 것이 없다
+        reclaimed = hold is not None and hold in overlay  # 이미 풀려 정리됐으면 회수할 것이 없다
         if reclaimed:
-            overlay.remove(expires_at)
+            overlay.remove(hold)
             if not overlay:
                 del self._bed_overlay[hospital_id]
         result = self._case_results.get(case_id)
@@ -1625,8 +1724,7 @@ class HubEngine:
                 "hospitals": [h.model_dump() for h in self._hospitals.values()],
                 "ambulances": [a.model_dump() for a in self._ambulances.values()],
                 "approvalStatus": [[cid, hid, status] for (cid, hid), status in self._approval_status.items()],
-                "bedOverlay": {hid: [t.isoformat() for t in times] for hid, times in self._bed_overlay.items()},
-                "caseOverlay": [[cid, hid, t.isoformat()] for (cid, hid), t in self._case_overlay.items()],
+                "bedOverlay": {hid: [h.to_json() for h in holds] for hid, holds in self._bed_overlay.items()},
                 "infoConfirmations": {hid: t.isoformat() for hid, t in self._info_confirmations.items()},
                 "cases": cases,
             }
@@ -1655,17 +1753,22 @@ class HubEngine:
                     continue
                 self._ambulances[amb.apid] = amb
                 counts["ambulances"] += 1
-            for cid, hid, at in state.get("caseOverlay", []):
-                parsed_at = _parse_iso(at)
-                if parsed_at is not None:
-                    self._case_overlay[(cid, hid)] = parsed_at
             for cid, hid, status in state.get("approvalStatus", []):
                 if status in _ACTION_TO_STATUS.values():
                     self._approval_status[(cid, hid)] = status
-            for hid, times in state.get("bedOverlay", {}).items():
-                parsed = [t for t in (_parse_iso(x) for x in times) if t is not None]
-                if parsed:
-                    self._bed_overlay[hid] = parsed
+            for hid, raws in state.get("bedOverlay", {}).items():
+                holds = [h for h in (_hold_from_state(raw) for raw in raws) if h is not None]
+                if holds:
+                    self._bed_overlay[hid] = holds
+                    for hold in holds:
+                        if hold.case_id is not None:
+                            self._case_overlay[(hold.case_id, hid)] = hold
+            for cid, hid, at in state.get("caseOverlay", []):  # 예전 형식: 사건 ↔ 차감을 만료 시각으로 이었다
+                expires = _parse_iso(at)
+                hold = next((h for h in self._bed_overlay.get(hid, []) if h.expires_at == expires), None)
+                if hold is not None:
+                    hold.case_id = cid
+                    self._case_overlay[(cid, hid)] = hold
             for hid, raw_ts in state.get("infoConfirmations", {}).items():
                 ts = _parse_iso(raw_ts)
                 if ts is not None:

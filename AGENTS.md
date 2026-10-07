@@ -116,7 +116,7 @@ feature/dashboard ──(통화 시작/종료 신호, WebSocket)─→ feature/h
 갱신이다~~ → **2026-08-13 이 화살표 자체가 없어졌다.** info가 병원
 Supabase 없이 E-Gen 실 API로 병상까지 직접 읽으면서(조회 전용이라 hub가
 쓸 방법이 원래 없었음), hub→info 방향 통신이 통째로 사라졌다. 이송 확정
-시점의 병상 차감은 이제 hub 혼자 자기 메모리(TTL 오버레이, 15분)로만
+시점의 병상 차감은 이제 hub 혼자 자기 메모리(차감 오버레이 — 2026-10-08부터 고정 15분이 아니라 사건 기준 유지·해제)로만
 처리한다 — feature/info로 아무것도 되돌려 쓰지 않는다. 자세한 것은
 "feature/hub 담당자 참고사항"의 "병상 차감은 TTL 오버레이로 처리한다" 참고.
 
@@ -487,7 +487,7 @@ info 수신구(`POST /hub/rejection`) → **완성.** dashboard 사유 선택 UI
 대응표 밖의 기관을 전부 버려서, E-Gen에서 533곳을 받아도 hub에는 7곳만 갔다 —
 원인은 병상만 Supabase에서 읽던 구조였다. 여기 제안됐던 방향(병상 차감을
 Supabase가 아니라 짧은 TTL 오버레이로 관리하고 병상 자체는 E-Gen 실값을 쓴다)을
-그대로 채택해 구현했다 — `hub/hub_engine.py`의 `BED_OVERLAY_TTL_MIN`(15분),
+그대로 채택해 구현했다 — `hub/hub_engine.py`의 병상 차감 오버레이(당시 `BED_OVERLAY_TTL_MIN` 15분, 2026-10-08 `BedHold` 규칙으로 교체),
 `send_to_hub.py`의 Supabase 병상 조회·대응표 삭제. 이제 E-Gen이 주는 병원
 전체(서울 실측 55곳, 전국 500여 곳)가 hub로 흘러간다. 예고됐던 대로
 `hospitalId`가 `S0000001~7`에서 실 hpid(`A1100017` 등)로 바뀌었다 —
@@ -526,7 +526,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   `apply_approval_action()` 진입 시 "이송 확정 후 `CASE_RETENTION_MIN=60`분 지난" 사건을
   모든 사건 dict에서 제거한다(`_bed_overlay`와 같은 read-time lazy 정리). 진행 중이거나
   아직 확정 전인 사건은 절대 지우지 않아 다중 사건 격리·따라잡기는 불변.
-- **병상 차감은 TTL 오버레이로 처리한다.** `HubEngine._bed_overlay`(hpid -> 만료 시각 목록, `BED_OVERLAY_TTL_MIN=15`)에 `final_approval`마다 하나씩 쌓이고, `effective_bed_count()`가 조회 시점에 만료 안 된 개수만큼만 얹어 보여준다. 15분은 `hvidate` 갱신 간격 실측(중앙값 5분, 88.7%가 10분 이내)에서 여유를 둔 값 — 그 안엔 E-Gen 자신도 아직 안 바뀌었을 가능성이 높다. `self._hospitals`의 원본값은 이제 직접 mutate하지 않는다(과거엔 `info.availableBedCount -= 1`로 직접 깎았음)
+- **병상 차감은 TTL 오버레이로 처리한다.** `HubEngine._bed_overlay`(hpid -> `BedHold` 목록)에 `final_approval`마다 하나씩 쌓이고, `effective_bed_count()`가 조회 시점에 아직 유효한 개수만큼만 얹어 보여준다. `self._hospitals`의 원본값은 직접 mutate하지 않는다(과거엔 `info.availableBedCount -= 1`로 직접 깎았음). ~~고정 15분(`BED_OVERLAY_TTL_MIN`, 근거: hvidate 갱신 간격 중앙값 5분)~~ → **2026-10-08 사건 기준으로 재설계**: 그 5분은 병원 입력 주기가 아니라 E-Gen 시스템의 5분 묶음 주기였고, hub가 병원의 반영을 보려면 이송 + 병원 입력 + E-Gen 묶음 + info 수집이 지나야 해서 15분이면 구급차 도착 전에 차감이 풀려 같은 병상이 다시 비어 보이고 부하 페널티도 꺼졌다. 새 규칙: 확정 + 예상 이동시간 + 20분은 무조건 유지 → 그 뒤 E-Gen 응급실 원값이 확정 당시보다 줄면 해제(줄어든 만큼만) → 끝까지 안 줄면 도착 예상 + 60분에 해제, 수용 완료 시 기준을 실제 도착으로 재설정(`BED_HOLD_GRACE_MIN=20`·`BED_HOLD_MAX_AFTER_ARRIVAL_MIN=60`, 정답 데이터 없는 초기값). 무작정 늘리지 않은 이유는 병원이 이미 고친 뒤 이중 차감되면 작은 응급실이 "확인된 만실"로 떨어져 병원 승인까지 막히기 때문. 해제 이유는 의사결정 로그 `bed_hold_released`(cause `egen_reflected`/`max_age`)로 남겨 상수 재조정 재료로 쓴다. 검증 `python test_bed_hold.py`
 - **여러 사건(구급차) 동시 처리를 지원한다.** `caseId`로 사건을, `apid`로 구급차(voice 인스턴스)를 구분한다. `HubEngine`은 승인 상태를 `(caseId, hospitalId)` 키로 분리 보관하고, 사건별 최신 매칭 결과를 캐시해뒀다가 승인 액션이 들어오면 재계산 없이 해당 병원 status만 패치해 재브로드캐스트한다(예전엔 이 재브로드캐스트 자체가 없어서 승인 버튼을 눌러도 화면에 반영이 안 됐다)
 - `_dashboard_ws` 전역 변수 하나였던 것을 소켓 **집합**으로 바꿔 연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다 — 예전엔 마지막에 연결한 탭만 갱신을 받는 버그가 있었다
 - **소켓 재연결 시 진행 중인 사건을 놓치던 문제 수정(2026-08-11)**: hub는 매칭 결과를 "그 순간 연결된 소켓"에만 브로드캐스트해서, 사건이 진행 중인 상태로 새 대시보드 탭이 뒤늦게 열리면 그 탭엔 아무것도 안 뜨는 문제가 실제로 있었다(구급1호차·서울대병원 탭 연결 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로 열면 그 사건이 안 보임). dashboard가 소켓 연결 직후 `{type:"identify", role, id}` 자기소개를 보내면(`DashboardIdentify`), hub가 `HubEngine.get_cases_for_hospital()`/`get_cases_for_apid()`로 관련된 진행 중인 사건들을 찾아 그 소켓에만 즉시 돌려준다(`app.py`의 `_send_catchup()`) — 응답은 평소 브로드캐스트와 같은 `HubMatchResult` 형식이라 dashboard 쪽에 별도 분기가 필요 없다

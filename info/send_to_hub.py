@@ -4,9 +4,9 @@
 수용가능정보 전부 실 E-Gen API(`HttpEgenClient`)에서 가져온다. 예전엔 병상만
 Supabase 대체 DB에 남겨뒀었다 — E-Gen이 조회 전용이라 hub의 이송 확정
 (final_approval) 차감을 되돌려 쓸 방법이 없어서였다. 그 문제는 이제 hub
-쪽 **TTL 병상 오버레이**(`hub_engine.py`의 `_bed_overlay`, 15분)로 대신
-푼다 — hub가 차감분을 짧게만 자기 메모리에 얹어 보여주고, 그 사이 E-Gen이
-직접 갱신되는 값(`hvidate` 갱신 중앙값 5분 실측)으로 자연히 맞춰진다. 이
+쪽 **병상 차감 오버레이**(`hub_engine.py`의 `_bed_overlay`)로 대신 푼다 — hub가
+차감분을 한시적으로만 자기 메모리에 얹어 보여주고, 병원이 E-Gen에 반영하면 풀린다
+(2026-10-08부터 고정 15분이 아니라 도착 예상·E-Gen 반영 기준, hub README 참고). 이
 전환으로 Supabase의 7개 병원 대응표(`SUPABASE_TO_EGEN_HPID`, 이제 삭제)
 병목이 없어져 E-Gen이 주는 병원 전체가 hub로 흘러간다.
 
