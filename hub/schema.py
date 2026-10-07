@@ -215,6 +215,8 @@ class HospitalInfo(BaseModel):
     # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
     # 여기에 필드가 없으면 pydantic이 모르는 필드로 흘려버려서 그 구분이 사라진다.
     bedsByType: Optional[dict[str, int]] = None
+    # 병상 종류별 정원(E-Gen hvs01 등, 2026-10-07) — 키는 bedsByType과 같다. 응급실 포화도(설명용)에 쓴다.
+    bedCapacityByType: Optional[dict[str, int]] = None
     # info-v2(hospital_score)가 보내는 신뢰도 진단 결과. 참고: 이 필드가 없어도
     # (즉 Optional 미지정 값으로 와도) 예전처럼 조용히 무시되지 않는다 — pydantic
     # BaseModel 기본값이 extra="ignore"라 애초에 이 필드가 없어도 검증 자체는
@@ -420,6 +422,10 @@ class HospitalMatch(BaseModel):
     # availableBedCount 자체를 Optional로 바꾸면 dashboard의 기존 타입이 깨지므로
     # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
     bedCountUnknown: bool = False
+    # 응급실 일반 정원과 포화도(%, (정원 - 가용) ÷ 정원, 2026-10-07, 규칙 기반·설명용 — 순위에 안 씀).
+    # 같은 "가용 2석"이 정원 10인 곳인지 40인 곳인지 구분하게 한다. 병상이 미상·오래된 값이면 포화도는 None.
+    erBedCapacity: Optional[int] = None
+    erOccupancyPct: Optional[int] = None
     status: HospitalStatus = "pending"
     # 도로 기준 도착 예상 시간(분, 올림). 카카오모빌리티 다중 목적지 길찾기로 채운다(routing.py,
     # 2026-09-24). 키 없음·조회 실패·반경 10km 밖이면 None. 표시용 원값이고, 순위에는 아래

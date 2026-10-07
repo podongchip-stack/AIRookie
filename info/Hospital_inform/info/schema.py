@@ -277,6 +277,11 @@ class HospitalInfo(Strict):
         default=None,
         description="병상 종류별 가용 수. 성인/소아 분기의 핵심. 미상인 종류는 키를 넣지 않는다",
     )
+    bedCapacityByType: Optional[dict[str, int]] = Field(
+        default=None,
+        description="병상 종류별 정원(E-Gen hvs01 등, 2026-10-07). 키는 bedsByType과 같고, 정원이 없거나 0인"
+        " 종류는 키를 넣지 않는다. hub가 응급실 포화도(설명용)를 낸다",
+    )
     capabilities: list[str] = Field(
         default_factory=list,
         description="수행 가능한 시술·장비 코드 목록. hub의 하드필터 대조 대상",
@@ -336,6 +341,20 @@ class HospitalInfo(Strict):
                 f"병상 수가 음수인 항목: {negative}. "
                 "E-Gen의 -1(미입력)은 키를 넣지 않는 방식으로 처리한다"
             )
+        return value
+
+    @field_validator("bedCapacityByType")
+    @classmethod
+    def _positive_capacity(cls, value: Optional[dict[str, int]]) -> Optional[dict[str, int]]:
+        """정원은 어휘 안의 병상 코드여야 하고 1 이상이어야 한다(0이면 키를 빼는 게 약속)."""
+        if value is None:
+            return None
+        unknown = sorted(set(value) - BED_CODES)
+        if unknown:
+            raise ValueError(f"어휘에 없는 병상 코드: {unknown}")
+        bad = sorted(code for code, count in value.items() if count < 1)
+        if bad:
+            raise ValueError(f"정원이 1 미만인 항목: {bad}")
         return value
 
     @field_validator("capabilities")

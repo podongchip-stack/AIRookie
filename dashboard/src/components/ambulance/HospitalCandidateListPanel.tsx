@@ -84,12 +84,18 @@ function Chip({ children, bg = AD.chip, fg = AD.ink3, title, border }: { childre
   );
 }
 
-function bedBox(available: number, unknown: boolean, stale?: boolean) {
+function bedBox(available: number, unknown: boolean, stale?: boolean, capacity?: number | null, occupancyPct?: number | null) {
   // "확인된 만실"(빨강)과 "미상"(회색)을 다르게 둔다 — 미상을 만실처럼 보이면 구급대원이 실제로는 받아줄 수도
   // 있는 병원을 스스로 후보에서 빼게 된다(CLAUDE.md 참고).
-  if (unknown) return <StatBox label="병상" value="미상" bg={AD.chip} fg={AD.ink3} title="E-Gen 병상 값이 없습니다 — 만실이 아니라 데이터가 없는 것" />;
-  if (available <= 0) return <StatBox label="병상" value="없음" bg={AD.redSoft} fg={AD.red} title={stale ? "1일 넘게 갱신 안 된 값" : undefined} />;
-  return <StatBox label={stale ? "병상 · 1일↑" : "병상"} value={`${available}석`} bg={AD.limeSoft} fg={AD.lime} title={stale ? "1일 넘게 갱신 안 된 값" : undefined} />;
+  // 정원이 오면(hub 2026-10-07~) "가용/정원"과 포화도를 같이 보인다 — 같은 2석이 정원 10인 곳인지 40인 곳인지(규칙 · 순위 무관).
+  const ofCapacity = capacity ? `/${capacity}` : "";
+  const capacityTitle = capacity ? `응급실 정원 ${capacity}석${occupancyPct != null ? ` · 포화도 ${occupancyPct}%` : ""} (E-Gen, 순위에는 쓰지 않음)` : undefined;
+  const staleTitle = stale ? "1일 넘게 갱신 안 된 값" : undefined;
+  const title = [staleTitle, capacityTitle].filter(Boolean).join(" · ") || undefined;
+  if (unknown) return <StatBox label="병상" value="미상" bg={AD.chip} fg={AD.ink3} title={["E-Gen 병상 값이 없습니다 — 만실이 아니라 데이터가 없는 것", capacityTitle].filter(Boolean).join(" · ")} />;
+  if (available <= 0) return <StatBox label={occupancyPct != null ? `병상 · ${occupancyPct}%` : "병상"} value={capacity ? `0${ofCapacity}` : "없음"} bg={AD.redSoft} fg={AD.red} title={title} />;
+  const label = [stale ? "병상 · 1일↑" : "병상", occupancyPct != null ? `${occupancyPct}%` : null].filter(Boolean).join(" · ");
+  return <StatBox label={label} value={capacity ? `${available}${ofCapacity}` : `${available}석`} bg={AD.limeSoft} fg={AD.lime} title={title} />;
 }
 
 function Skeletons({ from, count }: { from: number; count: number }) {
@@ -370,7 +376,7 @@ function CandidateCard({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
-        {bedBox(hospital.availableBedCount, hospital.bedCountUnknown, hospital.bedDataStale)}
+        {bedBox(hospital.availableBedCount, hospital.bedCountUnknown, hospital.bedDataStale, hospital.erBedCapacity, hospital.erOccupancyPct)}
         <StatBox
           label="AI 유효"
           value={live ? `${Math.round(live.rArrive * 100)}%${humanConfirmed ? " ✓" : ""}` : "—"}

@@ -103,6 +103,16 @@ BED_FIELD_MAP: dict[str, str] = {
 # 병상 수가 아니라 Y/N로 온다. 예전에 `hv11`을 ER_PEDIATRIC으로 매핑해 두어 소아 병상이
 # 늘 "미상"이었다 — 실제 소아 응급실 병상은 `hv28`이다.
 
+#: 가용병상 필드 → 같은 종류의 정원 필드(`hvs*`) — `bedCapacityByType`의 원천(2026-10-07).
+#: [확인됨] 짝은 reliability/probe_regime.py가 전국 스냅샷의 등장 횟수 일치로 확인했고, 응급실 일반 정원(hvs01)은
+#: "내 손안의 응급실"의 총 병상과 서울 50곳 모두 같았다. 정원 필드가 없는 종류(음압·심장 중환자실)는 넣지 않는다.
+CAPACITY_FIELD_MAP: dict[str, str] = {
+    "hvs01": "ER_ADULT",  # 응급실 일반 (hvec의 짝)
+    "hvs02": "ER_PEDIATRIC",  # 응급실 소아 (hv28)
+    "hvs17": "ICU",  # 일반 중환자실 (hvicc)
+    "hvs22": "OR",  # 수술실 (hvoc)
+}
+
 #: 병원 총 병상 수(`hvs38`). 가용 병상이 이 값을 넘으면 입력 오류로 본다
 TOTAL_BED_FIELD = "hvs38"
 
@@ -248,6 +258,16 @@ def build_beds_by_type(bed_row: dict) -> dict[str, int]:
     return beds
 
 
+def build_bed_capacity(bed_row: dict) -> dict[str, int]:
+    """병상 종류별 정원. 0·미입력은 키를 넣지 않는다 — 정원 0은 그 병상이 없다는 뜻이라 포화도를 낼 수 없다."""
+    capacity: dict[str, int] = {}
+    for field_name, code in CAPACITY_FIELD_MAP.items():
+        count = clean_count(bed_row.get(field_name), field_name)
+        if count is not None and count > 0:
+            capacity[code] = count
+    return capacity
+
+
 def build_capabilities(severe_row: dict | None, bed_row: dict | None = None) -> list[str]:
     """표준 역량 코드 목록을 만든다.
 
@@ -388,6 +408,7 @@ def map_hospital(
         emergencyLevel=(location_row.get("dutyEmclsName") or "").strip() or None,
         updatedAt=parse_hvidate(bed_row.get("hvidate")) or fallback_ts,
         bedsByType=beds_by_type or None,
+        bedCapacityByType=build_bed_capacity(bed_row) or None,
         capabilities=capabilities,
     )
 

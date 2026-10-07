@@ -270,6 +270,16 @@ def _should_demote(info: HospitalInfo, group: str | None) -> bool:
     return group_score is not None and group_score.tier == "declared_no"
 
 
+def _er_capacity(info: HospitalInfo, effective_beds: int, bed_unknown: bool, bed_stale: bool) -> tuple[int | None, int | None]:
+    """응급실 일반 정원과 포화도(%). 가용은 이송 확정 차감(TTL 오버레이)까지 반영한 값을 쓴다. info가 과밀(음수)을
+    0으로 보내므로 포화도는 100%가 상한이다. 정원이 없거나 병상이 미상·오래된 값이면 포화도를 내지 않는다."""
+    capacity = (info.bedCapacityByType or {}).get("ER_ADULT")
+    if capacity is None or capacity <= 0 or bed_unknown or bed_stale:
+        return capacity, None
+    occupied = capacity - max(effective_beds, 0)
+    return capacity, max(0, min(100, round(100 * occupied / capacity)))
+
+
 def _active_messages(info: HospitalInfo, now: datetime) -> list[AcceptanceMessage]:
     """E-Gen 수용 제한 메시지 중 지금 유효한 것(시작 ≤ 지금 < 종료). info는 30분마다 보내므로 그 사이에
     끝나거나 시작되는 메시지를 여기서 다시 거른다. 시각이 없거나 깨진 쪽은 열린 구간으로 본다."""
@@ -783,10 +793,13 @@ class HubEngine:
             beds = self.effective_bed_count(info)
             unknown = _is_bed_count_unknown(info)
             stale = _is_bed_data_stale(info, now)
+            capacity, occupancy = _er_capacity(info, beds, unknown, stale)
             update.update(
                 availableBedCount=beds,
                 bedCountUnknown=unknown,
                 bedDataStale=stale,
+                erBedCapacity=capacity,
+                erOccupancyPct=occupancy,
                 demoteReasons=_demote_reasons(
                     info, self._case_group.get(case_id), status, beds, unknown, stale, now
                 ),
@@ -1173,6 +1186,7 @@ class HubEngine:
                 # 병원의 "현재 정보 확인" 이력 — 현재 claim에 유효한지는
                 # evaluate()가 bornAt과 대조해 판단한다.
                 confirmed = self._info_confirmations.get(info.hospitalId)
+                er_capacity, er_occupancy = _er_capacity(info, beds, unknown, stale)
                 matches.append(
                     HospitalMatch(
                         hospitalId=info.hospitalId,
@@ -1185,6 +1199,8 @@ class HubEngine:
                         ),
                         availableBedCount=beds,
                         bedCountUnknown=unknown,
+                        erBedCapacity=er_capacity,
+                        erOccupancyPct=er_occupancy,
                         status=status,
                         reliability=_reliability_for(info, best_group) if best_group is not None else None,
                         # 병상 숫자 자체의 유효 확률(infosurv 모델, source: "ai"). 설명용 —

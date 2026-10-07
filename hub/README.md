@@ -144,7 +144,7 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 
 1. 이 사건의 이송 확정(`confirmed`) 병원 → 병원이 승인(`approved`)한 병원
 2. 나머지 병원: `finalScore` 내림차순 (같으면 가까운 순 → ID 순)
-3. 그 뒤: `declared_no`(관련 질환군 수용 불가 신고) · `beds_full`(병상 0이 **확인된** 만실)
+3. 그 뒤: `declared_no`(관련 질환군 수용 불가 신고) · `severe_blocked`(관련 질환군 E-Gen 차단 메시지, 2026-10-07) · `beds_full`(병상 0이 **확인된** 만실)
 4. 맨 뒤: 이 사건에서 거절(`rejected`)한 병원
 
 **진료과 점수** (2026-10-01): voice의 `summary.required_department`(심평원 과목 표기)가 병원 진료과에
