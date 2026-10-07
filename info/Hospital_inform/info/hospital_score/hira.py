@@ -54,6 +54,7 @@ import math
 import os
 import time
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -408,6 +409,50 @@ def fetch_detail(
     return cache
 
 
+def _int_or_none(raw: object) -> int | None:
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def load_backup_summary() -> dict[str, dict]:
+    """hpid -> 배후진료 보유 요약(BACKUP_DETAIL_PATHS 캐시에서). 캐시가 하나도 없으면 빈 dict — 부르는 쪽은
+    배후역량 없이 그대로 간다(fail-soft). 필드 뜻의 근거는 BACKUP_DETAIL_PATHS 주석."""
+    caches = {
+        key: json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        for key, path in BACKUP_DETAIL_PATHS.items()
+    }
+    existing = [path for path in BACKUP_DETAIL_PATHS.values() if path.exists()]
+    if not existing:
+        return {}
+    collected_at = datetime.fromtimestamp(
+        max(path.stat().st_mtime for path in existing), tz=timezone.utc
+    ).isoformat(timespec="seconds")
+    summary: dict[str, dict] = {}
+    for hpid in set().union(*caches.values()):
+        equipment = {
+            row["oftCdNm"]: count
+            for row in caches["equipment"].get(hpid) or []
+            if row.get("oftCdNm") and (count := _int_or_none(row.get("oftCnt"))) and count > 0
+        }
+        facility = (caches["facility"].get(hpid) or [{}])[0]
+        grade = next(
+            (row.get("careGrd") for row in caches["nursing_grade"].get(hpid) or [] if row.get("tyCdNm") == "건강보험"),
+            None,
+        )
+        summary[hpid] = {
+            "equipment": equipment,
+            "operatingRooms": _int_or_none(facility.get("soprmCnt")),
+            "icuTotal": _int_or_none(facility.get("aduChldSprmCnt")),
+            "nicu": _int_or_none(facility.get("nbySprmCnt")),
+            "generalWard": _int_or_none(facility.get("stdSickbdCnt")),
+            "nursingGrade": (grade or "").strip() or None,
+            "collectedAt": collected_at,
+        }
+    return summary
+
+
 def fetch_specialists(
     matches: dict[str, dict] | None = None, client: HiraClient | None = None
 ) -> dict[str, list[dict]]:
@@ -418,8 +463,8 @@ def fetch_specialists(
 def fetch_backup_details(
     matches: dict[str, dict] | None = None, client: HiraClient | None = None
 ) -> None:
-    """배후진료 역량 재료(BACKUP_DETAIL_PATHS)를 받아 캐시한다. 아직 읽는 코드는 없다 — 질환군별 배후진료
-    묶음을 정하기 전에 전국 분포부터 보려고 모은다(2026-10-08)."""
+    """배후진료 역량 재료(BACKUP_DETAIL_PATHS)를 받아 캐시한다(2026-10-08). load_backup_summary()가 읽어
+    send_to_hub.py가 HospitalInfo.backupCapacity로 hub에 보낸다(대시보드 [배후역량] 버튼)."""
     for key, path in BACKUP_DETAIL_PATHS.items():
         print(f"=== {OP_LABELS[key]} ===", flush=True)
         fetch_detail(key, path, matches, client)

@@ -63,12 +63,14 @@ from egen.mapper import map_all  # noqa: E402
 from egen.messages import build_acceptance_messages  # noqa: E402
 from schema import (  # noqa: E402
     AmbulanceInfo,
+    BackupCapacity,
     BedReliability,
     HospitalInfo,
     SevereDeclarations,
     SevereGroupDeclaration,
 )
 from hospital_score import dataset as hs_dataset  # noqa: E402
+from hospital_score import hira as hs_hira  # noqa: E402
 from hospital_score import scoring as hs_scoring  # noqa: E402
 from hospital_score import vocabulary as hs_vocab  # noqa: E402
 
@@ -320,6 +322,25 @@ def _attach_acceptance_messages(hospitals: list[HospitalInfo], http: HttpEgenCli
     return enriched
 
 
+def _attach_backup_capacity(hospitals: list[HospitalInfo]) -> list[HospitalInfo]:
+    """병원마다 심평원 배후진료 보유 역량(hira.load_backup_summary)을 붙인다(2026-10-08). 캐시가 없으면
+    (hira --build-join을 안 돌린 장비) 없이 그대로 보낸다 — 대시보드 [배후역량]에서 보유 칸만 비게 된다."""
+    try:
+        summary = hs_hira.load_backup_summary()
+        enriched = [
+            info.model_copy(update={"backupCapacity": BackupCapacity(**summary[info.hospitalId])})
+            if info.hospitalId in summary else info
+            for info in hospitals
+        ]
+    except Exception as e:  # noqa: BLE001 — 배후역량 처리 실패가 병원 목록 전송을 막으면 안 됨
+        print(f"  [배후역량] 심평원 캐시 처리 실패, 없이 전송: {e}")
+        return hospitals
+    attached = sum(1 for info in hospitals if info.hospitalId in summary)
+    print(f"  [배후역량] 심평원 보유 역량 {attached}/{len(hospitals)}곳 첨부"
+          f"{' (캐시 없음 — hira --build-join 필요)' if not summary else ''}")
+    return enriched
+
+
 #: 심평원 전문과목별 전문의 수 캐시(`python -m hospital_score.hira --build-join`이 만든다).
 HIRA_SPECIALISTS_PATH = HOSPITAL_INFORM_INFO_DIR / "data" / "hira" / "specialists.json"
 
@@ -364,6 +385,7 @@ def fetch_hospitals() -> list[HospitalInfo]:
     hospitals = _attach_assessments(hospitals, location_rows, severe_rows, bed_rows)
     hospitals = _attach_reliability(hospitals, bed_rows, severe_rows)
     hospitals = _attach_acceptance_messages(hospitals, http)
+    hospitals = _attach_backup_capacity(hospitals)
     return hospitals
 
 

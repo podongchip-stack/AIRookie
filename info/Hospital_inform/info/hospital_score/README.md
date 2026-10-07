@@ -299,7 +299,7 @@ hospital_score/
 | `data/snapshots_nationwide/` | E-Gen 원본 응답 시계열 (전국 443곳, 20분) | `snapshot.py` | `dataset.py` |
 | `data/hira/egen_hira_join.json` | hpid ↔ ykiho 좌표 조인 **518곳** | `hira.py --build-join` | `scoring.py` |
 | `data/hira/specialists.json` | 전문과목별 전문의 수 **518곳**(응답 있는 곳 517) | `hira.py --build-join` | `scoring.py` |
-| `data/hira/equipment.json` | 의료장비 대수 **521곳**(ECMO 146곳 · 인공호흡기 482곳 · 투석 387곳, 혈관조영은 항목 없음) | `hira.py --build-join`·`--fetch-backup` | 아직 없음(배후진료 묶음 재료, 2026-10-08) |
+| `data/hira/equipment.json` | 의료장비 대수 **521곳**(ECMO 146곳 · 인공호흡기 482곳 · 투석 387곳, 혈관조영은 항목 없음) | `hira.py --build-join`·`--fetch-backup` | `load_backup_summary()` → `send_to_hub.py` (`backupCapacity`, 2026-10-08) |
 | `data/hira/nursing_grade.json` | 간호등급 **521곳**(응답 있는 곳 496) | 〃 | 〃 |
 | `data/hira/facility.json` | 병상 종류별 정원 **521곳** — 필드 뜻·E-Gen 대조는 `hira.py`의 `BACKUP_DETAIL_PATHS` 주석 | 〃 | 〃 |
 | `data/hira/specialty_hospitals.json` | 전문병원 지정 현황 **114곳** | `hira_files.py --fetch` | `scoring.py`·`report.py` |
