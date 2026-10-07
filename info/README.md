@@ -567,7 +567,7 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 ├── README.md                      이 문서
 ├── DEVELOPMENT.md                 브랜치 전략
 ├── requirements.txt               서버 의존성 (Flask 등)
-├── send_to_hub.py                 E-Gen 실 API → hub 주기적 재조회 상시 프로세스 (기본 30분,
+├── send_to_hub.py                 E-Gen 실 API → hub 주기적 재조회 상시 프로세스 (기본 5분,
 │                                   병상 포함 전부 E-Gen에서 읽음 — Supabase 의존 없음, 2026-08-13)
 │
 ├── Hospital_inform/               [경로 A] E-Gen 공개 API → HospitalInfo   (규칙 기반)

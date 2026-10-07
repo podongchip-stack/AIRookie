@@ -627,7 +627,7 @@ class HospitalInfoConfirm(BaseModel):
 
 # ── feature/hub → feature/dashboard(병원) (출력, 자기 정보 현황) ─────────────
 # 병원 대시보드에 보내는 "귀원 정보 현황"(2026-09-29). identify 직후,
-# feature/info의 30분 주기 upsert 직후, 정보 확인 직후에 그 병원 소켓으로만
+# feature/info의 주기 upsert(기본 5분) 직후, 정보 확인 직후에 그 병원 소켓으로만
 # 보낸다. 데이터 공급자(병원)가 자기 정보의 신선도를 직접 보게 하는 피드백
 # 루프다 — E-Gen 포털엔 이런 피드백이 없어서 수년 묵은 값이 방치된다
 # (실측: 전국 가용병상 1위가 2,457일 묵은 값). bedReliability는 horizon 0

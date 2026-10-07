@@ -99,7 +99,7 @@
 | 3 | 스키마 계약 검증기 (`extra="forbid"`, 어휘·좌표·ISO8601 검사) | `schema.py` | 완료 |
 | 4 | 변환 실행 진입점 (fixture / Supabase / 실 API 3소스) | `build_hospitals.py` | 완료 |
 | 5 | 원본 응답 시계열 축적 (20분 주기, 가공 전 원본 JSONL) | `snapshot.py` + `.bat` | **가동 중** |
-| 6 | hub로 주기적 재조회·재전송 상시 프로세스 (기본 30분) | `send_to_hub.py` | 완료 |
+| 6 | hub로 주기적 재조회·재전송 상시 프로세스 (기본 5분) | `send_to_hub.py` | 완료 |
 | 7 | 구급차 레지스트리 동기화 (별도 Supabase 프로젝트) | `send_to_hub.py` | 완료 |
 | 8 | hub의 병상 갱신 수신 서버 (`POST /hub/bed-update`) | `app.py` | 완료 |
 | 9 | 신뢰도 진단 리포트 6절 (API 호출 0회) | `hospital_score/report.py` | 완료 |
@@ -680,8 +680,8 @@ tier**를 택한다. 최솟값이나 평균이 아니다 — 실패 비용이 �
 
 | # | 방향 | 엔드포인트 | 프로토콜 | 페이로드 | 빈도 | 상태 |
 |---|---|---|---|---|---|---|
-| 1 | info → hub | `POST /info/hospitals` | HTTP | `HospitalInfo` (병원 1곳당 1회) | 기본 30분 | 가동 |
-| 2 | info → hub | `POST /info/ambulances` | HTTP | `AmbulanceInfo` | 기본 30분 | 가동 |
+| 1 | info → hub | `POST /info/hospitals` | HTTP | `HospitalInfo` (병원 1곳당 1회) | 기본 5분 | 가동 |
+| 2 | info → hub | `POST /info/ambulances` | HTTP | `AmbulanceInfo` | 기본 5분 | 가동 |
 | 3 | hub → info | `POST /hub/bed-update` | HTTP | `HospitalBedUpdate` | `final_approval` 시 | 가동 |
 | 4 | hub → info | `POST /hub/rejection` | HTTP | 거절 로그 (관대 수신) | 거절 발생 시 | **수신구 대기 중** |
 | 5 | (조회) | `GET /hub/rejection/summary` | HTTP | 축별 집계 텍스트 | 수시 | 가동 |
@@ -975,7 +975,7 @@ hub가 `availableBedCount`로 순위를 매기기 시작하면 즉시 문제가 
 | `SUPABASE_URL` / `SUPABASE_KEY` | 병원 Supabase (병상) | 기동 실패 |
 | `AMBULANCE_SUPABASE_URL` / `_KEY` | 구급차 Supabase | 구급차 동기화만 조용히 건너뜀 |
 | `HUB_HOSPITALS_URL` / `HUB_AMBULANCES_URL` | 전송 대상 | 기본 `127.0.0.1:5001` |
-| `INFO_REFETCH_INTERVAL_SEC` | 재조회 주기 | 기본 1800(30분) |
+| `INFO_REFETCH_INTERVAL_SEC` | 재조회 주기 | 기본 300(5분, 2026-10-08 — 예전 1800) |
 
 ### 9.3 실행 명령
 

@@ -92,9 +92,11 @@ AMBULANCE_SUPABASE_URL = os.environ.get("AMBULANCE_SUPABASE_URL")
 AMBULANCE_SUPABASE_KEY = os.environ.get("AMBULANCE_SUPABASE_KEY")
 AMBULANCE_TABLE = "ambulances"
 
-# 재조회 주기 기본값 30분. 운영 중 주기를 바꿔야 하면 코드 수정 없이
-# INFO_REFETCH_INTERVAL_SEC 환경변수로 덮어쓴다.
-DEFAULT_REFETCH_INTERVAL_SEC = 30 * 60
+# 재조회 주기 기본값 5분(2026-10-08, 예전 30분). E-Gen 공개 API가 전국 값을 정확히 5분 묶음으로 갱신해서
+# (1분 간격 실측) 그보다 자주 부를 이득이 없고, 30분이면 hub의 병상 값이 E-Gen보다 최대 30분 더 늦었다.
+# 호출량은 오퍼레이션 4종 × 하루 288회 — 일일 트래픽 80,000회의 1.6%(클라우드 스냅샷 수집 포함).
+# 운영 중 주기를 바꿔야 하면 코드 수정 없이 INFO_REFETCH_INTERVAL_SEC 환경변수로 덮어쓴다.
+DEFAULT_REFETCH_INTERVAL_SEC = 5 * 60
 REFETCH_INTERVAL_SEC = int(os.environ.get("INFO_REFETCH_INTERVAL_SEC", DEFAULT_REFETCH_INTERVAL_SEC))
 
 def _to_float(raw: object) -> float | None:

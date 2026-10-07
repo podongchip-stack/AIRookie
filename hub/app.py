@@ -178,7 +178,7 @@ def receive_hospital_info():
 
     engine.update_hospital_info(info)
     # 그 병원 대시보드가 연결돼 있으면 "귀원 정보 현황"을 갱신해준다 —
-    # 30분 주기 재전송을 그대로 자기 화면 신선도 갱신으로 재사용.
+    # 주기 재전송(기본 5분)을 그대로 자기 화면 신선도 갱신으로 재사용.
     _send_self_info_to_hospital(info.hospitalId)
     return jsonify({"status": "ok", "hospitalId": info.hospitalId}), 200
 
