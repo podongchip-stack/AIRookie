@@ -6,6 +6,8 @@ import type { AmbulanceSimState, MapOverview } from "@/types/dashboard";
 // 안에서만 가짜 사건을 만들어 출동 → 현장 → 병원 응답 → 이송 → 도착 → 복귀를 돌린다. hub로 아무것도 보내지 않아
 // 다른 대시보드·의사결정 로그·지난 사건 기록과 무관하다. 실제 사건이 생기면 가짜 사건은 바로 모두 지운다.
 // 병원·구급차 위치만 hub의 실제 목록을 쓰고, 증상·응답·시간은 전부 꾸민 값이다.
+// 구급차는 실제 도로로 움직인다(2026-10-07) — hub GET /route/demo가 구급차마다 정해진 현장 몇 곳과 카카오 도로 경로를
+// 준다(좌표가 아니라 ID만 보내는 읽기 전용 조회, 사건·로그와 무관). hub가 없거나 경로를 못 받으면 예전처럼 직선이다.
 
 const SPAWN_EVERY_MS = 14_000;
 const MAX_CASES = 3;
@@ -21,6 +23,8 @@ const SCENES: [Sev, string][] = [
 
 type Phase = "dispatching" | "on_scene" | "matching" | "transporting" | "at_hospital" | "returning";
 type LatLng = { lat: number; lng: number };
+type Path = [number, number][];
+const DEMO_SCENES = 6;  // hub DEMO_SCENES_PER_AMBULANCE와 같다
 
 interface FakeCase {
   caseId: string;
@@ -38,6 +42,11 @@ interface FakeCase {
   zone: number;
   nextResponseAt: number;
   dest: LatLng | null;
+  destId: string | null;
+  sceneIdx: number;
+  roads: { dispatch?: Path | null; toHospital?: Path | null; back?: Path | null };
+  /** 이송 도로 경로를 기다리는 중 — 받을 때까지 현장에 머문다 */
+  waitRoute: boolean;
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -46,6 +55,40 @@ const lerp = (a: LatLng, b: LatLng, t: number): LatLng => {
   const k = Math.min(1, Math.max(0, t));
   return { lat: a.lat + (b.lat - a.lat) * k, lng: a.lng + (b.lng - a.lng) * k };
 };
+
+/** 도로 경로 위에서 전체 길이의 t(0~1) 지점 — 구간 길이에 비례해 고르게 움직인다 */
+function along(path: Path, t: number): LatLng {
+  const k = Math.min(1, Math.max(0, t));
+  const seg: number[] = [];
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    const d = Math.hypot(path[i][0] - path[i - 1][0], (path[i][1] - path[i - 1][1]) * 0.8);
+    seg.push(d);
+    total += d;
+  }
+  let left = k * total;
+  for (let i = 0; i < seg.length; i++) {
+    if (left <= seg[i] || i === seg.length - 1) {
+      const f = seg[i] > 0 ? Math.min(1, left / seg[i]) : 1;
+      return { lat: path[i][0] + (path[i + 1][0] - path[i][0]) * f, lng: path[i][1] + (path[i + 1][1] - path[i][1]) * f };
+    }
+    left -= seg[i];
+  }
+  return { lat: path[0][0], lng: path[0][1] };
+}
+
+/** hub의 자동 시연 경로. 없거나 실패하면 null */
+async function fetchDemoRoute(query: string): Promise<Record<string, unknown> | null> {
+  const httpUrl = process.env.NEXT_PUBLIC_HUB_HTTP_URL;
+  if (!httpUrl) return null;
+  try {
+    const response = await fetch(`${httpUrl}/route/demo?${query}`);
+    return response.ok ? ((await response.json()) as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+const asPath = (v: unknown): Path | null => (Array.isArray(v) && v.length >= 2 ? (v as Path) : null);
 
 /** 존 zone 안쪽 병원(가까운 순, 최대 MAX_HOSPITALS)을 판단 대기로 */
 function hospitalsWithin(overview: MapOverview, scene: LatLng, zone: number, already: IncHospital[]): IncHospital[] {
@@ -86,6 +129,8 @@ function advance(c: FakeCase, now: number, overview: MapOverview): FakeCase | nu
         return next("transporting", {
           hospitals: c.hospitals.map((h) => (h.hospitalId === dest.hospitalId ? { ...h, st: "t" } : h)),
           dest: gps,
+          destId: dest.hospitalId,
+          waitRoute: true,
         });
       }
       if (pending.length === 0) {
@@ -105,7 +150,7 @@ function advance(c: FakeCase, now: number, overview: MapOverview): FakeCase | nu
       };
     }
     case "transporting":
-      return elapsed >= DUR.transporting ? next("at_hospital") : c;
+      return !c.waitRoute && elapsed >= DUR.transporting ? next("at_hospital") : c;
     case "at_hospital":
       return elapsed >= DUR.at_hospital ? next("returning") : c;
     case "returning":
@@ -117,15 +162,18 @@ function positionOf(c: FakeCase, now: number): { gps: LatLng; path: [number, num
   const t = (now - c.phaseAt) / (DUR[c.phase as keyof typeof DUR] ?? 1);
   const line = (a: LatLng, b: LatLng): [number, number][] => [[a.lat, a.lng], [b.lat, b.lng]];
   const dest = c.dest ?? c.scene;
+  const move = (road: Path | null | undefined, a: LatLng, b: LatLng) =>
+    road ? { gps: along(road, t), path: road } : { gps: lerp(a, b, t), path: line(a, b) };
   switch (c.phase) {
     case "dispatching":
-      return { gps: lerp(c.base, c.scene, t), path: line(c.base, c.scene) };
+      return move(c.roads.dispatch, c.base, c.scene);
     case "transporting":
-      return { gps: lerp(c.scene, dest, t), path: line(c.scene, dest) };
+      if (c.waitRoute) return { gps: c.scene, path: null };
+      return move(c.roads.toHospital, c.scene, dest);
     case "at_hospital":
       return { gps: dest, path: null };
     case "returning":
-      return { gps: lerp(dest, c.base, t), path: line(dest, c.base) };
+      return move(c.roads.back, dest, c.base);
     default:
       return { gps: c.scene, path: null };
   }
@@ -151,6 +199,7 @@ export function useAutoDemo(
   // 갱신 함수를 두 번 불러 새 사건이 사라졌다
   const casesRef = useRef<FakeCase[]>([]);
   const lastSpawnRef = useRef(0);
+  const genRef = useRef(0);  // 켜질 때마다 바뀐다 — 꺼진 뒤 도착한 경로 응답을 버린다
   const numRef = useRef(0);
   const inputRef = useRef({ overview, realSim });
   useEffect(() => {
@@ -160,6 +209,12 @@ export function useAutoDemo(
   useEffect(() => {
     if (!active) return;
     casesRef.current = []; // 다시 켜질 때는 지난 가짜 사건을 버리고 새로 시작한다
+    const gen = ++genRef.current;
+    const update = (caseId: string, patch: (c: FakeCase) => FakeCase) => {
+      if (gen !== genRef.current) return;
+      casesRef.current = casesRef.current.map((c) => (c.caseId === caseId ? patch(c) : c));
+      setCases(casesRef.current);
+    };
     const tick = () => {
       const t = Date.now();
       const { overview: ov, realSim: sims } = inputRef.current;
@@ -167,7 +222,7 @@ export function useAutoDemo(
       if (!ov) return;
       {
         // 실제로 출동한 구급차를 빌리고 있던 가짜 사건은 바로 끝낸다
-        let next = casesRef.current
+        const next = casesRef.current
           .filter((c) => !sims[c.apid]?.caseId)
           .map((c) => advance(c, t, ov))
           .filter((c): c is FakeCase => c !== null);
@@ -177,16 +232,35 @@ export function useAutoDemo(
           if (idle.length) {
             lastSpawnRef.current = t;
             const a = pick(idle);
-            const angle = rand(0, Math.PI * 2);
-            const km = rand(1.5, 3.5);
-            const scene = { lat: a.base.lat + (km / 111) * Math.sin(angle), lng: a.base.lng + (km / 88) * Math.cos(angle) };
-            const [sev, sym] = pick(SCENES);
-            numRef.current += 1;
-            next = [...next, {
-              caseId: `auto-${t}`, num: numRef.current, sev, sym, apid: a.apid, name: a.name, base: a.base, scene,
-              startedAt: t, phase: "dispatching", phaseAt: t, hospitals: [], zone: 0, nextResponseAt: 0, dest: null,
-            }];
+            const sceneIdx = Math.floor(Math.random() * DEMO_SCENES);
+            // 현장·출동 도로 경로를 받은 뒤에 사건을 띄운다(못 받으면 무작위 현장 + 직선)
+            void fetchDemoRoute(`apid=${encodeURIComponent(a.apid)}&scene=${sceneIdx}`).then((r) => {
+              if (gen !== genRef.current || casesRef.current.length >= MAX_CASES) return;
+              const point = r?.point as LatLng | null | undefined;
+              const angle = rand(0, Math.PI * 2);
+              const km = rand(1.5, 3.5);
+              const scene = point ?? { lat: a.base.lat + (km / 111) * Math.sin(angle), lng: a.base.lng + (km / 88) * Math.cos(angle) };
+              const [sev, sym] = pick(SCENES);
+              const at = Date.now();
+              numRef.current += 1;
+              casesRef.current = [...casesRef.current, {
+                caseId: `auto-${at}`, num: numRef.current, sev, sym, apid: a.apid, name: a.name, base: a.base, scene,
+                startedAt: at, phase: "dispatching", phaseAt: at, hospitals: [], zone: 0, nextResponseAt: 0, dest: null,
+                destId: null, sceneIdx, roads: { dispatch: point ? asPath(r?.path) : null }, waitRoute: false,
+              }];
+              setCases(casesRef.current);
+            });
           }
+        }
+        // 이송이 막 정해진 사건 — 현장→병원·복귀 도로 경로를 한 번 받는다. 받을 때까지 현장에 머물고, 받으면 그때 출발
+        for (const c of next) {
+          if (c.phase !== "transporting" || !c.waitRoute || c.roads.toHospital !== undefined) continue;
+          c.roads = { ...c.roads, toHospital: null };
+          void fetchDemoRoute(`apid=${encodeURIComponent(c.apid)}&scene=${c.sceneIdx}&leg=transport&hospitalId=${encodeURIComponent(c.destId ?? "")}`)
+            .then((r) => update(c.caseId, (cur) => ({
+              ...cur, waitRoute: false, phaseAt: Date.now(),
+              roads: { ...cur.roads, toHospital: asPath(r?.toHospital), back: asPath(r?.back) },
+            })));
         }
         casesRef.current = next;
         setCases(next);

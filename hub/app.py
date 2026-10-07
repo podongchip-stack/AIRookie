@@ -16,6 +16,7 @@ import json
 import os
 import signal
 import sys
+import random
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -28,7 +29,7 @@ from flask_sock import Sock
 from pydantic import ValidationError
 
 import bed_reliability
-from ambulance_sim import TRANSPORT_SEC as SIM_TRANSPORT_SEC, TRIP_SEC as SIM_TRIP_SEC, DispatchSim
+from ambulance_sim import TRANSPORT_SEC as SIM_TRANSPORT_SEC, TRIP_SEC as SIM_TRIP_SEC, DispatchSim, _sample_around
 import decision_log
 from delivery import HUB_REJECTION_URL, LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
@@ -445,6 +446,76 @@ def get_route():
         route = router.route(_resolve_ambulance_gps(case_id)[0], hospital.gps)
         if route is not None:
             body.update(route)
+    response = jsonify(body)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, 200
+
+
+# ── 관제 지도 자동 시연용 도로 경로(2026-10-07) ─────────────────────────────────
+# 관제 지도는 실제 사건이 없을 때 화면 안에서 가짜 사건을 돌린다(dashboard lib/auto-demo.ts). 그 구급차가 직선으로
+# 움직이지 않게 도로 경로를 준다. /route처럼 좌표를 받지 않고 구급차·병원 ID와 현장 번호만 받아 hub가 좌표를 정한다
+# (공개 길찾기 프록시가 되지 않게). 현장은 구급차마다 정해진 몇 곳(기지 반경 3km, apid로 고정된 난수)이라 같은 경로가
+# 되풀이되고, 가짜 시연이라 교통 반영이 필요 없어 하루 동안 캐시한다. 카카오 호출은 하루 한도를 넘으면 멈추고
+# path=null(대시보드가 직선으로 대체)로 답한다. 사건·로그와 무관하다.
+DEMO_SCENES_PER_AMBULANCE = 6
+DEMO_ROUTE_CACHE_SEC = 24 * 3600
+DEMO_ROUTE_PER_DAY = int(os.environ.get("HUB_DEMO_ROUTE_PER_DAY", "2000"))
+_demo_route_cache: dict[tuple, tuple[float, dict]] = {}
+_demo_route_budget = {"day": "", "used": 0}
+_demo_route_lock = threading.Lock()
+
+
+def _demo_scenes(apid: str, base: GpsPoint) -> list[GpsPoint]:
+    return _sample_around(base, 3.0, DEMO_SCENES_PER_AMBULANCE, random.Random(f"auto-demo:{apid}"))
+
+
+def _demo_road(origin: GpsPoint, dest: GpsPoint) -> dict | None:
+    key = (round(origin.lat, 4), round(origin.lng, 4), round(dest.lat, 4), round(dest.lng, 4))
+    now = time.time()
+    today = datetime.now(timezone.utc).date().isoformat()
+    with _demo_route_lock:
+        hit = _demo_route_cache.get(key)
+        if hit and now - hit[0] < DEMO_ROUTE_CACHE_SEC:
+            return hit[1]
+        if _demo_route_budget["day"] != today:
+            _demo_route_budget.update(day=today, used=0)
+        if router is None or _demo_route_budget["used"] >= DEMO_ROUTE_PER_DAY:
+            return None
+        _demo_route_budget["used"] += 1
+    route = router.route(origin, dest)
+    if route and route.get("path"):
+        with _demo_route_lock:
+            _demo_route_cache[key] = (now, route)
+        return route
+    return None
+
+
+@app.get("/route/demo")
+def get_demo_route():
+    """관제 지도 자동 시연 경로. leg=dispatch(apid, scene) → 현장 좌표 + 기지→현장 경로,
+    leg=transport(apid, scene, hospitalId) → 현장→병원 경로 + 병원→기지(복귀) 경로. 실패한 경로는 null."""
+    apid = request.args.get("apid") or ""
+    leg = request.args.get("leg") or "dispatch"
+    try:
+        idx = int(request.args.get("scene", "0")) % DEMO_SCENES_PER_AMBULANCE
+    except ValueError:
+        idx = 0
+    body: dict = {"apid": apid, "scene": idx, "point": None, "source": "rule"}
+    ambulance = engine.get_ambulance_base(apid) if apid else None
+    scenes = _demo_scenes(apid, ambulance.gps) if ambulance is not None else []
+    if scenes:
+        scene = scenes[idx % len(scenes)]
+        body["point"] = {"lat": scene.lat, "lng": scene.lng}
+        if leg == "transport":
+            hospital = engine.get_hospital(request.args.get("hospitalId") or "")
+            if hospital is not None:
+                go = _demo_road(scene, hospital.gps)
+                back = _demo_road(hospital.gps, ambulance.gps)
+                body["toHospital"] = go["path"] if go else None
+                body["back"] = back["path"] if back else None
+        else:
+            road = _demo_road(ambulance.gps, scene)
+            body["path"] = road["path"] if road else None
     response = jsonify(body)
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response, 200
