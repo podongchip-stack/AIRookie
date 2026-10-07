@@ -78,7 +78,7 @@ info/Hospital_inform/info/
   ```bash
   cd info/Hospital_inform/info
   python -m hospital_score.hira_files --fetch    # API 2회
-  python -m hospital_score.hira --build-join     # API 약 520회, 이어받기 지원
+  python -m hospital_score.hira --build-join     # API 약 2,100회, 이어받기 지원
   ```
 - **폐기 판정 (되살리지 말 것, `python -m hospital_score.discarded`로 재현)**: ① 병상 수 예측 — P(만실 전환)=0.568%로 사전 등록 기준 2% 미달. ② 미상 추정 모델 — 관측 라벨 95.6%가 "가능"인 MNAR 편중이라 그대로 쓰면 "미신고 병원도 대부분 수용 가능"이라는 위험한 방향의 오류.
 

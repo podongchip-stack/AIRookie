@@ -1020,7 +1020,7 @@ python -m hospital_score.ingest                  # 수신 서버 단독 (포트 
 ```bash
 cd info/Hospital_inform/info
 python -m hospital_score.hira_files --fetch    # 전문병원 지정 (API 2회)
-python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
 ```
 
 ### 9.5 격리 원칙

@@ -299,6 +299,9 @@ hospital_score/
 | `data/snapshots_nationwide/` | E-Gen 원본 응답 시계열 (전국 443곳, 20분) | `snapshot.py` | `dataset.py` |
 | `data/hira/egen_hira_join.json` | hpid ↔ ykiho 좌표 조인 **518곳** | `hira.py --build-join` | `scoring.py` |
 | `data/hira/specialists.json` | 전문과목별 전문의 수 **518곳**(응답 있는 곳 517) | `hira.py --build-join` | `scoring.py` |
+| `data/hira/equipment.json` | 의료장비 대수 **521곳**(ECMO 146곳 · 인공호흡기 482곳 · 투석 387곳, 혈관조영은 항목 없음) | `hira.py --build-join`·`--fetch-backup` | 아직 없음(배후진료 묶음 재료, 2026-10-08) |
+| `data/hira/nursing_grade.json` | 간호등급 **521곳**(응답 있는 곳 496) | 〃 | 〃 |
+| `data/hira/facility.json` | 병상 종류별 정원 **521곳** — 필드 뜻·E-Gen 대조는 `hira.py`의 `BACKUP_DETAIL_PATHS` 주석 | 〃 | 〃 |
 | `data/hira/specialty_hospitals.json` | 전문병원 지정 현황 **114곳** | `hira_files.py --fetch` | `scoring.py`·`report.py` |
 | `data/rejections/YYYY-MM-DD.jsonl` | 거절 로그 (append-only) | `ingest.py` | `rejection.py` |
 
@@ -345,7 +348,7 @@ python -m hospital_score.ingest                   # 수신 서버 단독 실행 
 
 # 심평원 수집 — 새 장비에서 한 번은 반드시 돌려야 한다 (아래 참고)
 python -m hospital_score.hira_files --fetch       # 전문병원 지정 현황 (API 2회)
-python -m hospital_score.hira --build-join        # 조인 + 전문의 수 (API 약 520회)
+python -m hospital_score.hira --build-join        # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
 python -m hospital_score.hira --build-join --skip-specialists   # 조인만
 python -m hospital_score.hira --probe --ykiho <암호화요양기호>   # 응답 필드 확인
 ```
@@ -359,7 +362,7 @@ python -m hospital_score.hira --probe --ykiho <암호화요양기호>   # 응답
 ```bash
 cd info/Hospital_inform/info
 python -m hospital_score.hira_files --fetch    # 전문병원 지정 (API 2회)
-python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
 ```
 
 `--build-join`은 **재시도 3회 · 25곳마다 중간저장 · 이어받기**를 한다(권한 오류는

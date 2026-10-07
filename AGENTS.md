@@ -336,7 +336,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   ```bash
   cd info/Hospital_inform/info
   python -m hospital_score.hira_files --fetch    # 전문병원 지정 (API 2회)
-  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
   ```
   `--build-join`은 재시도 3회·25곳마다 중간저장·이어받기를 한다. 캐시를 치우고 처음부터
   재생성해 대조한 결과 조인 518곳이 **내용까지 동일**했고, 전문의 수는 오히려 3곳 늘었다

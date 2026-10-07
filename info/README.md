@@ -500,7 +500,7 @@ python -m hospital_score.ingest                        # 거절 로그 수신 �
 
 ```bash
 python -m hospital_score.hira_files --fetch    # 전문병원 지정 현황 (API 2회)
-python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
 ```
 
 캐시가 없어도 점수는 나오지만 **심평원 근거가 통째로 빠져 미상이 전부
@@ -747,7 +747,7 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
   ```bash
   cd info/Hospital_inform/info
   python -m hospital_score.hira_files --fetch    # 전문병원 지정 (API 2회)
-  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
   ```
 - **`hospital_score/`는 의도적으로 격리돼 있다.** 바깥 모듈을 import 하지 않고 바깥에서도
   이 폴더를 import 하지 않아, 폴더째 지워도 기존 경로가 멀쩡하다. 배선할 때 이 성질을

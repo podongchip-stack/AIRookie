@@ -37,7 +37,8 @@ data.go.kr 게이트웨이는 경로를 서비스+오퍼레이션 **전체**로 
 식별자가 없어서(`hpid` ↔ `ykiho`) 좌표 최근접으로 붙여야 한다. 그 두 단계를 묶은 것이
 `--build-join`이다.
 
-    python -m hospital_score.hira --build-join                 # 조인 + 전문의 수까지
+    python -m hospital_score.hira --build-join                 # 조인 + 전문의 수 + 배후진료 재료까지
+    python -m hospital_score.hira --fetch-backup               # 배후진료 재료만(의료장비·간호등급·시설)
     python -m hospital_score.hira --probe --ykiho <요양기호>    # 응답 필드만 확인
 
 `--build-join`이 만드는 두 파일(`data/hira/egen_hira_join.json`,
@@ -65,6 +66,21 @@ ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "hira"
 JOIN_PATH = CACHE_DIR / "egen_hira_join.json"
 SPECIALISTS_PATH = CACHE_DIR / "specialists.json"
+
+#: 배후진료 역량 재료(2026-10-08) — 오퍼레이션 키 → 캐시 파일. 전국 521곳 실측(2026-10-08 수집):
+#: - equipment: 장비별 대수(oftCdNm·oftCnt), 17종. ECMO 146곳(보유 병원 중앙값 3대)·인공호흡기 482곳·혈액투석
+#:   인공신장기 387곳·CT 505곳·MRI 474곳. E-Gen은 장비를 "지금 가용 Y/N"으로만 준다.
+#:   ⚠ 혈관조영장치는 전국 어디에도 없는 항목이다 — 재관류·대동맥엔 E-Gen hvangioayn(가용 Y/N)뿐
+#: - nursing_grade: 간호등급(careGrd, 유형 tyCdNm별). 건강보험 기준 1~6등급이 고르게 퍼져 있고 A·S도 있다(뜻 미확인)
+#: - facility: 병상 종류별 정원. E-Gen 정원과 숫자로 대조(±10% 또는 2석 이내 비율) —
+#:   soprmCnt = 수술실(hvs22, 95%), nbySprmCnt = 신생아 중환자실(hvs08, 87%), stdSickbdCnt ≈ 일반 입원실(hvs38, 69%).
+#:   aduChldSprmCnt는 E-Gen 일반 중환자실(hvs17)보다 큰 곳이 251곳 중 171곳이라 중환자실 총량으로 보인다(미확인).
+#:   emymCnt(응급실)는 403곳 중 371곳에서 E-Gen hvs01보다 커서 정의가 다르다 — 응급실 정원으로 쓰지 말 것
+BACKUP_DETAIL_PATHS: dict[str, Path] = {
+    "equipment": CACHE_DIR / "equipment.json",
+    "nursing_grade": CACHE_DIR / "nursing_grade.json",
+    "facility": CACHE_DIR / "facility.json",
+}
 
 BASE_URL = "https://apis.data.go.kr/B551182"
 
@@ -350,10 +366,10 @@ def build_join(
     return matches
 
 
-def fetch_specialists(
-    matches: dict[str, dict] | None = None, client: HiraClient | None = None
+def fetch_detail(
+    key: str, path: Path, matches: dict[str, dict] | None = None, client: HiraClient | None = None
 ) -> dict[str, list[dict]]:
-    """조인된 병원의 전문과목별 전문의 수를 받아 캐시한다.
+    """조인된 병원마다 상세정보 오퍼레이션 하나(`OPS[key]`)를 받아 hpid -> 원본 행 목록으로 캐시한다.
 
     이미 받아둔 곳은 건너뛴다(이어받기). 중간에 죽어도 거기까지는 남도록 25곳마다 쓴다.
     """
@@ -363,39 +379,50 @@ def fetch_specialists(
             raise HiraApiError(f"{JOIN_PATH.name}이 없다 — --build-join을 먼저 돌릴 것")
         matches = json.loads(JOIN_PATH.read_text(encoding="utf-8"))
 
-    specialists: dict[str, list[dict]] = {}
-    if SPECIALISTS_PATH.exists():
-        specialists = json.loads(SPECIALISTS_PATH.read_text(encoding="utf-8"))
-        print(f"  기존 캐시 {len(specialists)}곳 이어받기", flush=True)
+    cache: dict[str, list[dict]] = {}
+    if path.exists():
+        cache = json.loads(path.read_text(encoding="utf-8"))
+        print(f"  기존 캐시 {len(cache)}곳 이어받기", flush=True)
 
-    todo = [(hpid, row) for hpid, row in matches.items() if hpid not in specialists]
-    print(f"  전문의 수 조회 대상 {len(todo)}곳", flush=True)
+    label = OP_LABELS[key]
+    todo = [(hpid, row) for hpid, row in matches.items() if hpid not in cache]
+    print(f"  {label} 조회 대상 {len(todo)}곳", flush=True)
 
     failed: list[str] = []
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     for index, (hpid, row) in enumerate(todo, 1):
         try:
-            specialists[hpid] = _with_retry(
-                lambda y=row["ykiho"]: client.detail_op("specialists", y), hpid
-            )
+            cache[hpid] = _with_retry(lambda y=row["ykiho"]: client.detail_op(key, y), hpid)
         except HiraApiError:
             failed.append(hpid)
         if index % 25 == 0:
-            SPECIALISTS_PATH.write_text(
-                json.dumps(specialists, ensure_ascii=False), encoding="utf-8"
-            )
+            path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
             print(f"    {index}/{len(todo)} …", flush=True)
 
-    SPECIALISTS_PATH.write_text(
-        json.dumps(specialists, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
-    have = sum(1 for rows in specialists.values() if rows)
+    path.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
+    have = sum(1 for rows in cache.values() if rows)
     print(
-        f"  전문의 수 {len(specialists)}곳 저장 (응답 있는 곳 {have}곳, 실패 {len(failed)}건)"
-        f" → {SPECIALISTS_PATH.name}",
+        f"  {label} {len(cache)}곳 저장 (응답 있는 곳 {have}곳, 실패 {len(failed)}건) → {path.name}",
         flush=True,
     )
-    return specialists
+    return cache
+
+
+def fetch_specialists(
+    matches: dict[str, dict] | None = None, client: HiraClient | None = None
+) -> dict[str, list[dict]]:
+    """조인된 병원의 전문과목별 전문의 수를 받아 캐시한다(scoring·send_to_hub가 읽는다)."""
+    return fetch_detail("specialists", SPECIALISTS_PATH, matches, client)
+
+
+def fetch_backup_details(
+    matches: dict[str, dict] | None = None, client: HiraClient | None = None
+) -> None:
+    """배후진료 역량 재료(BACKUP_DETAIL_PATHS)를 받아 캐시한다. 아직 읽는 코드는 없다 — 질환군별 배후진료
+    묶음을 정하기 전에 전국 분포부터 보려고 모은다(2026-10-08)."""
+    for key, path in BACKUP_DETAIL_PATHS.items():
+        print(f"=== {OP_LABELS[key]} ===", flush=True)
+        fetch_detail(key, path, matches, client)
 
 
 def probe(ykiho: str) -> None:
@@ -429,6 +456,10 @@ if __name__ == "__main__":
     parser.add_argument("--day", default=None, help="조인에 쓸 스냅샷 날짜 (예: 2026-08-12)")
     parser.add_argument("--max-km", type=float, default=JOIN_MAX_KM, help="같은 병원으로 볼 최대 거리")
     parser.add_argument("--skip-specialists", action="store_true", help="조인만 하고 멈춘다")
+    parser.add_argument(
+        "--fetch-backup", action="store_true",
+        help="배후진료 재료(의료장비·간호등급·시설)만 받는다 — 기존 조인 캐시 사용, 이어받기",
+    )
     parser.add_argument("--probe", action="store_true", help="오퍼레이션 11종 응답 필드 확인")
     parser.add_argument("--ykiho", default="", help="암호화요양기호 (probe에 필요)")
     args = parser.parse_args()
@@ -440,7 +471,10 @@ if __name__ == "__main__":
         if not args.skip_specialists:
             print("=== 전문과목별 전문의 수 ===")
             fetch_specialists(joined, client=shared)
+            fetch_backup_details(joined, client=shared)
         print("\n이제 scoring이 심평원 근거를 읽는다: python -m hospital_score.scoring --check --validate")
+    elif args.fetch_backup:
+        fetch_backup_details(client=HiraClient(timeout=30.0))
     elif args.probe:
         if not args.ykiho:
             raise SystemExit(
