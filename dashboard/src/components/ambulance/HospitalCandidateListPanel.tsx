@@ -6,7 +6,7 @@ import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { AD, pill } from "@/components/ambulance/ambulance-design";
 import { formatDeclarationAge, liveBedReliability } from "@/lib/bedReliability";
-import type { HospitalCandidate, HospitalStatus, HubMatchResult, ReliabilityConfidence, SceneCandidates } from "@/types/dashboard";
+import type { AcceptanceMessage, HospitalCandidate, HospitalStatus, HubMatchResult, ReliabilityConfidence, SceneCandidates } from "@/types/dashboard";
 
 // 병원 후보 리스트(2026-10-05 디자인 시안) — 화면 아래쪽 가로 스크롤 카드 줄. 카드마다 이름 · 거리 · ETA · 상태,
 // 병상 · AI 유효 · 전문의 세 칸, 진료과·등급 칩, AI 배후진료 한 줄, [이송 승인].
@@ -403,6 +403,12 @@ function CandidateCard({
             수용 불가 신고
           </Chip>
         )}
+        {/* 병원이 E-Gen에 이 질환군 차단 메시지를 걸어둠(severe_blocked 강등, 2026-10-07) — 신고와 같은 원칙으로 순위만 내린다 */}
+        {hospital.demoteReasons?.includes("severe_blocked") && (
+          <Chip bg={AD.redSoft} fg={AD.red} title="이 질환군은 지금 못 받는다고 병원이 E-Gen 메시지를 걸어둔 상태 — 후보에서 빼지 않고 순위만 뒤로 내립니다">
+            병원 차단 메시지
+          </Chip>
+        )}
         {(hospital.inFlightCount ?? 0) > 0 && (
           <Chip bg={AD.orangeSoft} fg={AD.orange} title={hospital.loadReason ?? "이 병원으로 확정돼 이송 중인 다른 환자 — 그만큼 순위가 뒤로 밀린다"}>
             이송 중 {hospital.inFlightCount}건{hospital.loadPenaltyMin ? ` · 순위 +${hospital.loadPenaltyMin}분` : ""}
@@ -427,6 +433,8 @@ function CandidateCard({
         )}
       </div>
 
+      <AcceptanceMessages messages={hospital.acceptanceMessages} />
+
       <div style={{ minHeight: 16, fontSize: 11.5, color: AD.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={byType ?? undefined}>
         {byType ? `AI · ${byType}` : live ? `AI · 응급실 지금 유효 ${Math.round(live.authority * 100)}%` : "AI · 배후진료 신뢰도 정보 없음"}
       </div>
@@ -443,6 +451,38 @@ function CandidateCard({
         <button type="button" disabled style={approveButton("disabled")}>
           {hospital.excluded ? "이 사건에서 제외됨" : statusKey === "rejected" ? "수용 불가" : "병원 응답 대기"}
         </button>
+      )}
+    </div>
+  );
+}
+
+/** 병원이 E-Gen에 걸어둔 수용 제한 메시지(규칙 기반, 2026-10-07). 이 환자에 해당하는 것만 펼쳐 보이고(최대 2건),
+ *  나머지는 건수만 — 원문은 툴팁에 다 있다. 메시지가 없으면 아무것도 그리지 않는다(구버전 hub 포함). */
+function AcceptanceMessages({ messages }: { messages?: AcceptanceMessage[] | null }) {
+  if (!messages?.length) return null;
+  const matched = messages.filter((m) => m.matched);
+  const others = messages.length - matched.length;
+  const line = (m: AcceptanceMessage) =>
+    `${m.kind === "severe" ? m.diseaseName ?? m.diseaseGroup ?? "중증질환" : m.department ?? "응급실"} — ${m.message}`;
+  return (
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 11.5 }}
+      title={["병원 공지(E-Gen 메시지 · 규칙)", ...messages.map(line)].join("\n")}
+    >
+      {matched.slice(0, 2).map((m, i) => (
+        <div key={i} style={{ color: m.kind === "severe" ? AD.red : AD.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          병원 공지 · {line(m)}
+        </div>
+      ))}
+      {(matched.length > 2 || others > 0) && (
+        <div style={{ color: AD.sub }}>
+          {[
+            matched.length > 2 ? `이 환자 관련 공지 ${matched.length - 2}건 더` : null,
+            others > 0 ? `다른 진료 공지 ${others}건` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
       )}
     </div>
   );

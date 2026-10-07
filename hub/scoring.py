@@ -130,7 +130,7 @@ def rank_key(
        (2026-10-01 — 예전엔 dashboard가 자체 정렬로 올려 줬다. 순위를 hub 한 곳에서만 정하도록
        옮겼다. 병원의 명시적 응답이 점수 추정보다 우선한다는 _demote_reasons()의 원칙과 같다)
     1) 이 사건에서 거절(rejected)한 병원은 맨 뒤
-    2) 그 앞은 declared_no(수용 불가 신고)·beds_full(확인된 만실)로 내린 병원
+    2) 그 앞은 declared_no(수용 불가 신고)·severe_blocked(E-Gen 차단 메시지)·beds_full(확인된 만실)로 내린 병원
     3) 나머지는 finalScore 내림차순, 같으면 가까운 순·ID 순(결정적 정렬)
 
     declared_no를 가중합으로 섞지 않는 이유: hospital_score의 5단계 score(0.2~1.0)는

@@ -21,6 +21,8 @@ import decision_log
 from disease_group import match_group
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
+    AcceptanceMessage,
+    AcceptanceMessageMatch,
     AmbulanceInfo,
     ApprovalAction,
     ArrivalResult,
@@ -268,6 +270,44 @@ def _should_demote(info: HospitalInfo, group: str | None) -> bool:
     return group_score is not None and group_score.tier == "declared_no"
 
 
+def _active_messages(info: HospitalInfo, now: datetime) -> list[AcceptanceMessage]:
+    """E-Gen 수용 제한 메시지 중 지금 유효한 것(시작 ≤ 지금 < 종료). info는 30분마다 보내므로 그 사이에
+    끝나거나 시작되는 메시지를 여기서 다시 거른다. 시각이 없거나 깨진 쪽은 열린 구간으로 본다."""
+    active = []
+    for msg in info.acceptanceMessages or []:
+        start = _parse_iso(msg.startAt) if msg.startAt else None
+        end = _parse_iso(msg.endAt) if msg.endAt else None
+        if (start is None or start <= now) and (end is None or now < end):
+            active.append(msg)
+    return active
+
+
+def _severe_blocked(info: HospitalInfo, group: str | None, now: datetime) -> bool:
+    """사건 질환군에 대해 병원이 지금 유효한 중증질환 차단 메시지를 걸어뒀는지(2026-10-07). declared_no와
+    같은 원칙으로 순서만 내린다 — 병원이 미리 밝힌 "못 받는다"라서 근거 강도는 신고와 같다."""
+    if group is None:
+        return False
+    return any(m.kind == "severe" and m.diseaseGroup == group for m in _active_messages(info, now))
+
+
+def _acceptance_messages_for(
+    info: HospitalInfo, group: str | None, required_department: str | None, now: datetime
+) -> list[AcceptanceMessageMatch] | None:
+    """매칭 결과에 실을 메시지. 이 환자에 해당하는 것(matched)을 앞에 둔다. 응급실 메시지는 진료과가
+    필요 진료과와 같거나 응급실 전체 공지("문의 후 이송")일 때 해당한다."""
+    out = []
+    for msg in _active_messages(info, now):
+        if msg.kind == "severe":
+            matched = group is not None and msg.diseaseGroup == group
+        else:
+            matched = msg.department == "응급실" or (
+                required_department is not None and msg.department == required_department
+            )
+        out.append(AcceptanceMessageMatch(**msg.model_dump(), matched=matched))
+    out.sort(key=lambda m: not m.matched)
+    return out or None
+
+
 def _demote_reasons(
     info: HospitalInfo,
     group: str | None,
@@ -275,12 +315,13 @@ def _demote_reasons(
     effective_beds: int,
     bed_unknown: bool,
     bed_stale: bool,
+    now: datetime,
 ) -> list[str]:
     """이 병원을 순위 뒤쪽으로 내릴 이유들(2026-09-28). 비면 finalScore 순서 그대로다.
 
     - 이 사건에 대해 병원이 거절했으면 rejected 하나로 맨 뒤.
     - 병원이 이 사건에 승인·확정 응답을 했으면 내리지 않는다 — 그 병원의 명시적 응답이
-      미리 해둔 신고(declared_no)나 병상 숫자보다 우선이다. 특히 확정 직후 오버레이로 병상이
+      미리 해둔 신고(declared_no)·차단 메시지(severe_blocked)나 병상 숫자보다 우선이다. 특히 확정 직후 오버레이로 병상이
       0이 된 병원이 자기 사건에서 만실로 밀려나면 안 된다.
     - beds_full은 "확인된 만실"일 때만. 미상·오래된 값은 순위를 막지 않는다(미상을 이유로
       밀어내면 뺑뺑이가 오히려 늘어난다는 기존 원칙).
@@ -292,6 +333,8 @@ def _demote_reasons(
     reasons = []
     if _should_demote(info, group):
         reasons.append("declared_no")
+    if _severe_blocked(info, group, now):
+        reasons.append("severe_blocked")
     if not bed_unknown and not bed_stale and effective_beds <= 0:
         reasons.append("beds_full")
     return reasons
@@ -332,6 +375,7 @@ def _display_signature(result: HubMatchResult | None) -> tuple | None:
                 h.bedDataStale,
                 h.etaMin,
                 tuple(h.demoteReasons),
+                len(h.acceptanceMessages or ()),
                 round(h.bedReliability.authority, 2) if h.bedReliability else None,
                 round(h.bedReliability.rArrive, 2) if h.bedReliability else None,
             )
@@ -744,7 +788,7 @@ class HubEngine:
                 bedCountUnknown=unknown,
                 bedDataStale=stale,
                 demoteReasons=_demote_reasons(
-                    info, self._case_group.get(case_id), status, beds, unknown, stale
+                    info, self._case_group.get(case_id), status, beds, unknown, stale, now
                 ),
             )
             update["unavailableReason"] = _unavailable_reason(status, update["demoteReasons"])
@@ -1176,7 +1220,8 @@ class HubEngine:
                         loadReason=load_reason,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
-                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale)),
+                        acceptanceMessages=_acceptance_messages_for(info, best_group, required, now),
+                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale, now)),
                         rejectReason=self._reject_reason_for(voice.caseId, info.hospitalId, status),
                         unavailableReason=_unavailable_reason(status, demote),
                         bedDataStale=stale,

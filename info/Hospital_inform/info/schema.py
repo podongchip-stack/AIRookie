@@ -229,6 +229,28 @@ class SevereDeclarations(Strict):
     source: Literal["rule"] = "rule"
 
 
+class AcceptanceMessage(Strict):
+    """병원이 E-Gen에 걸어둔 수용 제한 메시지 하나 (egen/messages.py, 2026-10-07)."""
+
+    kind: Literal["er", "severe"] = Field(
+        description="er = 응급실 메시지(진료과 단위 자유 텍스트), severe = 중증질환 차단(질환 코드 있음)"
+    )
+    message: str = Field(min_length=1, description="병원이 쓴 원문")
+    department: Optional[str] = Field(default=None, description="E-Gen 진료과 이름(trtPrtCodMag)")
+    diseaseCode: Optional[str] = Field(default=None, description="중증질환 코드(Y0010 등). severe만")
+    diseaseName: Optional[str] = Field(default=None, description="E-Gen 항목명. severe만")
+    diseaseGroup: Optional[str] = Field(
+        default=None, description="hospital_score의 15개 질환군 이름. severe만, hub가 사건 질환군과 비교한다"
+    )
+    startAt: Optional[str] = Field(default=None, description="ISO 8601 (KST)")
+    endAt: Optional[str] = Field(default=None, description="ISO 8601 (KST)")
+
+    @field_validator("startAt", "endAt")
+    @classmethod
+    def _iso8601(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else _validate_iso8601(value)
+
+
 class HospitalInfo(Strict):
     """병원 1곳의 정보. feature/hub로 보내는 단위."""
 
@@ -282,6 +304,11 @@ class HospitalInfo(Strict):
         " (2026-09-28 다필드 확장). 키는 E-Gen 필드명 — hvoc(수술실)·"
         "hvgc(입원실)·hv28(소아) 등 train_field.py 관문을 통과한 필드만."
         " 값 구조는 bedReliability와 동일.",
+    )
+    acceptanceMessages: Optional[list[AcceptanceMessage]] = Field(
+        default=None,
+        description="E-Gen 응급실·중증질환 메시지(규칙 기반, 2026-10-07). 메시지가 없는 병원이나"
+        " 조회 실패 시 None — assessment와 같은 fail-soft.",
     )
 
     @field_validator("updatedAt")

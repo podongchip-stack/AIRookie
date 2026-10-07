@@ -60,6 +60,7 @@ sys.path.insert(0, str(HOSPITAL_INFORM_INFO_DIR))
 
 from egen.client import HttpEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
+from egen.messages import build_acceptance_messages  # noqa: E402
 from schema import (  # noqa: E402
     AmbulanceInfo,
     BedReliability,
@@ -299,6 +300,24 @@ def _attach_reliability(
     return enriched
 
 
+def _attach_acceptance_messages(hospitals: list[HospitalInfo], http: HttpEgenClient) -> list[HospitalInfo]:
+    """병원마다 E-Gen 응급실·중증질환 메시지(egen/messages.py)를 붙인다. 조회가 실패해도 메시지 없이
+    그대로 보낸다 — 다른 세 오퍼레이션과 따로 부르는 이유도 이것(메시지 하나 때문에 병원 목록 전체를 버리지 않게)."""
+    try:
+        by_hpid = build_acceptance_messages(http.get_er_messages())
+    except Exception as e:  # noqa: BLE001 — 메시지 조회 실패가 병원 목록 전송을 막으면 안 됨
+        print(f"  [메시지] E-Gen 응급실·중증질환 메시지 조회 실패, 메시지 없이 전송: {e}")
+        return hospitals
+    enriched = [
+        info.model_copy(update={"acceptanceMessages": by_hpid[info.hospitalId]}) if info.hospitalId in by_hpid else info
+        for info in hospitals
+    ]
+    attached = sum(1 for info in hospitals if info.hospitalId in by_hpid)
+    total = sum(len(v) for v in by_hpid.values())
+    print(f"  [메시지] 수용 제한 메시지 {total}건 · {len(by_hpid)}곳 중 {attached}곳 첨부")
+    return enriched
+
+
 #: 심평원 전문과목별 전문의 수 캐시(`python -m hospital_score.hira --build-join`이 만든다).
 HIRA_SPECIALISTS_PATH = HOSPITAL_INFORM_INFO_DIR / "data" / "hira" / "specialists.json"
 
@@ -342,6 +361,7 @@ def fetch_hospitals() -> list[HospitalInfo]:
 
     hospitals = _attach_assessments(hospitals, location_rows, severe_rows, bed_rows)
     hospitals = _attach_reliability(hospitals, bed_rows, severe_rows)
+    hospitals = _attach_acceptance_messages(hospitals, http)
     return hospitals
 
 

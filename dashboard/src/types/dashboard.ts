@@ -219,6 +219,20 @@ export interface HospitalCandidate {
   inFlightCount?: number;
   loadPenaltyMin?: number;
   loadReason?: string | null;
+  // hub 2026-10-07~: 병원이 E-Gen에 걸어둔 지금 유효한 수용 제한 메시지(규칙 기반). 이 환자에 해당하는
+  // 것(matched)이 앞이다. 사건 질환군의 중증질환 차단이 있으면 demoteReasons에 "severe_blocked"가 붙는다.
+  acceptanceMessages?: AcceptanceMessage[] | null;
+}
+
+export interface AcceptanceMessage {
+  kind: "er" | "severe"; // er = 응급실 메시지(진료과 단위), severe = 중증질환 차단(질환군 있음)
+  message: string;
+  department?: string | null;
+  diseaseName?: string | null;
+  diseaseGroup?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  matched: boolean;
 }
 
 // 확정 병원 도착 뒤 병원이 기록한 수용 결과(hub 2026-10-01~). 수용만 남는다(수용 불가는 그 병원이 rejected로 바뀜).
