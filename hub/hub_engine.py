@@ -27,7 +27,10 @@ from schema import (
     AmbulanceInfo,
     ApprovalAction,
     ArrivalResult,
+    BackupBedRow,
+    BackupEquipmentRow,
     GpsPoint,
+    HospitalBackupView,
     HospitalInfo,
     HospitalMatch,
     HospitalStatus,
@@ -328,6 +331,23 @@ def _er_capacity(info: HospitalInfo, effective_beds: int, bed_unknown: bool, bed
     return capacity, max(0, min(100, round(100 * occupied / capacity)))
 
 
+#: [배후역량] 장비 줄(2026-10-08): E-Gen 운영 코드 → (화면 이름, 심평원 장비명 또는 None, 설명). 심평원 장비명이 None인
+#: 줄은 심평원에 그 항목이 없다는 뜻이다(혈관조영장치는 전국 어디에도 항목이 없었다 — info hira.py 주석).
+BACKUP_EQUIPMENT: tuple[tuple[str, str, str | None, str | None], ...] = (
+    ("ECMO", "ECMO", "ECMO", None),
+    ("VENTILATOR", "인공호흡기", "인공호흡기", None),
+    ("CRRT", "CRRT(지속 투석)", None, "심평원은 일반 혈액투석기 대수만 있다(아래 줄)"),
+    ("HD", "혈액투석기", "혈액투석을위한인공신장기", None),
+    ("ANGIO", "혈관조영", None, "심평원 장비 목록에 항목이 없다"),
+    ("CT", "CT", "CT", None),
+    ("MRI", "MRI", "MRI", None),
+    ("HYPOTHERMIA", "저체온 치료기", None, None),
+    ("INCUBATOR", "인큐베이터", "인큐베이터", None),
+    ("VENTILATOR_PRETERM", "조산아 인공호흡기", None, None),
+    ("HYPERBARIC", "고압산소", None, None),
+)
+
+
 def _hold_from_state(raw: Any) -> BedHold | None:
     """상태 파일의 병상 차감 하나. 예전 형식(만료 시각 문자열 하나, 고정 15분 TTL 시절)은 그 시각에 풀리는
     차감으로 옮긴다(확정 당시 값을 몰라 조기 해제는 안 함)."""
@@ -609,6 +629,65 @@ class HubEngine:
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
         with self._lock:
             return self._hospitals.get(hospital_id)
+
+    def build_backup_view(self, hospital_id: str) -> HospitalBackupView | None:
+        """대시보드 [배후역량] 버튼(GET /hospital-backup, 2026-10-08) — 한 병원의 배후진료를 세 층으로 모은다.
+        보유(심평원, 월 단위) · 운영/정원(E-Gen) · 지금 가용(E-Gen 5분, 이송 확정 차감 반영)과 그 숫자의 지금 유효
+        확률(AI). 장비는 지금 남은 대수가 공개 정보에 없어 보유·운영만 싣는다. 순위와 무관한 열람용이다."""
+        with self._lock:
+            info = self._hospitals.get(hospital_id)
+            if info is None:
+                return None
+            now = _utcnow()
+            confirmed = self._info_confirmations.get(hospital_id)
+            hira = info.backupCapacity
+            capacity = info.bedCapacityByType or {}
+            beds_by_type = info.bedsByType or {}
+            by_field = info.bedReliabilityByType or {}
+
+            def authority(payload: Any) -> float | None:
+                match = bed_reliability.evaluate(payload, 0.0, now=now, horizon_sec=0.0, confirmed_at=confirmed)
+                return round(match.authority, 3) if match is not None else None
+
+            unknown = _is_bed_count_unknown(info)
+            beds = [
+                BackupBedRow(key="ER_ADULT", label="응급실(일반)", egenCapacity=capacity.get("ER_ADULT"),
+                             available=None if unknown else self.effective_bed_count(info),
+                             authority=authority(info.bedReliability)),
+                BackupBedRow(key="ER_PEDIATRIC", label="응급실(소아)", egenCapacity=capacity.get("ER_PEDIATRIC"),
+                             available=beds_by_type.get("ER_PEDIATRIC"), authority=authority(by_field.get("hv28"))),
+                BackupBedRow(key="OR", label="수술실", hiraCapacity=hira.operatingRooms if hira else None,
+                             egenCapacity=capacity.get("OR"), available=beds_by_type.get("OR"),
+                             authority=authority(by_field.get("hvoc"))),
+                BackupBedRow(key="ICU", label="중환자실", hiraCapacity=hira.icuTotal if hira else None,
+                             egenCapacity=capacity.get("ICU"), available=beds_by_type.get("ICU"),
+                             note="심평원 값은 중환자실 총량, E-Gen은 일반 중환자실만"),
+                BackupBedRow(key="NICU", label="신생아 중환자실", hiraCapacity=hira.nicu if hira else None),
+                BackupBedRow(key="WARD", label="입원실", hiraCapacity=hira.generalWard if hira else None,
+                             authority=authority(by_field.get("hvgc"))),
+            ]
+            operating = info.equipmentOperating or {}
+            owned = hira.equipment if hira else {}
+            equipment = [
+                BackupEquipmentRow(key=key, label=label, hiraCount=owned.get(hira_name) if hira_name else None,
+                                   egenOperating=operating.get(key), note=note)
+                for key, label, hira_name, note in BACKUP_EQUIPMENT
+            ]
+            return HospitalBackupView(
+                hospitalId=hospital_id,
+                name=info.name,
+                emergencyLevel=info.emergencyLevel,
+                beds=[row for row in beds if row.hiraCapacity is not None or row.egenCapacity is not None
+                      or row.available is not None],
+                equipment=[row for row in equipment if row.hiraCount is not None or row.egenOperating is not None],
+                specialties=[s for s in info.specialties if s.doctorCount > 0],
+                nursingGrade=hira.nursingGrade if hira else None,
+                severeDeclarations=info.severeDeclarations,
+                acceptanceMessages=_active_messages(info, now),
+                inFlightCount=self._prune_and_count_overlay(hospital_id, now),
+                egenUpdatedAt=info.updatedAt,
+                hiraCollectedAt=hira.collectedAt if hira else None,
+            )
 
     def list_hospitals(self) -> list[HospitalInfo]:
         """관제 지도(2026-10-03)에 병원 마커를 찍기 위한 전체 목록."""

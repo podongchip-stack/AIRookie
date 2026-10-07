@@ -606,6 +606,21 @@ def get_identity():
     return response, 200
 
 
+@app.get("/hospital-backup")
+def get_hospital_backup():
+    """대시보드 [배후역량] 버튼(2026-10-08) — 한 병원의 배후진료를 보유(심평원)·운영/정원(E-Gen)·지금 가용(E-Gen,
+    이송 확정 차감 반영)으로 모아 돌려준다(HubEngine.build_backup_view). 매칭 결과에 싣지 않고 누를 때만 가져와
+    카드 데이터가 커지지 않게 했다. 인증 없는 조회라 /identity처럼 CORS를 연다."""
+    hospital_id = (request.args.get("id") or "").strip()
+    view = engine.build_backup_view(hospital_id) if hospital_id else None
+    if view is None:
+        response, status = jsonify({"error": f"모르는 병원입니다: {hospital_id or '(id 없음)'}"}), 404
+    else:
+        response, status = jsonify(view.model_dump()), 200
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
+
+
 #: 매칭 결과를 한 번이라도 받은 병원들(caseId -> hpid 집합). 후보에서 빠진 병원도
 #: 다음 결과를 받아야 자기 화면의 카드를 지울 수 있어서, 역할별 전송의 수신 대상에 남긴다.
 _case_audience: dict[str, set[str]] = {}

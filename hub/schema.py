@@ -175,6 +175,20 @@ class SevereDeclarations(BaseModel):
     source: Literal["rule"] = "rule"
 
 
+class BackupCapacity(BaseModel):
+    """feature/info의 심평원 배후진료 보유 역량(hospital_score/hira.py load_backup_summary). 월 단위 구조 정보 —
+    지금 쓰고 있는 대수·당직은 없다."""
+
+    equipment: dict[str, int] = Field(default_factory=dict)  # 심평원 장비명 → 보유 대수
+    operatingRooms: Optional[int] = None
+    icuTotal: Optional[int] = None  # 중환자실 총량으로 보이는 값(미확인)
+    nicu: Optional[int] = None
+    generalWard: Optional[int] = None
+    nursingGrade: Optional[str] = None
+    collectedAt: Optional[str] = None
+    source: Literal["hira"] = "hira"
+
+
 class AcceptanceMessage(BaseModel):
     """병원이 E-Gen에 걸어둔 수용 제한 메시지 하나(feature/info egen/messages.py, 2026-10-07, 규칙 기반).
     er = 응급실 메시지(진료과 단위 자유 텍스트), severe = 중증질환 차단(질환 코드·질환군 있음)."""
@@ -195,6 +209,46 @@ class AcceptanceMessageMatch(AcceptanceMessage):
     er는 필요 진료과 일치이거나 응급실 전체 공지)."""
 
     matched: bool = False
+    source: Literal["rule"] = "rule"
+
+
+class BackupBedRow(BaseModel):
+    """[배후역량] 병상 한 줄. 보유(심평원)·E-Gen 정원·지금 가용·지금 유효 확률(AI)을 나란히 — 없는 칸은 None."""
+
+    key: str
+    label: str
+    hiraCapacity: Optional[int] = None
+    egenCapacity: Optional[int] = None
+    available: Optional[int] = None
+    authority: Optional[float] = None  # 지금 이 가용 숫자를 믿어도 될 확률(infosurv, source ai)
+    note: Optional[str] = None
+
+
+class BackupEquipmentRow(BaseModel):
+    """[배후역량] 장비 한 줄. 보유 대수(심평원)와 운영 여부(E-Gen Y/N/N1). 지금 남은 대수는 공개 정보가 없다."""
+
+    key: str
+    label: str
+    hiraCount: Optional[int] = None
+    egenOperating: Optional[str] = None
+    note: Optional[str] = None
+
+
+class HospitalBackupView(BaseModel):
+    """GET /hospital-backup 응답(2026-10-08, 규칙 기반 조립 — 순위와 무관한 열람용)."""
+
+    hospitalId: str
+    name: str
+    emergencyLevel: Optional[str] = None
+    beds: list[BackupBedRow] = Field(default_factory=list)
+    equipment: list[BackupEquipmentRow] = Field(default_factory=list)
+    specialties: list[Specialty] = Field(default_factory=list)
+    nursingGrade: Optional[str] = None
+    severeDeclarations: Optional[SevereDeclarations] = None
+    acceptanceMessages: list[AcceptanceMessage] = Field(default_factory=list)
+    inFlightCount: int = 0
+    egenUpdatedAt: Optional[str] = None
+    hiraCollectedAt: Optional[str] = None
     source: Literal["rule"] = "rule"
 
 
@@ -234,6 +288,10 @@ class HospitalInfo(BaseModel):
     bedReliabilityByType: Optional[dict[str, BedReliabilityInput]] = None
     # E-Gen 응급실·중증질환 메시지(2026-10-07). 같은 Optional 패턴 — 메시지 없는 병원은 None.
     acceptanceMessages: Optional[list[AcceptanceMessage]] = None
+    # 배후역량(2026-10-08) — E-Gen 장비 운영 Y/N/N1(코드 → 원값)과 심평원 보유 역량. 매칭 결과엔 싣지 않고
+    # 대시보드 [배후역량] 버튼(GET /hospital-backup)에서만 쓴다. 같은 Optional 패턴.
+    equipmentOperating: Optional[dict[str, str]] = None
+    backupCapacity: Optional["BackupCapacity"] = None
 
 
 class AmbulanceInfo(BaseModel):
