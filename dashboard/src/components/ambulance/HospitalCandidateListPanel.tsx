@@ -84,12 +84,24 @@ function Chip({ children, bg = AD.chip, fg = AD.ink3, title, border }: { childre
   );
 }
 
-function bedBox(available: number, unknown: boolean, stale?: boolean, capacity?: number | null, occupancyPct?: number | null) {
+function bedBox(
+  available: number,
+  unknown: boolean,
+  stale?: boolean,
+  capacity?: number | null,
+  occupancyPct?: number | null,
+  occupancyReason?: string | null,
+) {
   // "확인된 만실"(빨강)과 "미상"(회색)을 다르게 둔다 — 미상을 만실처럼 보이면 구급대원이 실제로는 받아줄 수도
   // 있는 병원을 스스로 후보에서 빼게 된다(CLAUDE.md 참고).
-  // 정원이 오면(hub 2026-10-07~) "가용/정원"과 포화도를 같이 보인다 — 같은 2석이 정원 10인 곳인지 40인 곳인지(규칙 · 순위 무관).
+  // 정원이 오면(hub 2026-10-07~) "가용/정원"과 포화도를 같이 보인다 — 같은 2석이 정원 10인 곳인지 40인 곳인지(규칙).
+  // 포화도는 순위에도 들어간다(이동시간 최대 +5분, occupancyReason) — 툴팁에 그 분을 밝힌다.
   const ofCapacity = capacity ? `/${capacity}` : "";
-  const capacityTitle = capacity ? `응급실 정원 ${capacity}석${occupancyPct != null ? ` · 포화도 ${occupancyPct}%` : ""} (E-Gen, 순위에는 쓰지 않음)` : undefined;
+  const capacityTitle = capacity
+    ? [`응급실 정원 ${capacity}석${occupancyPct != null ? ` · 포화도 ${occupancyPct}%` : ""} (E-Gen)`, occupancyReason ? `순위 ${occupancyReason}` : null]
+        .filter(Boolean)
+        .join(" · ")
+    : undefined;
   const staleTitle = stale ? "1일 넘게 갱신 안 된 값" : undefined;
   const title = [staleTitle, capacityTitle].filter(Boolean).join(" · ") || undefined;
   if (unknown) return <StatBox label="병상" value="미상" bg={AD.chip} fg={AD.ink3} title={["E-Gen 병상 값이 없습니다 — 만실이 아니라 데이터가 없는 것", capacityTitle].filter(Boolean).join(" · ")} />;
@@ -350,7 +362,7 @@ function CandidateCard({
           <div
             style={{ fontSize: 13.5, fontWeight: 700, color: AD.navy }}
             // 순위 점수(finalScore) 설명 — 그동안 안 보이던 내부 값의 투명화(2026-10-04)
-            title={hospital.finalScore != null ? `순위 점수 ${hospital.finalScore.toFixed(3)} — 진료과 적합도 0.6 + 이동시간 0.4 (전문성·등급 가산, 이송 중 부하 반영)` : undefined}
+            title={hospital.finalScore != null ? `순위 점수 ${hospital.finalScore.toFixed(3)} — 진료과 적합도 0.6 + 이동시간 0.4 (전문성·등급 가산, 이송 중 부하·응급실 포화도 반영)` : undefined}
           >
             {hospital.name}
           </div>
@@ -376,7 +388,14 @@ function CandidateCard({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
-        {bedBox(hospital.availableBedCount, hospital.bedCountUnknown, hospital.bedDataStale, hospital.erBedCapacity, hospital.erOccupancyPct)}
+        {bedBox(
+          hospital.availableBedCount,
+          hospital.bedCountUnknown,
+          hospital.bedDataStale,
+          hospital.erBedCapacity,
+          hospital.erOccupancyPct,
+          hospital.occupancyReason,
+        )}
         <StatBox
           label="AI 유효"
           value={live ? `${Math.round(live.rArrive * 100)}%${humanConfirmed ? " ✓" : ""}` : "—"}

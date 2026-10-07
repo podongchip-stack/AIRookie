@@ -99,10 +99,35 @@ def load_penalty_min(in_flight: int, effective_beds: int, bed_count_unknown: boo
     return minutes, f"이송 중 {in_flight}건/남은 병상 {max(effective_beds, 0)} +{minutes:g}분"
 
 
+# ── 응급실 포화도 페널티 (2026-10-07) ────────────────────────────────────────────
+# 병원이 E-Gen에 신고한 응급실 포화도(=(정원 - 가용) ÷ 정원)만큼 이동시간에 분을 더한다 — 같은 "가용 2석"이라도
+# 정원 10석(80% 참)과 정원 40석(95% 참)은 다르게 본다. 포화도에 비례(선형)하고 상한이 있어 불변식이 같다:
+#   **포화도 페널티를 다 받아도 OCCUPANCY_PENALTY_MAX_MIN분 넘게 가까운 병원은 역전당하지 않는다.**
+# 이송 중 부하 페널티의 절반으로 둔 이유: 부하는 우리가 확정한 사실이고, 포화도는 병원 신고값이라 시간이 지나면
+# 틀릴 수 있다(병상 신뢰도 모델 참고). 이송 확정 차감(오버레이) 전의 E-Gen 값으로 계산해 같은 환자를 부하
+# 페널티와 두 번 세지 않는다. 병상 미상·오래된 값이면 0분 — 미상을 이유로 불리하게 두지 않는 원칙.
+# 값은 팀 합의 전 초기값(2026-10-07) — 거절·도착 로그가 쌓이면 재보정한다.
+OCCUPANCY_PENALTY_MAX_MIN = 5.0
+
+
+def occupancy_penalty_min(occupancy_pct: int | None) -> tuple[float, str | None]:
+    """(이동시간에 더할 분, 설명 문구). 포화도 0%면 0분, 100%면 OCCUPANCY_PENALTY_MAX_MIN분."""
+    if occupancy_pct is None or occupancy_pct <= 0:
+        return 0.0, None
+    minutes = round(OCCUPANCY_PENALTY_MAX_MIN * min(occupancy_pct, 100) / 100, 1)
+    return minutes, f"응급실 포화도 {occupancy_pct}%(E-Gen 신고) +{minutes:g}분"
+
+
 def final_score(
-    specialty_score: float, travel_min: float, bonus_min: float = 0.0, load_min: float = 0.0
+    specialty_score: float,
+    travel_min: float,
+    bonus_min: float = 0.0,
+    load_min: float = 0.0,
+    occupancy_min: float = 0.0,
 ) -> float:
-    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(max(0.0, travel_min - bonus_min + load_min))
+    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(
+        max(0.0, travel_min - bonus_min + load_min + occupancy_min)
+    )
 
 
 def calibrate_min_per_km(samples: list[tuple[float, float]]) -> float:

@@ -38,7 +38,14 @@ from schema import (
     SpecialtyMatch,
     VoiceCallSummaryMessage,
 )
-from scoring import calibrate_min_per_km, expertise_bonus_min, final_score, load_penalty_min, rank_key
+from scoring import (
+    calibrate_min_per_km,
+    expertise_bonus_min,
+    final_score,
+    load_penalty_min,
+    occupancy_penalty_min,
+    rank_key,
+)
 from specialty_matcher import SpecialtyMatcher
 
 if TYPE_CHECKING:
@@ -1183,6 +1190,10 @@ class HubEngine:
                 # 건수(병원 단위 — 다른 사건 포함)만큼 이동시간에 분을 더한다. 평시엔 0.
                 in_flight = self._prune_and_count_overlay(info.hospitalId, now)
                 load_min, load_reason = load_penalty_min(in_flight, beds, unknown)
+                # 응급실 포화도 페널티(2026-10-07): 차감 전 E-Gen 값 기준 — 이송 중 환자는 위 부하 페널티가 센다.
+                occupancy_min, occupancy_reason = occupancy_penalty_min(
+                    _er_capacity(info, info.availableBedCount, unknown, stale)[1]
+                )
                 # 병원의 "현재 정보 확인" 이력 — 현재 claim에 유효한지는
                 # evaluate()가 bornAt과 대조해 판단한다.
                 confirmed = self._info_confirmations.get(info.hospitalId)
@@ -1227,13 +1238,15 @@ class HubEngine:
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
                         roadDistanceKm=round(eta[1] / 1000.0, 2) if eta is not None else None,
-                        finalScore=round(final_score(similarity, travel_min, bonus_min, load_min), 6),
+                        finalScore=round(final_score(similarity, travel_min, bonus_min, load_min, occupancy_min), 6),
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),
                         bonusReasons=bonus_reasons,
                         inFlightCount=in_flight,
                         loadPenaltyMin=load_min,
                         loadReason=load_reason,
+                        occupancyPenaltyMin=occupancy_min,
+                        occupancyReason=occupancy_reason,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
                         acceptanceMessages=_acceptance_messages_for(info, best_group, required, now),
@@ -1373,7 +1386,9 @@ class HubEngine:
                     else:
                         load_min = 0.0
                     travel = h.travelMin if h.travelMin is not None else h.distanceKm * 3.0
-                    score = final_score(h.specialtyMatch.score, travel, h.travelBonusMin or 0.0, load_min)
+                    score = final_score(
+                        h.specialtyMatch.score, travel, h.travelBonusMin or 0.0, load_min, h.occupancyPenaltyMin
+                    )
                     if best is None or score > best[0] + 1e-9:
                         best = (score, rank, h, load_min)
                 if best is None:

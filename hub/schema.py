@@ -422,8 +422,8 @@ class HospitalMatch(BaseModel):
     # availableBedCount 자체를 Optional로 바꾸면 dashboard의 기존 타입이 깨지므로
     # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
     bedCountUnknown: bool = False
-    # 응급실 일반 정원과 포화도(%, (정원 - 가용) ÷ 정원, 2026-10-07, 규칙 기반·설명용 — 순위에 안 씀).
-    # 같은 "가용 2석"이 정원 10인 곳인지 40인 곳인지 구분하게 한다. 병상이 미상·오래된 값이면 포화도는 None.
+    # 응급실 일반 정원과 포화도(%, (정원 - 가용) ÷ 정원, 2026-10-07, 규칙 기반). 이 값은 이송 확정 차감까지 반영한
+    # 표시용이고, 순위에는 차감 전 E-Gen 값으로 계산한 occupancyPenaltyMin이 들어간다. 병상이 미상·오래된 값이면 None.
     erBedCapacity: Optional[int] = None
     erOccupancyPct: Optional[int] = None
     status: HospitalStatus = "pending"
@@ -472,6 +472,10 @@ class HospitalMatch(BaseModel):
     inFlightCount: int = 0
     loadPenaltyMin: float = 0.0
     loadReason: Optional[str] = None
+    # ── 응급실 포화도 페널티 (2026-10-07, scoring.occupancy_penalty_min) ──
+    # E-Gen 신고 포화도(이송 확정 차감 전)에 비례해 이동시간에 더한 분(최대 5분)과 설명 문구. 병상 미상·오래된 값이면 0.
+    occupancyPenaltyMin: float = 0.0
+    occupancyReason: Optional[str] = None
 
 
 class ArrivalResult(BaseModel):

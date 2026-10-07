@@ -219,9 +219,12 @@ export interface HospitalCandidate {
   inFlightCount?: number;
   loadPenaltyMin?: number;
   loadReason?: string | null;
-  // hub 2026-10-07~: 응급실 일반 정원과 포화도(%, (정원-가용)÷정원). 규칙 기반 설명용 — 순위에 안 쓴다. 병상 미상이면 포화도 null.
+  // hub 2026-10-07~: 응급실 일반 정원과 포화도(%, (정원-가용)÷정원, 이송 확정 차감 반영). 규칙 기반. 병상 미상이면 포화도 null.
   erBedCapacity?: number | null;
   erOccupancyPct?: number | null;
+  // 포화도 페널티 — 차감 전 E-Gen 포화도에 비례해 이동시간에 더한 분(최대 5분)과 설명 문구. 미상이면 0/null.
+  occupancyPenaltyMin?: number;
+  occupancyReason?: string | null;
   // hub 2026-10-07~: 병원이 E-Gen에 걸어둔 지금 유효한 수용 제한 메시지(규칙 기반). 이 환자에 해당하는
   // 것(matched)이 앞이다. 사건 질환군의 중증질환 차단이 있으면 demoteReasons에 "severe_blocked"가 붙는다.
   acceptanceMessages?: AcceptanceMessage[] | null;
