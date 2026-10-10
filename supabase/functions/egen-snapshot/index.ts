@@ -1,4 +1,4 @@
-// E-Gen 스냅샷 수집기 — Supabase Edge Function (pg_cron 20분 주기 호출, 2026-10-04)
+// E-Gen 스냅샷 수집기 — Supabase Edge Function (pg_cron 5분 주기 호출 — 2026-10-10 20분에서 단축, 2026-10-04 신설)
 //
 // 노트북(수집 장비)을 들고 이동하게 되면서 수집 연속성이 깨지는 문제로, 수집기를
 // 클라우드로 이관했다. 이 함수는 info/snapshot.py의 클라우드판이되 역할을 더 좁혔다:
