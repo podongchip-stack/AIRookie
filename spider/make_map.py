@@ -127,7 +127,8 @@ h2{font-size:.85rem;font-weight:600;margin:0 0 6px}
         <label>μ · KTAS 3 <span id="mu3v" class="pill">5</span><input id="mu3" type="range" min="0" max="60" step="5" value="5"></label>
         <label>λ · 경증(KTAS 4·5)이 센터로 갈 때 물리는 분 <span id="lamv" class="pill">5</span><input id="lam" type="range" min="0" max="15" step="1" value="5"></label>
         <label>시작 시각 (시, 야간 22~06은 얇은 병원 역량이 내려감) <span id="shv" class="pill">14</span><input id="sh" type="range" min="0" max="23" step="1" value="14"></label>
-        <label class="row"><input id="dyn" type="checkbox" checked> 유효 역량 사용 (전문의 두께·야간·포화·시스템 부하)</label>
+        <label class="row"><input id="dyn" type="checkbox" checked> 유효 역량 사용 (전문의 두께·야간) + 부하 항</label>
+        <label class="row"><input id="wload" type="checkbox" checked> 부하 항 — 줄 길이에 분으로 (이송 중 건수 10×n/(n+가용) + 포화 최대 5분; 허브 공유 장부 전제, 각자 낡은 뷰면 끌 것)</label>
         <label>높이 배율 <span id="hv" class="pill">500</span><input id="hs" type="range" min="100" max="1500" step="50" value="500"></label>
         <label>높이 대비 (지수, 클수록 상급 병원이 더 솟음) <span id="zexpv" class="pill">2.0</span><input id="zexp" type="range" min="1" max="3" step="0.1" value="2.0"></label>
       </div>
@@ -315,14 +316,18 @@ function voiceToPatient(sum){
 }
 // 질환군 딱딱한 벽: 이 장비·등급이 없으면 줄 자체가 안 걸린다 (초안, 전문의 검토 전)
 const COND={general:{label:'일반',wall:h=>true},stemi:{label:'심근경색',wall:h=>h.angio==='Y'},stroke:{label:'뇌졸중',wall:h=>h.ct==='Y'&&h.g>=2},trauma:{label:'중증외상',wall:h=>h.g>=3}};
-// 병원 유효 역량: 등급 + 전문의 두께 + 야간 감점 + 포화 감점 (초안 값). 설명용 분해를 같이 돌려준다.
+// 병원 유효 역량: 등급 + 전문의 두께 + 야간 감점 (초안 값). 설명용 분해를 같이 돌려준다.
+// 부하(포화·이송 중)는 z에 넣지 않는다 — z는 μ에 곱해지는데 μ가 경증에서 음수라 붐비는 병원이 경증에게 더 짧아졌다(2026-10-12 재생에서 확인).
+// 부하는 load(분)로 따로 돌려주고 줄 길이에 더한다: 허브와 같은 식 — 이송 중 페널티 10×이송 중/(이송 중+가용), 포화 페널티 최대 5분.
 function zEff(h,tNow,ctx){
-  if(!$('dyn').checked) return {z:h.g,parts:''};
+  if(!$('dyn').checked) return {z:h.g,parts:'',load:0,loadParts:''};
   const em=h.em??0; const thick=em<=1?-0.4:em<=3?-0.2:em>=8?0.2:0;
   const hour=((+$('sh').value)+tNow/60)%24, night=hour>=22||hour<6; const nt=night?(h.g<=2&&em<=2?-0.6:em<=3?-0.25:-0.1):0;
-  const occ=h.er_cap&&h.hvec!==null?Math.max(0,Math.min(1,1-h.hvec/h.er_cap)):0.5; const oc=-0.3*occ;
-  const win=ctx.winCount(h.hpid); const wc=-0.25*Math.min(2,win/Math.max(1,ctx.capN));
-  return {z:h.g+thick+nt+oc+wc,parts:`등급${h.g} 전문의${em}명 ${thick>=0?'+':''}${thick.toFixed(1)}${night?' 야간'+nt.toFixed(1):''} 포화${oc.toFixed(2)}${win?' 창'+wc.toFixed(2):''}`};
+  const occ=h.er_cap&&h.hvec!==null?Math.max(0,Math.min(1,1-h.hvec/h.er_cap)):0.5;
+  const infl=$('wload').checked?ctx.inflight(h.hpid):0, free=Math.max(0,h.hvec??ctx.capN);
+  const lp=10*infl/Math.max(1,infl+free), op=$('wload').checked?5*occ:0;
+  return {z:h.g+thick+nt,parts:`등급${h.g} 전문의${em}명 ${thick>=0?'+':''}${thick.toFixed(1)}${night?' 야간'+nt.toFixed(1):''}`,
+          load:lp+op,loadParts:`${op?' 포화+'+op.toFixed(1)+'분':''}${infl?' 이송중'+infl+'건+'+lp.toFixed(1)+'분':''}`};
 }
 function candidates(row,from,p,tNow,ctx){
   const need=KTAS_Z[p.k], lam=+$('lam').value;
@@ -335,8 +340,8 @@ function candidates(row,from,p,tNow,ctx){
     const gap=ze.z-need; if(gap<-0.75) return null;   // 유효 역량이 필요 역량보다 0.75 넘게 모자라면 줄이 안 걸린다 (얇은 지역기관의 야간 등)
     // 위로 가는 이득은 μ(한 단계까지 전액, 그 위 1/4), 모자람의 비용은 ν(위급할수록 큼)
     const nu=p.k<=2?30:p.k===3?15:5;
-    const len=gap>=0?road-mu*(Math.min(gap,1)+0.25*Math.max(0,gap-1)):road+nu*(-gap);
-    return {h,road,gap,mu,len,parts:ze.parts};
+    const len=(gap>=0?road-mu*(Math.min(gap,1)+0.25*Math.max(0,gap-1)):road+nu*(-gap))+ze.load;
+    return {h,road,gap,mu,len,parts:ze.parts+ze.loadParts};
   }).filter(Boolean).sort((a,b)=>a.len-b.len);
 }
 function posAt(seg,t){
@@ -363,7 +368,7 @@ function solve(){
     const {p,from,tNow,first}=queue.shift();
     skip[p.id]??=new Set(); hist[p.id]??=[];
     const tb=tableFrom(from); settled+=tb.settled;
-    const ctx={capN,inflightSevere:Object.values(cur).filter(sg=>sg.tArr>tNow&&P.find(q=>q.id===sg.pid).k<=2).length,winCount:hpid=>assigned(hpid).filter(sg=>Math.abs(sg.tArr-tNow)<=tau).length};
+    const ctx={capN,inflightSevere:Object.values(cur).filter(sg=>sg.tArr>tNow&&P.find(q=>q.id===sg.pid).k<=2).length,winCount:hpid=>assigned(hpid).filter(sg=>Math.abs(sg.tArr-tNow)<=tau).length,inflight:hpid=>assigned(hpid).filter(sg=>sg.tArr>tNow).length};
     const cands=candidates(tb.row,from,p,tNow,ctx).filter(c=>!skip[p.id].has(c.h.hpid));
     if(first) events.push({t:tNow,type:'s',text:`<b>#${p.id}</b> (K${p.k}${p.cond&&p.cond!=='general'?' '+COND[p.cond].label:''}) ${p.site} 발생 · 걸 수 있는 줄 ${cands.length}개 · μ ${cands[0]?cands[0].mu.toFixed(0):'-'}분/레벨${ctx.inflightSevere?' (이송 중 중증 '+ctx.inflightSevere+')':''}`});
     let placed=false; const avoided=[];
@@ -581,6 +586,7 @@ $('hs').addEventListener('input',()=>{$('hv').textContent=$('hs').value;});
 $('zexp').addEventListener('input',()=>{$('zexpv').textContent=$('zexp').value;});
 $('base').addEventListener('change',()=>{deckgl.setProps({mapStyle:BASE[$('base').value]});});
 $('dyn').addEventListener('change',()=>recompute(+$('time').value));
+$('wload').addEventListener('change',()=>recompute(+$('time').value));
 document.querySelectorAll('[data-hmode]').forEach(b=>b.addEventListener('click',()=>{HMODE=b.dataset.hmode; document.querySelectorAll('[data-hmode]').forEach(x=>x.classList.toggle('on',x===b));}));
 document.querySelector('[data-hmode="sphere"]').classList.add('on');
 $('time').addEventListener('input',()=>{stopPlay();tick();});
