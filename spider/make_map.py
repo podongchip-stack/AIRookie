@@ -38,6 +38,7 @@ select,input{font:inherit;font-size:.85rem;padding:5px 7px;border:1px solid var(
 input[type=range]{padding:0}
 input[type=checkbox]{margin:0}
 button{font:inherit;font-size:.8rem;padding:5px 10px;border:1px solid var(--line);background:#0c1020;color:var(--ink);border-radius:3px;cursor:pointer;white-space:nowrap}
+button.on{border-color:var(--ink);background:#1a2340}
 button.pri{background:var(--ink);color:#0a1024;border-color:var(--ink)}
 .addrow{display:grid;grid-template-columns:1.3fr .7fr .9fr auto;gap:5px;align-items:end}
 .addrow input{width:100%;box-sizing:border-box}
@@ -77,6 +78,7 @@ h2{font-size:.85rem;font-weight:600;margin:0 0 6px}
 
 <div id="left" class="panel">
   <h1>병원 역량 공간 — 전국</h1>
+  <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0 4px"><span class="note" style="margin:0">병원 표시</span><button data-hmode="sphere">3D 구만 (순수 모델)</button><button data-hmode="node">공중 노드</button><button data-hmode="beams">빛기둥</button></div>
   <p class="lead">병원은 역량 z 높이에 뜬 노드. 환자는 발생 시각에 켜져서 자기 높이 이상의 병원 중 도로 시간이 가장 짧은 줄을 잡고, <b>이 브라우저가 도로 그래프(OSM)로 직접 계산한 최단경로</b>를 따라 흘러간다. 도로 그래프는 전국 3차로 이상 + 병원 주변 4 km 골목(OSM). 지도를 클릭하면 환자가 떨어진다.</p>
   <div class="ctl">
     <details open><summary>환자 떨어뜨리기 (분배 모델)</summary>
@@ -95,9 +97,17 @@ h2{font-size:.85rem;font-weight:600;margin:0 0 6px}
             <option>강남역</option><option>시청</option><option>종로3가</option><option>서울역</option><option>노원역</option>
             <option>구로디지털단지</option><option>잠실</option><option>홍대입구</option><option>건대입구</option><option>연신내</option></select></label>
           <label>KTAS<select id="ktas"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+          <label>질환군<select id="cond"><option value="general">일반</option><option value="stemi">심근경색</option><option value="stroke">뇌졸중</option><option value="trauma">중증외상</option></select></label>
           <label>발생(분)<input id="t0" type="number" min="0" max="180" step="1" value="0"></label>
           <button id="add" class="pri">추가</button>
         </div>
+        <details><summary>통화 요약(voice v2 JSON)으로 환자 추가</summary>
+          <div style="display:grid;gap:6px;margin-top:6px">
+            <textarea id="vsum" rows="5" style="font:inherit;font-size:.72rem;font-family:var(--mono);background:#0c1020;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:6px" placeholder='{"ktas_level": 2, "chief_complaint": {"major": "I 심혈관계", "minor": "흉통(심장성)"}, "suspected_diagnosis": [{"text": "경색 의심"}], "incidents": [{"type": "질병", "primary": true}], "disease_category": "심장질환"}'></textarea>
+            <div style="display:flex;gap:6px;align-items:center"><button id="vadd" class="pri">요약으로 추가</button><span id="vmsg" class="note" style="margin:0"></span></div>
+            <p class="note" style="margin:0">위치·발생(분)은 위 칸을 쓴다. KTAS는 요약의 ktas_level, 질환군은 예상 병명 키워드 규칙(뇌졸중 → 심근경색 → 외상 기전+KTAS 1·2 → 일반). 규칙은 <code>voice_to_patient.py</code>와 같다. 무작위 환자의 질환군은 여전히 주사위다.</p>
+          </div>
+        </details>
         <div style="border:1px solid var(--line);border-radius:3px;padding:8px;display:grid;gap:6px">
           <div style="font-size:.78rem;color:var(--ink);font-weight:600">완전 랜덤 생성</div>
           <label>환자 수 <span id="rnv" class="pill">12</span><input id="rn" type="range" min="2" max="60" step="1" value="12"></label>
@@ -128,7 +138,6 @@ h2{font-size:.85rem;font-weight:600;margin:0 0 6px}
           <div style="display:flex;gap:5px;flex-wrap:wrap"><button data-cam="korea">전국</button><button data-cam="seoul">서울</button><button data-cam="top">위에서</button><button data-cam="tilt">비스듬히</button><button data-cam="side">옆에서</button><button data-cam="low">낮게 옆에서</button><button id="spin">회전</button></div>
           <p class="note" style="margin:4px 0 0">언제든 마우스로 잡으면 회전·연출이 멈춘다. 왼쪽 드래그 이동 · 오른쪽 드래그(또는 Ctrl+드래그) 돌리기·기울이기 · 휠 확대 · 방향키/Shift+방향키</p></label>
         <label>바탕지도<select id="base"><option value="esri">어두운 회색 (Esri, 한글 지명)</option><option value="sat">위성 영상 어둡게 (Esri)</option><option value="street">길거리 지도 어둡게 (Esri)</option><option value="osm">OpenStreetMap 어둡게</option></select></label>
-        <label class="row"><input id="beams" type="checkbox"> 병원을 빛기둥으로 (기본은 공중 노드)</label>
         <label class="row"><input id="camauto" type="checkbox" checked> 카메라 연출 (재생 때 위에서 → 옆으로)</label>
       </div>
     </details>
@@ -285,6 +294,25 @@ function randomPatients(n,add){
   $('scn').value='custom';
 }
 function cumul(coords){ const d=[0]; for(let i=1;i<coords.length;i++) d.push(d[i-1]+straightKm(coords[i-1][1],coords[i-1][0],coords[i][1],coords[i][0])); const T=d[d.length-1]||1; return d.map(x=>x/T); }
+// voice v2 통화 요약 → {k, cond, text}. voice_to_patient.py와 같은 규칙(규칙 기반). 한쪽을 고치면 다른 쪽도.
+const V_STROKE=/뇌졸중|뇌\s*경색|뇌출혈|편마비|구음\s*장애|거미막하|지주막하|두개내\s*출혈|경막[하외]\s*(출혈|혈종)/, V_STEMI=/심근\s*경색|급성\s*관상|STEMI|흉통\(심장성\)|경색/;
+function voiceToPatient(sum){
+  if(sum&&typeof sum.summary==='object'&&sum.summary) sum=sum.summary;
+  sum=sum||{};
+  const k=[1,2,3,4,5].includes(+sum.ktas_level)?+sum.ktas_level:3;
+  const incs=sum.incidents||[], pri=incs.find(i=>i.primary)||incs[0];
+  const parts=[];
+  if(pri&&pri.type&&pri.type!=='질병') parts.push(pri.detail?`${pri.type}(${pri.detail})`:pri.type);
+  else if(sum.disease_category&&sum.disease_category!=='기타 질병') parts.push(sum.disease_category);
+  const minor=(sum.chief_complaint||{}).minor; if(minor) parts.push(minor);
+  (sum.suspected_diagnosis||[]).forEach(d=>d.text&&parts.push(d.text));
+  (sum.injuries||[]).slice(0,3).forEach(i=>parts.push([i.side,i.region,i.type].filter(Boolean).join(' ')));
+  const seen=[]; parts.map(x=>String(x).split(/\s+/).join(' ').trim()).forEach(x=>{if(x&&!seen.includes(x))seen.push(x);});
+  const text=seen.join(' · ')||(sum.chief_complaint||{}).major||'미상';
+  const trauma=!!(pri&&pri.type&&pri.type!=='질병');
+  const cond=V_STROKE.test(text)?'stroke':V_STEMI.test(text)?'stemi':(trauma&&k<=2)?'trauma':'general';
+  return {k,cond,text};
+}
 // 질환군 딱딱한 벽: 이 장비·등급이 없으면 줄 자체가 안 걸린다 (초안, 전문의 검토 전)
 const COND={general:{label:'일반',wall:h=>true},stemi:{label:'심근경색',wall:h=>h.angio==='Y'},stroke:{label:'뇌졸중',wall:h=>h.ct==='Y'&&h.g>=2},trauma:{label:'중증외상',wall:h=>h.g>=3}};
 // 병원 유효 역량: 등급 + 전문의 두께 + 야간 감점 + 포화 감점 (초안 값). 설명용 분해를 같이 돌려준다.
@@ -388,7 +416,15 @@ const BASE={
     layers:[{id:'b',type:'raster',source:'b',paint:{'raster-brightness-max':.45,'raster-saturation':-.6,'raster-contrast':.15}}]},
   esri:{version:8,sources:{b:{type:'raster',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],tileSize:256,maxzoom:16,attribution:'Esri, HERE, Garmin, © OpenStreetMap contributors'}},layers:[{id:'b',type:'raster',source:'b'}]},
   osm:{version:8,sources:{b:{type:'raster',tiles:['https://tile.openstreetmap.de/{z}/{x}/{y}.png'],tileSize:256,maxzoom:18,attribution:'© OpenStreetMap contributors (openstreetmap.de)'}},layers:[{id:'b',type:'raster',source:'b',paint:{'raster-brightness-max':.42,'raster-saturation':-.7,'raster-contrast':.15}}]}};
-const {DeckGL, ColumnLayer, ScatterplotLayer, LineLayer, PathLayer, TripsLayer, TextLayer} = deck;
+const {DeckGL, ColumnLayer, ScatterplotLayer, LineLayer, PathLayer, TripsLayer, TextLayer, SimpleMeshLayer} = deck;
+// 병원 표시 방식: sphere(3D 구만) / node(공중 노드+줄기, 기본) / beams(빛기둥)
+let HMODE='sphere';
+// 단위 구 메시 (SimpleMeshLayer용) — 외부 의존 없이 직접 만든다
+const SPHERE=(()=>{const la=18,lo=36,pos=[],nor=[],idx=[];
+  for(let i=0;i<=la;i++){const th=Math.PI*i/la,st=Math.sin(th),ct=Math.cos(th);
+    for(let j=0;j<=lo;j++){const ph=2*Math.PI*j/lo,x=st*Math.cos(ph),y=st*Math.sin(ph),z=ct; pos.push(x,y,z); nor.push(x,y,z);}}
+  for(let i=0;i<la;i++)for(let j=0;j<lo;j++){const a=i*(lo+1)+j,b=a+lo+1; idx.push(a,b,a+1,b,b+1,a+1);}
+  return {positions:{value:new Float32Array(pos),size:3},normals:{value:new Float32Array(nor),size:3},indices:{value:new Uint32Array(idx)}};})();
 let VIEW={longitude:127.7,latitude:36.3,zoom:6.6,pitch:50,bearing:-10}, spinning=false;
 const CAMS={korea:{longitude:127.7,latitude:36.3,zoom:6.6,pitch:50,bearing:-10},seoul:{longitude:126.99,latitude:37.53,zoom:11,pitch:58,bearing:-18},top:{pitch:0,bearing:0,zoom:11},tilt:{pitch:58,bearing:-18,zoom:11},side:{pitch:75,bearing:-30,zoom:11.4},low:{pitch:78,bearing:20,zoom:12.2}};
 function goCam(c){VIEW={...VIEW,...c,transitionDuration:900}; deckgl.setProps({initialViewState:VIEW});}
@@ -432,13 +468,21 @@ function layers(t){
   // 병원 노드 (첫 3D 화면 방식): 높이에 뜬 점 + 바닥까지 가는 가는 선 + 바닥 그림자
   const top=h=>[h.lng,h.lat,ZH(h.z)*hs*ease];
   const hcol=h=>full(h)?[255,80,80]:gCol(h.g).slice(0,3);
+  if(HMODE==='sphere'){
+    // 순수 3D 모델: 병원 = 역량 높이에 뜬 구 (등급이 높을수록 크다). 기둥·줄기·빛 없음
+    L.push(new SimpleMeshLayer({id:'h-sphere',data:live,mesh:SPHERE,material:{ambient:0.35,diffuse:0.7,shininess:40,specularColor:[255,255,255]},getPosition:top,getColor:h=>[...hcol(h),255],getScale:h=>{const r=h.g>=4?170:h.g===3?130:h.g===2?95:70;return [r,r,r];},pickable:true,updateTriggers:{getPosition:[ease]}}));
+    L.push(new ScatterplotLayer({id:'h-shadow',data:live,radiusUnits:'meters',getRadius:50,radiusMinPixels:1.5,getPosition:h=>[h.lng,h.lat,0],getFillColor:h=>[...hcol(h),70],parameters:{depthTest:false}}));
+    L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
+    L.push(new TextLayer({id:'h-name',data:live.filter(h=>h.g>=4||(VIEW.zoom>=9.5&&h.g>=3)),getPosition:top,getText:h=>shortName(h.name),getSize:11,characterSet:'auto',getColor:[242,241,236,230],getPixelOffset:[0,-18],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,150],backgroundPadding:[3,1],parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
+  } else {
   L.push(new LineLayer({id:'h-stem',data:live,getSourcePosition:h=>[h.lng,h.lat,0],getTargetPosition:top,getColor:h=>[...hcol(h),110],getWidth:1,widthUnits:'pixels',parameters:ADD,updateTriggers:{getTargetPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-shadow',data:live,radiusUnits:'meters',getRadius:60,radiusMinPixels:2,getPosition:h=>[h.lng,h.lat,0],getFillColor:h=>[...hcol(h),120],parameters:{depthTest:false}}));
   L.push(new ScatterplotLayer({id:'h-glow',data:live,radiusUnits:'meters',getRadius:300+pulse*40,radiusMinPixels:9,getPosition:top,getFillColor:h=>[...hcol(h),60],parameters:ADD,updateTriggers:{getRadius:[animTick],getPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-node',data:live,radiusUnits:'meters',getRadius:h=>h.g>=4?120:h.g===3?95:70,radiusMinPixels:h=>h.g>=4?6:h.g===3?4.5:3,getPosition:top,getFillColor:h=>[...hcol(h),255],stroked:true,getLineColor:[255,255,255,200],lineWidthMinPixels:1.2,pickable:true,parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
   L.push(new TextLayer({id:'h-name',data:live.filter(h=>h.g>=4||(VIEW.zoom>=9.5&&h.g>=3)),getPosition:top,getText:h=>shortName(h.name),getSize:11,characterSet:'auto',getColor:[242,241,236,230],getPixelOffset:[0,-16],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,150],backgroundPadding:[3,1],parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
-  if($('beams').checked){
+  }
+  if(HMODE==='beams'){
     const beam=(id,r,a,res)=>new ColumnLayer({id,data:live,diskResolution:res,radius:r,extruded:true,elevationScale:hs*ease,getPosition:h=>[h.lng,h.lat],getElevation:h=>ZH(h.z),getFillColor:h=>full(h)?[255,60,60,a]:[...gCol(h.g).slice(0,3),a],getLineColor:[0,0,0,0],material:false,pickable:id==='beam-core',parameters:ADD});
     L.push(beam('beam-halo',150,10,12)); L.push(beam('beam-mid',60,38,12)); L.push(beam('beam-core',18,230,10));
     L.push(new ScatterplotLayer({id:'top-halo',data:live,radiusUnits:'meters',getRadius:420+pulse*90,getPosition:top,getFillColor:h=>full(h)?[255,60,60,45]:[...gCol(h.g).slice(0,3),55],parameters:ADD,updateTriggers:{getRadius:[animTick],getPosition:[ease]}}));
@@ -506,7 +550,7 @@ function renderTicks(){
 function renderList(){
   const ul=$('plist'); ul.innerHTML='';
   P.slice().sort((a,b)=>a.t0-b.t0||a.id-b.id).forEach(p=>{const li=document.createElement('li');
-    li.innerHTML=`<span class="id">#${p.id}</span><span class="pill k" style="--c:var(--k${p.k})">K${p.k}</span><span>${p.site}${p.cond&&p.cond!=='general'?' · '+COND[p.cond].label:''}</span><span class="tm">${p.t0}분</span><button>빼기</button>`;
+    li.innerHTML=`<span class="id">#${p.id}</span><span class="pill k" style="--c:var(--k${p.k})">K${p.k}</span><span title="${p.text||''}">${p.site}${p.cond&&p.cond!=='general'?' · '+COND[p.cond].label:''}${p.text?' · '+p.text:''}</span><span class="tm">${p.t0}분</span><button>빼기</button>`;
     li.querySelector('button').onclick=()=>{P=P.filter(q=>q.id!==p.id);$('scn').value='custom';recompute();}; ul.appendChild(li);});
 }
 let lastSideT=-1;
@@ -520,7 +564,10 @@ function recompute(keepT){
     $('etanote').textContent=G?`병원 ${H.length}곳(병상 데이터 ${LIVE.length}). 경로: 이 브라우저 안의 다익스트라 (OSM 전국 도로 ${G.n.toLocaleString()} 노드, 등급별 속도 80/55/45/35/25 km/h). 마지막 계산 ${ms.toFixed(0)} ms, 탐색 ${RES.settled.toLocaleString()} 노드.`:'도로 그래프 없음 → 직선 추정.'; },20);
 }
 $('scn').addEventListener('change',()=>{loadScenario();recompute();});
-$('add').onclick=()=>{addPatient($('site').value,+$('ktas').value,Math.max(0,+$('t0').value||0));$('scn').value='custom';recompute();};
+$('add').onclick=()=>{addPatient($('site').value,+$('ktas').value,Math.max(0,+$('t0').value||0));P[P.length-1].cond=$('cond').value;$('scn').value='custom';recompute();};
+$('vadd').onclick=()=>{ let sum; try{ sum=JSON.parse($('vsum').value); }catch(e){ $('vmsg').textContent='JSON을 읽을 수 없음'; return; }
+  const v=voiceToPatient(sum); addPatient($('site').value,v.k,Math.max(0,+$('t0').value||0)); const p=P[P.length-1]; p.cond=v.cond; p.text=v.text;
+  $('vmsg').textContent=`#${p.id} K${v.k} · ${COND[v.cond].label} · ${v.text}`; $('scn').value='custom'; recompute(); };
 $('rn').addEventListener('input',()=>{$('rnv').textContent=$('rn').value;});
 $('rw').addEventListener('input',()=>{$('rwv').textContent=$('rw').value;});
 $('rgen').onclick=()=>{randomPatients(+$('rn').value,false);recompute();};
@@ -534,6 +581,8 @@ $('hs').addEventListener('input',()=>{$('hv').textContent=$('hs').value;});
 $('zexp').addEventListener('input',()=>{$('zexpv').textContent=$('zexp').value;});
 $('base').addEventListener('change',()=>{deckgl.setProps({mapStyle:BASE[$('base').value]});});
 $('dyn').addEventListener('change',()=>recompute(+$('time').value));
+document.querySelectorAll('[data-hmode]').forEach(b=>b.addEventListener('click',()=>{HMODE=b.dataset.hmode; document.querySelectorAll('[data-hmode]').forEach(x=>x.classList.toggle('on',x===b));}));
+document.querySelector('[data-hmode="sphere"]').classList.add('on');
 $('time').addEventListener('input',()=>{stopPlay();tick();});
 $('end').onclick=()=>{stopPlay();$('time').value=$('time').max;tick();};
 $('play').onclick=()=>{ if(timer){stopPlay();return;} const s=$('time'); if(+s.value>=+s.max) s.value=0; $('play').textContent='❚❚ 멈춤'; if(+s.value===0) choreograph();
