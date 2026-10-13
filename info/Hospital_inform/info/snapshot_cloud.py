@@ -126,6 +126,24 @@ def _save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+# 동기화 장비 쪽 네트워크 실패(원본 내려받기 실패)로 남은 오류 줄 — E-Gen 자체 오류(.err.json)와 구분해
+# 다음 sync 때 다시 만든다. 2026-10-10에 이런 줄 180개가 지문(raw 객체 수)이 안 바뀌어 그대로 남았었다.
+_TRANSIENT_ERROR = ("ConnectionError", "ReadTimeout", "ConnectTimeout", "ChunkedEncodingError", "SSLError", "HTTPError")
+RETRY_AFTER_SEC = 1200  # 망이 계속 죽어 있으면 20분마다만 다시 시도 (watch가 1분마다 돌아도 하루치를 매번 다시 받지 않게)
+
+
+def _has_transient_errors(local: Path) -> int:
+    n = 0
+    with local.open(encoding="utf-8") as fh:
+        for line in fh:
+            if '"error"' not in line:
+                continue
+            err = str(json.loads(line).get("error", ""))
+            if err.startswith(_TRANSIENT_ERROR):
+                n += 1
+    return n
+
+
 # ── seed: 기존 로컬 아카이브 → days/ ─────────────────────────────────────────
 
 def _gzip_bytes(raw: bytes) -> bytes:
@@ -213,6 +231,11 @@ def _rebuild_day(url: str, anon: str, date: str, objects: list[dict], has_partia
     for (hms, op) in sorted(groups):
         entry = groups[(hms, op)]
         ts = f"{date}T{hms[:2]}:{hms[2:4]}:{hms[4:6]}+09:00"
+        # base/partial에서 온 줄이 '내려받기 실패' 오류인데 raw에 원본 페이지가 있으면 raw로 다시 만든다
+        # (partial은 로컬 수집분을 그대로 올린 것이라 그 안의 오류 줄이 raw보다 우선돼 버리는 문제가 있었다)
+        prev = records.get((ts, op))
+        if prev is not None and entry["pages"] and str(prev.get("error", "")).startswith(_TRANSIENT_ERROR):
+            del records[(ts, op)]
         record: dict = {"ts": ts, "operation": op, "stage1": "", "stage2": ""}
         if entry.get("error_obj") and not entry["pages"]:
             err = json.loads(_download(url, f"raw/{date}/{entry['error_obj']}"))
@@ -275,8 +298,22 @@ def sync(url: str, anon: str) -> None:
         objects = _list_all(url, anon, f"raw/{date}")
         fingerprint = f"{len(objects)}|{partials.get(date, '')}"
         if state["managedDays"].get(date) == fingerprint and local.exists():
-            continue
+            # 지문은 같아도 지난번 내려받기 실패로 남은 오류 줄이 있으면 다시 만든다
+            n_bad = _has_transient_errors(local)
+            if not n_bad:
+                continue
+            retry_at = state.setdefault("retryAfter", {}).get(date, 0)
+            if time.time() < retry_at:
+                continue
+            print(f"  {date}: 내려받기 실패로 남은 오류 줄 {n_bad}개 — 다시 만든다")
         body = _rebuild_day(url, anon, date, objects, has_partial=date in partials)
+        n_bad_after = sum(1 for line in body.splitlines() if '"error"' in line
+                          and str(json.loads(line).get("error", "")).startswith(_TRANSIENT_ERROR))
+        if n_bad_after:
+            state.setdefault("retryAfter", {})[date] = time.time() + RETRY_AFTER_SEC
+            print(f"  {date}: 아직 내려받기 실패 {n_bad_after}줄 — {RETRY_AFTER_SEC // 60}분 뒤 다시 시도")
+        else:
+            state.get("retryAfter", {}).pop(date, None)
         tmp = local.with_suffix(".jsonl.tmp")
         tmp.write_text(body, encoding="utf-8")
         tmp.replace(local)

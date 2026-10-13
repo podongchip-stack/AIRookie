@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { AD, cardStyle, pill } from "@/components/ambulance/ambulance-design";
 import { formatVital } from "@/components/panels/PatientVitals";
-import type { CallStatus, CallTranscriptLine, HubMatchResult, PatientInfo, Severity } from "@/types/dashboard";
+import { ConfirmationChip } from "@/components/panels/PatientConfirmation";
+import type { CallStatus, CallTranscriptLine, HubMatchResult, PatientInfo, PatientOverrideChanges, Severity } from "@/types/dashboard";
 
 const SEVERITY_RISK_LABEL: Record<Severity, string> = {
   high: "중증 의심",
@@ -32,6 +33,23 @@ function toListInput(values: string[]) {
   return values.join(", ");
 }
 
+const KTAS_SEVERITY: Record<number, Severity> = { 1: "high", 2: "high", 3: "medium", 4: "low", 5: "low" };
+
+/** 고친 칸만 골라 hub로 보낼 변경분을 만든다. 비교는 hub가 받은 patientInfo 기준. */
+function overrideChanges(base: PatientInfo, draft: PatientInfo, symptomsText: string): PatientOverrideChanges {
+  const changes: PatientOverrideChanges = {};
+  const diagnosis = draft.expectedDiagnosis.trim();
+  if (diagnosis && diagnosis !== base.expectedDiagnosis) changes.expectedDiagnosis = diagnosis;
+  const symptoms = fromListInput(symptomsText);
+  if (JSON.stringify(symptoms) !== JSON.stringify(base.injuryStatus)) changes.injuryStatus = symptoms;
+  if (draft.ktasLevel != null && draft.ktasLevel !== base.ktasLevel) changes.ktasLevel = draft.ktasLevel;
+  const dept = draft.requiredDepartment?.trim() || null;
+  if (dept !== (base.requiredDepartment ?? null)) changes.requiredDepartment = dept;
+  const complaint = draft.chiefComplaint?.trim() || null;
+  if (complaint !== (base.chiefComplaint ?? null)) changes.chiefComplaint = complaint;
+  return changes;
+}
+
 function fromListInput(value: string) {
   return value
     .split(",")
@@ -45,7 +63,8 @@ function mmss(ms: number): string {
 }
 
 // 통화 요약 · 구조화 카드(2026-10-05 디자인 시안). AI가 생성한 통화 요약(hub가 재가공해 넘긴 patientInfo)은
-// 최종 전송 전 구급대원이 확인·수정할 수 있어야 한다(Override, CLAUDE.md). 카드 아래쪽 '통화 현황'은 예전
+// 통화가 끝나자마자 후보 병원에 "AI 요약 · 구급대원 확인 전"으로 가고, 구급대원이 여기서 확인·수정해 [확인·전송]하면
+// hub가 갱신본(순위 칸이면 재매칭)을 병원에 다시 보낸다(Override, 2026-10-13 — 예전엔 수정이 이 화면 안에서만 바뀌었다). 카드 아래쪽 '통화 현황'은 예전
 // 따로 있던 통화 현황 패널(보기 전용 — 통화는 대원 휴대폰 전화 앱 담당)을 합친 것이다: 통화 중엔 요약이 아직
 // 없으니 본문에 실시간 자막(voice, AI)을 띄우고, 요약이 오면 자막은 접어 둔다.
 export function CallSummaryEditablePanel({
@@ -55,6 +74,7 @@ export function CallSummaryEditablePanel({
   voiceLines = [],
   sentHospitalCount = null,
   waitingHint = null,
+  onConfirm,
 }: {
   data: HubMatchResult | null;
   apid: string;
@@ -62,9 +82,13 @@ export function CallSummaryEditablePanel({
   voiceLines?: CallTranscriptLine[];
   sentHospitalCount?: number | null;
   waitingHint?: string | null;
+  // 확인·수정을 hub로 보낸다(보낸 칸만 바뀜, 빈 객체면 수정 없이 확인). 실제로 보냈는지 돌려준다.
+  onConfirm?: (changes: PatientOverrideChanges) => boolean;
 }) {
   const patientInfo = data?.patientInfo ?? null;
   const [editing, setEditing] = useState(false);
+  // [확인·전송] 뒤 hub 갱신본이 올 때까지(올 때 위 동기화가 푼다)
+  const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState<PatientInfo | null>(patientInfo);
   // 증상은 편집 중 배열이 아닌 순수 문자열로 유지한다 (쉼표 입력 도중 배열 변환을
   // 거치면 빈 항목이 즉시 filter(Boolean)로 제거되어 콤마가 사라진 것처럼 보이는 버그 방지).
@@ -76,6 +100,7 @@ export function CallSummaryEditablePanel({
     setDraft(patientInfo);
     setSymptomsText(toListInput(patientInfo?.injuryStatus ?? []));
     setEditing(false);
+    setSending(false);
   }
   const [showTranscript, setShowTranscript] = useState(false);
 
@@ -143,6 +168,7 @@ export function CallSummaryEditablePanel({
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
           <div style={pill(AD.blueSoft, AD.blue)}>Qwen3-ASR · MF_BERT</div>
+          <ConfirmationChip patientInfo={patientInfo} />
           {(patientInfo?.callRound ?? 1) > 1 && (
             <div style={pill(AD.orangeSoft, AD.orange, 700)}>{patientInfo?.callRound}차 통화로 갱신</div>
           )}
@@ -171,6 +197,35 @@ export function CallSummaryEditablePanel({
               <div style={{ fontSize: 13, fontWeight: 500, color: AD.navy }}>{draft.expectedDiagnosis}</div>
             )}
           </div>
+          {editing && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <label style={{ flex: "0 0 90px", minWidth: 0 }}>
+                <div style={labelStyle}>KTAS</div>
+                <select
+                  id="override-ktas"
+                  style={inputStyle}
+                  value={draft.ktasLevel ?? ""}
+                  onChange={(e) => {
+                    const k = Number(e.target.value);
+                    setDraft({ ...draft, ktasLevel: k, severityTag: KTAS_SEVERITY[k] ?? draft.severityTag });
+                  }}
+                >
+                  {draft.ktasLevel == null && <option value="">-</option>}
+                  {[1, 2, 3, 4, 5].map((k) => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </label>
+              <label style={{ flex: "1 1 120px", minWidth: 0 }}>
+                <div style={labelStyle}>필요 진료과</div>
+                <input id="override-dept" style={inputStyle} value={draft.requiredDepartment ?? ""}
+                  onChange={(e) => setDraft({ ...draft, requiredDepartment: e.target.value })} />
+              </label>
+              <label style={{ flex: "1 1 160px", minWidth: 0 }}>
+                <div style={labelStyle}>주 호소</div>
+                <input id="override-complaint" style={inputStyle} value={draft.chiefComplaint ?? ""}
+                  onChange={(e) => setDraft({ ...draft, chiefComplaint: e.target.value })} />
+              </label>
+            </div>
+          )}
           <div style={{ minWidth: 0 }}>
             <div style={labelStyle}>증상</div>
             {editing ? (
@@ -248,19 +303,36 @@ export function CallSummaryEditablePanel({
               </button>
               <button
                 type="button"
+                disabled={!draft.expectedDiagnosis.trim()}
                 style={{ ...buttonStyle, background: AD.blue, borderColor: AD.blue, color: "#FFFFFF", fontWeight: 700 }}
                 onClick={() => {
+                  const changes = overrideChanges(patientInfo, draft, symptomsText);
                   setDraft({ ...draft, injuryStatus: fromListInput(symptomsText) });
                   setEditing(false);
+                  if (onConfirm?.(changes)) setSending(true);
                 }}
               >
-                확인 완료
+                확인·전송
               </button>
             </>
+          ) : sending ? (
+            <div style={pill(AD.blueSoft, AD.blue)}>병원에 전송 중…</div>
           ) : (
-            <button type="button" style={buttonStyle} onClick={() => setEditing(true)}>
-              수정
-            </button>
+            <>
+              {onConfirm && patientInfo.confirmedBy === "ai" && (
+                <button
+                  type="button"
+                  style={{ ...buttonStyle, background: AD.blue, borderColor: AD.blue, color: "#FFFFFF", fontWeight: 700 }}
+                  title="AI 요약이 맞으면 그대로 확인합니다 — 병원 화면에 '구급대원 확인'이 표시됩니다"
+                  onClick={() => { if (onConfirm({})) setSending(true); }}
+                >
+                  확인
+                </button>
+              )}
+              <button type="button" style={buttonStyle} onClick={() => setEditing(true)}>
+                수정
+              </button>
+            </>
           ))}
         </div>
       </div>

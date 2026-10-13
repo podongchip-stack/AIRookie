@@ -19,7 +19,7 @@
 #   ./start-all.sh --local            터널 없이 로컬 주소로만 (같은 Wi-Fi 시연·개발용)
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
 #   ./start-all.sh --no-info          info(병원 정보 주기 전송)·E-Gen 스냅샷 동기화·거절 로그 수신구 생략
-#   ./start-all.sh --no-snapshot      E-Gen 스냅샷 동기화(클라우드 수집분 내려받기, 20분 주기)만 생략
+#   ./start-all.sh --no-snapshot      E-Gen 스냅샷 동기화(클라우드 수집분 내려받기)만 생략
 #   ./start-all.sh --no-sim-dispatch  구급차 출동 시뮬레이션(가짜 GPS) 끄기 — 기본은 켬: 실제 구급차 GPS 수신
 #                                     경로가 아직 없어 구급차 화면의 [이동] 버튼으로 위치를 만든다
 #   ./start-all.sh --dashboard-call   구급차 대시보드에도 [통화 시작] 버튼(마이크 파형) — 기본은 끔: 통화는 대원 휴대폰
@@ -260,9 +260,9 @@ if [ "$RUN_INFO" = 1 ]; then
   (cd info/Hospital_inform/info && PYTHONIOENCODING=utf-8 exec "$INFO_PY" -u -m hospital_score.ingest) \
       > "$LOG_DIR/rejection.log" 2>&1 &
   PIDS+=("$!")
-  # E-Gen 스냅샷은 2026-10-04부터 클라우드(Supabase Edge Function, pg_cron 20분)가 수집한다
+  # E-Gen 스냅샷은 2026-10-04부터 클라우드(Supabase Edge Function, pg_cron 5분 — 2026-10-10 20분에서 단축)가 수집한다
   # — 수집 장비(노트북)를 들고 이동해도 관측이 안 끊기게 하기 위한 이관. 여기서는 로컬 수집기
-  # (info/snapshot.py) 대신 그 수집분을 20분마다 내려받아 snapshots_nationwide/를 복원한다
+  # (info/snapshot.py) 대신 그 수집분을 내려받아 snapshots_nationwide/를 복원한다
   # (snapshot_cloud.py --sync — 신뢰도 보드·live_board가 읽는 건 여전히 로컬 파일이라 소비 코드 불변).
   # SNAPSHOT_SUPABASE_URL이 .env에 없으면 건너뛴다(fail-soft). SERVICE_KEY까지 있는 장비(과거
   # 로컬 수집분을 가진 노트북)는 완결된 날짜를 먼저 --seed로 올려 클라우드 아카이브를 메꾼다.

@@ -357,6 +357,16 @@ class PatientUpdate(BaseModel):
     consciousness: Optional[str] = None
 
 
+class OverrideRecord(BaseModel):
+    """구급대원이 고친 칸 하나(2026-10-13, Override). ai = AI(통화 요약)가 낸 원래 값, value = 구급대원이 고친 값.
+    같은 칸을 여러 번 고치면 ai는 처음 AI 값 그대로, value·at만 바뀐다 — 칸별 AI 오류율을 셀 재료."""
+
+    field: Literal["expectedDiagnosis", "injuryStatus", "ktasLevel", "requiredDepartment", "chiefComplaint"]
+    ai: Optional[str | int | list[str]] = None
+    value: Optional[str | int | list[str]] = None
+    at: str
+
+
 class PatientInfo(BaseModel):
     injuryStatus: list[str]
     expectedDiagnosis: str
@@ -375,6 +385,12 @@ class PatientInfo(BaseModel):
     # 몇 번째 통화 요약인지(2026-10-05) — 1이면 현장 첫 통화. 2 이상이면 previousCalls에 앞선 요약이 있다.
     callRound: int = 1
     previousCalls: list[PatientUpdate] = Field(default_factory=list)
+    # 구급대원 확인(2026-10-13, Override). 요약은 통화가 끝나면 바로 병원에 가고("ai" — 병원 화면에 "AI 요약 · 구급대원
+    # 확인 전"), 구급대원이 [확인·전송]을 누르면 "paramedic"과 확인 시각이 찍힌 갱신본이 다시 나간다. 고친 칸은
+    # overrides에 AI 값 → 구급대원 값으로 남는다(병원 화면의 "환자 정보 변경" 배너 재료). 새 통화 회차가 오면 "ai"로 돌아간다.
+    confirmedBy: Literal["ai", "paramedic"] = "ai"
+    confirmedAt: Optional[str] = None
+    overrides: list[OverrideRecord] = Field(default_factory=list)
 
 
 class SpecialtyMatch(BaseModel):
@@ -579,6 +595,23 @@ class HubMatchResult(BaseModel):
 
 
 # ── feature/dashboard → feature/hub (입력, 수신 주체 hub로 확정) ────────────
+
+class PatientOverride(BaseModel):
+    """구급대원의 통화 요약 확인·수정(2026-10-13, Override — WebSocket `patient_override`, 구급차 소켓만).
+
+    보낸 칸만 바꾼다(안 보낸 칸은 그대로). 아무 칸도 안 보내면 "수정 없이 확인"이다. ktasLevel을 바꾸면
+    중증도(severityTag)도 KTAS 1·2 high / 3 medium / 4·5 low로 따라 바뀐다. 순위에 쓰는 칸(예상 병명·KTAS·필요
+    진료과)이 바뀌고 이송 확정 전이면 hub가 다시 매칭한다(넓힌 존 유지, 병원 승인 유지)."""
+
+    type: Literal["patient_override"] = "patient_override"
+    caseId: str
+    expectedDiagnosis: Optional[str] = None
+    injuryStatus: Optional[list[str]] = None
+    ktasLevel: Optional[int] = Field(default=None, ge=1, le=5)
+    requiredDepartment: Optional[str] = None
+    chiefComplaint: Optional[str] = None
+    timestamp: Optional[str] = None
+
 
 # arrival_accepted / arrival_refused(2026-10-01): 구급차가 확정 병원에 도착한 뒤 병원이 누르는 실제 수용
 # 결과. 신뢰도 모델의 독립 관측(G2 라벨, AIROOKIE-EGEN.md §7 ④)이 생기는 지점이다.

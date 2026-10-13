@@ -52,7 +52,7 @@ function alertNotSent() {
 }
 
 function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
-  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand, sendTransportVitals } =
+  const { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendSimCommand, sendTransportVitals, sendPatientOverride } =
     useDashboardSocket(apid ? { role: "ambulance", id: apid } : null);
   // 이송 승인을 눌렀지만 hub 응답(confirmed)을 아직 못 받은 병원. 화면의 "확정"은 hub 기준으로만
   // 띄운다(2026-10-01) — 예전엔 누르는 즉시 로컬에서 확정으로 바꿔서, hub가 거부해도(병원 미승인 등)
@@ -304,6 +304,7 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
               callStatus={myCallStatus}
               voiceLines={currentCaseId ? state.callTranscripts[currentCaseId] ?? [] : []}
               sentHospitalCount={myResult ? myResult.hospitals.length : null}
+              onConfirm={myResult ? (changes) => sendPatientOverride(myResult.caseId, changes) : undefined}
               waitingHint={simOn && !onSceneForMyCase && !myResult ? "현장 도착 후 대원 휴대폰의 전화 앱으로 병원에 전화합니다" : null}
             />
             {/* 이송 중 모니터링(2.5단계, 2026-10-04) — 이송이 확정된 사건에만 뜬다. 활력징후
