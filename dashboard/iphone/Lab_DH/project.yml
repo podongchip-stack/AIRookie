@@ -1,0 +1,35 @@
+# XcodeGen 정의 — `xcodegen generate`가 LabDH.xcodeproj를 만든다(생성물이라 커밋하지 않는다).
+# 기존 GoldenLinkPhone 앱과 독립된 실험 앱: 서버 연결 없이 기기 안에서 음성인식 → 구조화까지 돌려 본다.
+name: LabDH
+options:
+  bundleIdPrefix: com.goldenlink
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+packages:
+  onnxruntime:
+    url: https://github.com/microsoft/onnxruntime-swift-package-manager
+    exactVersion: 1.19.2
+
+targets:
+  LabDH:
+    type: application
+    platform: iOS
+    sources:
+      - path: LabApp
+    dependencies:
+      - package: onnxruntime
+        product: onnxruntime
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.goldenlink.labdh   # 내 Apple ID로 서명할 때 겹치지 않게 바꾼다
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""   # Xcode > Signing & Capabilities에서 팀 선택
+        CODE_SIGN_ENTITLEMENTS: LabApp/LabDH.entitlements
+        INFOPLIST_FILE: LabApp/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"

@@ -1,0 +1,5 @@
+# 생성물 — 커밋하지 않는다
+LabDH.xcodeproj/
+.build/
+DerivedData/
+xcuserdata/
