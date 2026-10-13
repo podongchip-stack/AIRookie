@@ -1,13 +1,7 @@
-# feature/dashboard — 기능 요약 한 줄
+# feature/dashboard — 구급차·병원·관제 실시간 대시보드
 
-<!-- 예: feature/dashboard — 구급차·병원 실시간 대시보드 -->
-
-> **폴더 구조 안내(모노레포)**: 이 저장소는 `feature/voice`·`feature/hub`·
-> `feature/info`·`feature/dashboard`가 하나의 저장소를 공유하며, 각 브랜치는
-> 자기 작업 폴더(`voice/`·`hub/`·`info/`·`dashboard/`)만 갖는다. **지금 이
-> 브랜치에는 `dashboard/` 폴더만 있고 `voice/`·`hub/`·`info/`는 없다.** 만약
-> 작업 중 낯선 폴더가 보인다면 `develop`을 머지했거나 다른 브랜치를 체크아웃한
-> 상태라는 뜻이니, 실수로 만들어진 게 아닌지 걱정하지 않아도 된다.
+> **모노레포 안내**: 이 저장소는 `voice/`·`hub/`·`info/`·`dashboard/`를 한 저장소에 두고 브랜치마다 자기 폴더를 맡는다.
+> `feature/dashboard`는 develop을 주기적으로 병합하므로 다른 폴더도 함께 보인다 — 정상이다. 이 브랜치가 고치는 건 `dashboard/`뿐이다.
 
 ## 담당자
 
@@ -16,189 +10,110 @@
 
 ## 이 브랜치가 하는 일
 
-<!-- 구급차 대시보드 / 병원 대시보드가 각각 무엇을 보여주는지 2~3문장 -->
+구급대원·병원·관제가 보는 화면이다. 구급차 대시보드는 출동 상황, AI가 정리한 통화 요약(구급대원이 확인·수정), 후보 병원
+목록과 이송 승인을 보여준다. 병원 대시보드는 들어온 수용 요청을 카드로 받아 승인·불가(사유)·도착 결과를 누른다. 관제 지도는
+전체 병원·구급차와 요청 현황을 보기 전용으로 보여준다.
 
-## 개발 환경 / 언어
+**dashboard는 feature/hub와만 통신한다.** voice·info와 직접 연결하지 않고, 모든 데이터는 hub가 재가공한 WebSocket 메시지로 받는다.
+순위는 hub가 정한 `hospitals[]` 순서를 그대로 쓴다(화면에서 다시 정렬하지 않음).
 
-- 언어:
-- 프레임워크: (예: React)
-- 스타일링:
-- 상태 관리:
-- 실시간 통신 방식: (예: WebSocket)
+## 개발 환경
 
-## 화면 구성
-
-| 화면 | 설명 | 관련 브랜치 데이터 |
-|---|---|---|
-| 구급차 대시보드 (`/ambulance?id=<apid>`) | 구급차 1대 전용 화면. URL의 `?id=`(apid)로 자신을 식별하고, 통화 시작마다 새 `caseId`를 만들어 hub에 실어 보낸다. 사건은 항상 1개(자기 사건)만 표시 | feature/hub (voice·info 결합 결과) |
-| 병원 대시보드 (`/hospital?id=<hpid>`) | 병원 1곳 전용 화면. `?id=`(hpid)가 후보로 걸린 **모든 사건**을 카드로 나열한다(다중 구급차가 동시에 같은 병원을 후보로 걸 수 있음) — 카드를 선택하면 그 사건 기준으로 지도가 갱신됨 | feature/hub (voice·info 결합 결과) |
-
-## 연동하는 데이터 (약식)
-
-> **dashboard는 feature/hub와만 직접 통신한다.** feature/voice·feature/info와는
-> 직접 연결하지 않으며, voice의 의료 정보·예상 병명과 info의 병원 정보는 모두
-> feature/hub가 재가공한 통합 결과로만 받는다 (자세한 설명은 CLAUDE.md "데이터
-> 포맷 및 흐름" 참고). 환자 바이탈 정보는 더 이상 사용하지 않기로 결정되어 관련
-> 스키마를 제거했다. 아래 스키마는 모두 가안이며 팀 리뷰 후 확정 예정.
->
-> **다중 사건(multi-case) 지원 (2026-08-11)**: hub가 `caseId`(구급차 1건의 이송
-> 이벤트 식별자)와 `apid`(구급차 식별자)를 도입하면서, dashboard의 상태도 사건
-> 하나(`matchResult`)가 아니라 `matchResults: Record<caseId, HubMatchResult>` 맵으로
-> 바뀌었다. 구급차 대시보드는 자신이 만든 `caseId` 하나만 맵에서 꺼내 쓰고, 병원
-> 대시보드는 자기 hpid가 `hospitals[]`에 들어있는 모든 사건을 맵에서 걸러 리스트로
-> 보여준다.
-
-**hub로부터 수신** — 통합 매칭 결과 (의료 정보·예상 병명·병원 정보·병원 리스트 포함. 자세한 필드 설명은 feature/hub README 참고)
-```json
-{
-  "caseId": "case-...",
-  "patientInfo": {
-    "injuryStatus": [],
-    "expectedDiagnosis": "...",
-    "severityTag": "high"
-  },
-  "zoneActive": [],
-  "hospitals": [
-    {
-      "hospitalId": "",
-      "name": "",
-      "gps": { "lat": 0, "lng": 0 },
-      "distanceKm": 0,
-      "specialtyMatch": { "department": "", "score": 0 },
-      "availableBedCount": 0,
-      "status": "pending",
-      "etaMin": 0
-    }
-  ],
-  "source": "rule"
-}
-```
-
-**송신** — 승인 액션 (구급대원/병원이 대시보드에서 버튼을 눌렀을 때. 수신처는
-`feature/hub`로 확정됨 — dashboard는 feature/hub와만 직접 통신하기 때문)
-```json
-{
-  "caseId": "case-...",
-  "action": "final_approval",
-  "hospital_id": "",
-  "actor": "paramedic",
-  "timestamp": "..."
-}
-```
-
-**송신** — 통화 시작/종료 신호 (구급차 대시보드 전용. `apid`는 URL `?id=`, `caseId`는
-`call_started` 시점에 `crypto.randomUUID()`로 새로 생성)
-```json
-{
-  "type": "call_signal",
-  "signal": "call_started",
-  "timestamp": "...",
-  "apid": "A0000001",
-  "caseId": "case-..."
-}
-```
-
-**송신** — 소켓 연결 직후 자기소개 (2026-08-11 신설, hub와의 "따라잡기" 문제 수정)
-```json
-{
-  "type": "identify",
-  "role": "hospital",
-  "id": "S0000001"
-}
-```
-> hub는 그동안 소켓 연결을 완전히 익명으로 취급해서, 매칭 결과를 그 순간
-> 연결된 소켓에만 브로드캐스트했다. 그래서 진행 중인 사건이 있는 상태로
-> 새 대시보드 탭이 뒤늦게 열리면, 그 탭은 이전 브로드캐스트를 놓쳐 화면에
-> 아무것도 안 뜨는 문제가 있었다(2026-08-11 실제 재현됨 — 구급1호차·
-> 서울대병원 탭이 연결된 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로
-> 열면 그 사건이 안 보였음). `useDashboardSocket`이 소켓이 열리자마자
-> 이 메시지를 자동으로 보내면, hub가 자기가 병원(hpid)인지 구급차
-> (apid)인지 보고 두 가지를 순서대로 돌려준다: (1) 사건 유무와 무관한
-> 즉시 신원 확인(아래 `identity_info`), (2) 관련된 진행 중인 사건
-> 따라잡기 — 이건 평소 브로드캐스트와 같은 `HubMatchResult` 형식이라
-> `onmessage`에서 별도 분기가 필요 없다(feature/hub README.md "입력
-> 스키마 9" 참고).
-
-**수신** — 신원 확인 응답 (2026-08-11 신설, "자기소개"에 대한 첫 응답)
-```json
-{
-  "type": "identity_info",
-  "role": "hospital",
-  "id": "S0000001",
-  "name": "서울대학교병원",
-  "known": true
-}
-```
-> `hospitals[].name`/`HubMatchResult.ambulanceName`은 둘 다 "그 병원/구급차가
-> 실제 매칭 사건에 등장해야만" 이름이 왔다 — 통화 전에는 상단바에
-> `병원 ID: S0000001`, `구급 A0000001호차` 같은 ID 폴백만 보였다. 이 응답은
-> 사건 유무와 무관하게, hub가 이미 아는 병원/구급차 레지스트리에서 즉시
-> 이름을 조회해 돌려준다. `useDashboardSocket`의 반환값 중
-> `state.identity`(`{ name, known }`)에 저장되며, `matchResults`와는 완전히
-> 분리된 상태다(feature/hub README.md "출력 스키마 6" 참고). `known`이
-> `false`인 경우의 "존재하지 않는 접근 코드" 처리는 아래 "랜딩 페이지 사전
-> 검증" 항목 참고 — 처음엔 이 소켓 응답을 받은 뒤(즉 `/hospital`,
-> `/ambulance` 페이지가 열린 뒤) 전체 화면을 막는 방식이었는데, 2026-08-11에
-> 랜딩 페이지에서 넘어가기 전에 미리 막는 방식으로 옮겼다(`/hospital`,
-> `/ambulance` 페이지 자체엔 더 이상 이 차단이 없다 — 직접 URL로 들어온
-> 경우엔 상단바 이름이 ID 폴백으로 남는 정도로만 티가 난다).
-
-**랜딩 페이지 사전 검증** (2026-08-11 신설, `src/app/page.tsx`)
-
-코드를 입력하고 "입장"을 누르면, `/hospital`·`/ambulance`로 라우팅하기 **전에**
-hub의 `GET /identity`(HTTP, WebSocket 아님)로 그 hpid/apid가 실제로 존재하는지
-먼저 확인한다. 존재하지 않으면 입력칸과 입장 버튼 사이에 빨간 글씨로
-"존재하지 않는 코드입니다"를 띄우고 라우팅하지 않는다 — 예전엔 목적지
-페이지로 넘어간 뒤 전체 화면이 "존재하지 않는 접근 코드입니다"로 막히는
-방식이었다.
-
-```
-GET {NEXT_PUBLIC_HUB_HTTP_URL}/identity?role=hospital&id=S0000001
-→ { "role": "hospital", "id": "S0000001", "name": "서울대학교병원", "known": true }
-```
-
-`NEXT_PUBLIC_HUB_HTTP_URL`(신규 환경변수, 예: `http://127.0.0.1:5001`)이
-설정돼 있지 않거나 요청이 실패하면(hub가 안 떠 있는 개발 환경 등) 검증 없이
-통과시킨다 — 그 경우엔 목적지 페이지의 WebSocket `identify`가 이름 표시
-용도로 한 번 더 조회하므로 완전히 무방비는 아니다. dashboard(포트 3000)와
-hub(포트 5001)는 다른 origin이라 브라우저 `fetch`가 CORS로 막히는데, hub의
-`GET /identity`만 `Access-Control-Allow-Origin: *`을 붙여 이 요청을 허용한다
-(feature/hub README.md "`GET /identity`" 참고).
-
-## AI 처리 여부 표시 규칙
-
-> 대시보드는 AI 처리 정보와 규칙 기반 정보를 시각적으로 구분해서 보여줘야 한다 (CLAUDE.md 참고).
-- [ ] AI 처리 항목에 배지/표시 적용함
-- [ ] 규칙 기반 항목에 배지/표시 적용함
+| 항목 | 내용 |
+|---|---|
+| 프레임워크 | Next.js 16 (App Router), React 19, TypeScript |
+| 스타일 | Panda CSS(`styled-system/`, `npm install` 때 `panda codegen`으로 생성) + 컴포넌트별 인라인 디자인 토큰 |
+| 실시간 통신 | 순수 WebSocket(`new WebSocket()`, socket.io 아님) — `src/hooks/use-dashboard-socket.ts` |
+| 지도 | 카카오 지도 JavaScript SDK |
+| 마이크 | 브라우저 PCM 캡처(16kHz 모노 16비트, `src/lib/pcm-capture.ts`) — https·localhost에서만 열림 |
+| 모바일 앱 | `iphone/`(Swift), `android/`(Kotlin·Compose) — 통화 STT·구조화를 기기 안에서 돌리는 온디바이스 앱(각 폴더 README) |
 
 ## 실행 방법
 
 ```bash
-
+cd dashboard
+npm install                  # panda codegen 포함
+npm run dev                  # http://localhost:3000
+npm run build && npm start   # 배포 모드
+npm run lint
 ```
+
+보통은 저장소 루트의 `./start-all.sh`가 hub·info와 함께 띄운다(루트 README "실행 명령 정리").
+
+`.env.local`:
+
+| 변수 | 뜻 |
+|---|---|
+| `NEXT_PUBLIC_DASHBOARD_WS_URL` | hub WebSocket 주소(예: `ws://127.0.0.1:5001/ws/dashboard`). **없으면 목데이터 모드** — 상단바에 "○ 목데이터 모드" 배지 |
+| `NEXT_PUBLIC_HUB_HTTP_URL` | hub HTTP 주소(예: `http://127.0.0.1:5001`). 접근 코드 사전 확인·경로·배후역량 조회 |
+| `NEXT_PUBLIC_KAKAO_MAP_APP_KEY` | 카카오 지도 키. 없으면 지도 칸에 안내만 뜬다 |
+| `NEXT_PUBLIC_LIDAR_VIEWER_URL` | (선택) 3D 뷰어 주소 — 있으면 병원 대시보드에 3D 버튼 |
+
+## 화면
+
+첫 페이지(`/`)에 접근 코드를 넣어 들어간다. 넘어가기 전에 hub `GET /identity`로 코드가 실제로 있는지 확인한다.
+
+| 화면 | 주소 | 하는 일 |
+|---|---|---|
+| 구급차 대시보드 | `/ambulance?id=<apid>` (코드 `A-…`) | 출동 조작, 통화 요약 확인·수정, 현장 후보(첫 연락 추천), 후보 병원 목록·이송 승인, 이송 중 모니터링 |
+| 휴대폰 전화 앱 | `/phone?id=<apid>` (코드 `P-…`) | 대원 휴대폰. 현장 도착 뒤 병원을 골라 통화만 한다(마이크 음성이 hub를 거쳐 voice STT 입력) |
+| 병원 대시보드 | `/hospital?id=<hpid>` (코드 `H-…`) | 자기 병원이 후보인 **모든 사건**을 카드로. 승인·불가(사유)·이송 중 철회·도착 결과, 자기 정보 확인 |
+| 관제 지도 | `/map` | 보기 전용. 진행 중 사건·병원 응답·구급차 위치·존 범위 |
+| 사건 상황판 | `/case` | 사건 단위 모니터 지도 |
+| 시연 콘솔 | `/control` | 시연 진행(이송 중 시나리오·대량사고 분배 등) |
+| 신뢰도 검증 | `/verify` | 병상 정보 신뢰도 시연용 채점·라이브 보드(`?hpid=`면 그 병원 기록) |
+
+## 통화 요약 확인·수정 (Override, 2026-10-13)
+
+AI 통화 요약은 통화가 끝나자마자 후보 병원에 간다(순차 전화를 없애는 게 목적이라 기다리지 않는다). 대신 확인 상태를 화면에 드러낸다.
+
+- **구급차 — 통화 요약 카드**(`components/ambulance/CallSummaryEditablePanel.tsx`): 요약이 맞으면 [확인] 한 번. 틀리면 [수정]에서
+  예상 병명·증상·KTAS·필요 진료과·주 호소를 고쳐 [확인·전송]. 고친 칸만 `patient_override`로 hub에 보내고, hub 갱신본이 오면 화면이
+  그것으로 맞춰진다(그 사이 "병원에 전송 중"). KTAS를 바꾸면 중증도가 따라 바뀌고, 이송 확정 전이면 hub가 다시 매칭해 후보 순서가 바뀔 수 있다.
+- **병원 — 수용 요청 카드**(`components/hospital/RequestCard.tsx`): "AI 요약 · 구급대원 확인 전" 또는 "✓ 구급대원 확인 hh:mm" 칩.
+  고친 칸이 있으면 AI 값 → 구급대원 값 상자(KTAS 상향이면 빨강). 병원 승인은 자동으로 풀리지 않는다 — 이 상자를 보고 다시 판단한다.
+- 칩·상자는 `components/panels/PatientConfirmation.tsx` 공용. 구버전 hub(필드 없음)면 그리지 않는다. 목데이터 모드는 로컬로 흉내만 낸다.
+
+## hub와 주고받는 메시지
+
+형식의 정본은 CLAUDE.md "데이터 포맷 및 흐름"과 hub README "입출력 데이터 포맷"이다. 여기는 목록만 둔다.
+
+**보냄**(같은 WebSocket): `identify`(연결 직후 자기소개) · 승인 액션(`hospital_approve`·`hospital_reject`(사유)·`final_approval`·
+`arrival_accepted`·`arrival_refused`·`transport_withdraw`) · `call_signal`(통화 시작·종료·취소) · 마이크 PCM(바이너리) ·
+`patient_override`(통화 요약 확인·수정) · `info_confirm`(병원 정보 확인) · `transport_vitals`(이송 중 활력징후) · 시뮬레이션 조작
+(`dispatch`·`scene_end`·`sim_pause`·`sim_resume`·`sim_reset`·`sim_fast_forward`) · `zone_expand_now` · 대량사고(`mci_preview`·`mci_allocate`) ·
+`voice_summary`(온디바이스 앱)
+
+**받음**: `match_result`(통합 매칭 결과) · `identity_info` · `hospital_self_info` · `scene_candidates` · `ambulance_phase`·`ambulance_position` ·
+`call_status`·`call_transcript` · `case_closed`·`case_sync` · `map_overview`·`case_overview`·`case_meta`·`case_history` ·
+`transport_assessment`·`pre_alert` · `mci_plan`·`mci_allocated` · `scene_input_mode` · `action_refused`(일시정지·권한 없음 등).
+모르는 `type`은 버리고, `type` 없는 메시지는 구 hub의 매칭 결과로 본다.
+
+## 설계 메모 (왜 이렇게 했나)
+
+- **상태는 사건 맵**: `matchResults: Record<caseId, HubMatchResult>`. 구급차는 자기 사건 하나, 병원은 자기 hpid가 후보인 모든 사건을 꺼낸다.
+- **연결 직후 `identify`**: hub는 그 순간 연결된 소켓에만 매칭 결과를 보내서, 진행 중 사건이 있을 때 늦게 연 탭은 화면이 비었다(2026-08-11
+  재현). 자기소개를 보내면 hub가 이름(`identity_info`)과 진행 중 사건(따라잡기, 평소와 같은 `match_result` 형식)을 돌려준다.
+- **접근 코드 사전 확인은 첫 페이지에서**: 목적지 페이지가 열린 뒤 막는 대신, 라우팅 전에 `GET /identity`로 확인한다. hub가 꺼져 있으면
+  확인 없이 통과시킨다(목적지의 `identify`가 이름 표시용으로 한 번 더 조회). dashboard는 Supabase에 직접 붙지 않는다.
+- **병상 "미상"은 0이 아니다**: `bedCountUnknown`이면 "미상"으로 표시한다. 미상을 만실처럼 보이면 구급대원이 자리가 있을 수도 있는 병원을 스스로 뺀다.
+- **AI와 규칙 구분**: AI 처리(통화 요약·자막·병상 신뢰도 확률)와 규칙 기반(병원 목록·순위·지도·존)을 칩과 범례로 나눠 보여준다.
 
 ## 폴더 구조
 
 ```
-
+dashboard/
+├── src/app/            화면(라우트): ambulance · phone · hospital · map · case · control · verify · api/demo
+├── src/components/     ambulance · hospital · map · phone · panels(공용 상자) · verify · ui · layout
+├── src/hooks/          use-dashboard-socket.ts(hub WebSocket 전부) · use-kakao-map-script.ts · use-elapsed-time.ts
+├── src/lib/            mock-data · rejection(거절 사유 어휘) · distance · pcm-capture · control-map · monitor · route · geocode …
+├── src/types/          dashboard.ts — hub 출력·입력 스키마의 TypeScript 대응
+├── iphone/ · android/  온디바이스 통화 앱
+└── public/             정적 파일(시연 영상 등)
 ```
 
-## 알려진 제약사항 / TODO
+## 알려진 제약사항
 
-- ~~apid/hpid는 URL 쿼리(`?id=`)만으로 구분하며, Supabase 구급차/병원
-  레지스트리에 실제로 존재하는 값인지 서버 사이드로 검증하지 않는다~~ →
-  **2026-08-11 해결.** dashboard가 Supabase에 직접 붙는 대신, hub가
-  `identify`에 대한 응답(`identity_info`)으로 `known`을 알려주는 방식으로
-  구현했다 — `known === false`면 `/hospital`, `/ambulance` 페이지가
-  "존재하지 않는 접근 코드입니다" 화면으로 막는다. 이 결정 과정에서
-  `dashboard/.env.local`의 `AMBULANCE_SUPABASE_URL`/`AMBULANCE_SUPABASE_KEY`
-  (한 번도 실제로 쓰인 적 없었음)와 `package.json`의
-  `@supabase/supabase-js` 의존성을 제거했다 — dashboard는 여전히
-  feature/hub와만 직접 통신한다(CLAUDE.md 원칙 유지).
-- 병원 대시보드의 다중 사건 카드 리스트·구급차 대시보드의 `caseId` 흐름,
-  그리고 이번 `identity_info` 흐름은 `tsc`/`eslint`/`next build`와 로컬
-  WebSocket smoke test로만 검증했고, 실제 브라우저 인터랙션(다중 탭·다중
-  사건 동시 진행, 접근 불가 화면 실제 렌더링 등) 테스트는 아직 안 함 — 이
-  환경엔 브라우저 도구가 없어 직접 확인이 어려웠다.
-
-## 추가사항
+- WebSocket 인증이 없다. 접근 코드를 알면 누구나 그 화면에 들어간다(시연 범위).
+- 브라우저 마이크는 https(도메인) 또는 localhost에서만 열린다.
+- 통화 요약 확인·수정은 2026-10-13 hub와 함께 실서버(소켓 4개)와 헤드리스 화면 캡처로 확인했다. [수정] 편집 칸을 사람이 직접 눌러 보는 확인은 리뷰 때 한다.
