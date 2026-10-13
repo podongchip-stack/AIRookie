@@ -27,6 +27,33 @@ export interface PatientInfo {
   // 추가 통화 덧붙이기(2026-10-05): 몇 번째 통화 요약인지와 앞선 요약들. 1이면 현장 첫 통화(구버전 hub면 없음).
   callRound?: number;
   previousCalls?: PatientUpdate[];
+  // 구급대원 확인·수정(Override, 2026-10-13). "ai"면 AI 요약 그대로(구급대원 확인 전), "paramedic"이면 구급대원이
+  // 확인한 갱신본. overrides는 고친 칸별 AI 값 → 구급대원 값. 구버전 hub면 없다.
+  confirmedBy?: "ai" | "paramedic";
+  confirmedAt?: string | null;
+  overrides?: OverrideRecord[];
+}
+
+export interface OverrideRecord {
+  field: "expectedDiagnosis" | "injuryStatus" | "ktasLevel" | "requiredDepartment" | "chiefComplaint";
+  ai: string | number | string[] | null;
+  value: string | number | string[] | null;
+  at: string;
+}
+
+// 구급대원의 통화 요약 확인·수정(dashboard → hub, WebSocket). 보낸 칸만 바뀌고, 아무 칸도 없으면 "수정 없이 확인".
+export interface PatientOverrideChanges {
+  expectedDiagnosis?: string;
+  injuryStatus?: string[];
+  ktasLevel?: number;
+  requiredDepartment?: string | null;
+  chiefComplaint?: string | null;
+}
+
+export interface PatientOverrideMessage extends PatientOverrideChanges {
+  type: "patient_override";
+  caseId: string;
+  timestamp: string;
 }
 
 // 앞선 통화 요약 한 건(hub PatientUpdate) — 환자 상태가 바뀌어 다시 통화하면 최신 요약이 patientInfo가 되고 이전 것은 여기 쌓인다

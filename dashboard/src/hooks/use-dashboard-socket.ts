@@ -36,6 +36,8 @@ import type {
   TransportAssessment,
   TransportVitalsMessage,
   VitalObservationIn,
+  PatientOverrideChanges,
+  PatientOverrideMessage,
 } from "@/types/dashboard";
 
 // hub의 hub_engine.py _ACTION_TO_STATUS와 동일한 매핑 — mock 모드에서 승인
@@ -546,6 +548,56 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return false;
   }, []);
 
+  // 구급대원의 통화 요약 확인·수정(Override, 2026-10-13). hub가 고친 값으로 사건을 갱신(순위 칸이면 재매칭)해
+  // 이 구급차 탭과 후보 병원 탭에 갱신본을 다시 보낸다 — 화면은 그 갱신본으로 맞춘다. mock 모드엔 hub가 없으니
+  // 로컬에서 확인 상태만 흉내낸다(재매칭 없음). 실제로 보냈는지를 돌려준다.
+  const sendPatientOverride = useCallback((caseId: string, changes: PatientOverrideChanges): boolean => {
+    const payload: PatientOverrideMessage = {
+      type: "patient_override",
+      caseId,
+      timestamp: new Date().toISOString(),
+      ...changes,
+    };
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+      return true;
+    }
+    if (!process.env.NEXT_PUBLIC_DASHBOARD_WS_URL) {
+      console.info("[mock] 통화 요약 확인·수정 전송(WS 미연결):", payload);
+      setState((prev) => {
+        const current = prev.matchResults[caseId];
+        if (!current) return prev;
+        const now = new Date().toISOString();
+        const p = current.patientInfo;
+        const overrides = [...(p.overrides ?? [])];
+        (Object.keys(changes) as (keyof PatientOverrideChanges)[]).forEach((field) => {
+          const value = changes[field] ?? null;
+          const before = (p[field] ?? null) as string | number | string[] | null;
+          if (JSON.stringify(before) === JSON.stringify(value)) return;
+          const i = overrides.findIndex((r) => r.field === field);
+          const ai = i >= 0 ? overrides[i].ai : before;
+          if (i >= 0) overrides.splice(i, 1);
+          if (JSON.stringify(ai) !== JSON.stringify(value)) overrides.push({ field, ai, value, at: now });
+        });
+        const severity = changes.ktasLevel != null ? (changes.ktasLevel <= 2 ? "high" : changes.ktasLevel === 3 ? "medium" : "low") : p.severityTag;
+        return {
+          ...prev,
+          matchResults: {
+            ...prev.matchResults,
+            [caseId]: {
+              ...current,
+              patientInfo: { ...p, ...changes, severityTag: severity, confirmedBy: "paramedic", confirmedAt: now, overrides },
+            },
+          },
+        };
+      });
+      return true;
+    }
+    console.warn("[골든링크] hub 연결이 끊겨 통화 요약 확인을 보내지 못했습니다:", payload);
+    return false;
+  }, []);
+
   // 이송 중 활력징후 1회 측정을 입력 구멍으로 보낸다(2026-10-04). 판정(transport_assessment)은
   // hub의 규칙 엔진이 돌려준다 — mock 모드에는 엔진이 없으므로 보낸 척만 하고 true를
   // 돌려준다(패널이 "판정은 hub 연결 시" 안내를 띄운다).
@@ -642,7 +694,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
+  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendPatientOverride, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.
