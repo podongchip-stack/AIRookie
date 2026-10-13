@@ -27,6 +27,11 @@ run에 속한 재확인 간격에 이름표를 되돌려 붙인다 — 그래야
 
 run 분할 규칙은 학습 파이프라인과 같다: 관측 공백 SEGMENT_GAP_SEC(1시간) 초과면 끊는다.
 수집 중단 구간에서도 끊기므로 유령 run 길이는 **하한**으로 읽어야 한다.
+
+하트비트 생존은 hvidate 전진만 보지 않고 **병원별 갱신 주기로 보정**한다 — 주기가 폴링(20분)보다
+긴 병원은 hvidate가 그대로인 간격이 정상이라, 전진만 세면 생존시간이 깎여 유령 기준(생존시간
+분위수)과 유령 판정이 함께 왜곡된다. 주기는 폴링 시점 경과의 p95로 근사한다(`estimate_cadence`).
+`--no-cadence`로 보정 전 결과와 비교할 수 있다.
 """
 from __future__ import annotations
 
@@ -70,6 +75,87 @@ ATTRACTIVE_MIN = 3
 
 WEEKDAYS = "월화수목금토일"
 HOUR_BANDS = ((0, 6, "새벽 00-06"), (6, 9, "아침 06-09"), (9, 18, "주간 09-18"), (18, 24, "저녁 18-24"))
+
+#: 하트비트 생존 판정의 병원별 갱신 주기 보정. hvidate가 전진한 간격만 "살아 있음"으로 세면,
+#: 갱신 주기가 폴링(20분)보다 긴 병원(실측 4~10분 89%, 10~20분 10%, 소수는 1~2시간)은 멀쩡히
+#: 돌고 있어도 간격 대부분이 침묵으로 찍히고 생존시간이 과소 집계된다. 그래서 hvidate가 그대로여도
+#: 폴링 시점의 경과가 그 병원 주기의 ALIVE_FACTOR배 안쪽이면 아직 다음 갱신 차례가 안 온 것으로 본다
+ALIVE_FACTOR = 2.0
+#: 주기 근사의 하한(분). 폴링 20분이라 20분 미만 주기는 hvidate 간격으로 구분이 안 되므로(에일리어싱)
+#: 폴링 시점 경과의 p95로 근사한다 — 경과는 0~주기 사이에서 고르게 나온다
+CADENCE_FLOOR_MIN = 5.0
+CADENCE_MAX_AGE_MIN = 360.0  # 6시간 넘는 경과는 피드 중단이라 주기 추정에서 제외
+CADENCE_MIN_SAMPLES = 200    # 이보다 표본이 적은 병원은 보정 없이 hvidate 전진만 본다
+CADENCE_DEFAULT_MIN = CADENCE_FLOOR_MIN * 2
+
+
+def _parse_hvidate(raw: object) -> datetime | None:
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    if len(digits) < 12:
+        return None
+    try:
+        return datetime.strptime((digits + "00")[:14], "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+def _age_minutes(ts: datetime, hvidate: object) -> float | None:
+    """폴링 시점의 '마지막 갱신 후 경과(분)'. hvidate는 KST 벽시계다."""
+    hv = _parse_hvidate(hvidate)
+    if hv is None:
+        return None
+    return (ts.astimezone(KST).replace(tzinfo=None) - hv).total_seconds() / 60
+
+
+def _iter_bed_records(snapshot_dir: Path, since: date | None, until: date | None):
+    """기간 안의 병상·중증질환 응답 레코드를 (operation, ts(KST), items)로 시각순에 낸다."""
+    for path in sorted(snapshot_dir.glob("*.jsonl")):
+        day = date.fromisoformat(path.stem) if len(path.stem) == 10 else None
+        if day and ((since and day < since) or (until and day > until)):
+            continue
+        with path.open("rb") as f:
+            for raw_line in f:
+                try:
+                    record = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                operation = record.get("operation")
+                if operation not in (_BED_OP, SEVERE_OP) or "error" in record or not record.get("items"):
+                    continue
+                try:
+                    ts = datetime.fromisoformat(record["ts"]).astimezone(KST)
+                except (KeyError, ValueError):
+                    continue
+                yield operation, ts, record["items"]
+
+
+def estimate_cadence(snapshot_dir: Path, since: date | None, until: date | None) -> dict[str, float]:
+    """병원별 hvidate 갱신 주기(분) 근사 = 폴링 시점 경과의 p95 (CADENCE_FLOOR_MIN 하한)."""
+    ages: dict[str, list[float]] = defaultdict(list)
+    for operation, ts, items in _iter_bed_records(snapshot_dir, since, until):
+        if operation != _BED_OP:
+            continue
+        for item in items:
+            hpid = (item.get("hpid") or "").strip()
+            age = _age_minutes(ts, item.get("hvidate"))
+            if hpid and age is not None and -5 <= age <= CADENCE_MAX_AGE_MIN:
+                ages[hpid].append(age)
+    cadence: dict[str, float] = {}
+    for hpid, values in ages.items():
+        if len(values) >= CADENCE_MIN_SAMPLES:
+            values.sort()
+            cadence[hpid] = max(values[int(len(values) * 0.95)], CADENCE_FLOOR_MIN)
+    return cadence
+
+
+def _heartbeat_alive(ts: datetime, hvidate, prev_hvidate, cadence_min: float | None) -> bool:
+    """hvidate가 전진했거나, 그대로여도 경과가 병원 주기의 ALIVE_FACTOR배 안쪽이면 살아 있음."""
+    if hvidate != prev_hvidate:
+        return True
+    if cadence_min is None:
+        return False
+    age = _age_minutes(ts, hvidate)
+    return age is not None and age <= ALIVE_FACTOR * cadence_min
 
 
 def _band(hour: int) -> str:
@@ -156,11 +242,14 @@ class Signals:
         return bisect.bisect_right(times, end) - bisect.bisect_right(times, start)
 
 
-def collect(snapshot_dir: Path, since: date | None, until: date | None):
+def collect(snapshot_dir: Path, since: date | None, until: date | None,
+            cadence: dict[str, float] | None = None):
     """스냅샷을 시각순으로 훑어 닫힌 run 전부와 값 변화 간격 집계를 돌려준다.
 
     교차 확인용으로 병상 필드별 값 변화 시각과 중증질환 신고(MKiosk) 변화 시각도 모은다.
+    `cadence`(병원별 갱신 주기, 분)를 주면 하트비트 생존 판정에 주기 보정을 적용한다.
     """
+    cadence = cadence or {}
     runs: list[Run] = []
     #: 값 변화·미입력 간격은 run 판정과 무관하므로 바로 센다: (필드, 요일, 시, 종류) -> 건수
     direct: Counter[tuple[str, int, int, str]] = Counter()
@@ -171,79 +260,64 @@ def collect(snapshot_dir: Path, since: date | None, until: date | None):
     first_ts = last_ts = None
     hospitals: set[str] = set()
 
-    for path in sorted(snapshot_dir.glob("*.jsonl")):
-        day = date.fromisoformat(path.stem) if len(path.stem) == 10 else None
-        if day and ((since and day < since) or (until and day > until)):
+    for operation, ts, items in _iter_bed_records(snapshot_dir, since, until):
+        if operation == SEVERE_OP:
+            for item in items:
+                hpid = (item.get("hpid") or "").strip()
+                if not hpid:
+                    continue
+                declared = tuple(item.get(f"MKioskTy{no}") for no in range(1, 29))
+                prev_severe = severe_state.get(hpid)
+                if (prev_severe and declared != prev_severe[1]
+                        and (ts - prev_severe[0]).total_seconds() <= SEGMENT_GAP_SEC):
+                    signals.severe[hpid].append(ts)
+                severe_state[hpid] = (ts, declared)
             continue
-        with path.open("rb") as f:
-            for raw_line in f:
-                try:
-                    record = json.loads(raw_line)
-                except json.JSONDecodeError:
+        polls += 1
+        first_ts = first_ts or ts
+        last_ts = ts
+        for item in items:
+            hpid = (item.get("hpid") or "").strip()
+            if not hpid:
+                continue
+            hospitals.add(hpid)
+            hvidate = item.get("hvidate")
+            name = (item.get("dutyName") or "").strip()
+            cadence_min = cadence.get(hpid)
+            for field, cap_field in FIELDS.items():
+                if field not in item:
                     continue
-                operation = record.get("operation")
-                if operation not in (_BED_OP, SEVERE_OP) or "error" in record or not record.get("items"):
+                value = _parse(item.get(field), field)
+                cap = _parse(item.get(cap_field), cap_field)
+                key = (hpid, field)
+                prev = state.get(key)
+                if prev is None or (ts - prev[1].last).total_seconds() > SEGMENT_GAP_SEC:
+                    if prev is not None:
+                        runs.append(prev[1])
+                    state[key] = (hvidate, Run(hpid, name, field, value, cap, ts))
                     continue
-                try:
-                    ts = datetime.fromisoformat(record["ts"]).astimezone(KST)
-                except (KeyError, ValueError):
+                prev_hvidate, run = prev
+                if ts <= run.last:
                     continue
-                if operation == SEVERE_OP:
-                    for item in record["items"]:
-                        hpid = (item.get("hpid") or "").strip()
-                        if not hpid:
-                            continue
-                        declared = tuple(item.get(f"MKioskTy{no}") for no in range(1, 29))
-                        prev_severe = severe_state.get(hpid)
-                        if (prev_severe and declared != prev_severe[1]
-                                and (ts - prev_severe[0]).total_seconds() <= SEGMENT_GAP_SEC):
-                            signals.severe[hpid].append(ts)
-                        severe_state[hpid] = (ts, declared)
+                wd, hr = ts.weekday(), ts.hour
+                if value != run.value:
+                    kind = MISSING if value is None or run.value is None else CHANGE
+                    direct[(field, wd, hr, kind)] += 1
+                    if kind == CHANGE:
+                        run.end_delta = value - run.value
+                        signals.bed[key].append(ts)
+                    runs.append(run)
+                    state[key] = (hvidate, Run(hpid, name, field, value, cap, ts))
                     continue
-                polls += 1
-                first_ts = first_ts or ts
-                last_ts = ts
-                for item in record["items"]:
-                    hpid = (item.get("hpid") or "").strip()
-                    if not hpid:
-                        continue
-                    hospitals.add(hpid)
-                    hvidate = item.get("hvidate")
-                    name = (item.get("dutyName") or "").strip()
-                    for field, cap_field in FIELDS.items():
-                        if field not in item:
-                            continue
-                        value = _parse(item.get(field), field)
-                        cap = _parse(item.get(cap_field), cap_field)
-                        key = (hpid, field)
-                        prev = state.get(key)
-                        if prev is None or (ts - prev[1].last).total_seconds() > SEGMENT_GAP_SEC:
-                            if prev is not None:
-                                runs.append(prev[1])
-                            state[key] = (hvidate, Run(hpid, name, field, value, cap, ts))
-                            continue
-                        prev_hvidate, run = prev
-                        if ts <= run.last:
-                            continue
-                        wd, hr = ts.weekday(), ts.hour
-                        if value != run.value:
-                            kind = MISSING if value is None or run.value is None else CHANGE
-                            direct[(field, wd, hr, kind)] += 1
-                            if kind == CHANGE:
-                                run.end_delta = value - run.value
-                                signals.bed[key].append(ts)
-                            runs.append(run)
-                            state[key] = (hvidate, Run(hpid, name, field, value, cap, ts))
-                            continue
-                        if run.value is None:
-                            direct[(field, wd, hr, MISSING)] += 1
-                        else:
-                            alive = hvidate != prev_hvidate
-                            if alive:
-                                run.alive_sec += (ts - run.last).total_seconds()
-                            run.pairs.append((wd, hr, alive))
-                        run.last = ts
-                        state[key] = (hvidate, run)
+                if run.value is None:
+                    direct[(field, wd, hr, MISSING)] += 1
+                else:
+                    alive = _heartbeat_alive(ts, hvidate, prev_hvidate, cadence_min)
+                    if alive:
+                        run.alive_sec += (ts - run.last).total_seconds()
+                    run.pairs.append((wd, hr, alive))
+                run.last = ts
+                state[key] = (hvidate, run)
 
     runs.extend(run for _, run in state.values())
     return runs, direct, signals, polls, first_ts, last_ts, hospitals
@@ -505,15 +579,40 @@ def main() -> None:
     parser.add_argument("--since", type=date.fromisoformat, default=None, help="KST 날짜 (포함)")
     parser.add_argument("--until", type=date.fromisoformat, default=None, help="KST 날짜 (포함)")
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--no-cadence", action="store_true",
+                        help="병원별 갱신 주기 보정 없이 hvidate 전진만 하트비트로 본다 (보정 전과 비교용)")
     args = parser.parse_args()
 
+    cadence: dict[str, float] = {}
+    cadence_summary: dict | None = None
+    if not args.no_cadence:
+        cadence = estimate_cadence(args.snapshots, args.since, args.until)
+        if cadence:
+            cad_vals = sorted(cadence.values())
+            slow = sum(1 for c in cad_vals if c > 20)
+            cadence_summary = {
+                "hospitals": len(cadence),
+                "medianMin": round(statistics.median(cad_vals), 1),
+                "p90Min": round(cad_vals[int(len(cad_vals) * 0.9)], 1),
+                "maxMin": round(cad_vals[-1], 1),
+                "over20Min": slow,
+                "aliveFactor": ALIVE_FACTOR,
+            }
+
     runs, direct, signals, polls, first_ts, last_ts, hospitals = collect(
-        args.snapshots, args.since, args.until)
+        args.snapshots, args.since, args.until, cadence)
     if polls == 0 or first_ts is None:
         raise SystemExit(f"병상 응답을 하나도 못 읽었다: {args.snapshots}")
     span_days = (last_ts - first_ts).total_seconds() / 86400
     print(f"병상 폴링 {polls:,}회 · {first_ts:%m-%d %H:%M} ~ {last_ts:%m-%d %H:%M} KST "
           f"({span_days:.1f}일) · 병원 {len(hospitals)}곳 · run {len(runs):,}개")
+    if cadence_summary:
+        print(f"갱신 주기 근사(경과 p95) {cadence_summary['hospitals']}곳: 중위 {cadence_summary['medianMin']}분 · "
+              f"p90 {cadence_summary['p90Min']}분 · 최대 {cadence_summary['maxMin']:.0f}분 · "
+              f"20분 초과 {cadence_summary['over20Min']}곳 — hvidate 그대로여도 경과가 주기 "
+              f"{ALIVE_FACTOR:g}배 안쪽이면 살아 있음")
+    else:
+        print("갱신 주기 보정 없음 — hvidate 전진만 하트비트로 본다")
     print(f"유령 기준: 집단 p{GHOST_QUANTILE * 100:g} 하트비트 생존시간, 최소 {GHOST_FLOOR_H:g}h")
 
     rule = thresholds(runs)
@@ -527,6 +626,7 @@ def main() -> None:
         "hospitals": len(hospitals),
         "ghostRule": {"quantile": GHOST_QUANTILE, "floorH": GHOST_FLOOR_H,
                       "stratumMinRuns": STRATUM_MIN_RUNS},
+        "cadence": cadence_summary,
     } | report(runs, direct, rule, signals, span_days)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,7526 @@
+[
+ {
+  "ts": "2026-10-10T12:51:00",
+  "changes": [
+   {
+    "hpid": "A2200008",
+    "name": "강릉아산병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200001",
+    "name": "연세대학교원주세브란스기독병원",
+    "field": "hvgc",
+    "from": 209,
+    "to": 208,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200013",
+    "name": "한림대학교춘천성심병원",
+    "field": "hvgc",
+    "from": 121,
+    "to": 122,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100005",
+    "name": "순천향대학교부속부천병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100001",
+    "name": "분당서울대학교병원",
+    "field": "hvgc",
+    "from": 393,
+    "to": 394,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100001",
+    "name": "분당서울대학교병원",
+    "field": "hvoc",
+    "from": 39,
+    "to": 38,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100030",
+    "name": "차의과학대학교분당차병원",
+    "field": "hvec",
+    "from": -1,
+    "to": 0,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100030",
+    "name": "차의과학대학교분당차병원",
+    "field": "hvgc",
+    "from": 244,
+    "to": 242,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100002",
+    "name": "아주대학교병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100002",
+    "name": "아주대학교병원",
+    "field": "hvgc",
+    "from": 322,
+    "to": 323,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100003",
+    "name": "고려대학교의과대학부속안산병원",
+    "field": "hvgc",
+    "from": 216,
+    "to": 217,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100004",
+    "name": "한림대학교성심병원",
+    "field": "hvec",
+    "from": 0,
+    "to": -1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800011",
+    "name": "양산부산대학교병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800011",
+    "name": "양산부산대학교병원",
+    "field": "hvgc",
+    "from": 284,
+    "to": 285,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800020",
+    "name": "학교법인성균관대학삼성창원병원",
+    "field": "hvgc",
+    "from": 280,
+    "to": 281,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700007",
+    "name": "차의과학대학교부속구미차병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700014",
+    "name": "의료법인안동병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700016",
+    "name": "포항성모병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300001",
+    "name": "영남대학교병원",
+    "field": "hvgc",
+    "from": 268,
+    "to": 269,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600006",
+    "name": "학교법인건양교육재단건양대학교병원",
+    "field": "hvgc",
+    "from": 366,
+    "to": 367,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600006",
+    "name": "학교법인건양교육재단건양대학교병원",
+    "field": "hvicc",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200003",
+    "name": "동아대학교병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200022",
+    "name": "인제대학교 해운대백병원",
+    "field": "hvgc",
+    "from": 228,
+    "to": 227,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100014",
+    "name": "고려대학교의과대학부속구로병원",
+    "field": "hvgc",
+    "from": 211,
+    "to": 212,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100017",
+    "name": "서울대학교병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100017",
+    "name": "서울대학교병원",
+    "field": "hvgc",
+    "from": 414,
+    "to": 415,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100035",
+    "name": "서울특별시서울의료원",
+    "field": "hvec",
+    "from": 8,
+    "to": 10,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100035",
+    "name": "서울특별시서울의료원",
+    "field": "hvgc",
+    "from": 104,
+    "to": 101,
+    "delta": -3
+   },
+   {
+    "hpid": "A1700004",
+    "name": "학교법인울산공업학원울산대학교병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500001",
+    "name": "조선대학교병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600011",
+    "name": "목포한국병원",
+    "field": "hvoc",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500001",
+    "name": "원광대학교병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500002",
+    "name": "전북대학교병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 15,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500002",
+    "name": "전북대학교병원",
+    "field": "hvgc",
+    "from": 365,
+    "to": 366,
+    "delta": 1
+   },
+   {
+    "hpid": "A2900001",
+    "name": "제주한라병원",
+    "field": "hvec",
+    "from": -3,
+    "to": -5,
+    "delta": -2
+   },
+   {
+    "hpid": "A2400002",
+    "name": "단국대학교의과대학부속병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400002",
+    "name": "단국대학교의과대학부속병원",
+    "field": "hvgc",
+    "from": 252,
+    "to": 251,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400001",
+    "name": "학교법인동은학원순천향대학교부속천안병원",
+    "field": "hvoc",
+    "from": 20,
+    "to": 21,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100038",
+    "name": "인제대학교일산백병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100038",
+    "name": "인제대학교일산백병원",
+    "field": "hvgc",
+    "from": 235,
+    "to": 236,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100007",
+    "name": "광명성애병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100039",
+    "name": "한양대학교구리병원",
+    "field": "hvgc",
+    "from": 193,
+    "to": 192,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100053",
+    "name": "의료법인우리의료재단김포우리병원",
+    "field": "hvgc",
+    "from": 83,
+    "to": 81,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100037",
+    "name": "현대병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100037",
+    "name": "현대병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100052",
+    "name": "가톨릭대학교부천성모병원",
+    "field": "hvec",
+    "from": 17,
+    "to": 18,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100052",
+    "name": "가톨릭대학교부천성모병원",
+    "field": "hvgc",
+    "from": 251,
+    "to": 250,
+    "delta": -1
+   },
+   {
+    "hpid": "A2116806",
+    "name": "성남시의료원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100009",
+    "name": "의료법인녹산의료재단동수원병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100008",
+    "name": "의료법인남촌의료재단시화병원",
+    "field": "hvgc",
+    "from": 94,
+    "to": 97,
+    "delta": 3
+   },
+   {
+    "hpid": "A2100008",
+    "name": "의료법인남촌의료재단시화병원",
+    "field": "hvoc",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100015",
+    "name": "효산의료재단안양샘병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 8,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100015",
+    "name": "효산의료재단안양샘병원",
+    "field": "hvgc",
+    "from": 119,
+    "to": 120,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100024",
+    "name": "오산한국병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100020",
+    "name": "연세대학교의과대학용인세브란스병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100029",
+    "name": "강남병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100029",
+    "name": "강남병원",
+    "field": "hvgc",
+    "from": 39,
+    "to": 38,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100019",
+    "name": "(의)영문의료재단다보스병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100019",
+    "name": "(의)영문의료재단다보스병원",
+    "field": "hvgc",
+    "from": 56,
+    "to": 55,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100028",
+    "name": "의료법인백송의료재단굿모닝병원",
+    "field": "hvgc",
+    "from": 81,
+    "to": 82,
+    "delta": 1
+   },
+   {
+    "hpid": "A2113246",
+    "name": "의료법인양진의료재단평택성모병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2113246",
+    "name": "의료법인양진의료재단평택성모병원",
+    "field": "hvgc",
+    "from": 87,
+    "to": 85,
+    "delta": -2
+   },
+   {
+    "hpid": "A2113246",
+    "name": "의료법인양진의료재단평택성모병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100031",
+    "name": "경기도의료원포천병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 17,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800010",
+    "name": "의료법인환명의료재단 조은금강병원",
+    "field": "hvgc",
+    "from": 72,
+    "to": 71,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800006",
+    "name": "의료법인숭인의료재단 김해복음병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800003",
+    "name": "제일병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800017",
+    "name": "의료법인합포의료재단에스엠지연세병원",
+    "field": "hvgc",
+    "from": 40,
+    "to": 39,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700012",
+    "name": "의료법인덕산의료재단김천제일병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300004",
+    "name": "대구가톨릭대학교병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600007",
+    "name": "의료법인영훈의료재단유성선병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600008",
+    "name": "의료법인영훈의료재단대전선병원",
+    "field": "hvgc",
+    "from": 78,
+    "to": 76,
+    "delta": -2
+   },
+   {
+    "hpid": "A1200020",
+    "name": "의료법인 온병원그룹의료재단 온병원",
+    "field": "hvgc",
+    "from": 187,
+    "to": 188,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200001",
+    "name": "인제대학교부산백병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200005",
+    "name": "의료법인 은성의료재단 좋은삼선병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200005",
+    "name": "의료법인 은성의료재단 좋은삼선병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200004",
+    "name": "고신대학교복음병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 15,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200007",
+    "name": "비에이치에스한서병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100010",
+    "name": "삼성서울병원",
+    "field": "hvgc",
+    "from": 577,
+    "to": 575,
+    "delta": -2
+   },
+   {
+    "hpid": "A1120796",
+    "name": "이화여자대학교의과대학부속서울병원",
+    "field": "hvgc",
+    "from": 262,
+    "to": 261,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100020",
+    "name": "의료법인한전의료재단 한일병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100001",
+    "name": "경희대학교병원",
+    "field": "hvicc",
+    "from": 17,
+    "to": 18,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100021",
+    "name": "삼육서울병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100007",
+    "name": "연세대학교의과대학세브란스병원",
+    "field": "hvec",
+    "from": -3,
+    "to": -2,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100012",
+    "name": "학교법인가톨릭학원가톨릭대학교서울성모병원",
+    "field": "hvec",
+    "from": -11,
+    "to": -12,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100012",
+    "name": "학교법인가톨릭학원가톨릭대학교서울성모병원",
+    "field": "hvgc",
+    "from": 360,
+    "to": 361,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100009",
+    "name": "재단법인아산사회복지재단 서울아산병원",
+    "field": "hvgc",
+    "from": 733,
+    "to": 735,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100054",
+    "name": "성애의료재단성애병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 4,
+    "delta": -2
+   },
+   {
+    "hpid": "A1100054",
+    "name": "성애의료재단성애병원",
+    "field": "hvgc",
+    "from": 38,
+    "to": 39,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100054",
+    "name": "성애의료재단성애병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A1121013",
+    "name": "가톨릭대학교은평성모병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100006",
+    "name": "강북삼성병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1700002",
+    "name": "의료법인동강의료재단동강병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 19,
+    "delta": 1
+   },
+   {
+    "hpid": "A1700002",
+    "name": "의료법인동강의료재단동강병원",
+    "field": "hvoc",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400010",
+    "name": "검단탑병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400010",
+    "name": "검단탑병원",
+    "field": "hvicc",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400016",
+    "name": "인천사랑병원",
+    "field": "hvgc",
+    "from": 59,
+    "to": 60,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400012",
+    "name": "가톨릭대학교 인천성모병원",
+    "field": "hvgc",
+    "from": 224,
+    "to": 225,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400013",
+    "name": "안은의료재단 부평세림병원",
+    "field": "hvgc",
+    "from": 31,
+    "to": 30,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400013",
+    "name": "안은의료재단 부평세림병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400003",
+    "name": "의료법인 루가의료재단 나은병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400003",
+    "name": "의료법인 루가의료재단 나은병원",
+    "field": "hvgc",
+    "from": 115,
+    "to": 114,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600017",
+    "name": "의료법인목포구암의료재단목포중앙병원",
+    "field": "hvicc",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500012",
+    "name": "의료법인오성의료재단동군산병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500012",
+    "name": "의료법인오성의료재단동군산병원",
+    "field": "hvoc",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500056",
+    "name": "대자인병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500006",
+    "name": "재단법인예수병원유지재단예수병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 19,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500008",
+    "name": "재단법인 아산사회복지재단 정읍아산병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 11,
+    "delta": 2
+   },
+   {
+    "hpid": "A2500008",
+    "name": "재단법인 아산사회복지재단 정읍아산병원",
+    "field": "hvgc",
+    "from": 58,
+    "to": 55,
+    "delta": -3
+   },
+   {
+    "hpid": "A2400009",
+    "name": "의료법인백제병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400009",
+    "name": "의료법인백제병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400008",
+    "name": "당진종합병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400003",
+    "name": "서산중앙병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2402257",
+    "name": "아산충무병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400012",
+    "name": "의료법인영서의료재단천안충무병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 11,
+    "delta": 2
+   },
+   {
+    "hpid": "A2400012",
+    "name": "의료법인영서의료재단천안충무병원",
+    "field": "hvgc",
+    "from": 59,
+    "to": 58,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400007",
+    "name": "충청남도홍성의료원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300009",
+    "name": "의료법인명지의료재단명지병원",
+    "field": "hvec",
+    "from": -1,
+    "to": -2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300009",
+    "name": "의료법인명지의료재단명지병원",
+    "field": "hvgc",
+    "from": 62,
+    "to": 63,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300013",
+    "name": "의료법인 건명의료재단 중앙제일병원",
+    "field": "hvgc",
+    "from": 88,
+    "to": 87,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300007",
+    "name": "의료법인인화재단한국병원",
+    "field": "hvec",
+    "from": 0,
+    "to": 1,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300002",
+    "name": "의료법인한마음의료재단하나병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300010",
+    "name": "건국대학교충주병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 14,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200011",
+    "name": "강원특별자치도강릉의료원",
+    "field": "hvec",
+    "from": -2,
+    "to": -3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200046",
+    "name": "의료법인온세움의료재단온재병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200015",
+    "name": "강원특별자치도원주의료원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200024",
+    "name": "의료법인성지의료재단성지병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "E2200025",
+    "name": "화천군보건의료원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200016",
+    "name": "횡성대성병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2118188",
+    "name": "엘병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100050",
+    "name": "의료법인대인의료재단다니엘종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100175",
+    "name": "의료법인토마스의료재단윌스기념병원",
+    "field": "hvgc",
+    "from": 80,
+    "to": 78,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100175",
+    "name": "의료법인토마스의료재단윌스기념병원",
+    "field": "hvicc",
+    "from": 3,
+    "to": 5,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100013",
+    "name": "의료법인록향의료재단신천연합병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 5,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100021",
+    "name": "의료법인플러스의료재단단원병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 11,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100124",
+    "name": "의료법인칠석의료재단사랑의병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 7,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100124",
+    "name": "의료법인칠석의료재단사랑의병원",
+    "field": "hvgc",
+    "from": 52,
+    "to": 53,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100124",
+    "name": "의료법인칠석의료재단사랑의병원",
+    "field": "hvoc",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100305",
+    "name": "안성성모병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100089",
+    "name": "양평병원",
+    "field": "hvgc",
+    "from": 24,
+    "to": 25,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100131",
+    "name": "메디인병원",
+    "field": "hvgc",
+    "from": 80,
+    "to": 79,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100022",
+    "name": "의료법인박애의료재단박애병원",
+    "field": "hvgc",
+    "from": 108,
+    "to": 107,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100036",
+    "name": "의료법인 일심의료재단 포천우리병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100018",
+    "name": "의료법인은혜와감사의료재단화성중앙종합병원",
+    "field": "hvgc",
+    "from": 85,
+    "to": 84,
+    "delta": -1
+   },
+   {
+    "hpid": "A2115699",
+    "name": "의료법인원광의료재단원광종합병원",
+    "field": "hvgc",
+    "from": 15,
+    "to": 16,
+    "delta": 1
+   },
+   {
+    "hpid": "A2115699",
+    "name": "의료법인원광의료재단원광종합병원",
+    "field": "hvicc",
+    "from": -1,
+    "to": -2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800008",
+    "name": "의료법인 거붕 백병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 8,
+    "delta": 2
+   },
+   {
+    "hpid": "A2800094",
+    "name": "의료법인 이도의료재단 남해병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 6,
+    "delta": -2
+   },
+   {
+    "hpid": "A2800094",
+    "name": "의료법인 이도의료재단 남해병원",
+    "field": "hvgc",
+    "from": 79,
+    "to": 81,
+    "delta": 2
+   },
+   {
+    "hpid": "A2800113",
+    "name": "밀양병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800062",
+    "name": "태황의료재단한성병원",
+    "field": "hvgc",
+    "from": 90,
+    "to": 89,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800025",
+    "name": "경상남도마산의료원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700036",
+    "name": "의료법인서명의료재단세명종합병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700018",
+    "name": "경상북도김천의료원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700009",
+    "name": "의료법인삼백의료재단상주성모병원",
+    "field": "hvgc",
+    "from": 28,
+    "to": 29,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700009",
+    "name": "의료법인삼백의료재단상주성모병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700001",
+    "name": "경상북도안동의료원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700023",
+    "name": "의료법인서준의료재단예천권병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300034",
+    "name": "드림종합병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300034",
+    "name": "드림종합병원",
+    "field": "hvgc",
+    "from": 37,
+    "to": 36,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300006",
+    "name": "의료법인구의료재단구병원",
+    "field": "hvoc",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300045",
+    "name": "삼일병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 7,
+    "delta": -2
+   },
+   {
+    "hpid": "A1300018",
+    "name": "강남종합병원",
+    "field": "hvgc",
+    "from": 70,
+    "to": 71,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300076",
+    "name": "대구굿모닝병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 12,
+    "delta": 2
+   },
+   {
+    "hpid": "A1303923",
+    "name": "더필종합병원",
+    "field": "hvgc",
+    "from": 28,
+    "to": 29,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300081",
+    "name": "(재)미리내천주성삼성직수도회천주성삼병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300081",
+    "name": "(재)미리내천주성삼성직수도회천주성삼병원",
+    "field": "hvgc",
+    "from": 39,
+    "to": 37,
+    "delta": -2
+   },
+   {
+    "hpid": "A1600003",
+    "name": "대전한국병원",
+    "field": "hvec",
+    "from": 0,
+    "to": -1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1602246",
+    "name": "대청병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1602246",
+    "name": "대청병원",
+    "field": "hvgc",
+    "from": 137,
+    "to": 136,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200013",
+    "name": "부산성모병원(재단법인 천주교부산교구유지재단)",
+    "field": "hvgc",
+    "from": 101,
+    "to": 100,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200013",
+    "name": "부산성모병원(재단법인 천주교부산교구유지재단)",
+    "field": "hvoc",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200026",
+    "name": "좋은문화병원",
+    "field": "hvgc",
+    "from": 111,
+    "to": 110,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200019",
+    "name": "학교법인)동의병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200006",
+    "name": "의료법인 인당의료재단 부민병원",
+    "field": "hvgc",
+    "from": 66,
+    "to": 65,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200008",
+    "name": "의료법인 은성의료재단 좋은강안병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 6,
+    "delta": -2
+   },
+   {
+    "hpid": "A1200008",
+    "name": "의료법인 은성의료재단 좋은강안병원",
+    "field": "hvgc",
+    "from": 162,
+    "to": 166,
+    "delta": 4
+   },
+   {
+    "hpid": "A1200008",
+    "name": "의료법인 은성의료재단 좋은강안병원",
+    "field": "hvoc",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200024",
+    "name": "부산광역시의료원",
+    "field": "hvgc",
+    "from": 108,
+    "to": 107,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100049",
+    "name": "희명병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A1122033",
+    "name": "기쁨병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1122033",
+    "name": "기쁨병원",
+    "field": "hvgc",
+    "from": 57,
+    "to": 56,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100019",
+    "name": "홍익병원",
+    "field": "hvgc",
+    "from": 56,
+    "to": 57,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100019",
+    "name": "홍익병원",
+    "field": "hvoc",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100019",
+    "name": "홍익병원",
+    "field": "hvicc",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100037",
+    "name": "대림성모병원",
+    "field": "hvoc",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100023",
+    "name": "의료법인청구성심병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100075",
+    "name": "의료법인풍산의료재단동부제일병원",
+    "field": "hvgc",
+    "from": 53,
+    "to": 54,
+    "delta": 1
+   },
+   {
+    "hpid": "A1800417",
+    "name": "의료법인 영제 의료재단 엔케이세종병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1800417",
+    "name": "의료법인 영제 의료재단 엔케이세종병원",
+    "field": "hvgc",
+    "from": 149,
+    "to": 151,
+    "delta": 2
+   },
+   {
+    "hpid": "A1700001",
+    "name": "서울산보람병원",
+    "field": "hvgc",
+    "from": 94,
+    "to": 93,
+    "delta": -1
+   },
+   {
+    "hpid": "A1403617",
+    "name": "비에스종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400005",
+    "name": "온누리병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600050",
+    "name": "전라남도강진의료원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600018",
+    "name": "의료법인영성의료재단고흥종합병원",
+    "field": "hvicc",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500017",
+    "name": "하남성심병원",
+    "field": "hvgc",
+    "from": 22,
+    "to": 21,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500018",
+    "name": "광주수완병원",
+    "field": "hvgc",
+    "from": 56,
+    "to": 55,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500004",
+    "name": "광주보훈병원",
+    "field": "hvgc",
+    "from": 102,
+    "to": 104,
+    "delta": 2
+   },
+   {
+    "hpid": "A2600016",
+    "name": "나주종합병원",
+    "field": "hvgc",
+    "from": 61,
+    "to": 60,
+    "delta": -1
+   },
+   {
+    "hpid": "A2602211",
+    "name": "빛가람종합병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600003",
+    "name": "대송의료재단무안병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600052",
+    "name": "보성아산병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500015",
+    "name": "광주병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500015",
+    "name": "광주병원",
+    "field": "hvgc",
+    "from": 45,
+    "to": 44,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500003",
+    "name": "광주현대병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 5,
+    "delta": 2
+   },
+   {
+    "hpid": "A1500016",
+    "name": "광주한국병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600005",
+    "name": "의료법인한국의료재단한국병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 5,
+    "delta": -2
+   },
+   {
+    "hpid": "A2600005",
+    "name": "의료법인한국의료재단한국병원",
+    "field": "hvgc",
+    "from": 99,
+    "to": 98,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600010",
+    "name": "여수전남병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600032",
+    "name": "완도대성병원",
+    "field": "hvgc",
+    "from": 52,
+    "to": 51,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600021",
+    "name": "의료법인우범의료재단장흥종합병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2602088",
+    "name": "의료법인남우의료재단 진도전남병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600009",
+    "name": "의료법인행촌의료재단해남종합병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "E2500019",
+    "name": "무주군보건의료원",
+    "field": "hvec",
+    "from": 3,
+    "to": 1,
+    "delta": -2
+   },
+   {
+    "hpid": "E2500021",
+    "name": "순창군보건의료원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2502742",
+    "name": "새강병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400010",
+    "name": "충청남도공주의료원",
+    "field": "hvec",
+    "from": 11,
+    "to": 12,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400038",
+    "name": "학교법인건양교육재단건양대학교부여병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400039",
+    "name": "현대병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300030",
+    "name": "의료법인조윤의료재단영동병원",
+    "field": "hvgc",
+    "from": 19,
+    "to": 22,
+    "delta": 3
+   },
+   {
+    "hpid": "A2300006",
+    "name": "충청북도청주의료원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   }
+  ]
+ },
+ {
+  "ts": "2026-10-10T12:56:01",
+  "changes": [
+   {
+    "hpid": "A2200008",
+    "name": "강릉아산병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200008",
+    "name": "강릉아산병원",
+    "field": "hvgc",
+    "from": 229,
+    "to": 228,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200001",
+    "name": "연세대학교원주세브란스기독병원",
+    "field": "hvec",
+    "from": 21,
+    "to": 20,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200001",
+    "name": "연세대학교원주세브란스기독병원",
+    "field": "hvgc",
+    "from": 208,
+    "to": 207,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200013",
+    "name": "한림대학교춘천성심병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 8,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100005",
+    "name": "순천향대학교부속부천병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100005",
+    "name": "순천향대학교부속부천병원",
+    "field": "hvgc",
+    "from": 298,
+    "to": 297,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100005",
+    "name": "순천향대학교부속부천병원",
+    "field": "hvoc",
+    "from": 21,
+    "to": 20,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100001",
+    "name": "분당서울대학교병원",
+    "field": "hvec",
+    "from": -28,
+    "to": -29,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100030",
+    "name": "차의과학대학교분당차병원",
+    "field": "hvoc",
+    "from": 18,
+    "to": 19,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100002",
+    "name": "아주대학교병원",
+    "field": "hvgc",
+    "from": 323,
+    "to": 322,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100003",
+    "name": "고려대학교의과대학부속안산병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100004",
+    "name": "한림대학교성심병원",
+    "field": "hvec",
+    "from": -1,
+    "to": 1,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100040",
+    "name": "가톨릭대학교의정부성모병원",
+    "field": "hvec",
+    "from": 17,
+    "to": 18,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100040",
+    "name": "가톨릭대학교의정부성모병원",
+    "field": "hvgc",
+    "from": 228,
+    "to": 227,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800011",
+    "name": "양산부산대학교병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800011",
+    "name": "양산부산대학교병원",
+    "field": "hvgc",
+    "from": 285,
+    "to": 286,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800020",
+    "name": "학교법인성균관대학삼성창원병원",
+    "field": "hvgc",
+    "from": 281,
+    "to": 282,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700014",
+    "name": "의료법인안동병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 6,
+    "delta": 2
+   },
+   {
+    "hpid": "A2700014",
+    "name": "의료법인안동병원",
+    "field": "hvgc",
+    "from": 162,
+    "to": 163,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700014",
+    "name": "의료법인안동병원",
+    "field": "hvoc",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300001",
+    "name": "영남대학교병원",
+    "field": "hvgc",
+    "from": 269,
+    "to": 270,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300002",
+    "name": "경북대학교병원",
+    "field": "hvec",
+    "from": 2,
+    "to": -1,
+    "delta": -3
+   },
+   {
+    "hpid": "A1200003",
+    "name": "동아대학교병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200003",
+    "name": "동아대학교병원",
+    "field": "hvgc",
+    "from": 213,
+    "to": 214,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100043",
+    "name": "강동경희대학교병원",
+    "field": "hvgc",
+    "from": 306,
+    "to": 305,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100014",
+    "name": "고려대학교의과대학부속구로병원",
+    "field": "hvoc",
+    "from": 22,
+    "to": 23,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100013",
+    "name": "한양대학교병원",
+    "field": "hvgc",
+    "from": 284,
+    "to": 285,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100008",
+    "name": "학교법인고려중앙학원고려대학교의과대학부속병원(안암병원)",
+    "field": "hvec",
+    "from": 10,
+    "to": 12,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100005",
+    "name": "이화여자대학교의과대학부속목동병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100005",
+    "name": "이화여자대학교의과대학부속목동병원",
+    "field": "hvgc",
+    "from": 157,
+    "to": 158,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100017",
+    "name": "서울대학교병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100035",
+    "name": "서울특별시서울의료원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100035",
+    "name": "서울특별시서울의료원",
+    "field": "hvgc",
+    "from": 101,
+    "to": 100,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400001",
+    "name": "의료법인 길의료재단 길병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400001",
+    "name": "의료법인 길의료재단 길병원",
+    "field": "hvgc",
+    "from": 438,
+    "to": 439,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400002",
+    "name": "인하대학교의과대학부속병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500002",
+    "name": "전남대학교병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 4,
+    "delta": -4
+   },
+   {
+    "hpid": "A1500002",
+    "name": "전남대학교병원",
+    "field": "hvgc",
+    "from": 304,
+    "to": 305,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600011",
+    "name": "목포한국병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600011",
+    "name": "목포한국병원",
+    "field": "hvgc",
+    "from": 89,
+    "to": 90,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600019",
+    "name": "성가롤로병원",
+    "field": "hvec",
+    "from": -3,
+    "to": -2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500002",
+    "name": "전북대학교병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 16,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500002",
+    "name": "전북대학교병원",
+    "field": "hvgc",
+    "from": 366,
+    "to": 367,
+    "delta": 1
+   },
+   {
+    "hpid": "A2900001",
+    "name": "제주한라병원",
+    "field": "hvec",
+    "from": -5,
+    "to": -3,
+    "delta": 2
+   },
+   {
+    "hpid": "A2400002",
+    "name": "단국대학교의과대학부속병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400001",
+    "name": "학교법인동은학원순천향대학교부속천안병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 12,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300001",
+    "name": "충북대학교병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 12,
+    "delta": 3
+   },
+   {
+    "hpid": "A2200009",
+    "name": "강원대학교병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100047",
+    "name": "동국대학교일산불교병원",
+    "field": "hvgc",
+    "from": 230,
+    "to": 231,
+    "delta": 1
+   },
+   {
+    "hpid": "A2118788",
+    "name": "중앙대학교광명병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 17,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100007",
+    "name": "광명성애병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100007",
+    "name": "광명성애병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100155",
+    "name": "참조은병원",
+    "field": "hvec",
+    "from": 0,
+    "to": 1,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100155",
+    "name": "참조은병원",
+    "field": "hvgc",
+    "from": 61,
+    "to": 60,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100053",
+    "name": "의료법인우리의료재단김포우리병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 4,
+    "delta": 3
+   },
+   {
+    "hpid": "A2100006",
+    "name": "의료법인인봉의료재단뉴고려병원",
+    "field": "hvgc",
+    "from": 79,
+    "to": 80,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100041",
+    "name": "남양주한양병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100041",
+    "name": "남양주한양병원",
+    "field": "hvgc",
+    "from": 75,
+    "to": 74,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100041",
+    "name": "남양주한양병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100037",
+    "name": "현대병원",
+    "field": "hvgc",
+    "from": 83,
+    "to": 84,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100052",
+    "name": "가톨릭대학교부천성모병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 19,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100025",
+    "name": "대진의료재단분당제생병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100025",
+    "name": "대진의료재단분당제생병원",
+    "field": "hvgc",
+    "from": 177,
+    "to": 178,
+    "delta": 1
+   },
+   {
+    "hpid": "A2117135",
+    "name": "의료법인명인의료재단화홍병원",
+    "field": "hvgc",
+    "from": 65,
+    "to": 63,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100009",
+    "name": "의료법인녹산의료재단동수원병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100009",
+    "name": "의료법인녹산의료재단동수원병원",
+    "field": "hvgc",
+    "from": 118,
+    "to": 115,
+    "delta": -3
+   },
+   {
+    "hpid": "A2100009",
+    "name": "의료법인녹산의료재단동수원병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100012",
+    "name": "가톨릭대학교성빈센트병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 12,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100008",
+    "name": "의료법인남촌의료재단시화병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100015",
+    "name": "효산의료재단안양샘병원",
+    "field": "hvgc",
+    "from": 120,
+    "to": 121,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100024",
+    "name": "오산한국병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100020",
+    "name": "연세대학교의과대학용인세브란스병원",
+    "field": "hvgc",
+    "from": 229,
+    "to": 230,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100029",
+    "name": "강남병원",
+    "field": "hvgc",
+    "from": 38,
+    "to": 39,
+    "delta": 1
+   },
+   {
+    "hpid": "A2117994",
+    "name": "학교법인을지학원의정부을지대학교병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 15,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100193",
+    "name": "경기도의료원이천병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100028",
+    "name": "의료법인백송의료재단굿모닝병원",
+    "field": "hvec",
+    "from": 0,
+    "to": 1,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100046",
+    "name": "한림대학교동탄성심병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 18,
+    "delta": 2
+   },
+   {
+    "hpid": "A2800010",
+    "name": "의료법인환명의료재단 조은금강병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800010",
+    "name": "의료법인환명의료재단 조은금강병원",
+    "field": "hvgc",
+    "from": 71,
+    "to": 70,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800006",
+    "name": "의료법인숭인의료재단 김해복음병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800006",
+    "name": "의료법인숭인의료재단 김해복음병원",
+    "field": "hvicc",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800043",
+    "name": "한일병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800043",
+    "name": "한일병원",
+    "field": "hvgc",
+    "from": 44,
+    "to": 45,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800043",
+    "name": "한일병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800043",
+    "name": "한일병원",
+    "field": "hvicc",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800003",
+    "name": "제일병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800007",
+    "name": "창원한마음병원",
+    "field": "hvgc",
+    "from": 139,
+    "to": 140,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700003",
+    "name": "동국대학교의과대학경주병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700006",
+    "name": "의료법인동춘의료재단문경제일병원",
+    "field": "hvgc",
+    "from": 42,
+    "to": 41,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700004",
+    "name": "안동성소병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700004",
+    "name": "안동성소병원",
+    "field": "hvgc",
+    "from": 143,
+    "to": 142,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300009",
+    "name": "대구파티마병원",
+    "field": "hvec",
+    "from": -10,
+    "to": -9,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300009",
+    "name": "대구파티마병원",
+    "field": "hvgc",
+    "from": 281,
+    "to": 279,
+    "delta": -2
+   },
+   {
+    "hpid": "A1300010",
+    "name": "칠곡경북대학교병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 9,
+    "delta": 2
+   },
+   {
+    "hpid": "A1600002",
+    "name": "학교법인을지학원대전을지대학교병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600002",
+    "name": "학교법인을지학원대전을지대학교병원",
+    "field": "hvgc",
+    "from": 121,
+    "to": 120,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600007",
+    "name": "의료법인영훈의료재단유성선병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 10,
+    "delta": 2
+   },
+   {
+    "hpid": "A1600008",
+    "name": "의료법인영훈의료재단대전선병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 6,
+    "delta": 2
+   },
+   {
+    "hpid": "A1600008",
+    "name": "의료법인영훈의료재단대전선병원",
+    "field": "hvoc",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200005",
+    "name": "의료법인 은성의료재단 좋은삼선병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200004",
+    "name": "고신대학교복음병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 14,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200002",
+    "name": "부산대학교병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200007",
+    "name": "비에이치에스한서병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100015",
+    "name": "연세대학교의과대학강남세브란스병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100015",
+    "name": "연세대학교의과대학강남세브란스병원",
+    "field": "hvgc",
+    "from": 266,
+    "to": 267,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100010",
+    "name": "삼성서울병원",
+    "field": "hvec",
+    "from": -1,
+    "to": -2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100010",
+    "name": "삼성서울병원",
+    "field": "hvgc",
+    "from": 575,
+    "to": 573,
+    "delta": -2
+   },
+   {
+    "hpid": "A1100010",
+    "name": "삼성서울병원",
+    "field": "hvoc",
+    "from": 32,
+    "to": 33,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100053",
+    "name": "한국보훈복지의료공단 중앙보훈병원",
+    "field": "hvgc",
+    "from": 247,
+    "to": 248,
+    "delta": 1
+   },
+   {
+    "hpid": "A1120796",
+    "name": "이화여자대학교의과대학부속서울병원",
+    "field": "hvec",
+    "from": -9,
+    "to": -8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1120796",
+    "name": "이화여자대학교의과대학부속서울병원",
+    "field": "hvgc",
+    "from": 261,
+    "to": 262,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100041",
+    "name": "의료법인서울효천의료재단 에이치플러스양지병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100016",
+    "name": "인제대학교상계백병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100048",
+    "name": "노원을지대학교병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100007",
+    "name": "연세대학교의과대학세브란스병원",
+    "field": "hvec",
+    "from": -2,
+    "to": -3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100007",
+    "name": "연세대학교의과대학세브란스병원",
+    "field": "hvgc",
+    "from": 611,
+    "to": 612,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100011",
+    "name": "가톨릭대학교여의도성모병원",
+    "field": "hvgc",
+    "from": 100,
+    "to": 101,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100054",
+    "name": "성애의료재단성애병원",
+    "field": "hvgc",
+    "from": 39,
+    "to": 41,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100004",
+    "name": "순천향대학교부속서울병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100004",
+    "name": "순천향대학교부속서울병원",
+    "field": "hvoc",
+    "from": 11,
+    "to": 13,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100052",
+    "name": "국립중앙의료원",
+    "field": "hvicc",
+    "from": 4,
+    "to": 9,
+    "delta": 5
+   },
+   {
+    "hpid": "A1700028",
+    "name": "의료법인정안의료재단중앙병원",
+    "field": "hvgc",
+    "from": 55,
+    "to": 53,
+    "delta": -2
+   },
+   {
+    "hpid": "A1700028",
+    "name": "의료법인정안의료재단중앙병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A1700003",
+    "name": "울산병원",
+    "field": "hvgc",
+    "from": 91,
+    "to": 90,
+    "delta": -1
+   },
+   {
+    "hpid": "A1700025",
+    "name": "의료법인송은의료재단울산시티병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1700002",
+    "name": "의료법인동강의료재단동강병원",
+    "field": "hvgc",
+    "from": 155,
+    "to": 154,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400010",
+    "name": "검단탑병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A1403372",
+    "name": "인천세종병원",
+    "field": "hvgc",
+    "from": 72,
+    "to": 71,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400012",
+    "name": "가톨릭대학교 인천성모병원",
+    "field": "hvec",
+    "from": -5,
+    "to": -7,
+    "delta": -2
+   },
+   {
+    "hpid": "A1400011",
+    "name": "의료법인 나사렛의료재단 나사렛국제병원",
+    "field": "hvgc",
+    "from": 43,
+    "to": 44,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500019",
+    "name": "KS병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600017",
+    "name": "의료법인목포구암의료재단목포중앙병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600014",
+    "name": "여천전남병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 15,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600001",
+    "name": "화순전남대학교병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500004",
+    "name": "전북특별자치도남원의료원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500056",
+    "name": "대자인병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500056",
+    "name": "대자인병원",
+    "field": "hvgc",
+    "from": 17,
+    "to": 18,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500006",
+    "name": "재단법인예수병원유지재단예수병원",
+    "field": "hvec",
+    "from": 19,
+    "to": 18,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500005",
+    "name": "의료법인영경의료재단전주병원",
+    "field": "hvec",
+    "from": 0,
+    "to": 1,
+    "delta": 1
+   },
+   {
+    "hpid": "A2900006",
+    "name": "의료법인중앙의료재단중앙병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400003",
+    "name": "서산중앙병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 6,
+    "delta": -2
+   },
+   {
+    "hpid": "A2400006",
+    "name": "충청남도서산의료원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400007",
+    "name": "충청남도홍성의료원",
+    "field": "hvec",
+    "from": 11,
+    "to": 14,
+    "delta": 3
+   },
+   {
+    "hpid": "A2300009",
+    "name": "의료법인명지의료재단명지병원",
+    "field": "hvgc",
+    "from": 63,
+    "to": 62,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300005",
+    "name": "의료법인자산의료재단제천서울병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300005",
+    "name": "의료법인자산의료재단제천서울병원",
+    "field": "hvgc",
+    "from": 44,
+    "to": 45,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300007",
+    "name": "의료법인인화재단한국병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300007",
+    "name": "의료법인인화재단한국병원",
+    "field": "hvgc",
+    "from": 98,
+    "to": 102,
+    "delta": 4
+   },
+   {
+    "hpid": "A2300003",
+    "name": "의료법인정산의료재단효성병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 15,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300008",
+    "name": "청주성모병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300010",
+    "name": "건국대학교충주병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 15,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200046",
+    "name": "의료법인온세움의료재단온재병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200046",
+    "name": "의료법인온세움의료재단온재병원",
+    "field": "hvgc",
+    "from": 58,
+    "to": 57,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200015",
+    "name": "강원특별자치도원주의료원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100290",
+    "name": "의료법인자인의료재단더자인병원",
+    "field": "hvgc",
+    "from": 72,
+    "to": 71,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100049",
+    "name": "국립암센터",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100016",
+    "name": "순천의료재단성남정병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2121061",
+    "name": "의료법인덕산의료재단수원덕산병원",
+    "field": "hvgc",
+    "from": 105,
+    "to": 104,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100175",
+    "name": "의료법인토마스의료재단윌스기념병원",
+    "field": "hvgc",
+    "from": 78,
+    "to": 77,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100013",
+    "name": "의료법인록향의료재단신천연합병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100013",
+    "name": "의료법인록향의료재단신천연합병원",
+    "field": "hvgc",
+    "from": 31,
+    "to": 32,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100021",
+    "name": "의료법인플러스의료재단단원병원",
+    "field": "hvoc",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100045",
+    "name": "경기도의료원안성병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 12,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100194",
+    "name": "세종여주병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100122",
+    "name": "(의)효심의료재단용인서울병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 6,
+    "delta": -2
+   },
+   {
+    "hpid": "A2121142",
+    "name": "메디필드한강병원",
+    "field": "hvgc",
+    "from": 141,
+    "to": 140,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100034",
+    "name": "의료법인영동의료재단의정부백병원",
+    "field": "hvgc",
+    "from": 111,
+    "to": 110,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100150",
+    "name": "추병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100131",
+    "name": "메디인병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100022",
+    "name": "의료법인박애의료재단박애병원",
+    "field": "hvgc",
+    "from": 107,
+    "to": 106,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100036",
+    "name": "의료법인 일심의료재단 포천우리병원",
+    "field": "hvgc",
+    "from": 66,
+    "to": 68,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100018",
+    "name": "의료법인은혜와감사의료재단화성중앙종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800032",
+    "name": "강병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800014",
+    "name": "의료법인갑을의료재단 갑을장유병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800014",
+    "name": "의료법인갑을의료재단 갑을장유병원",
+    "field": "hvgc",
+    "from": 39,
+    "to": 38,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800014",
+    "name": "의료법인갑을의료재단 갑을장유병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 4,
+    "delta": 2
+   },
+   {
+    "hpid": "A2804593",
+    "name": "양산성모병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2804593",
+    "name": "양산성모병원",
+    "field": "hvgc",
+    "from": 150,
+    "to": 149,
+    "delta": -1
+   },
+   {
+    "hpid": "A2804593",
+    "name": "양산성모병원",
+    "field": "hvicc",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800090",
+    "name": "의령병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800009",
+    "name": "의료법인청아의료재단청아병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800021",
+    "name": "연세에스병원",
+    "field": "hvoc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800080",
+    "name": "함양성심병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700036",
+    "name": "의료법인서명의료재단세명종합병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700009",
+    "name": "의료법인삼백의료재단상주성모병원",
+    "field": "hvgc",
+    "from": 29,
+    "to": 28,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700011",
+    "name": "상주적십자병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700020",
+    "name": "영주자인병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700020",
+    "name": "영주자인병원",
+    "field": "hvgc",
+    "from": 39,
+    "to": 40,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700023",
+    "name": "의료법인서준의료재단예천권병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700023",
+    "name": "의료법인서준의료재단예천권병원",
+    "field": "hvgc",
+    "from": 78,
+    "to": 77,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700052",
+    "name": "울진군의료원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "E2700554",
+    "name": "청송군보건의료원",
+    "field": "hvec",
+    "from": 6,
+    "to": 4,
+    "delta": -2
+   },
+   {
+    "hpid": "A2702563",
+    "name": "의료법인은성의료재단좋은선린병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300006",
+    "name": "의료법인구의료재단구병원",
+    "field": "hvgc",
+    "from": 91,
+    "to": 89,
+    "delta": -2
+   },
+   {
+    "hpid": "A1300110",
+    "name": "더블유병원",
+    "field": "hvoc",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300038",
+    "name": "나사렛종합병원",
+    "field": "hvgc",
+    "from": 38,
+    "to": 39,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300076",
+    "name": "대구굿모닝병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "A1303923",
+    "name": "더필종합병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300081",
+    "name": "(재)미리내천주성삼성직수도회천주성삼병원",
+    "field": "hvgc",
+    "from": 37,
+    "to": 36,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300008",
+    "name": "곽병원",
+    "field": "hvgc",
+    "from": 24,
+    "to": 23,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600003",
+    "name": "대전한국병원",
+    "field": "hvgc",
+    "from": 55,
+    "to": 54,
+    "delta": -1
+   },
+   {
+    "hpid": "A1602246",
+    "name": "대청병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200026",
+    "name": "좋은문화병원",
+    "field": "hvgc",
+    "from": 110,
+    "to": 112,
+    "delta": 2
+   },
+   {
+    "hpid": "A1200026",
+    "name": "좋은문화병원",
+    "field": "hvoc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200009",
+    "name": "의료법인 광혜의료재단 광혜병원",
+    "field": "hvgc",
+    "from": 58,
+    "to": 57,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200008",
+    "name": "의료법인 은성의료재단 좋은강안병원",
+    "field": "hvgc",
+    "from": 166,
+    "to": 171,
+    "delta": 5
+   },
+   {
+    "hpid": "A1200024",
+    "name": "부산광역시의료원",
+    "field": "hvgc",
+    "from": 107,
+    "to": 108,
+    "delta": 1
+   },
+   {
+    "hpid": "A1205143",
+    "name": "의료법인 인당의료재단 해운대부민병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100036",
+    "name": "부민병원",
+    "field": "hvgc",
+    "from": 59,
+    "to": 60,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100024",
+    "name": "명지성모병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100029",
+    "name": "서울적십자병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100044",
+    "name": "녹색병원",
+    "field": "hvec",
+    "from": -3,
+    "to": -1,
+    "delta": 2
+   },
+   {
+    "hpid": "A1800417",
+    "name": "의료법인 영제 의료재단 엔케이세종병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A1800417",
+    "name": "의료법인 영제 의료재단 엔케이세종병원",
+    "field": "hvgc",
+    "from": 151,
+    "to": 149,
+    "delta": -2
+   },
+   {
+    "hpid": "A1700001",
+    "name": "서울산보람병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1700001",
+    "name": "서울산보람병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400004",
+    "name": "현대유비스병원",
+    "field": "hvgc",
+    "from": 25,
+    "to": 26,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400007",
+    "name": "의료법인 성수의료재단 인천백병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600029",
+    "name": "곡성사랑병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500006",
+    "name": "신가병원",
+    "field": "hvgc",
+    "from": 50,
+    "to": 49,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500017",
+    "name": "하남성심병원",
+    "field": "hvgc",
+    "from": 21,
+    "to": 22,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500018",
+    "name": "광주수완병원",
+    "field": "hvgc",
+    "from": 55,
+    "to": 56,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500004",
+    "name": "광주보훈병원",
+    "field": "hvgc",
+    "from": 104,
+    "to": 105,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600006",
+    "name": "광양사랑병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500009",
+    "name": "광주씨티병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600020",
+    "name": "목포기독병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600020",
+    "name": "목포기독병원",
+    "field": "hvgc",
+    "from": 125,
+    "to": 122,
+    "delta": -3
+   },
+   {
+    "hpid": "A2600003",
+    "name": "대송의료재단무안병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600003",
+    "name": "대송의료재단무안병원",
+    "field": "hvgc",
+    "from": 57,
+    "to": 58,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500010",
+    "name": "운암한국병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500003",
+    "name": "광주현대병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500003",
+    "name": "광주현대병원",
+    "field": "hvgc",
+    "from": 55,
+    "to": 57,
+    "delta": 2
+   },
+   {
+    "hpid": "A1500007",
+    "name": "광주희망병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500007",
+    "name": "광주희망병원",
+    "field": "hvgc",
+    "from": 65,
+    "to": 66,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500016",
+    "name": "광주한국병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 12,
+    "delta": 2
+   },
+   {
+    "hpid": "A1500016",
+    "name": "광주한국병원",
+    "field": "hvgc",
+    "from": 51,
+    "to": 49,
+    "delta": -2
+   },
+   {
+    "hpid": "A2600008",
+    "name": "순천제일병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600005",
+    "name": "의료법인한국의료재단한국병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600034",
+    "name": "의료법인 거명의료재단 영광기독병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600032",
+    "name": "완도대성병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2501890",
+    "name": "의료법인영경의료재단호성전주병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2900003",
+    "name": "의료법인 혜인의료재단 한국병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400010",
+    "name": "충청남도공주의료원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   }
+  ]
+ },
+ {
+  "ts": "2026-10-10T13:01:01",
+  "changes": [
+   {
+    "hpid": "A2200008",
+    "name": "강릉아산병원",
+    "field": "hvgc",
+    "from": 228,
+    "to": 227,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200001",
+    "name": "연세대학교원주세브란스기독병원",
+    "field": "hvec",
+    "from": 20,
+    "to": 21,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200013",
+    "name": "한림대학교춘천성심병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100042",
+    "name": "의료법인명지의료재단명지병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100042",
+    "name": "의료법인명지의료재단명지병원",
+    "field": "hvgc",
+    "from": 219,
+    "to": 220,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100033",
+    "name": "국민건강보험공단일산병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100005",
+    "name": "순천향대학교부속부천병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 6,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100005",
+    "name": "순천향대학교부속부천병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100001",
+    "name": "분당서울대학교병원",
+    "field": "hvec",
+    "from": -29,
+    "to": -28,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100001",
+    "name": "분당서울대학교병원",
+    "field": "hvgc",
+    "from": 394,
+    "to": 393,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100030",
+    "name": "차의과학대학교분당차병원",
+    "field": "hvec",
+    "from": 0,
+    "to": -3,
+    "delta": -3
+   },
+   {
+    "hpid": "A2100003",
+    "name": "고려대학교의과대학부속안산병원",
+    "field": "hvgc",
+    "from": 217,
+    "to": 218,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100004",
+    "name": "한림대학교성심병원",
+    "field": "hvgc",
+    "from": 232,
+    "to": 231,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100040",
+    "name": "가톨릭대학교의정부성모병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 20,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100040",
+    "name": "가톨릭대학교의정부성모병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800011",
+    "name": "양산부산대학교병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800011",
+    "name": "양산부산대학교병원",
+    "field": "hvgc",
+    "from": 286,
+    "to": 285,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700014",
+    "name": "의료법인안동병원",
+    "field": "hvgc",
+    "from": 163,
+    "to": 164,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300002",
+    "name": "경북대학교병원",
+    "field": "hvec",
+    "from": -1,
+    "to": -2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600006",
+    "name": "학교법인건양교육재단건양대학교병원",
+    "field": "hvec",
+    "from": 17,
+    "to": 16,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600001",
+    "name": "충남대학교병원",
+    "field": "hvec",
+    "from": -8,
+    "to": -6,
+    "delta": 2
+   },
+   {
+    "hpid": "A1600001",
+    "name": "충남대학교병원",
+    "field": "hvgc",
+    "from": 303,
+    "to": 305,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100043",
+    "name": "강동경희대학교병원",
+    "field": "hvec",
+    "from": -1,
+    "to": 0,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100043",
+    "name": "강동경희대학교병원",
+    "field": "hvgc",
+    "from": 305,
+    "to": 306,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100014",
+    "name": "고려대학교의과대학부속구로병원",
+    "field": "hvgc",
+    "from": 212,
+    "to": 213,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100013",
+    "name": "한양대학교병원",
+    "field": "hvoc",
+    "from": 16,
+    "to": 15,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100008",
+    "name": "학교법인고려중앙학원고려대학교의과대학부속병원(안암병원)",
+    "field": "hvgc",
+    "from": 261,
+    "to": 260,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100008",
+    "name": "학교법인고려중앙학원고려대학교의과대학부속병원(안암병원)",
+    "field": "hvoc",
+    "from": 24,
+    "to": 23,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100005",
+    "name": "이화여자대학교의과대학부속목동병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100017",
+    "name": "서울대학교병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100017",
+    "name": "서울대학교병원",
+    "field": "hvgc",
+    "from": 415,
+    "to": 416,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100035",
+    "name": "서울특별시서울의료원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1700004",
+    "name": "학교법인울산공업학원울산대학교병원",
+    "field": "hvgc",
+    "from": 237,
+    "to": 236,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400001",
+    "name": "의료법인 길의료재단 길병원",
+    "field": "hvoc",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400002",
+    "name": "인하대학교의과대학부속병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 4,
+    "delta": -2
+   },
+   {
+    "hpid": "A1400002",
+    "name": "인하대학교의과대학부속병원",
+    "field": "hvgc",
+    "from": 243,
+    "to": 242,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500002",
+    "name": "전남대학교병원",
+    "field": "hvgc",
+    "from": 305,
+    "to": 306,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600019",
+    "name": "성가롤로병원",
+    "field": "hvec",
+    "from": -2,
+    "to": -3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500001",
+    "name": "원광대학교병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500002",
+    "name": "전북대학교병원",
+    "field": "hvoc",
+    "from": 20,
+    "to": 19,
+    "delta": -1
+   },
+   {
+    "hpid": "A2900001",
+    "name": "제주한라병원",
+    "field": "hvec",
+    "from": -3,
+    "to": -2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400001",
+    "name": "학교법인동은학원순천향대학교부속천안병원",
+    "field": "hvoc",
+    "from": 21,
+    "to": 20,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300001",
+    "name": "충북대학교병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 10,
+    "delta": -2
+   },
+   {
+    "hpid": "A2300001",
+    "name": "충북대학교병원",
+    "field": "hvoc",
+    "from": 15,
+    "to": 16,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200005",
+    "name": "의료법인강릉동인병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200007",
+    "name": "강원특별자치도삼척의료원",
+    "field": "hvec",
+    "from": 15,
+    "to": 14,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100038",
+    "name": "인제대학교일산백병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100007",
+    "name": "광명성애병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100007",
+    "name": "광명성애병원",
+    "field": "hvgc",
+    "from": 61,
+    "to": 60,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100007",
+    "name": "광명성애병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100155",
+    "name": "참조은병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 3,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100048",
+    "name": "원광대학교산본병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100006",
+    "name": "의료법인인봉의료재단뉴고려병원",
+    "field": "hvgc",
+    "from": 80,
+    "to": 79,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100041",
+    "name": "남양주한양병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100055",
+    "name": "부천세종병원",
+    "field": "hvicc",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100052",
+    "name": "가톨릭대학교부천성모병원",
+    "field": "hvec",
+    "from": 19,
+    "to": 18,
+    "delta": -1
+   },
+   {
+    "hpid": "A2116806",
+    "name": "성남시의료원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100009",
+    "name": "의료법인녹산의료재단동수원병원",
+    "field": "hvgc",
+    "from": 115,
+    "to": 116,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100008",
+    "name": "의료법인남촌의료재단시화병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100017",
+    "name": "대아의료재단한도병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100017",
+    "name": "대아의료재단한도병원",
+    "field": "hvgc",
+    "from": 97,
+    "to": 96,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100017",
+    "name": "대아의료재단한도병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100024",
+    "name": "오산한국병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100024",
+    "name": "오산한국병원",
+    "field": "hvgc",
+    "from": 58,
+    "to": 57,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100020",
+    "name": "연세대학교의과대학용인세브란스병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 12,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100020",
+    "name": "연세대학교의과대학용인세브란스병원",
+    "field": "hvgc",
+    "from": 230,
+    "to": 229,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100029",
+    "name": "강남병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100029",
+    "name": "강남병원",
+    "field": "hvicc",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2117994",
+    "name": "학교법인을지학원의정부을지대학교병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 13,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100193",
+    "name": "경기도의료원이천병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100035",
+    "name": "경기도의료원파주병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 12,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100028",
+    "name": "의료법인백송의료재단굿모닝병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2113246",
+    "name": "의료법인양진의료재단평택성모병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2113246",
+    "name": "의료법인양진의료재단평택성모병원",
+    "field": "hvgc",
+    "from": 85,
+    "to": 86,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100046",
+    "name": "한림대학교동탄성심병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 19,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800010",
+    "name": "의료법인환명의료재단 조은금강병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800043",
+    "name": "한일병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 4,
+    "delta": 2
+   },
+   {
+    "hpid": "A2800003",
+    "name": "제일병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800003",
+    "name": "제일병원",
+    "field": "hvicc",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800017",
+    "name": "의료법인합포의료재단에스엠지연세병원",
+    "field": "hvgc",
+    "from": 39,
+    "to": 41,
+    "delta": 2
+   },
+   {
+    "hpid": "A2800007",
+    "name": "창원한마음병원",
+    "field": "hvgc",
+    "from": 140,
+    "to": 141,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800004",
+    "name": "창원파티마병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 5,
+    "delta": -2
+   },
+   {
+    "hpid": "A2800004",
+    "name": "창원파티마병원",
+    "field": "hvgc",
+    "from": 198,
+    "to": 197,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700012",
+    "name": "의료법인덕산의료재단김천제일병원",
+    "field": "hvgc",
+    "from": 81,
+    "to": 80,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700012",
+    "name": "의료법인덕산의료재단김천제일병원",
+    "field": "hvicc",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700006",
+    "name": "의료법인동춘의료재단문경제일병원",
+    "field": "hvgc",
+    "from": 41,
+    "to": 40,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700004",
+    "name": "안동성소병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700002",
+    "name": "포항세명기독병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 6,
+    "delta": -2
+   },
+   {
+    "hpid": "A2700002",
+    "name": "포항세명기독병원",
+    "field": "hvoc",
+    "from": 14,
+    "to": 12,
+    "delta": -2
+   },
+   {
+    "hpid": "A1300004",
+    "name": "대구가톨릭대학교병원",
+    "field": "hvec",
+    "from": 0,
+    "to": -1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300003",
+    "name": "계명대학교동산병원",
+    "field": "hvec",
+    "from": 0,
+    "to": -1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300003",
+    "name": "계명대학교동산병원",
+    "field": "hvoc",
+    "from": 23,
+    "to": 24,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300009",
+    "name": "대구파티마병원",
+    "field": "hvec",
+    "from": -9,
+    "to": -11,
+    "delta": -2
+   },
+   {
+    "hpid": "A1600002",
+    "name": "학교법인을지학원대전을지대학교병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 11,
+    "delta": 2
+   },
+   {
+    "hpid": "A1600002",
+    "name": "학교법인을지학원대전을지대학교병원",
+    "field": "hvgc",
+    "from": 120,
+    "to": 119,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600007",
+    "name": "의료법인영훈의료재단유성선병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600007",
+    "name": "의료법인영훈의료재단유성선병원",
+    "field": "hvoc",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600008",
+    "name": "의료법인영훈의료재단대전선병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600008",
+    "name": "의료법인영훈의료재단대전선병원",
+    "field": "hvgc",
+    "from": 76,
+    "to": 75,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200018",
+    "name": "대동병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200001",
+    "name": "인제대학교부산백병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200005",
+    "name": "의료법인 은성의료재단 좋은삼선병원",
+    "field": "hvicc",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200004",
+    "name": "고신대학교복음병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 15,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200007",
+    "name": "비에이치에스한서병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100010",
+    "name": "삼성서울병원",
+    "field": "hvec",
+    "from": -2,
+    "to": -3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100010",
+    "name": "삼성서울병원",
+    "field": "hvgc",
+    "from": 573,
+    "to": 572,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100010",
+    "name": "삼성서울병원",
+    "field": "hvoc",
+    "from": 33,
+    "to": 32,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100028",
+    "name": "성심의료재단강동성심병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100028",
+    "name": "성심의료재단강동성심병원",
+    "field": "hvgc",
+    "from": 255,
+    "to": 256,
+    "delta": 1
+   },
+   {
+    "hpid": "A1120796",
+    "name": "이화여자대학교의과대학부속서울병원",
+    "field": "hvec",
+    "from": -8,
+    "to": -9,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100002",
+    "name": "건국대학교병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100048",
+    "name": "노원을지대학교병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100001",
+    "name": "경희대학교병원",
+    "field": "hvgc",
+    "from": 274,
+    "to": 273,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100040",
+    "name": "서울특별시보라매병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 17,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100040",
+    "name": "서울특별시보라매병원",
+    "field": "hvgc",
+    "from": 304,
+    "to": 305,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100003",
+    "name": "중앙대학교병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 15,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100007",
+    "name": "연세대학교의과대학세브란스병원",
+    "field": "hvec",
+    "from": -3,
+    "to": 0,
+    "delta": 3
+   },
+   {
+    "hpid": "A1100012",
+    "name": "학교법인가톨릭학원가톨릭대학교서울성모병원",
+    "field": "hvec",
+    "from": -12,
+    "to": -13,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100009",
+    "name": "재단법인아산사회복지재단 서울아산병원",
+    "field": "hvgc",
+    "from": 735,
+    "to": 731,
+    "delta": -4
+   },
+   {
+    "hpid": "A1100004",
+    "name": "순천향대학교부속서울병원",
+    "field": "hvgc",
+    "from": 229,
+    "to": 230,
+    "delta": 1
+   },
+   {
+    "hpid": "A1121013",
+    "name": "가톨릭대학교은평성모병원",
+    "field": "hvec",
+    "from": 0,
+    "to": 2,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100052",
+    "name": "국립중앙의료원",
+    "field": "hvicc",
+    "from": 9,
+    "to": 4,
+    "delta": -5
+   },
+   {
+    "hpid": "A1700028",
+    "name": "의료법인정안의료재단중앙병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "A1700002",
+    "name": "의료법인동강의료재단동강병원",
+    "field": "hvgc",
+    "from": 154,
+    "to": 153,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400010",
+    "name": "검단탑병원",
+    "field": "hvgc",
+    "from": 59,
+    "to": 60,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400012",
+    "name": "가톨릭대학교 인천성모병원",
+    "field": "hvec",
+    "from": -7,
+    "to": -8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400013",
+    "name": "안은의료재단 부평세림병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400015",
+    "name": "가톨릭관동대학교국제성모병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 7,
+    "delta": 3
+   },
+   {
+    "hpid": "A1400011",
+    "name": "의료법인 나사렛의료재단 나사렛국제병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500019",
+    "name": "KS병원",
+    "field": "hvgc",
+    "from": 28,
+    "to": 29,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500011",
+    "name": "첨단종합병원",
+    "field": "hvec",
+    "from": 17,
+    "to": 18,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500011",
+    "name": "첨단종합병원",
+    "field": "hvgc",
+    "from": 128,
+    "to": 130,
+    "delta": 2
+   },
+   {
+    "hpid": "A1500020",
+    "name": "서광병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500020",
+    "name": "서광병원",
+    "field": "hvgc",
+    "from": 69,
+    "to": 68,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600001",
+    "name": "화순전남대학교병원",
+    "field": "hvgc",
+    "from": 161,
+    "to": 162,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500012",
+    "name": "의료법인오성의료재단동군산병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500004",
+    "name": "전북특별자치도남원의료원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500011",
+    "name": "의료법인대산의료재단익산병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500011",
+    "name": "의료법인대산의료재단익산병원",
+    "field": "hvgc",
+    "from": 79,
+    "to": 78,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500011",
+    "name": "의료법인대산의료재단익산병원",
+    "field": "hvicc",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500005",
+    "name": "의료법인영경의료재단전주병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500005",
+    "name": "의료법인영경의료재단전주병원",
+    "field": "hvgc",
+    "from": 43,
+    "to": 42,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500008",
+    "name": "재단법인 아산사회복지재단 정읍아산병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2900005",
+    "name": "한마음병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400009",
+    "name": "의료법인백제병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400003",
+    "name": "서산중앙병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 8,
+    "delta": 2
+   },
+   {
+    "hpid": "A2402257",
+    "name": "아산충무병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2402257",
+    "name": "아산충무병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2402257",
+    "name": "아산충무병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300007",
+    "name": "의료법인인화재단한국병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 7,
+    "delta": 5
+   },
+   {
+    "hpid": "A2300007",
+    "name": "의료법인인화재단한국병원",
+    "field": "hvgc",
+    "from": 102,
+    "to": 101,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300003",
+    "name": "의료법인정산의료재단효성병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200003",
+    "name": "의료법인동해동인병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200037",
+    "name": "의료법인성심의료재단양구성심병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200024",
+    "name": "의료법인성지의료재단성지병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200024",
+    "name": "의료법인성지의료재단성지병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2201730",
+    "name": "철원병원",
+    "field": "hvec",
+    "from": 0,
+    "to": 1,
+    "delta": 1
+   },
+   {
+    "hpid": "E2200025",
+    "name": "화천군보건의료원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100290",
+    "name": "의료법인자인의료재단더자인병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100290",
+    "name": "의료법인자인의료재단더자인병원",
+    "field": "hvgc",
+    "from": 71,
+    "to": 70,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100258",
+    "name": "국군수도병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 12,
+    "delta": 1
+   },
+   {
+    "hpid": "A2121061",
+    "name": "의료법인덕산의료재단수원덕산병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 13,
+    "delta": -2
+   },
+   {
+    "hpid": "A2121061",
+    "name": "의료법인덕산의료재단수원덕산병원",
+    "field": "hvgc",
+    "from": 104,
+    "to": 105,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100175",
+    "name": "의료법인토마스의료재단윌스기념병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100124",
+    "name": "의료법인칠석의료재단사랑의병원",
+    "field": "hvgc",
+    "from": 53,
+    "to": 55,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100305",
+    "name": "안성성모병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100305",
+    "name": "안성성모병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 1,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100089",
+    "name": "양평병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100194",
+    "name": "세종여주병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 0,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100122",
+    "name": "(의)효심의료재단용인서울병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100150",
+    "name": "추병원",
+    "field": "hvgc",
+    "from": 61,
+    "to": 62,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100036",
+    "name": "의료법인 일심의료재단 포천우리병원",
+    "field": "hvgc",
+    "from": 68,
+    "to": 69,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100018",
+    "name": "의료법인은혜와감사의료재단화성중앙종합병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800008",
+    "name": "의료법인 거붕 백병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800005",
+    "name": "의료법인 대우의료재단대우병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800032",
+    "name": "강병원",
+    "field": "hvoc",
+    "from": 0,
+    "to": 1,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800113",
+    "name": "밀양병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 1,
+    "delta": -4
+   },
+   {
+    "hpid": "A2800068",
+    "name": "의료법인승연의료재단 삼천포서울병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800090",
+    "name": "의령병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800084",
+    "name": "반도병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800084",
+    "name": "반도병원",
+    "field": "hvgc",
+    "from": 75,
+    "to": 74,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800015",
+    "name": "의료법인 문병욱의료재단 진주고려병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800015",
+    "name": "의료법인 문병욱의료재단 진주고려병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 0,
+    "delta": -3
+   },
+   {
+    "hpid": "A2800037",
+    "name": "진주복음병원",
+    "field": "hvgc",
+    "from": 37,
+    "to": 36,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700036",
+    "name": "의료법인서명의료재단세명종합병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700070",
+    "name": "의료법인영암의료재단고령영생병원",
+    "field": "hvgc",
+    "from": 33,
+    "to": 32,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700015",
+    "name": "구미강동병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700031",
+    "name": "영주기독병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "E2700553",
+    "name": "울릉군보건의료원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700038",
+    "name": "의료법인대남의료재단청도대남병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "E2700554",
+    "name": "청송군보건의료원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700008",
+    "name": "에스포항병원",
+    "field": "hvgc",
+    "from": 99,
+    "to": 98,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700008",
+    "name": "에스포항병원",
+    "field": "hvicc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300006",
+    "name": "의료법인구의료재단구병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300006",
+    "name": "의료법인구의료재단구병원",
+    "field": "hvgc",
+    "from": 89,
+    "to": 88,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300045",
+    "name": "삼일병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 9,
+    "delta": 2
+   },
+   {
+    "hpid": "A1300045",
+    "name": "삼일병원",
+    "field": "hvgc",
+    "from": 79,
+    "to": 78,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300018",
+    "name": "강남종합병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300076",
+    "name": "대구굿모닝병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 11,
+    "delta": -2
+   },
+   {
+    "hpid": "A1303923",
+    "name": "더필종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300081",
+    "name": "(재)미리내천주성삼성직수도회천주성삼병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1602246",
+    "name": "대청병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1602246",
+    "name": "대청병원",
+    "field": "hvgc",
+    "from": 136,
+    "to": 138,
+    "delta": 2
+   },
+   {
+    "hpid": "A1200015",
+    "name": "동남권원자력의학원",
+    "field": "hvgc",
+    "from": 104,
+    "to": 105,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200013",
+    "name": "부산성모병원(재단법인 천주교부산교구유지재단)",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200026",
+    "name": "좋은문화병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200017",
+    "name": "의료법인정화의료재단 봉생기념병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200017",
+    "name": "의료법인정화의료재단 봉생기념병원",
+    "field": "hvgc",
+    "from": 83,
+    "to": 81,
+    "delta": -2
+   },
+   {
+    "hpid": "A1200011",
+    "name": "동래봉생병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200009",
+    "name": "의료법인 광혜의료재단 광혜병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 3,
+    "delta": -2
+   },
+   {
+    "hpid": "A1200006",
+    "name": "의료법인 인당의료재단 부민병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200008",
+    "name": "의료법인 은성의료재단 좋은강안병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200024",
+    "name": "부산광역시의료원",
+    "field": "hvec",
+    "from": 13,
+    "to": 14,
+    "delta": 1
+   },
+   {
+    "hpid": "A1205143",
+    "name": "의료법인 인당의료재단 해운대부민병원",
+    "field": "hvgc",
+    "from": 69,
+    "to": 70,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100051",
+    "name": "혜민병원",
+    "field": "hvoc",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100049",
+    "name": "희명병원",
+    "field": "hvgc",
+    "from": 133,
+    "to": 132,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100049",
+    "name": "희명병원",
+    "field": "hvicc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A1122033",
+    "name": "기쁨병원",
+    "field": "hvgc",
+    "from": 56,
+    "to": 55,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100019",
+    "name": "홍익병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 3,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100223",
+    "name": "서울특별시서남병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 15,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100223",
+    "name": "서울특별시서남병원",
+    "field": "hvgc",
+    "from": 73,
+    "to": 72,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100023",
+    "name": "의료법인청구성심병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100032",
+    "name": "세란병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100044",
+    "name": "녹색병원",
+    "field": "hvec",
+    "from": -1,
+    "to": 1,
+    "delta": 2
+   },
+   {
+    "hpid": "A1403871",
+    "name": "인천힘찬종합병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400004",
+    "name": "현대유비스병원",
+    "field": "hvec",
+    "from": 17,
+    "to": 15,
+    "delta": -2
+   },
+   {
+    "hpid": "A1400008",
+    "name": "(의)성세의료재단 뉴성민병원",
+    "field": "hvgc",
+    "from": 128,
+    "to": 129,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500006",
+    "name": "신가병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1502007",
+    "name": "광주센트럴병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600006",
+    "name": "광양사랑병원",
+    "field": "hvgc",
+    "from": 66,
+    "to": 65,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500013",
+    "name": "동아병원",
+    "field": "hvgc",
+    "from": 98,
+    "to": 99,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500009",
+    "name": "광주씨티병원",
+    "field": "hvoc",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600020",
+    "name": "목포기독병원",
+    "field": "hvgc",
+    "from": 122,
+    "to": 121,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600022",
+    "name": "목포시의료원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600052",
+    "name": "보성아산병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500015",
+    "name": "광주병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500010",
+    "name": "운암한국병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500003",
+    "name": "광주현대병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500005",
+    "name": "광주일곡병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500016",
+    "name": "광주한국병원",
+    "field": "hvgc",
+    "from": 49,
+    "to": 48,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600010",
+    "name": "여수전남병원",
+    "field": "hvgc",
+    "from": 53,
+    "to": 54,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600021",
+    "name": "의료법인우범의료재단장흥종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 8,
+    "delta": 2
+   },
+   {
+    "hpid": "A2500009",
+    "name": "의료법인석천재단고창병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500038",
+    "name": "김제우석병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "E2500019",
+    "name": "무주군보건의료원",
+    "field": "hvec",
+    "from": 1,
+    "to": 3,
+    "delta": 2
+   },
+   {
+    "hpid": "A2501890",
+    "name": "의료법인영경의료재단호성전주병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400010",
+    "name": "충청남도공주의료원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400039",
+    "name": "현대병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400039",
+    "name": "현대병원",
+    "field": "hvgc",
+    "from": 20,
+    "to": 21,
+    "delta": 1
+   },
+   {
+    "hpid": "E2400033",
+    "name": "태안군보건의료원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300006",
+    "name": "충청북도청주의료원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300004",
+    "name": "충청북도충주의료원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   }
+  ]
+ },
+ {
+  "ts": "2026-10-10T13:06:00",
+  "changes": [
+   {
+    "hpid": "A2200008",
+    "name": "강릉아산병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200008",
+    "name": "강릉아산병원",
+    "field": "hvgc",
+    "from": 227,
+    "to": 226,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200001",
+    "name": "연세대학교원주세브란스기독병원",
+    "field": "hvgc",
+    "from": 207,
+    "to": 206,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200013",
+    "name": "한림대학교춘천성심병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 5,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100042",
+    "name": "의료법인명지의료재단명지병원",
+    "field": "hvgc",
+    "from": 220,
+    "to": 219,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100033",
+    "name": "국민건강보험공단일산병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100033",
+    "name": "국민건강보험공단일산병원",
+    "field": "hvgc",
+    "from": 208,
+    "to": 209,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100005",
+    "name": "순천향대학교부속부천병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100001",
+    "name": "분당서울대학교병원",
+    "field": "hvec",
+    "from": -28,
+    "to": -29,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100001",
+    "name": "분당서울대학교병원",
+    "field": "hvgc",
+    "from": 393,
+    "to": 395,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100030",
+    "name": "차의과학대학교분당차병원",
+    "field": "hvec",
+    "from": -3,
+    "to": -2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100030",
+    "name": "차의과학대학교분당차병원",
+    "field": "hvgc",
+    "from": 242,
+    "to": 243,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100003",
+    "name": "고려대학교의과대학부속안산병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100040",
+    "name": "가톨릭대학교의정부성모병원",
+    "field": "hvec",
+    "from": 20,
+    "to": 19,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800011",
+    "name": "양산부산대학교병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700014",
+    "name": "의료법인안동병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700016",
+    "name": "포항성모병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 14,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600001",
+    "name": "충남대학교병원",
+    "field": "hvec",
+    "from": -6,
+    "to": -5,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200003",
+    "name": "동아대학교병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200022",
+    "name": "인제대학교 해운대백병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100043",
+    "name": "강동경희대학교병원",
+    "field": "hvec",
+    "from": 0,
+    "to": -1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100014",
+    "name": "고려대학교의과대학부속구로병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100014",
+    "name": "고려대학교의과대학부속구로병원",
+    "field": "hvgc",
+    "from": 213,
+    "to": 212,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100013",
+    "name": "한양대학교병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100008",
+    "name": "학교법인고려중앙학원고려대학교의과대학부속병원(안암병원)",
+    "field": "hvec",
+    "from": 12,
+    "to": 11,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100017",
+    "name": "서울대학교병원",
+    "field": "hvgc",
+    "from": 416,
+    "to": 418,
+    "delta": 2
+   },
+   {
+    "hpid": "A1700004",
+    "name": "학교법인울산공업학원울산대학교병원",
+    "field": "hvgc",
+    "from": 236,
+    "to": 235,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500002",
+    "name": "전남대학교병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500002",
+    "name": "전남대학교병원",
+    "field": "hvgc",
+    "from": 306,
+    "to": 305,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500001",
+    "name": "조선대학교병원",
+    "field": "hvgc",
+    "from": 232,
+    "to": 231,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600019",
+    "name": "성가롤로병원",
+    "field": "hvec",
+    "from": -3,
+    "to": -2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500001",
+    "name": "원광대학교병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500002",
+    "name": "전북대학교병원",
+    "field": "hvec",
+    "from": 16,
+    "to": 15,
+    "delta": -1
+   },
+   {
+    "hpid": "A2900001",
+    "name": "제주한라병원",
+    "field": "hvec",
+    "from": -2,
+    "to": -4,
+    "delta": -2
+   },
+   {
+    "hpid": "A2400002",
+    "name": "단국대학교의과대학부속병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400002",
+    "name": "단국대학교의과대학부속병원",
+    "field": "hvgc",
+    "from": 251,
+    "to": 250,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400001",
+    "name": "학교법인동은학원순천향대학교부속천안병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 15,
+    "delta": 3
+   },
+   {
+    "hpid": "A2400001",
+    "name": "학교법인동은학원순천향대학교부속천안병원",
+    "field": "hvgc",
+    "from": 291,
+    "to": 292,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400001",
+    "name": "학교법인동은학원순천향대학교부속천안병원",
+    "field": "hvoc",
+    "from": 20,
+    "to": 19,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300001",
+    "name": "충북대학교병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300001",
+    "name": "충북대학교병원",
+    "field": "hvgc",
+    "from": 297,
+    "to": 298,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200009",
+    "name": "강원대학교병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 10,
+    "delta": -2
+   },
+   {
+    "hpid": "A2100038",
+    "name": "인제대학교일산백병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100038",
+    "name": "인제대학교일산백병원",
+    "field": "hvgc",
+    "from": 236,
+    "to": 235,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100007",
+    "name": "광명성애병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100155",
+    "name": "참조은병원",
+    "field": "hvicc",
+    "from": -3,
+    "to": -4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100048",
+    "name": "원광대학교산본병원",
+    "field": "hvec",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100053",
+    "name": "의료법인우리의료재단김포우리병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100037",
+    "name": "현대병원",
+    "field": "hvoc",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100055",
+    "name": "부천세종병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 12,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100052",
+    "name": "가톨릭대학교부천성모병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 19,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100025",
+    "name": "대진의료재단분당제생병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2117135",
+    "name": "의료법인명인의료재단화홍병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 8,
+    "delta": -2
+   },
+   {
+    "hpid": "A2117135",
+    "name": "의료법인명인의료재단화홍병원",
+    "field": "hvgc",
+    "from": 63,
+    "to": 64,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100009",
+    "name": "의료법인녹산의료재단동수원병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100017",
+    "name": "대아의료재단한도병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100017",
+    "name": "대아의료재단한도병원",
+    "field": "hvgc",
+    "from": 96,
+    "to": 95,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100017",
+    "name": "대아의료재단한도병원",
+    "field": "hvoc",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100024",
+    "name": "오산한국병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100019",
+    "name": "(의)영문의료재단다보스병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100035",
+    "name": "경기도의료원파주병원",
+    "field": "hvgc",
+    "from": 80,
+    "to": 79,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100028",
+    "name": "의료법인백송의료재단굿모닝병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100028",
+    "name": "의료법인백송의료재단굿모닝병원",
+    "field": "hvgc",
+    "from": 82,
+    "to": 83,
+    "delta": 1
+   },
+   {
+    "hpid": "A2113246",
+    "name": "의료법인양진의료재단평택성모병원",
+    "field": "hvgc",
+    "from": 86,
+    "to": 88,
+    "delta": 2
+   },
+   {
+    "hpid": "A2100046",
+    "name": "한림대학교동탄성심병원",
+    "field": "hvec",
+    "from": 19,
+    "to": 20,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800006",
+    "name": "의료법인숭인의료재단 김해복음병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 12,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800006",
+    "name": "의료법인숭인의료재단 김해복음병원",
+    "field": "hvgc",
+    "from": 42,
+    "to": 41,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800003",
+    "name": "제일병원",
+    "field": "hvgc",
+    "from": 71,
+    "to": 70,
+    "delta": -1
+   },
+   {
+    "hpid": "A2803505",
+    "name": "창원경상국립대학교병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 7,
+    "delta": -2
+   },
+   {
+    "hpid": "A2800007",
+    "name": "창원한마음병원",
+    "field": "hvgc",
+    "from": 141,
+    "to": 142,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800004",
+    "name": "창원파티마병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700003",
+    "name": "동국대학교의과대학경주병원",
+    "field": "hvgc",
+    "from": 112,
+    "to": 111,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700004",
+    "name": "안동성소병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 6,
+    "delta": 2
+   },
+   {
+    "hpid": "A1300004",
+    "name": "대구가톨릭대학교병원",
+    "field": "hvec",
+    "from": -1,
+    "to": 0,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300004",
+    "name": "대구가톨릭대학교병원",
+    "field": "hvgc",
+    "from": 356,
+    "to": 355,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300003",
+    "name": "계명대학교동산병원",
+    "field": "hvec",
+    "from": -1,
+    "to": 0,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600002",
+    "name": "학교법인을지학원대전을지대학교병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 9,
+    "delta": -2
+   },
+   {
+    "hpid": "A1600002",
+    "name": "학교법인을지학원대전을지대학교병원",
+    "field": "hvgc",
+    "from": 119,
+    "to": 120,
+    "delta": 1
+   },
+   {
+    "hpid": "A1600007",
+    "name": "의료법인영훈의료재단유성선병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600008",
+    "name": "의료법인영훈의료재단대전선병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1600008",
+    "name": "의료법인영훈의료재단대전선병원",
+    "field": "hvgc",
+    "from": 75,
+    "to": 76,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200018",
+    "name": "대동병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200018",
+    "name": "대동병원",
+    "field": "hvgc",
+    "from": 81,
+    "to": 82,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200001",
+    "name": "인제대학교부산백병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200005",
+    "name": "의료법인 은성의료재단 좋은삼선병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200004",
+    "name": "고신대학교복음병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 14,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100015",
+    "name": "연세대학교의과대학강남세브란스병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100015",
+    "name": "연세대학교의과대학강남세브란스병원",
+    "field": "hvgc",
+    "from": 267,
+    "to": 268,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100053",
+    "name": "한국보훈복지의료공단 중앙보훈병원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100053",
+    "name": "한국보훈복지의료공단 중앙보훈병원",
+    "field": "hvgc",
+    "from": 248,
+    "to": 249,
+    "delta": 1
+   },
+   {
+    "hpid": "A1120796",
+    "name": "이화여자대학교의과대학부속서울병원",
+    "field": "hvec",
+    "from": -9,
+    "to": -8,
+    "delta": 1
+   },
+   {
+    "hpid": "A1120796",
+    "name": "이화여자대학교의과대학부속서울병원",
+    "field": "hvgc",
+    "from": 262,
+    "to": 264,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100048",
+    "name": "노원을지대학교병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100020",
+    "name": "의료법인한전의료재단 한일병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 10,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100001",
+    "name": "경희대학교병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100040",
+    "name": "서울특별시보라매병원",
+    "field": "hvec",
+    "from": 17,
+    "to": 18,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100040",
+    "name": "서울특별시보라매병원",
+    "field": "hvgc",
+    "from": 305,
+    "to": 306,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100007",
+    "name": "연세대학교의과대학세브란스병원",
+    "field": "hvgc",
+    "from": 612,
+    "to": 618,
+    "delta": 6
+   },
+   {
+    "hpid": "A1100009",
+    "name": "재단법인아산사회복지재단 서울아산병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 12,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100009",
+    "name": "재단법인아산사회복지재단 서울아산병원",
+    "field": "hvgc",
+    "from": 731,
+    "to": 728,
+    "delta": -3
+   },
+   {
+    "hpid": "A1100054",
+    "name": "성애의료재단성애병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 6,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100054",
+    "name": "성애의료재단성애병원",
+    "field": "hvgc",
+    "from": 41,
+    "to": 42,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100054",
+    "name": "성애의료재단성애병원",
+    "field": "hvoc",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100004",
+    "name": "순천향대학교부속서울병원",
+    "field": "hvoc",
+    "from": 13,
+    "to": 11,
+    "delta": -2
+   },
+   {
+    "hpid": "A1121013",
+    "name": "가톨릭대학교은평성모병원",
+    "field": "hvgc",
+    "from": 302,
+    "to": 301,
+    "delta": -1
+   },
+   {
+    "hpid": "A1800441",
+    "name": "세종충남대학교병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 8,
+    "delta": -2
+   },
+   {
+    "hpid": "A1700025",
+    "name": "의료법인송은의료재단울산시티병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400010",
+    "name": "검단탑병원",
+    "field": "hvgc",
+    "from": 60,
+    "to": 59,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400010",
+    "name": "검단탑병원",
+    "field": "hvicc",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A1403372",
+    "name": "인천세종병원",
+    "field": "hvgc",
+    "from": 71,
+    "to": 70,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400014",
+    "name": "의료법인인성의료재단한림병원",
+    "field": "hvgc",
+    "from": 62,
+    "to": 63,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400016",
+    "name": "인천사랑병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400016",
+    "name": "인천사랑병원",
+    "field": "hvgc",
+    "from": 60,
+    "to": 59,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400012",
+    "name": "가톨릭대학교 인천성모병원",
+    "field": "hvec",
+    "from": -8,
+    "to": -9,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400013",
+    "name": "안은의료재단 부평세림병원",
+    "field": "hvgc",
+    "from": 30,
+    "to": 31,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400015",
+    "name": "가톨릭관동대학교국제성모병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1400015",
+    "name": "가톨릭관동대학교국제성모병원",
+    "field": "hvgc",
+    "from": 249,
+    "to": 250,
+    "delta": 1
+   },
+   {
+    "hpid": "A1400003",
+    "name": "의료법인 루가의료재단 나은병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500019",
+    "name": "KS병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A1500011",
+    "name": "첨단종합병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 17,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500021",
+    "name": "광주기독병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600014",
+    "name": "여천전남병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 14,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600001",
+    "name": "화순전남대학교병원",
+    "field": "hvgc",
+    "from": 162,
+    "to": 163,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500011",
+    "name": "의료법인대산의료재단익산병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500056",
+    "name": "대자인병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 9,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500056",
+    "name": "대자인병원",
+    "field": "hvgc",
+    "from": 18,
+    "to": 20,
+    "delta": 2
+   },
+   {
+    "hpid": "A2500005",
+    "name": "의료법인영경의료재단전주병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500005",
+    "name": "의료법인영경의료재단전주병원",
+    "field": "hvgc",
+    "from": 42,
+    "to": 41,
+    "delta": -1
+   },
+   {
+    "hpid": "A2500008",
+    "name": "재단법인 아산사회복지재단 정읍아산병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2900007",
+    "name": "제주대학교병원",
+    "field": "hvec",
+    "from": -2,
+    "to": -3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2900006",
+    "name": "의료법인중앙의료재단중앙병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2900006",
+    "name": "의료법인중앙의료재단중앙병원",
+    "field": "hvicc",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2400008",
+    "name": "당진종합병원",
+    "field": "hvgc",
+    "from": 109,
+    "to": 111,
+    "delta": 2
+   },
+   {
+    "hpid": "A2400011",
+    "name": "재단법인아산사회복지재단보령아산병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 14,
+    "delta": 1
+   },
+   {
+    "hpid": "A2400012",
+    "name": "의료법인영서의료재단천안충무병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 9,
+    "delta": -2
+   },
+   {
+    "hpid": "A2400007",
+    "name": "충청남도홍성의료원",
+    "field": "hvec",
+    "from": 14,
+    "to": 13,
+    "delta": -1
+   },
+   {
+    "hpid": "A2300009",
+    "name": "의료법인명지의료재단명지병원",
+    "field": "hvgc",
+    "from": 62,
+    "to": 63,
+    "delta": 1
+   },
+   {
+    "hpid": "A2300007",
+    "name": "의료법인인화재단한국병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 9,
+    "delta": 2
+   },
+   {
+    "hpid": "A2300010",
+    "name": "건국대학교충주병원",
+    "field": "hvec",
+    "from": 15,
+    "to": 14,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200011",
+    "name": "강원특별자치도강릉의료원",
+    "field": "hvec",
+    "from": -3,
+    "to": -2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200037",
+    "name": "의료법인성심의료재단양구성심병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 3,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200015",
+    "name": "강원특별자치도원주의료원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2200014",
+    "name": "홍천아산병원",
+    "field": "hvgc",
+    "from": 12,
+    "to": 13,
+    "delta": 1
+   },
+   {
+    "hpid": "E2200025",
+    "name": "화천군보건의료원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2200016",
+    "name": "횡성대성병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2118188",
+    "name": "엘병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100175",
+    "name": "의료법인토마스의료재단윌스기념병원",
+    "field": "hvec",
+    "from": 13,
+    "to": 14,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100175",
+    "name": "의료법인토마스의료재단윌스기념병원",
+    "field": "hvgc",
+    "from": 77,
+    "to": 76,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100021",
+    "name": "의료법인플러스의료재단단원병원",
+    "field": "hvec",
+    "from": 11,
+    "to": 10,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100305",
+    "name": "안성성모병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100305",
+    "name": "안성성모병원",
+    "field": "hvgc",
+    "from": 84,
+    "to": 83,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100194",
+    "name": "세종여주병원",
+    "field": "hvgc",
+    "from": 125,
+    "to": 126,
+    "delta": 1
+   },
+   {
+    "hpid": "E2100187",
+    "name": "연천군보건의료원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100150",
+    "name": "추병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 9,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100131",
+    "name": "메디인병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 4,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100309",
+    "name": "의료법인갈렌의료재단박병원",
+    "field": "hvgc",
+    "from": 43,
+    "to": 42,
+    "delta": -1
+   },
+   {
+    "hpid": "A2100036",
+    "name": "의료법인 일심의료재단 포천우리병원",
+    "field": "hvec",
+    "from": 10,
+    "to": 11,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100018",
+    "name": "의료법인은혜와감사의료재단화성중앙종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A2100018",
+    "name": "의료법인은혜와감사의료재단화성중앙종합병원",
+    "field": "hvoc",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800005",
+    "name": "의료법인 대우의료재단대우병원",
+    "field": "hvgc",
+    "from": 78,
+    "to": 77,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800022",
+    "name": "의료법인 성념의료재단맑은샘병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800076",
+    "name": "거창적십자병원",
+    "field": "hvgc",
+    "from": 43,
+    "to": 47,
+    "delta": 4
+   },
+   {
+    "hpid": "A2800113",
+    "name": "밀양병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800084",
+    "name": "반도병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A2800062",
+    "name": "태황의료재단한성병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800062",
+    "name": "태황의료재단한성병원",
+    "field": "hvgc",
+    "from": 89,
+    "to": 88,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800009",
+    "name": "의료법인청아의료재단청아병원",
+    "field": "hvgc",
+    "from": 112,
+    "to": 111,
+    "delta": -1
+   },
+   {
+    "hpid": "A2800080",
+    "name": "함양성심병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700019",
+    "name": "의)근원의료재단경산중앙병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 7,
+    "delta": -2
+   },
+   {
+    "hpid": "A2700009",
+    "name": "의료법인삼백의료재단상주성모병원",
+    "field": "hvgc",
+    "from": 28,
+    "to": 29,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700011",
+    "name": "상주적십자병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 7,
+    "delta": 2
+   },
+   {
+    "hpid": "A2700023",
+    "name": "의료법인서준의료재단예천권병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A2700052",
+    "name": "울진군의료원",
+    "field": "hvec",
+    "from": 6,
+    "to": 8,
+    "delta": 2
+   },
+   {
+    "hpid": "A2700038",
+    "name": "의료법인대남의료재단청도대남병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700005",
+    "name": "경상북도포항의료원",
+    "field": "hvec",
+    "from": 7,
+    "to": 8,
+    "delta": 1
+   },
+   {
+    "hpid": "A2700005",
+    "name": "경상북도포항의료원",
+    "field": "hvgc",
+    "from": 31,
+    "to": 30,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300006",
+    "name": "의료법인구의료재단구병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 7,
+    "delta": 3
+   },
+   {
+    "hpid": "A1300110",
+    "name": "더블유병원",
+    "field": "hvgc",
+    "from": 89,
+    "to": 88,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300045",
+    "name": "삼일병원",
+    "field": "hvec",
+    "from": 9,
+    "to": 8,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300038",
+    "name": "나사렛종합병원",
+    "field": "hvgc",
+    "from": 39,
+    "to": 38,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300005",
+    "name": "대구가톨릭대학교칠곡가톨릭병원",
+    "field": "hvec",
+    "from": -2,
+    "to": -1,
+    "delta": 1
+   },
+   {
+    "hpid": "A1300005",
+    "name": "대구가톨릭대학교칠곡가톨릭병원",
+    "field": "hvgc",
+    "from": 64,
+    "to": 63,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300076",
+    "name": "대구굿모닝병원",
+    "field": "hvgc",
+    "from": 62,
+    "to": 61,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300076",
+    "name": "대구굿모닝병원",
+    "field": "hvicc",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300007",
+    "name": "대구의료원",
+    "field": "hvec",
+    "from": 18,
+    "to": 17,
+    "delta": -1
+   },
+   {
+    "hpid": "A1300081",
+    "name": "(재)미리내천주성삼성직수도회천주성삼병원",
+    "field": "hvgc",
+    "from": 36,
+    "to": 38,
+    "delta": 2
+   },
+   {
+    "hpid": "A1300008",
+    "name": "곽병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 5,
+    "delta": -2
+   },
+   {
+    "hpid": "A1600004",
+    "name": "대전보훈병원",
+    "field": "hvgc",
+    "from": 70,
+    "to": 71,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200015",
+    "name": "동남권원자력의학원",
+    "field": "hvec",
+    "from": -1,
+    "to": -2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200011",
+    "name": "동래봉생병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 2,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200008",
+    "name": "의료법인 은성의료재단 좋은강안병원",
+    "field": "hvgc",
+    "from": 171,
+    "to": 170,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200024",
+    "name": "부산광역시의료원",
+    "field": "hvgc",
+    "from": 108,
+    "to": 107,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200014",
+    "name": "영도병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 6,
+    "delta": 1
+   },
+   {
+    "hpid": "A1200014",
+    "name": "영도병원",
+    "field": "hvgc",
+    "from": 29,
+    "to": 28,
+    "delta": -1
+   },
+   {
+    "hpid": "A1200023",
+    "name": "재단법인천주교부산교구유지재단 메리놀병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 4,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100026",
+    "name": "구로성심병원",
+    "field": "hvec",
+    "from": 4,
+    "to": 5,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100025",
+    "name": "의료법인동신의료재단동신병원",
+    "field": "hvoc",
+    "from": 2,
+    "to": 3,
+    "delta": 1
+   },
+   {
+    "hpid": "A1122033",
+    "name": "기쁨병원",
+    "field": "hvec",
+    "from": 2,
+    "to": 1,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100019",
+    "name": "홍익병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 5,
+    "delta": 2
+   },
+   {
+    "hpid": "A1100037",
+    "name": "대림성모병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 6,
+    "delta": -1
+   },
+   {
+    "hpid": "A1100045",
+    "name": "씨엠병원",
+    "field": "hvgc",
+    "from": 55,
+    "to": 56,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100029",
+    "name": "서울적십자병원",
+    "field": "hvgc",
+    "from": 117,
+    "to": 118,
+    "delta": 1
+   },
+   {
+    "hpid": "A1100044",
+    "name": "녹색병원",
+    "field": "hvec",
+    "from": 1,
+    "to": 0,
+    "delta": -1
+   },
+   {
+    "hpid": "A1700001",
+    "name": "서울산보람병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 7,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600050",
+    "name": "전라남도강진의료원",
+    "field": "hvec",
+    "from": 5,
+    "to": 8,
+    "delta": 3
+   },
+   {
+    "hpid": "A1500017",
+    "name": "하남성심병원",
+    "field": "hvec",
+    "from": 18,
+    "to": 17,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500018",
+    "name": "광주수완병원",
+    "field": "hvgc",
+    "from": 56,
+    "to": 57,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600016",
+    "name": "나주종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600016",
+    "name": "나주종합병원",
+    "field": "hvgc",
+    "from": 60,
+    "to": 61,
+    "delta": 1
+   },
+   {
+    "hpid": "A2602211",
+    "name": "빛가람종합병원",
+    "field": "hvec",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A1500013",
+    "name": "동아병원",
+    "field": "hvgc",
+    "from": 99,
+    "to": 98,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600020",
+    "name": "목포기독병원",
+    "field": "hvgc",
+    "from": 121,
+    "to": 119,
+    "delta": -2
+   },
+   {
+    "hpid": "A1500010",
+    "name": "운암한국병원",
+    "field": "hvgc",
+    "from": 19,
+    "to": 20,
+    "delta": 1
+   },
+   {
+    "hpid": "A2600056",
+    "name": "전라남도순천의료원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600010",
+    "name": "여수전남병원",
+    "field": "hvec",
+    "from": 7,
+    "to": 9,
+    "delta": 2
+   },
+   {
+    "hpid": "A2600010",
+    "name": "여수전남병원",
+    "field": "hvgc",
+    "from": 54,
+    "to": 53,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600010",
+    "name": "여수전남병원",
+    "field": "hvicc",
+    "from": 3,
+    "to": 2,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600070",
+    "name": "영암한국병원",
+    "field": "hvec",
+    "from": 8,
+    "to": 7,
+    "delta": -1
+   },
+   {
+    "hpid": "A2600035",
+    "name": "의료법인행복나눔의료재단장성병원",
+    "field": "hvgc",
+    "from": 48,
+    "to": 49,
+    "delta": 1
+   },
+   {
+    "hpid": "A2500009",
+    "name": "의료법인석천재단고창병원",
+    "field": "hvec",
+    "from": 5,
+    "to": 3,
+    "delta": -2
+   },
+   {
+    "hpid": "A2400004",
+    "name": "의료법인 예당의료재단 예산종합병원",
+    "field": "hvec",
+    "from": 6,
+    "to": 5,
+    "delta": -1
+   }
+  ]
+ }
+]
