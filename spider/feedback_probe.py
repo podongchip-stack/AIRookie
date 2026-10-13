@@ -111,7 +111,7 @@ def run(policy, cfg, patients, hospitals, polls, lag, G, cache):
     name, n_dec, sync, fb, ttl = cfg
     w = View(hospitals, polls, lag, sync, fb, ttl)
     hnodes = np.array([h["node"] for h in hospitals])
-    stats = dict(n=0, refusals=0, recasts=0, fb_recasts=0, overflow=0, unreachable=0)
+    stats = dict(n=0, refusals=0, ref_k12=0, ref_k12_center=0, recasts=0, fb_recasts=0, overflow=0, unreachable=0)
     out = []
 
     def table(node):
@@ -209,6 +209,9 @@ def run(policy, cfg, patients, hospitals, polls, lag, G, cache):
                 finish(s)
                 continue
             stats["refusals"] += 1
+            if s["k"] <= 2:
+                stats["ref_k12"] += 1
+                stats["ref_k12_center"] += hospitals[hi]["g"] in rp.CENTER
             w.remove(s["entry"])
             if fb != "off":
                 w.blocks[hi].append((t, s["d"]))
@@ -227,8 +230,13 @@ def run(policy, cfg, patients, hospitals, polls, lag, G, cache):
     pct = lambda q: dur[min(len(dur) - 1, int(q * (len(dur) - 1)))]
     res = dict(config=name, policy=policy, lag=lag, **stats, meanMin=round(sum(dur) / len(dur), 2),
                medianMin=round(pct(0.5), 2), p90Min=round(pct(0.9), 2))
-    k12 = [o for o in out if o["k"] <= 2]
-    res["k12_center"] = round(sum(1 for o in k12 if o["g"] in rp.CENTER) / len(k12), 3) if k12 else None
+    for grp, ks in (("k12", (1, 2)), ("k3", (3,)), ("k45", (4, 5))):
+        g = [o for o in out if o["k"] in ks]
+        d = sorted(o["tArr"] - o["t0"] for o in g)
+        res[f"{grp}_n"] = len(g)
+        res[f"{grp}_center"] = round(sum(1 for o in g if o["g"] in rp.CENTER) / len(g), 3) if g else None
+        res[f"{grp}_meanMin"] = round(sum(d) / len(d), 2) if d else None
+        res[f"{grp}_p90Min"] = round(d[min(len(d) - 1, int(0.9 * (len(d) - 1)))], 2) if d else None
     return res
 
 
