@@ -761,6 +761,21 @@ dashboard의 관제 지도(`/map`, 보기 전용 — 병원 대시보드와는 �
 - `GET /identity`는 여전히 `hospital`/`ambulance`만 받는다(관제 지도는 사전 확인이 필요 없다)
 - 검증: `python test_monitor_map.py`(실제 로그를 건드리지 않게 임시 경로로 돌린다)
 
+### 입력 스키마 11: feature/dashboard로부터 (통화 요약 확인·수정 — Override, 2026-10-13 신설)
+
+WebSocket `{"type": "patient_override", "caseId", ...고친 칸}` — 칸 정의와 규칙은 CLAUDE.md "데이터 포맷 및 흐름 > 4".
+
+- **받는 소켓**: 그 사건을 연 구급차(`role: "ambulance"`, `engine.get_case_apid(caseId)`와 같은 apid)만. 병원·관제·다른 구급차는
+  `action_refused`(reason `not_owner`). 일시정지 중이면 `paused`. 사건이 없으면 `no_case`
+- **처리**(`HubEngine.apply_patient_override`, 작업 스레드): 고친 값을 사건의 통화 요약(`_case_voice`)에 덮어써서 60초 재계산·존 확장도
+  고친 값으로 돈다. 순위 칸(예상 병명·KTAS·필요 진료과)이 바뀌고 이송 확정 전이면 `process_voice_summary`로 재매칭(넓힌 존·병원 승인 유지),
+  아니면 `patientInfo`만 교체. 확인 상태(`_case_override`: 확인 시각 + 칸별 `OverrideRecord`)는 `_patient_info()`가 매번 찍고, 상태 파일에
+  저장·복구된다. 같은 칸을 여러 번 고쳐도 `ai`는 처음 AI 값, AI 값으로 되돌리면 그 칸은 빠진다. 새 통화 회차(`add_call_summary`)는 초기화
+- **출력**: 평소 매칭 결과 전송(`_send_to_dashboard`) — 구급차 탭·후보 병원 탭·관제 요약. `PatientInfo.confirmedBy`·`confirmedAt`·`overrides`
+- **로그**: `patient_override` `{caseId, confirmedOnly, rematched, caseConfirmed, changes: [{field, before, after}]}`
+- 검증: `python test_patient_override.py`(엔진 9개 검사, 임베딩 없이). 실서버 E2E(소켓 4개 — 구급차·다른 구급차·병원 2곳)로 소유자 검사·
+  병원 2곳 갱신본 수신·KTAS 3→2 재정렬·로그 기록을 확인했다(2026-10-13)
+
 ## 결과 저장 및 전송 방식 (`delivery.py`)
 
 로컬 파일 저장은 항상 하고, 실시간 dashboard 전송은 `app.py`가 처리한다.
