@@ -116,7 +116,7 @@ feature/dashboard ──(통화 시작/종료 신호, WebSocket)─→ feature/h
 갱신이다~~ → **2026-08-13 이 화살표 자체가 없어졌다.** info가 병원
 Supabase 없이 E-Gen 실 API로 병상까지 직접 읽으면서(조회 전용이라 hub가
 쓸 방법이 원래 없었음), hub→info 방향 통신이 통째로 사라졌다. 이송 확정
-시점의 병상 차감은 이제 hub 혼자 자기 메모리(TTL 오버레이, 15분)로만
+시점의 병상 차감은 이제 hub 혼자 자기 메모리(차감 오버레이 — 2026-10-08부터 고정 15분이 아니라 사건 기준 유지·해제)로만
 처리한다 — feature/info로 아무것도 되돌려 쓰지 않는다. 자세한 것은
 "feature/hub 담당자 참고사항"의 "병상 차감은 TTL 오버레이로 처리한다" 참고.
 
@@ -283,7 +283,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
 - 승인 프로세스: 병원의 "승인"은 후보 등록일 뿐이며, 구급대원의 "이송 승인"이 최종 확정이다. 이동 중에도 새 병원이 승인하면 재선택 가능해야 한다
 - 출력 포맷은 위 "데이터 포맷 및 흐름 > 1. feature/voice → feature/hub" 참고 (병원 정보 스키마는 feature/hub README.md 참고). 승인 액션(2번 포맷)은 feature/hub가 수신하므로 이 브랜치는 별도 구현이 필요 없다
 - 병상 수가 미상인 병상 종류는 `bedsByType`에 그 키(`ER_ADULT` 등)를 아예 넣지 않는 방식으로 표시한다(`egen/mapper.py`의 `build_beds_by_type`). `availableBedCount`엔 보수적으로 0을 넣지만, hub가 `bedsByType`의 키 유무로 "미상"과 "확인된 만실"(`{"ER_ADULT": 0}`)을 구분해 재해석한다
-- `send_to_hub.py`는 1회성 스크립트가 아니라 **상시 프로세스**다 — hub는 한 번 받은 병원 정보를 메모리에 들고 있을 뿐 스스로 재조회하지 않으므로, 이 스크립트가 주기적으로(기본 30분, `INFO_REFETCH_INTERVAL_SEC` 환경변수로 조절) 다시 조회해 재전송한다. Supabase realtime 구독 대신 주기적 재조회 방식을 택했다. hub가 잠깐 안 떠 있어도 죽지 않고 다음 주기에 재시도한다
+- `send_to_hub.py`는 1회성 스크립트가 아니라 **상시 프로세스**다 — hub는 한 번 받은 병원 정보를 메모리에 들고 있을 뿐 스스로 재조회하지 않으므로, 이 스크립트가 주기적으로(기본 5분 — 2026-10-08 30분에서 단축, E-Gen 공개 API가 정확히 5분 묶음으로 갱신됨을 1분 간격 실측으로 확인, 일일 트래픽 80,000회의 1.6%. `INFO_REFETCH_INTERVAL_SEC` 환경변수로 조절) 다시 조회해 재전송한다. Supabase realtime 구독 대신 주기적 재조회 방식을 택했다. hub가 잠깐 안 떠 있어도 죽지 않고 다음 주기에 재시도한다
 - ~~**E-Gen 실 API가 상시 파이프라인에 연결됐다(2026-08-11)** — 목록·좌표·중증질환은 실 API로, 실시간 병상 수(hvec)만 계속 Supabase 대체 DB로 가져와 합친다~~ → **2026-08-13 병원 Supabase 의존을 완전히 제거.** 병상까지 포함해 목록·병상·중증질환 전부 실 E-Gen API(`HttpEgenClient`)에서 가져온다. Supabase에 병상만 남겨뒀던 이유(E-Gen이 조회 전용이라 hub의 `final_approval` 차감을 되돌려 쓸 방법이 없어서)는 hub 쪽 **TTL 병상 오버레이**(`hub/hub_engine.py`의 `BED_OVERLAY_TTL_MIN`, 15분)로 대체됐다 — 자세한 것은 아래 "feature/hub 담당자 참고사항" 참고
 - ~~**Supabase 대체 DB의 hpid는 가짜다.**~~ → **해소됨.** 병상 소스가 Supabase에서 E-Gen 실 API로 바뀌면서, 두 소스의 hpid를 맞추던 `SUPABASE_TO_EGEN_HPID`(7곳 수기 대응표)와 `_remap_to_supabase_hpid()`를 통째로 삭제했다. **`hospitalId`가 `S0000001~7` 체계에서 실제 E-Gen hpid(`A1100017` 등)로 바뀌었다** — dashboard 접근 코드(`/hospital?id=`)로 쓰던 값이 전부 무효화된다. 대응표 병목이 없어져 E-Gen이 주는 병원 전체(서울 기준 실측 55곳, 전국 500여 곳)가 hub로 흘러간다
 - ~~hub→info 방향(병상 갱신 쓰기)도 **구현 완료**됐다~~ → **2026-08-13 완전히 폐지.** `info/app.py`(`POST /hub/bed-update` 수신 서버)를 삭제했다 — 병원 Supabase 자체가 없어지면서 되돌려 쓸 대상이 사라졌기 때문. hub의 `delivery.py`도 `send_to_info()`/재시도 대기열을 같이 제거했다
@@ -336,7 +336,7 @@ dashboard가 브라우저 마이크로 캡처해 보내는 오디오(`sendAudioC
   ```bash
   cd info/Hospital_inform/info
   python -m hospital_score.hira_files --fetch    # 전문병원 지정 (API 2회)
-  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
   ```
   `--build-join`은 재시도 3회·25곳마다 중간저장·이어받기를 한다. 캐시를 치우고 처음부터
   재생성해 대조한 결과 조인 518곳이 **내용까지 동일**했고, 전문의 수는 오히려 3곳 늘었다
@@ -457,6 +457,9 @@ Egress Estimation Model` — git remote 없는 로컬 전용)에서 학습한 E-
 
 - **진료과를 심평원 전문의 수로 채운다.** `egen/mapper.build_specialties()`가 E-Gen 역량 4개 과에 `data/hira/specialists.json`의 전문과목별 전문의 수를 합친다(응급 수용 과만 — `ACUTE_HIRA_DEPARTMENTS`, 영상의학과·마취통증의학과·진단검사의학과·치과·한방 등 제외). `doctorCount`에 실제 인원, 분과(순환기내과)는 대분류(내과) 인원을 빌린다. 캐시가 없거나 조인 안 된 병원은 기존 4개 과 그대로(fail-soft). 실측: 415곳 중 403곳 반영. 예전엔 438곳 중 186곳(42%)이 진료과 0개였다
 - `HospitalInfo.emergencyLevel`: E-Gen 목록의 `dutyEmclsName`(권역/지역응급의료센터 등). hub가 중증 환자 가산에 쓴다
+- **E-Gen 응급실·중증질환 메시지 수집(2026-10-07)**: 같은 E-Gen 서비스의 `getEmrrmSrsillDissMsgInqire`(추가 활용신청 불필요, 전국 1회 호출 — Q0를 주면 0건)를 `egen/messages.py`가 `HospitalInfo.acceptanceMessages`(kind er/severe·원문·진료과·질환 코드·시작/종료, source rule)로 옮긴다. 병원이 직접 거는 "지금 이런 환자는 못 받는다" 공지다(실측 125곳·805건 — 응급실 메시지 580, 중증질환 차단 225). 중증 메시지의 질환 코드(Y0010 등 27종)는 hospital_score 15개 질환군 이름(`diseaseGroup`)으로 옮겨 보낸다(항목명으론 "수족지접합"↔"사지접합"처럼 어긋남). 끝난 메시지는 버리고, 조회 실패 시 메시지 없이 전송(fail-soft). 검사 `python -m egen.messages`
+- **병상 정원(2026-10-07)**: 실시간 병상 응답에 이미 있는 정원 필드를 `HospitalInfo.bedCapacityByType`(키는 `bedsByType`과 같음 — 응급실 일반 `hvs01`·소아 `hvs02`·중환자실 `hvs17`·수술실 `hvs22`, 0·미입력은 키 없음)로 보낸다. 추가 API 호출 없음. 짝은 `reliability/probe_regime.py`의 실측과 같고, 응급실 정원은 "내 손안의 응급실" 총 병상과 서울 50곳 전부 일치했다. 실측 416곳 중 415곳. ⚠ mapper의 `TOTAL_BED_FIELD`(`hvs38`, 가용 상한 검사용)는 "병원 총 병상"이라 적혀 있지만 실제로는 입원실 정원(hvgc의 짝)이다 — 상한 검사로는 여전히 동작해 그대로 뒀다
+- **배후역량 재료(2026-10-08)**: `HospitalInfo.backupCapacity`(심평원 보유 — 의료장비 대수·수술실·중환자실 총량·신생아 중환자실·일반 입원실·간호등급, `hospital_score/hira.py`의 `load_backup_summary()`, 캐시는 `hira --build-join`/`--fetch-backup`)와 `equipmentOperating`(E-Gen 장비 운영 Y/N/N1 10종 원값 — 고장·점검 때만 바뀌는 운영 상태라 거의 고정이 정상, 남은 대수가 아님). 심평원 장비 목록엔 혈관조영장치 항목이 없다. 실측 404곳/416곳
 - `send_to_hub.py`가 한 주기 병원을 다 보낸 뒤 `POST /info/hospitals/roster`로 전체 hpid 목록을 보낸다 — hub가 피드에서 빠진 병원을 지운다
 - ~~**스냅샷 수집은 이제 `start-all.sh`가 info와 함께 20분 주기로 띄운다**(`--no-snapshot`으로 끔). Windows 작업 스케줄러(`snapshot_nationwide.bat`)로만 돌아서 이 맥에선 8월 13일 이후 멈춰 있었다~~ → **2026-10-04 수집이 클라우드로 이관되면서 start-all은 수집 대신 동기화(`snapshot_cloud.py --sync`, 20분 주기)를 띄운다** — 아래 "스냅샷 수집기가 클라우드로 이관됐다" 참고
 - **응급실 `hvec`의 `-1`은 미상이 아니라 과밀 1명(만실 0)으로 읽는다(2026-10-01).** 다른 병상 필드의 -1은 그대로 미입력. 전국 스냅샷에서 hvec -1의 앞뒤 값 77%가 -3~1(0 → -1 → -2처럼 이어짐)이라 미입력일 수 없다. 예전엔 서울아산처럼 꽉 찬 응급실이 "미상"으로 떠서 만실 표시·승인 차단이 안 걸렸다. 신뢰도 모델은 이미 이렇게 읽고 있었다(`egen/mapper.py`의 `MINUS_ONE_IS_VALUE_FIELDS`, `hospital_score/scoring.py`도 같게). 폐기 판정·리포트 재현 스크립트는 기록된 수치를 바꾸지 않도록 그대로 둠. 검사 `python -m egen.test_hvec_minus_one`
@@ -499,7 +502,7 @@ info 수신구(`POST /hub/rejection`) → **완성.** dashboard 사유 선택 UI
 대응표 밖의 기관을 전부 버려서, E-Gen에서 533곳을 받아도 hub에는 7곳만 갔다 —
 원인은 병상만 Supabase에서 읽던 구조였다. 여기 제안됐던 방향(병상 차감을
 Supabase가 아니라 짧은 TTL 오버레이로 관리하고 병상 자체는 E-Gen 실값을 쓴다)을
-그대로 채택해 구현했다 — `hub/hub_engine.py`의 `BED_OVERLAY_TTL_MIN`(15분),
+그대로 채택해 구현했다 — `hub/hub_engine.py`의 병상 차감 오버레이(당시 `BED_OVERLAY_TTL_MIN` 15분, 2026-10-08 `BedHold` 규칙으로 교체),
 `send_to_hub.py`의 Supabase 병상 조회·대응표 삭제. 이제 E-Gen이 주는 병원
 전체(서울 실측 55곳, 전국 500여 곳)가 hub로 흘러간다. 예고됐던 대로
 `hospitalId`가 `S0000001~7`에서 실 hpid(`A1100017` 등)로 바뀌었다 —
@@ -538,7 +541,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   `apply_approval_action()` 진입 시 "이송 확정 후 `CASE_RETENTION_MIN=60`분 지난" 사건을
   모든 사건 dict에서 제거한다(`_bed_overlay`와 같은 read-time lazy 정리). 진행 중이거나
   아직 확정 전인 사건은 절대 지우지 않아 다중 사건 격리·따라잡기는 불변.
-- **병상 차감은 TTL 오버레이로 처리한다.** `HubEngine._bed_overlay`(hpid -> 만료 시각 목록, `BED_OVERLAY_TTL_MIN=15`)에 `final_approval`마다 하나씩 쌓이고, `effective_bed_count()`가 조회 시점에 만료 안 된 개수만큼만 얹어 보여준다. 15분은 `hvidate` 갱신 간격 실측(중앙값 5분, 88.7%가 10분 이내)에서 여유를 둔 값 — 그 안엔 E-Gen 자신도 아직 안 바뀌었을 가능성이 높다. `self._hospitals`의 원본값은 이제 직접 mutate하지 않는다(과거엔 `info.availableBedCount -= 1`로 직접 깎았음)
+- **병상 차감은 TTL 오버레이로 처리한다.** `HubEngine._bed_overlay`(hpid -> `BedHold` 목록)에 `final_approval`마다 하나씩 쌓이고, `effective_bed_count()`가 조회 시점에 아직 유효한 개수만큼만 얹어 보여준다. `self._hospitals`의 원본값은 직접 mutate하지 않는다(과거엔 `info.availableBedCount -= 1`로 직접 깎았음). ~~고정 15분(`BED_OVERLAY_TTL_MIN`, 근거: hvidate 갱신 간격 중앙값 5분)~~ → **2026-10-08 사건 기준으로 재설계**: 그 5분은 병원 입력 주기가 아니라 E-Gen 시스템의 5분 묶음 주기였고, hub가 병원의 반영을 보려면 이송 + 병원 입력 + E-Gen 묶음 + info 수집이 지나야 해서 15분이면 구급차 도착 전에 차감이 풀려 같은 병상이 다시 비어 보이고 부하 페널티도 꺼졌다. 새 규칙: 확정 + 예상 이동시간 + 20분은 무조건 유지 → 그 뒤 E-Gen 응급실 원값이 확정 당시보다 줄면 해제(줄어든 만큼만) → 끝까지 안 줄면 도착 예상 + 60분에 해제, 수용 완료 시 기준을 실제 도착으로 재설정(`BED_HOLD_GRACE_MIN=20`·`BED_HOLD_MAX_AFTER_ARRIVAL_MIN=60`, 정답 데이터 없는 초기값). 무작정 늘리지 않은 이유는 병원이 이미 고친 뒤 이중 차감되면 작은 응급실이 "확인된 만실"로 떨어져 병원 승인까지 막히기 때문. 해제 이유는 의사결정 로그 `bed_hold_released`(cause `egen_reflected`/`max_age`)로 남겨 상수 재조정 재료로 쓴다. 검증 `python test_bed_hold.py`
 - **여러 사건(구급차) 동시 처리를 지원한다.** `caseId`로 사건을, `apid`로 구급차(voice 인스턴스)를 구분한다. `HubEngine`은 승인 상태를 `(caseId, hospitalId)` 키로 분리 보관하고, 사건별 최신 매칭 결과를 캐시해뒀다가 승인 액션이 들어오면 재계산 없이 해당 병원 status만 패치해 재브로드캐스트한다(예전엔 이 재브로드캐스트 자체가 없어서 승인 버튼을 눌러도 화면에 반영이 안 됐다)
 - `_dashboard_ws` 전역 변수 하나였던 것을 소켓 **집합**으로 바꿔 연결된 모든 dashboard(구급차 여러 개 + 병원 여러 개)에 브로드캐스트한다 — 예전엔 마지막에 연결한 탭만 갱신을 받는 버그가 있었다
 - **소켓 재연결 시 진행 중인 사건을 놓치던 문제 수정(2026-08-11)**: hub는 매칭 결과를 "그 순간 연결된 소켓"에만 브로드캐스트해서, 사건이 진행 중인 상태로 새 대시보드 탭이 뒤늦게 열리면 그 탭엔 아무것도 안 뜨는 문제가 실제로 있었다(구급1호차·서울대병원 탭 연결 상태에서 매칭이 끝난 뒤 한양대병원 탭을 새로 열면 그 사건이 안 보임). dashboard가 소켓 연결 직후 `{type:"identify", role, id}` 자기소개를 보내면(`DashboardIdentify`), hub가 `HubEngine.get_cases_for_hospital()`/`get_cases_for_apid()`로 관련된 진행 중인 사건들을 찾아 그 소켓에만 즉시 돌려준다(`app.py`의 `_send_catchup()`) — 응답은 평소 브로드캐스트와 같은 `HubMatchResult` 형식이라 dashboard 쪽에 별도 분기가 필요 없다
@@ -575,10 +578,13 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **존 확장 거절 비율(2026-10-01)**: 분모를 "응답한 병원"에서 "현재 존 안 후보 병원 전체"로, 기준을 50% → **40%**로. 예전엔 첫 응답이 거절이면 1/1=100%라 후보 10곳 중 한 곳의 거절로 바로 넓어졌다(`geo.REJECT_RATIO_THRESHOLD`, `HubEngine.reject_ratio`)
 - **구급차 묶음 수신·목록 동기화(2026-10-04)**: `POST /info/ambulances/batch {"ambulances": [...]}`(형식 틀린 한 대는 `rejected`로 돌려주고 나머지 반영, 관제 지도 `map_overview`는 끝에 한 번)와 `POST /info/ambulances/roster {"apids": [...]}`(`HubEngine.apply_ambulance_roster`)를 추가했다. 목록에 없는 구급차는 레지스트리·시뮬레이션 유닛·voice 주소에서 지운다 — 단 진행 중 사건(수용 완료 전)이 있거나 출동 시뮬레이션 중인 구급차는 보류, 목록이 비었거나 절반 미만으로 급감하면 부분 조회 실패로 보고 아무것도 안 뺀다. 의사결정 로그 `ambulance_roster_applied`. 기존 `POST /info/ambulances`(한 대씩)는 그대로 받는다. 검증 `test_ambulance_roster.py`
 - **질환군 매칭을 임베딩에서 키워드 규칙으로(2026-10-02)**: 예상 병명 → 15개 중증질환군(신뢰도 칩·`declared_no` 내림·신고 신선도에 쓰임)을 고를 때 기준선 없이 임베딩 최근접을 골라, 다리 골절·심근경색·뇌출혈·"미상"이 전부 담낭담관질환으로 붙었다(유사도 0.47~0.93이라 기준선으로도 못 거름). 상관없는 신고로 병원이 뒤로 밀릴 수 있는 오류였다. `hub/disease_group.py`가 E-Gen 항목명 키워드로만 고르고, 해당 없으면 None(칩·내림 없음). 진료과 매칭은 그대로 임베딩. 검사 `python disease_group.py`
+- **E-Gen 수용 제한 메시지 수신·강등(2026-10-07)**: info의 `acceptanceMessages`를 매칭 시점에 시작~종료로 다시 걸러 `HospitalMatch.acceptanceMessages`(matched = severe는 사건 질환군 일치, er는 필요 진료과 일치·응급실 전체 공지)로 싣는다. 사건 질환군에 유효한 중증질환 차단이 있으면 `demoteReasons`에 `severe_blocked` — `declared_no`와 같은 원칙(순서만 내림, 후보 유지, 병원이 이 사건에 승인·확정하면 안 내림). 검증 `python test_acceptance_messages.py`(임베딩 모델 없이 가짜 매처)
+- **응급실 정원·포화도 + 포화도 페널티(2026-10-07)**: `HospitalMatch.erBedCapacity`·`erOccupancyPct`(=(정원-가용)÷정원, 이송 확정 차감 반영 표시값, info가 과밀을 0으로 보내므로 100% 상한, 병상 미상·1일 넘은 값이면 None). **순위에도 들어간다** — `scoring.occupancy_penalty_min()`이 차감 **전** E-Gen 포화도에 비례해 이동시간에 최대 **+5분**(`OCCUPANCY_PENALTY_MAX_MIN`, 부하 페널티의 절반 — 신고값이라 낡을 수 있어서. 이송 중 환자는 부하 페널티가 세므로 이중 계산 없음). `occupancyPenaltyMin`·`occupancyReason`, `plan_mci`도 같은 값. 불변식: 5분 넘게 가까운 병원은 역전 안 됨. 팀 합의 전 초기값. ⚠ `sim/` goldenlink 팔엔 아직 없음(시뮬↔실코드 로직 일치가 깨짐). 검증 `python test_er_occupancy.py`
+- **`GET /hospital-backup?id=<hpid>`(2026-10-08)**: 대시보드 [배후역량] 버튼용. `HubEngine.build_backup_view()`가 병상(보유·E-Gen 정원·지금 가용(이송 확정 차감 반영)·가용 값 신뢰 AI)과 장비(보유 대수·운영 Y/N — 지금 남은 대수는 공개 정보가 없어 칸 없음)·전문의·간호등급·중증 신고·수용 제한 메시지를 모은다. 매칭 결과엔 안 싣는다(누를 때만). 순위 무관. 공개 모드 터널 경로에 추가. 검증 `python test_backup_view.py`
 - **시연용 신뢰도 검증 화면(2026-10-02)** — 병원·구급차 상단바 [신뢰도 검증] 모달(3D 뷰어와 같은 `FrameModalButton`) 또는 `/verify` 직접. 가상 이송 요청(시각·병원·이동 5~25분은 무작위)의 결과를 **실제 E-Gen 다음 스냅샷**으로 채점한다 — 도착 때 병상 수가 3석(모델 θ) 이상 안 바뀌었으면 "맞음". info `reliability/replay_demo.py`가 스냅샷 1장당 10건을 만들고(`data/verification/replay_demo.jsonl`, 전부 `demo: true`·`source: "replay"`), 거절 로그 수신구(5003)의 `GET /verification/summary`가 1시간마다 다시 채점해 확률 구간별 예측 vs 실제·거절 사유를 낸다. hub `GET /verification`이 그대로 중계(dashboard는 hub와만 통신, 도메인 라우팅 추가). **실제 운영 검증이 아니다** — "병원이 실제로 받았는가"는 다루지 않고 화면에 늘 "시연용 예시"를 붙인다. 첫 결과(10/1~2, 590건): 구간 순서는 맞고(예측 35→52→71→89% / 실제 83→90→96→98%) 모델이 실제보다 보수적
   - **"우리 병원" 칸(2026-10-02)**: 병원 대시보드에서 열면 `/verify?hpid=` → 맨 위에 그 병원 기록. 무작위 표본이 아니라 그 병원 스냅샷 **전수**(최근 7일)로 "빈 병상이 보였던 모든 시각에 출발했다면 15분 뒤 실제 값은"을 센다(`hospital_score/hospital_view.py`), 빈 병상 수 그래프(수집이 1시간 넘게 끊긴 곳은 선을 끊음)·만실/과밀 시간 비율·E-Gen 15개 질환군 신고·심평원 전문병원 지정과 전문의 수·거절 로그. hub가 `hospitalHub`로 지금 API 값·신뢰도(`_build_self_info`)와 의사결정 로그의 그 병원 활동(`_hospital_activity`)을 덧붙인다. ⚠ 의사결정 로그에는 예전에 테스트를 실로그에 돌린 기록이 섞여 있다(예: A1100017 수용 불가 59건) — 해시 체인이라 지울 수 없음. 첫 수치(서울아산): 출발 53번 중 16번 3석 이상 바뀜·만실, 기록 시간의 51%가 만실·과밀
   - **화면 개편(2026-10-02)**: 맨 위를 "API가 알려준 값 vs 실제"로 — ① 출발 때 병상 수가 도착 때 달라진 비율(100칸 그림, 그대로/1~2석/3석 이상/만실)과 가장 크게 줄어든 실제 사례 ② 심평원 전문병원 지정인데 E-Gen에 "가능" 신고가 없는 병원(`hospital_score/crosscheck.py`, 수신구 응답의 `crosscheck`)·중증질환 신고 "정보 없음" 비율 ③ 크게 바뀐 곳 vs 그대로인 곳에 AI가 준 확률. 확률 구간별 채점은 접어 둠. 첫 수치(1,100건): 54%가 달라짐, 3석 이상 7%, 만실 6건 / 전문병원 9/15곳 미신고 / AI 확률 64% vs 77%
-- **병상 없는 병원은 '수용 불가'로 보인다(2026-10-03)**: 응급실 병상 0이 확인된 병원(E-Gen, 미상·1일 넘은 값 제외 — beds_full 내림과 같은 기준)은 병원이 아직 안 눌렀어도 `HospitalMatch.unavailableReason="beds_full"`. status는 pending 그대로라 병원 거절로 세지 않는다(거절 로그·존 확장 비율 X). 관제 지도는 이걸 "✕ 병상 없음"(status rejected로 전송), 병원 카드·구급차 후보는 "수용 불가 · 병상 없음(E-Gen)"으로 보여준다. 매칭·60초 재계산 때마다 E-Gen 값으로 다시 정하므로 병상이 생기면 판단 대기로 돌아온다 — 단 hub가 E-Gen 값을 info의 30분 주기로 받아 반영이 그만큼 늦을 수 있다
+- **병상 없는 병원은 '수용 불가'로 보인다(2026-10-03)**: 응급실 병상 0이 확인된 병원(E-Gen, 미상·1일 넘은 값 제외 — beds_full 내림과 같은 기준)은 병원이 아직 안 눌렀어도 `HospitalMatch.unavailableReason="beds_full"`. status는 pending 그대로라 병원 거절로 세지 않는다(거절 로그·존 확장 비율 X). 관제 지도는 이걸 "✕ 병상 없음"(status rejected로 전송), 병원 카드·구급차 후보는 "수용 불가 · 병상 없음(E-Gen)"으로 보여준다. 매칭·60초 재계산 때마다 E-Gen 값으로 다시 정하므로 병상이 생기면 판단 대기로 돌아온다 — 단 hub가 E-Gen 값을 info의 5분 주기로 받아 반영이 그만큼 늦을 수 있다
 - **병원이 고른 거절 사유를 화면에(2026-10-03)**: `HospitalMatch.rejectReason`(status=rejected일 때, 승인으로 번복하면 지움). 병원 [불가] 선택칸이 그 사유를 계속 보여주고, 구급차 후보·관제 지도에도 사유가 붙는다(`lib/rejection.ts` 공용 어휘)
 - **수용 완료하면 바로 기지 복귀(2026-10-03)**: 출동 시뮬레이션의 병원 체류 `HUB_SIM_HOSPITAL_DWELL_SEC` 기본 15 → 0
 - **거리는 카카오 내비 기준(2026-10-03)**: 매칭 결과·현장 후보·관제 지도 사건 요약에 `roadDistanceKm`(도로 거리)를 싣는다(다중 목적지 ETA 응답의 distance — 예전엔 소요 시간만 쓰고 버렸다). 현장 후보(`scene_candidates`)도 이제 내비 ETA를 받아 **도착 시간순**으로 정렬하고 `etaMin`·`travelMin`·`travelBasis`를 싣는다(첫 연락 추천의 도착 시점 horizon도 이 값). ETA를 못 받은 병원(키 없음·반경 10km 밖)만 직선거리 추정이고, 대시보드는 이를 "직선 X km"로 구분해 보여준다(`lib/distance.ts`). **존 판정은 여전히 직선 반경**(5km 간격)이다
@@ -700,6 +706,9 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - 인증은 여전히 없다 — 접근 코드가 관제 지도에 보이므로, 지도를 볼 수 있으면 누구나 그 코드로 병원 대시보드에 들어갈 수 있다(시연 범위)
 - **라이브 채점 보드 전면 개편(2026-10-03)**: /verify 라이브 섹션을 "신뢰 등급별 유지율 라이브 그래프" 중심으로 재구성(LiveBoardSection.tsx). 선 3개 — 엔진 선별(조건부 확률 80%↑, 파랑)·전체 평균(회색 점선)·엔진 경고(<50%, 주황, 6시간 이동평균) — 20분 폴링마다 점 추가, 리플레이(90초) 때 차트가 점진 공개로 동기화. 데이터는 live_board timeseries(schemaVersion 2). 숫자 타일 그리드는 디자인 지침상 금지 패턴이라 문장형 헤드라인으로 교체. 첫 실측: 그냥 믿으면 94% vs 엔진 선별 97.9% vs 경고 값 69%. **지역별 격차 섹션**(2026-10-03 추가): 시도별 원값→선별 점-간격 행 — 원값은 울산 90.3~부산 96.3%로 갈리고 서울·경기가 하위권(수도권 회전율)인데 선별 값은 전 지역 96~98.7%로 균일, 원값 나쁜 지역일수록 이득 큼. **레짐 감지(2026-10-03)**: 공통충격(아침 병상 정리 러시 — 토 09:40 실측 128건/폴링, 평시 4배)은 개별 claim 예측으로 못 피하므로(그 폴링만 선별 73% vs 전체 69% 수렴) 감지로 대응 — 폴링 어긋남이 창 중앙값 2배(주의)/3배(급증)면 timeseries.surge·regime으로 내보내고(schemaVersion 4), 화면은 상태 칩·경보 배너·차트 붉은 띠로 표시. 확률 할인은 재보정과 함께 갈 다음 단계
 - **미구현 대기(2026-10-03)**: hub가 보내는 이송 중 부하 필드의 화면 표시 — 후보 카드의 `loadPenaltyMin`·`loadReason`(순위 가산 툴팁과 같은 패턴) + 관제 지도 마커의 `MapHospital.inFlightCount`("이송 중 N건"). 둘 다 Optional이라 안 그려도 안 깨지지만, 대량사고 시연에서 분산이 "왜" 일어나는지 보이려면 필요하다
+- **병원 공지(E-Gen 메시지) 표시(2026-10-07)**: 구급차 후보 카드에 이 환자에 해당하는 병원 공지(최대 2건, 중증 차단은 빨강)와 나머지 건수, 툴팁에 전체 원문. `severe_blocked`면 "병원 차단 메시지" 칩. 필드가 없으면 안 그림
+- **병상 칸 정원·포화도(2026-10-07)**: 구급차 후보 카드 병상 칸이 정원이 오면 "가용/정원"과 라벨에 포화도 %를 보이고, 툴팁에 순위에 더해진 분(`occupancyReason`)을 밝힌다. 정원이 없으면 예전 그대로
+- **[배후역량] 버튼(2026-10-08)**: 현장 후보·매칭 후보 카드 칩 줄에 버튼 하나(`components/ambulance/BackupCapacityButton.tsx`) — 누르면 hub `/hospital-backup`을 불러 모달로 병상·장비·전문의·병원 신고를 보여 준다. 맨 위에 "보유는 최대치, 지금 쓸 수 있는지는 E-Gen 가용과 병원 수용 승인으로" 안내 고정, 장비의 지금 남은 수는 "공개 정보 없음". 목데이터 모드면 숨김
 
 ---
 

@@ -137,14 +137,14 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 
 ## 순위 규칙 (2026-09-28 정비, 2026-10-01 보강)
 
-`finalScore = 0.6 × 진료과 점수 + 0.4 × 이동시간 점수(이동분 − 가산분 + 부하 페널티분)`으로 매기고, 아래 순서로
+`finalScore = 0.6 × 진료과 점수 + 0.4 × 이동시간 점수(이동분 − 가산분 + 부하 페널티분 + 포화도 페널티분)`으로 매기고, 아래 순서로
 정렬한다(`scoring.rank_key()`). 후보에서 빼는 병원은 없다 — 뒤로 내릴 뿐이다. **순위는 hub 한 곳에서만
 정한다** — dashboard는 받은 `hospitals[]` 순서를 그대로 쓴다(2026-10-01, 그 전엔 dashboard가 자체
 정렬로 이 규칙을 덮어써서 화면에 반영되지 않았다).
 
 1. 이 사건의 이송 확정(`confirmed`) 병원 → 병원이 승인(`approved`)한 병원
 2. 나머지 병원: `finalScore` 내림차순 (같으면 가까운 순 → ID 순)
-3. 그 뒤: `declared_no`(관련 질환군 수용 불가 신고) · `beds_full`(병상 0이 **확인된** 만실)
+3. 그 뒤: `declared_no`(관련 질환군 수용 불가 신고) · `severe_blocked`(관련 질환군 E-Gen 차단 메시지, 2026-10-07) · `beds_full`(병상 0이 **확인된** 만실)
 4. 맨 뒤: 이 사건에서 거절(`rejected`)한 병원
 
 **진료과 점수** (2026-10-01): voice의 `summary.required_department`(심평원 과목 표기)가 병원 진료과에
@@ -179,6 +179,18 @@ beds_full 절벽 강등). 이 페널티는 만실 **전에** 연속적으로 분
 - 쓴 값과 이유는 `inFlightCount`·`loadPenaltyMin`·`loadReason`으로 나간다. 검증 `run_match.py`의
   `test_load_penalty()` (평시 불변 + 확정 16건 → +8분 → 만실 전 분산)
 - 관제 지도(`map_overview`)의 병원마다 `inFlightCount`가 실려, 확정·도착 결과 때마다 다시 간다
+
+**응급실 포화도 페널티** (2026-10-07, `scoring.occupancy_penalty_min()`): info가 보내는 응급실 정원
+(`bedCapacityByType.ER_ADULT`, E-Gen `hvs01`)으로 포화도 `(정원 − 가용) ÷ 정원`을 내고, 그에 비례해
+**이동시간에 최대 5분**을 더한다(`OCCUPANCY_PENALTY_MAX_MIN`). 같은 "가용 2석"이라도 정원 10석과 40석은 다르다.
+- 불변식: 페널티를 다 받아도 5분 넘게 가까운 병원은 역전당하지 않는다
+- 부하 페널티의 절반 — 부하는 우리가 확정한 사실이고 포화도는 병원 신고값이라 낡을 수 있다
+- 이송 확정 차감 **전** E-Gen 값으로 계산한다 — 이송 중 환자는 부하 페널티가 세므로 두 번 세지 않는다.
+  화면의 `erOccupancyPct`는 차감까지 반영한 표시값이다
+- 병상 미상·1일 넘은 값·정원 없음이면 0분. 쓴 값과 이유는 `occupancyPenaltyMin`·`occupancyReason`
+- 대량사고 분배(`plan_mci`)도 같은 값을 더한다. **`sim/`의 goldenlink 팔에는 아직 없다** — 시뮬과 실코드의
+  로직 일치를 유지하려면 sim 쪽에도 같은 페널티를 넣어야 한다
+- 값은 팀 합의 전 초기값이다. 검증 `test_er_occupancy.py`
 
 내린 이유는 `hospitals[].demoteReasons`로 나간다. 세부 규칙:
 
@@ -644,13 +656,14 @@ hub는 `/ws/dashboard` 연결을 그동안 완전히 익명으로 취급해서, 
 > `has_pending_bed_update()`, `hub/schema.py`의 `HospitalBedUpdate` 전부
 > 삭제됐다.
 >
-> 대신 병상 차감은 **hub 혼자 자기 메모리에서 짧게(TTL)만 처리**한다.
-> `HubEngine._bed_overlay`(hpid -> 만료 시각 목록)에 `final_approval`마다
-> 기록 하나가 쌓이고, `effective_bed_count()`가 조회 시점에 만료 안 된
+> 대신 병상 차감은 **hub 혼자 자기 메모리에서 한시적으로만 처리**한다.
+> `HubEngine._bed_overlay`(hpid -> `BedHold` 목록)에 `final_approval`마다
+> 기록 하나가 쌓이고, `effective_bed_count()`가 조회 시점에 아직 유효한
 > 개수만큼만 원본(`HospitalInfo.availableBedCount`)에서 빼서 보여준다.
-> `BED_OVERLAY_TTL_MIN=15`(분)는 `hvidate` 갱신 간격 실측(중앙값 5분,
-> 88.7%가 10분 이내)에서 여유를 둔 값 — 그 안에는 E-Gen 자신도 아직 안
-> 바뀌었을 가능성이 높아 오버레이가 유효한 근거가 된다. 예전 대기열 방어
+> 언제 푸는가(2026-10-08, 예전 고정 15분 대체): 확정 + 예상 이동시간 + 20분은 무조건 유지 → 그 뒤 E-Gen 응급실 원값이 확정 당시보다 줄면 해제(줄어든 만큼만) → 끝까지 안 줄면 도착 예상 + 60분에 해제, 수용 완료 시 기준을 실제 도착으로 재설정.
+> 15분의 근거였던 "hvidate 갱신 간격 중앙값 5분"은 병원 입력 주기가 아니라 E-Gen의
+> 5분 묶음 주기였고, 15분이면 구급차가 도착하기도 전에 차감이 풀렸다. 해제 이유는
+> 의사결정 로그 `bed_hold_released`로 남는다. 검증 `test_bed_hold.py`. 예전 대기열 방어
 > 로직(`HubEngine.update_hospital_info()`가 재시도 중인 병원은 upsert
 > 건너뛰기)도 필요 없어졌다 — 오버레이가 read-time에 적용되므로 info가
 > 보내는 최신 원본값을 매번 그대로 덮어써도 안전하다.

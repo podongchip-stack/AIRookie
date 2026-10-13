@@ -40,6 +40,7 @@ BASE_URL = "http://apis.data.go.kr/B552657/ErmctInfoInqireService"
 OP_REALTIME_BEDS = "getEmrrmRltmUsefulSckbdInfoInqire"  # 응급실 실시간 가용병상정보
 OP_SEVERE_ILLNESS = "getSrsillDissAceptncPosblInfoInqire"  # 중증질환자 수용가능정보
 OP_LIST_INFO = "getEgytListInfoInqire"  # 응급의료기관 목록정보
+OP_ER_MESSAGES = "getEmrrmSrsillDissMsgInqire"  # 응급실 및 중증질환 메시지 (2026-10-07)
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "data" / "fixtures"
 
@@ -360,6 +361,11 @@ class HttpEgenClient:
 
     def get_list_info(self, q0: str = "", q1: str = "") -> list[dict]:
         return self._call(OP_LIST_INFO, {"Q0": q0, "Q1": q1})
+
+    def get_er_messages(self) -> list[dict]:
+        """응급실·중증질환 메시지 전국 전체. 이 오퍼레이션은 Q0(시도)를 주면 0건이 와서
+        (2026-10-07 실측) 지역 인자를 받지 않는다 — 전국 800건 안팎이라 1페이지로 끝난다."""
+        return self._call(OP_ER_MESSAGES, {})
 
     def update_bed_count(self, hpid: str, hvec_value: int) -> None:
         raise NotImplementedError(

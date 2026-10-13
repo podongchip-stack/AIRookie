@@ -175,6 +175,83 @@ class SevereDeclarations(BaseModel):
     source: Literal["rule"] = "rule"
 
 
+class BackupCapacity(BaseModel):
+    """feature/info의 심평원 배후진료 보유 역량(hospital_score/hira.py load_backup_summary). 월 단위 구조 정보 —
+    지금 쓰고 있는 대수·당직은 없다."""
+
+    equipment: dict[str, int] = Field(default_factory=dict)  # 심평원 장비명 → 보유 대수
+    operatingRooms: Optional[int] = None
+    icuTotal: Optional[int] = None  # 중환자실 총량으로 보이는 값(미확인)
+    nicu: Optional[int] = None
+    generalWard: Optional[int] = None
+    nursingGrade: Optional[str] = None
+    collectedAt: Optional[str] = None
+    source: Literal["hira"] = "hira"
+
+
+class AcceptanceMessage(BaseModel):
+    """병원이 E-Gen에 걸어둔 수용 제한 메시지 하나(feature/info egen/messages.py, 2026-10-07, 규칙 기반).
+    er = 응급실 메시지(진료과 단위 자유 텍스트), severe = 중증질환 차단(질환 코드·질환군 있음)."""
+
+    kind: Literal["er", "severe"]
+    message: str
+    department: Optional[str] = None
+    diseaseCode: Optional[str] = None
+    diseaseName: Optional[str] = None
+    # info-v2 15개 질환군 이름(severe만). 사건 질환군과 같으면 severe_blocked로 순위를 내린다.
+    diseaseGroup: Optional[str] = None
+    startAt: Optional[str] = None
+    endAt: Optional[str] = None
+
+
+class AcceptanceMessageMatch(AcceptanceMessage):
+    """매칭 결과에 싣는 메시지. matched = 이 환자에 해당하는 메시지(severe는 질환군 일치,
+    er는 필요 진료과 일치이거나 응급실 전체 공지)."""
+
+    matched: bool = False
+    source: Literal["rule"] = "rule"
+
+
+class BackupBedRow(BaseModel):
+    """[배후역량] 병상 한 줄. 보유(심평원)·E-Gen 정원·지금 가용·지금 유효 확률(AI)을 나란히 — 없는 칸은 None."""
+
+    key: str
+    label: str
+    hiraCapacity: Optional[int] = None
+    egenCapacity: Optional[int] = None
+    available: Optional[int] = None
+    authority: Optional[float] = None  # 지금 이 가용 숫자를 믿어도 될 확률(infosurv, source ai)
+    note: Optional[str] = None
+
+
+class BackupEquipmentRow(BaseModel):
+    """[배후역량] 장비 한 줄. 보유 대수(심평원)와 운영 여부(E-Gen Y/N/N1). 지금 남은 대수는 공개 정보가 없다."""
+
+    key: str
+    label: str
+    hiraCount: Optional[int] = None
+    egenOperating: Optional[str] = None
+    note: Optional[str] = None
+
+
+class HospitalBackupView(BaseModel):
+    """GET /hospital-backup 응답(2026-10-08, 규칙 기반 조립 — 순위와 무관한 열람용)."""
+
+    hospitalId: str
+    name: str
+    emergencyLevel: Optional[str] = None
+    beds: list[BackupBedRow] = Field(default_factory=list)
+    equipment: list[BackupEquipmentRow] = Field(default_factory=list)
+    specialties: list[Specialty] = Field(default_factory=list)
+    nursingGrade: Optional[str] = None
+    severeDeclarations: Optional[SevereDeclarations] = None
+    acceptanceMessages: list[AcceptanceMessage] = Field(default_factory=list)
+    inFlightCount: int = 0
+    egenUpdatedAt: Optional[str] = None
+    hiraCollectedAt: Optional[str] = None
+    source: Literal["rule"] = "rule"
+
+
 class HospitalInfo(BaseModel):
     hospitalId: str
     name: str
@@ -192,6 +269,8 @@ class HospitalInfo(BaseModel):
     # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
     # 여기에 필드가 없으면 pydantic이 모르는 필드로 흘려버려서 그 구분이 사라진다.
     bedsByType: Optional[dict[str, int]] = None
+    # 병상 종류별 정원(E-Gen hvs01 등, 2026-10-07) — 키는 bedsByType과 같다. 응급실 포화도(설명용)에 쓴다.
+    bedCapacityByType: Optional[dict[str, int]] = None
     # info-v2(hospital_score)가 보내는 신뢰도 진단 결과. 참고: 이 필드가 없어도
     # (즉 Optional 미지정 값으로 와도) 예전처럼 조용히 무시되지 않는다 — pydantic
     # BaseModel 기본값이 extra="ignore"라 애초에 이 필드가 없어도 검증 자체는
@@ -207,6 +286,12 @@ class HospitalInfo(BaseModel):
     # 키는 E-Gen 필드명(hvoc 수술실·hvgc 입원실·hv28 소아 등), 값 구조는
     # bedReliability와 동일. 같은 Optional 패턴.
     bedReliabilityByType: Optional[dict[str, BedReliabilityInput]] = None
+    # E-Gen 응급실·중증질환 메시지(2026-10-07). 같은 Optional 패턴 — 메시지 없는 병원은 None.
+    acceptanceMessages: Optional[list[AcceptanceMessage]] = None
+    # 배후역량(2026-10-08) — E-Gen 장비 운영 Y/N/N1(코드 → 원값)과 심평원 보유 역량. 매칭 결과엔 싣지 않고
+    # 대시보드 [배후역량] 버튼(GET /hospital-backup)에서만 쓴다. 같은 Optional 패턴.
+    equipmentOperating: Optional[dict[str, str]] = None
+    backupCapacity: Optional["BackupCapacity"] = None
 
 
 class AmbulanceInfo(BaseModel):
@@ -371,10 +456,11 @@ class SevereFreshness(BaseModel):
 
 # 순위를 맨 뒤쪽으로 내린 이유(2026-09-28 신설). 후보에서 빼지는 않는다 — 뺑뺑이 방지 원칙.
 # declared_no: 관련 중증질환군을 병원이 "수용 불가"로 신고 / beds_full: 병상 0이 확인된 만실
-# (미상·오래된 값은 해당 안 됨) / rejected: 이 사건에 대해 병원이 명시적으로 거절.
-# 병원이 이 사건에 승인(approved)·확정(confirmed) 응답을 했으면 신고·병상 값보다 그 응답이
-# 우선이라 declared_no·beds_full로 내리지 않는다.
-DemoteReason = Literal["declared_no", "beds_full", "rejected"]
+# (미상·오래된 값은 해당 안 됨) / rejected: 이 사건에 대해 병원이 명시적으로 거절 /
+# severe_blocked(2026-10-07): 관련 중증질환군에 병원이 E-Gen 차단 메시지를 걸어둠("의료진 부족" 등).
+# 병원이 이 사건에 승인(approved)·확정(confirmed) 응답을 했으면 신고·병상·메시지보다 그 응답이
+# 우선이라 declared_no·severe_blocked·beds_full로 내리지 않는다.
+DemoteReason = Literal["declared_no", "severe_blocked", "beds_full", "rejected"]
 # 순위 계산에 쓴 이동 시간의 출처. eta: 카카오 도로 기준 소요시간 / estimate: 직선거리 ×
 # (같은 사건에서 ETA가 있는 병원들로 보정한 분/km, 없으면 기본값)으로 추정.
 TravelBasis = Literal["eta", "estimate"]
@@ -394,6 +480,10 @@ class HospitalMatch(BaseModel):
     # availableBedCount 자체를 Optional로 바꾸면 dashboard의 기존 타입이 깨지므로
     # 필드를 덧붙이는 쪽을 택했다 — dashboard는 이 값을 읽기 전까지 그대로 동작한다.
     bedCountUnknown: bool = False
+    # 응급실 일반 정원과 포화도(%, (정원 - 가용) ÷ 정원, 2026-10-07, 규칙 기반). 이 값은 이송 확정 차감까지 반영한
+    # 표시용이고, 순위에는 차감 전 E-Gen 값으로 계산한 occupancyPenaltyMin이 들어간다. 병상이 미상·오래된 값이면 None.
+    erBedCapacity: Optional[int] = None
+    erOccupancyPct: Optional[int] = None
     status: HospitalStatus = "pending"
     # 도로 기준 도착 예상 시간(분, 올림). 카카오모빌리티 다중 목적지 길찾기로 채운다(routing.py,
     # 2026-09-24). 키 없음·조회 실패·반경 10km 밖이면 None. 표시용 원값이고, 순위에는 아래
@@ -420,6 +510,8 @@ class HospitalMatch(BaseModel):
     # 카카오 내비 기준 도로 거리(km, 2026-10-03). 화면은 이걸 우선 보여주고, 없으면(ETA 못 받음) distanceKm를
     # "직선 추정"으로 표시한다. distanceKm(직선)는 존 판정·설명용으로 그대로 둔다.
     roadDistanceKm: Optional[float] = None
+    # 지금 유효한 E-Gen 수용 제한 메시지(2026-10-07, 규칙 기반) — 이 환자에 해당하는 것(matched)이 앞. 없으면 None.
+    acceptanceMessages: Optional[list[AcceptanceMessageMatch]] = None
     # 순위를 뒤로 내린 이유. 비어 있으면 finalScore 순서 그대로다.
     demoteReasons: list[DemoteReason] = Field(default_factory=list)
     # 병상 값이 오래됐거나(마지막 갱신 1일 초과) 실시간 피드에 아예 없는 병원. 이 경우 병상 0이어도
@@ -438,6 +530,10 @@ class HospitalMatch(BaseModel):
     inFlightCount: int = 0
     loadPenaltyMin: float = 0.0
     loadReason: Optional[str] = None
+    # ── 응급실 포화도 페널티 (2026-10-07, scoring.occupancy_penalty_min) ──
+    # E-Gen 신고 포화도(이송 확정 차감 전)에 비례해 이동시간에 더한 분(최대 5분)과 설명 문구. 병상 미상·오래된 값이면 0.
+    occupancyPenaltyMin: float = 0.0
+    occupancyReason: Optional[str] = None
 
 
 class ArrivalResult(BaseModel):
@@ -589,7 +685,7 @@ class HospitalInfoConfirm(BaseModel):
 
 # ── feature/hub → feature/dashboard(병원) (출력, 자기 정보 현황) ─────────────
 # 병원 대시보드에 보내는 "귀원 정보 현황"(2026-09-29). identify 직후,
-# feature/info의 30분 주기 upsert 직후, 정보 확인 직후에 그 병원 소켓으로만
+# feature/info의 주기 upsert(기본 5분) 직후, 정보 확인 직후에 그 병원 소켓으로만
 # 보낸다. 데이터 공급자(병원)가 자기 정보의 신선도를 직접 보게 하는 피드백
 # 루프다 — E-Gen 포털엔 이런 피드백이 없어서 수년 묵은 값이 방치된다
 # (실측: 전국 가용병상 1위가 2,457일 묵은 값). bedReliability는 horizon 0

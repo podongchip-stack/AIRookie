@@ -219,6 +219,62 @@ export interface HospitalCandidate {
   inFlightCount?: number;
   loadPenaltyMin?: number;
   loadReason?: string | null;
+  // hub 2026-10-07~: 응급실 일반 정원과 포화도(%, (정원-가용)÷정원, 이송 확정 차감 반영). 규칙 기반. 병상 미상이면 포화도 null.
+  erBedCapacity?: number | null;
+  erOccupancyPct?: number | null;
+  // 포화도 페널티 — 차감 전 E-Gen 포화도에 비례해 이동시간에 더한 분(최대 5분)과 설명 문구. 미상이면 0/null.
+  occupancyPenaltyMin?: number;
+  occupancyReason?: string | null;
+  // hub 2026-10-07~: 병원이 E-Gen에 걸어둔 지금 유효한 수용 제한 메시지(규칙 기반). 이 환자에 해당하는
+  // 것(matched)이 앞이다. 사건 질환군의 중증질환 차단이 있으면 demoteReasons에 "severe_blocked"가 붙는다.
+  acceptanceMessages?: AcceptanceMessage[] | null;
+}
+
+// hub GET /hospital-backup(2026-10-08) — [배후역량] 버튼. 보유(심평원, 월 단위)·정원/운영(E-Gen)·지금 가용(E-Gen 5분,
+// 이송 확정 차감 반영)을 나란히. 장비는 지금 남은 대수가 공개 정보에 없어 보유·운영만 온다. 순위와 무관한 열람용(규칙).
+export interface BackupBedRow {
+  key: string;
+  label: string;
+  hiraCapacity?: number | null;
+  egenCapacity?: number | null;
+  available?: number | null;
+  authority?: number | null; // 지금 이 가용 숫자를 믿어도 될 확률(AI)
+  note?: string | null;
+}
+
+export interface BackupEquipmentRow {
+  key: string;
+  label: string;
+  hiraCount?: number | null;
+  egenOperating?: "Y" | "N" | "N1" | null;
+  note?: string | null;
+}
+
+export interface HospitalBackupView {
+  hospitalId: string;
+  name: string;
+  emergencyLevel?: string | null;
+  beds: BackupBedRow[];
+  equipment: BackupEquipmentRow[];
+  specialties: { department: string; doctorCount: number }[];
+  nursingGrade?: string | null;
+  severeDeclarations?: SevereDeclarations | null;
+  acceptanceMessages: Omit<AcceptanceMessage, "matched">[];
+  inFlightCount: number;
+  egenUpdatedAt?: string | null;
+  hiraCollectedAt?: string | null;
+  source: "rule";
+}
+
+export interface AcceptanceMessage {
+  kind: "er" | "severe"; // er = 응급실 메시지(진료과 단위), severe = 중증질환 차단(질환군 있음)
+  message: string;
+  department?: string | null;
+  diseaseName?: string | null;
+  diseaseGroup?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  matched: boolean;
 }
 
 // 확정 병원 도착 뒤 병원이 기록한 수용 결과(hub 2026-10-01~). 수용만 남는다(수용 불가는 그 병원이 rejected로 바뀜).

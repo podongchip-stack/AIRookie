@@ -147,8 +147,8 @@ export default function MonitorMapPage() {
 
   return (
     <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: C.bg, color: C.ink, whiteSpace: "nowrap" }}>
-      {/* 시연 영상 모드(2026-10-06) — 영상(소리 있음)이 끝나면 /verify/stage 한 바퀴, 다시 영상 */}
-      <DemoVideoOverlay src="/demo-videos/map.mp4" withStage />
+      {/* 시연 영상 모드(2026-10-06) — 관제 지도는 ijs.mp4를 반복 재생(2026-10-08, /verify/stage 순환 없음) */}
+      <DemoVideoOverlay src="/demo-videos/ijs.mp4" />
       <div style={{ position: "absolute", inset: 0, boxSizing: "border-box", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {/* 헤더 + 범례 */}
         <header style={{ flex: "none", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 20px", display: "flex", flexDirection: "column", gap: 10 }}>

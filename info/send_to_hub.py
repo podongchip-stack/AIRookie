@@ -4,9 +4,9 @@
 수용가능정보 전부 실 E-Gen API(`HttpEgenClient`)에서 가져온다. 예전엔 병상만
 Supabase 대체 DB에 남겨뒀었다 — E-Gen이 조회 전용이라 hub의 이송 확정
 (final_approval) 차감을 되돌려 쓸 방법이 없어서였다. 그 문제는 이제 hub
-쪽 **TTL 병상 오버레이**(`hub_engine.py`의 `_bed_overlay`, 15분)로 대신
-푼다 — hub가 차감분을 짧게만 자기 메모리에 얹어 보여주고, 그 사이 E-Gen이
-직접 갱신되는 값(`hvidate` 갱신 중앙값 5분 실측)으로 자연히 맞춰진다. 이
+쪽 **병상 차감 오버레이**(`hub_engine.py`의 `_bed_overlay`)로 대신 푼다 — hub가
+차감분을 한시적으로만 자기 메모리에 얹어 보여주고, 병원이 E-Gen에 반영하면 풀린다
+(2026-10-08부터 고정 15분이 아니라 도착 예상·E-Gen 반영 기준, hub README 참고). 이
 전환으로 Supabase의 7개 병원 대응표(`SUPABASE_TO_EGEN_HPID`, 이제 삭제)
 병목이 없어져 E-Gen이 주는 병원 전체가 hub로 흘러간다.
 
@@ -60,14 +60,17 @@ sys.path.insert(0, str(HOSPITAL_INFORM_INFO_DIR))
 
 from egen.client import HttpEgenClient  # noqa: E402
 from egen.mapper import map_all  # noqa: E402
+from egen.messages import build_acceptance_messages  # noqa: E402
 from schema import (  # noqa: E402
     AmbulanceInfo,
+    BackupCapacity,
     BedReliability,
     HospitalInfo,
     SevereDeclarations,
     SevereGroupDeclaration,
 )
 from hospital_score import dataset as hs_dataset  # noqa: E402
+from hospital_score import hira as hs_hira  # noqa: E402
 from hospital_score import scoring as hs_scoring  # noqa: E402
 from hospital_score import vocabulary as hs_vocab  # noqa: E402
 
@@ -91,9 +94,11 @@ AMBULANCE_SUPABASE_URL = os.environ.get("AMBULANCE_SUPABASE_URL")
 AMBULANCE_SUPABASE_KEY = os.environ.get("AMBULANCE_SUPABASE_KEY")
 AMBULANCE_TABLE = "ambulances"
 
-# 재조회 주기 기본값 30분. 운영 중 주기를 바꿔야 하면 코드 수정 없이
-# INFO_REFETCH_INTERVAL_SEC 환경변수로 덮어쓴다.
-DEFAULT_REFETCH_INTERVAL_SEC = 30 * 60
+# 재조회 주기 기본값 5분(2026-10-08, 예전 30분). E-Gen 공개 API가 전국 값을 정확히 5분 묶음으로 갱신해서
+# (1분 간격 실측) 그보다 자주 부를 이득이 없고, 30분이면 hub의 병상 값이 E-Gen보다 최대 30분 더 늦었다.
+# 호출량은 오퍼레이션 4종 × 하루 288회 — 일일 트래픽 80,000회의 1.6%(클라우드 스냅샷 수집 포함).
+# 운영 중 주기를 바꿔야 하면 코드 수정 없이 INFO_REFETCH_INTERVAL_SEC 환경변수로 덮어쓴다.
+DEFAULT_REFETCH_INTERVAL_SEC = 5 * 60
 REFETCH_INTERVAL_SEC = int(os.environ.get("INFO_REFETCH_INTERVAL_SEC", DEFAULT_REFETCH_INTERVAL_SEC))
 
 def _to_float(raw: object) -> float | None:
@@ -299,6 +304,43 @@ def _attach_reliability(
     return enriched
 
 
+def _attach_acceptance_messages(hospitals: list[HospitalInfo], http: HttpEgenClient) -> list[HospitalInfo]:
+    """병원마다 E-Gen 응급실·중증질환 메시지(egen/messages.py)를 붙인다. 조회가 실패해도 메시지 없이
+    그대로 보낸다 — 다른 세 오퍼레이션과 따로 부르는 이유도 이것(메시지 하나 때문에 병원 목록 전체를 버리지 않게)."""
+    try:
+        by_hpid = build_acceptance_messages(http.get_er_messages())
+    except Exception as e:  # noqa: BLE001 — 메시지 조회 실패가 병원 목록 전송을 막으면 안 됨
+        print(f"  [메시지] E-Gen 응급실·중증질환 메시지 조회 실패, 메시지 없이 전송: {e}")
+        return hospitals
+    enriched = [
+        info.model_copy(update={"acceptanceMessages": by_hpid[info.hospitalId]}) if info.hospitalId in by_hpid else info
+        for info in hospitals
+    ]
+    attached = sum(1 for info in hospitals if info.hospitalId in by_hpid)
+    total = sum(len(v) for v in by_hpid.values())
+    print(f"  [메시지] 수용 제한 메시지 {total}건 · {len(by_hpid)}곳 중 {attached}곳 첨부")
+    return enriched
+
+
+def _attach_backup_capacity(hospitals: list[HospitalInfo]) -> list[HospitalInfo]:
+    """병원마다 심평원 배후진료 보유 역량(hira.load_backup_summary)을 붙인다(2026-10-08). 캐시가 없으면
+    (hira --build-join을 안 돌린 장비) 없이 그대로 보낸다 — 대시보드 [배후역량]에서 보유 칸만 비게 된다."""
+    try:
+        summary = hs_hira.load_backup_summary()
+        enriched = [
+            info.model_copy(update={"backupCapacity": BackupCapacity(**summary[info.hospitalId])})
+            if info.hospitalId in summary else info
+            for info in hospitals
+        ]
+    except Exception as e:  # noqa: BLE001 — 배후역량 처리 실패가 병원 목록 전송을 막으면 안 됨
+        print(f"  [배후역량] 심평원 캐시 처리 실패, 없이 전송: {e}")
+        return hospitals
+    attached = sum(1 for info in hospitals if info.hospitalId in summary)
+    print(f"  [배후역량] 심평원 보유 역량 {attached}/{len(hospitals)}곳 첨부"
+          f"{' (캐시 없음 — hira --build-join 필요)' if not summary else ''}")
+    return enriched
+
+
 #: 심평원 전문과목별 전문의 수 캐시(`python -m hospital_score.hira --build-join`이 만든다).
 HIRA_SPECIALISTS_PATH = HOSPITAL_INFORM_INFO_DIR / "data" / "hira" / "specialists.json"
 
@@ -342,6 +384,8 @@ def fetch_hospitals() -> list[HospitalInfo]:
 
     hospitals = _attach_assessments(hospitals, location_rows, severe_rows, bed_rows)
     hospitals = _attach_reliability(hospitals, bed_rows, severe_rows)
+    hospitals = _attach_acceptance_messages(hospitals, http)
+    hospitals = _attach_backup_capacity(hospitals)
     return hospitals
 
 
