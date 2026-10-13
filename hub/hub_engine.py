@@ -35,7 +35,9 @@ from schema import (
     HospitalMatch,
     HospitalStatus,
     HubMatchResult,
+    OverrideRecord,
     PatientInfo,
+    PatientOverride,
     PatientUpdate,
     ReliabilityInfo,
     SevereFreshness,
@@ -51,6 +53,7 @@ from scoring import (
     rank_key,
 )
 from specialty_matcher import SpecialtyMatcher
+from voice_v2 import KTAS_TO_SEVERITY
 
 if TYPE_CHECKING:
     from routing import KakaoRouting
@@ -130,6 +133,27 @@ STATE_VERSION = 1
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _override_to_json(override: dict | None) -> dict | None:
+    """구급대원 확인 상태(_case_override 항목) -> 상태 파일용 dict."""
+    if override is None:
+        return None
+    return {"confirmedAt": override["confirmedAt"],
+            "records": [r.model_dump() for r in override["records"].values()]}
+
+
+def _override_from_json(raw: dict | None) -> dict | None:
+    if not raw or not raw.get("confirmedAt"):
+        return None
+    records = {}
+    for item in raw.get("records") or []:
+        try:
+            record = OverrideRecord.model_validate(item)
+        except Exception:  # noqa: BLE001 — 항목 하나가 깨져도 나머지는 살린다
+            continue
+        records[record.field] = record
+    return {"confirmedAt": raw["confirmedAt"], "records": records}
 
 
 def _parse_iso(value: str) -> datetime | None:
@@ -573,6 +597,10 @@ class HubEngine:
         self._case_excluded: set[tuple[str, str]] = set()
         # caseId -> 앞선 통화 요약들(2026-10-05, 덧붙이기) — 새 통화 요약이 오면 직전 patientInfo를 여기 쌓는다
         self._case_prev_calls: dict[str, list[PatientUpdate]] = {}
+        # caseId -> 구급대원 확인 상태(2026-10-13, Override): {"confirmedAt": iso, "records": {field: OverrideRecord}}.
+        # 고친 값 자체는 _case_voice의 요약에 반영돼 이후 재계산(60초 주기·존 확장)에도 유지되고, 여기는 "누가·언제·
+        # 무엇을 고쳤나"만 둔다. 새 통화 회차가 오면 지운다(새 AI 요약은 아직 확인 전).
+        self._case_override: dict[str, dict] = {}
         # hospitalId -> 병원 대시보드가 "현재 정보 확인"을 누른 시각(2026-09-29).
         # infosurv의 조건부 생존 갱신 S(a)/S(u)에 쓰는 유효 확인 이력 —
         # E-Gen 자기 신고 바깥에서 처음 생기는 관측이다. 값이 바뀌면(새 claim
@@ -875,6 +903,7 @@ class HubEngine:
         self._case_confirmed_at.pop(case_id, None)
         self._case_arrival.pop(case_id, None)
         self._case_prev_calls.pop(case_id, None)
+        self._case_override.pop(case_id, None)
         self._case_excluded = {k for k in self._case_excluded if k[0] != case_id}
         for key in [k for k in self._reject_reason if k[0] == case_id]:
             del self._reject_reason[key]
@@ -1459,6 +1488,11 @@ class HubEngine:
         """통화 요약 → 대시보드의 환자 정보. 앞선 통화가 있으면(2026-10-05 덧붙이기) 회차와 앞선 요약을 함께 싣는다."""
         with self._lock:
             previous = list(self._case_prev_calls.get(voice.caseId, []))
+            override = self._case_override.get(voice.caseId)
+        confirmation = {} if override is None else {
+            "confirmedBy": "paramedic", "confirmedAt": override["confirmedAt"],
+            "overrides": list(override["records"].values()),
+        }
         return PatientInfo(
             injuryStatus=voice.summary.symptoms,
             expectedDiagnosis=voice.summary.mechanism,
@@ -1475,7 +1509,83 @@ class HubEngine:
             requiredDepartment=voice.summary.required_department,
             callRound=len(previous) + 1,
             previousCalls=previous,
+            **confirmation,
         )
+
+    # 순위에 쓰이는 칸 — 바뀌면(이송 확정 전) 다시 매칭한다. 주 호소·증상은 표시용이라 환자 정보만 갈아 끼운다.
+    _OVERRIDE_RANKING_FIELDS = frozenset({"expectedDiagnosis", "ktasLevel", "requiredDepartment"})
+    # PatientOverride 칸 -> VoiceSummary 칸
+    _OVERRIDE_SUMMARY_FIELD = {
+        "expectedDiagnosis": "mechanism", "injuryStatus": "symptoms", "ktasLevel": "ktas_level",
+        "requiredDepartment": "required_department", "chiefComplaint": "chief_complaint",
+    }
+
+    def apply_patient_override(
+        self, override: PatientOverride, ambulance_gps: GpsPoint
+    ) -> tuple[HubMatchResult, dict] | None:
+        """구급대원의 통화 요약 확인·수정(2026-10-13, Override)을 사건에 반영한다.
+
+        보낸 칸만 사건의 통화 요약(_case_voice)에 덮어쓴다 — 이후 60초 재계산·존 확장도 고친 값으로 돈다. KTAS를
+        바꾸면 중증도도 따라 바뀐다. 순위 칸(예상 병명·KTAS·필요 진료과)이 실제로 바뀌었고 이송 확정 전이면 다시
+        매칭한다(넓힌 존 유지 — process_voice_summary가 승인 상태를 그대로 읽어 병원 승인은 유지된다). 확정 사건이거나
+        표시용 칸만 바뀌었으면 병원 목록·순서는 그대로 두고 환자 정보만 바꾼다. 아무 칸도 안 보내면 "수정 없이 확인"이다.
+
+        사건이 없으면 None. 반환: (새 결과, 의사결정 로그에 남긴 요약)."""
+        case_id = override.caseId
+        now = _utcnow().isoformat(timespec="seconds")
+        with self._lock:
+            voice = self._case_voice.get(case_id)
+            old = self._case_results.get(case_id)
+            if voice is None or old is None:
+                return None
+            confirmed = case_id in self._case_confirmed_at
+            max_zone = self._case_max_zone.get(case_id, 1)
+            gps_fallback = self._case_gps_fallback.get(case_id, False)
+            state = self._case_override.setdefault(case_id, {"confirmedAt": now, "records": {}})
+            state["confirmedAt"] = now
+            summary_updates: dict = {}
+            changes = []
+            for field in sorted(override.model_fields_set & set(self._OVERRIDE_SUMMARY_FIELD)):
+                value = getattr(override, field)
+                if field == "injuryStatus":
+                    value = [v.strip() for v in (value or []) if v and v.strip()]
+                elif isinstance(value, str):
+                    value = value.strip() or None
+                if field in ("expectedDiagnosis", "ktasLevel") and value is None:
+                    continue  # 예상 병명·KTAS는 비울 수 없다(매칭 입력)
+                summary_key = self._OVERRIDE_SUMMARY_FIELD[field]
+                before = getattr(voice.summary, summary_key)
+                if before == value:
+                    continue
+                summary_updates[summary_key] = value
+                if field == "ktasLevel":
+                    summary_updates["severity_tag"] = KTAS_TO_SEVERITY[value]
+                record = state["records"].get(field)
+                ai_value = record.ai if record is not None else before
+                if ai_value == value:
+                    state["records"].pop(field, None)  # AI 값으로 되돌렸다 — 고친 칸이 아니다
+                else:
+                    state["records"][field] = OverrideRecord(field=field, ai=ai_value, value=value, at=now)
+                changes.append({"field": field, "before": before, "after": value})
+            if summary_updates:
+                voice = voice.model_copy(update={"summary": voice.summary.model_copy(update=summary_updates)})
+                self._case_voice[case_id] = voice
+            self._dirty = True
+
+        ranking_changed = any(c["field"] in self._OVERRIDE_RANKING_FIELDS for c in changes)
+        rematched = ranking_changed and not confirmed
+        if rematched:
+            result = self.process_voice_summary(voice, ambulance_gps, max_zone=max_zone, gps_fallback=gps_fallback)
+        else:
+            patient = self._patient_info(voice)
+            with self._lock:
+                result = self._case_results[case_id].model_copy(update={"patientInfo": patient})
+                self._case_results[case_id] = result
+                self._dirty = True
+        log = {"caseId": case_id, "confirmedOnly": not changes, "rematched": rematched,
+               "caseConfirmed": confirmed, "changes": changes}
+        decision_log.log_decision("patient_override", log)
+        return result, log
 
     def add_call_summary(
         self,
@@ -1509,6 +1619,7 @@ class HubEngine:
             ))
             round_no = len(prev) + 1
             confirmed = voice.caseId in self._case_confirmed_at
+            self._case_override.pop(voice.caseId, None)  # 새 AI 요약은 아직 구급대원 확인 전
             current_zone = self._case_max_zone.get(voice.caseId, 1)
         marker = f"\n\n── {round_no}차 통화 ──\n"
         merged = voice.model_copy(update={"transcript": voice.transcript.model_copy(update={
@@ -1796,6 +1907,7 @@ class HubEngine:
                     "confirmedAt": confirmed_at.isoformat() if confirmed_at else None,
                     "voice": _voice_without_transcript(voice) if voice else None,
                     "result": _result_without_transcript(result) if result else None,
+                    "override": _override_to_json(self._case_override.get(cid)),
                 }
             return {
                 "version": STATE_VERSION,
@@ -1868,6 +1980,9 @@ class HubEngine:
                             self._case_arrival[cid] = arrival
                     self._case_group[cid] = case.get("group")
                     self._case_gps_fallback[cid] = bool(case.get("gpsFallback"))
+                    override = _override_from_json(case.get("override"))
+                    if override is not None:
+                        self._case_override[cid] = override
                     confirmed_at = _parse_iso(case["confirmedAt"]) if case.get("confirmedAt") else None
                     if confirmed_at is not None:
                         self._case_confirmed_at[cid] = confirmed_at
