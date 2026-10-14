@@ -82,7 +82,12 @@ const SPHERE=(()=>{const la=18,lo=36,pos=[],nor=[],idx=[];
 const TOUCH=('ontouchstart' in window)||navigator.maxTouchPoints>0;
 let VIEW={longitude:127.7,latitude:36.3,zoom:6.6,pitch:50,bearing:-10,minZoom:5,maxZoom:16.5}, spinning=false;
 const CAMS={korea:{longitude:127.7,latitude:36.3,zoom:6.6,pitch:50,bearing:-10},seoul:{longitude:126.99,latitude:37.53,zoom:11,pitch:58,bearing:-18},top:{pitch:0,bearing:0,zoom:11},tilt:{pitch:58,bearing:-18,zoom:11},side:{pitch:75,bearing:-30,zoom:11.4},low:{pitch:78,bearing:20,zoom:12.2}};
-function goCam(c){VIEW={...VIEW,...c,transitionDuration:900}; deckgl.setProps({initialViewState:VIEW});}
+// 카메라 이동은 항상 setCam으로 — deck.gl은 새 initialViewState가 직전 것과 내용이 같으면(깊은 비교) 무시한다. 멈춰 있는 구급차로
+// 다시 따라가기·같은 사건들로 다시 전체 보기처럼 목표가 직전과 같으면 사람이 그 사이 지도를 옮겼어도 카메라가 안 움직였다(2026-10-15).
+// 매번 바뀌는 번호(camSeq)를 붙여 항상 새 목표로 받게 한다.
+let CAM_SEQ=0;
+function setCam(v){deckgl.setProps({initialViewState:{...v,camSeq:++CAM_SEQ}});}
+function goCam(c){VIEW={...VIEW,...c,transitionDuration:900}; setCam(VIEW);}
 // 카메라 연출: 환자들 위에서 내려다보다가 3초 뒤 천천히 옆으로 기울어진다
 let camT=null;
 function choreograph(){
@@ -94,11 +99,15 @@ function choreograph(){
   const span=Math.max((Math.max(...lngs)-Math.min(...lngs))*0.79,Math.max(...lats)-Math.min(...lats));
   const zoom=Math.min(13,Math.max(10.5,Math.log2(0.6/Math.max(span,0.02))+9.2));
   goCam({longitude:cLng,latitude:cLat,zoom,pitch:0,bearing:0});
-  camT=setTimeout(()=>{VIEW={...VIEW,pitch:72,bearing:-28,zoom:zoom+0.3,transitionDuration:3200}; deckgl.setProps({initialViewState:VIEW});},3000);
+  camT=setTimeout(()=>{VIEW={...VIEW,pitch:72,bearing:-28,zoom:zoom+0.3,transitionDuration:3200}; setCam(VIEW);},3000);
 }
 const deckgl = new DeckGL({
   container:'map', mapLib: maplibregl, mapStyle:BASE.esri,
   initialViewState:VIEW, controller:{maxPitch:80,inertia:!TOUCH,dragRotate:true,touchRotate:true,keyboard:true},
+  // 누르기 여유(2026-10-15): 공중 노드가 작아(축소하면 몇 px) 손가락으로 정확히 맞히기 어려웠다. 누른 점에서 이 반경(px) 안에 있는
+  // 병원 중 **가장 가까운** 하나를 고른다(deck.gl은 반경 안 후보 중 누른 점에 제일 가까운 것을 돌려준다) — 노드가 촘촘한 곳에선
+  // 가까운 쪽이 이기고, 외딴 노드는 근처만 눌러도 잡힌다. 마우스는 정확하니 조금만.
+  pickingRadius:TOUCH?28:6,
   // 사용자가 잡으면 회전·연출을 즉시 멈추고 손에 맡긴다
   onViewStateChange:({viewState,interactionState})=>{VIEW=viewState; const u=interactionState||{}; if(u.isDragging||u.isPanning||u.isRotating||u.isZooming){ if(spinning){spinning=false;$('spin').textContent='회전';} clearTimeout(camT); } if(u.isPanning&&window.onUserPan) window.onUserPan();},
   getTooltip:({object})=>object&&object.hpid?{html:`<b>${object.name}</b><br>${object.grade}<br>z ${object.z} · 중증 가능 ${object.severeY}/28<br>응급실 ${object.hasBeds?(object.hvec===null?'미상':object.hvec)+' / '+(object.er_cap??'?'):'데이터 없음'}`,

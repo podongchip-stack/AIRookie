@@ -1786,6 +1786,8 @@ def _handle_identify(ws, identify: DashboardIdentify) -> None:
         sim_case = sim.case_of(identify.id) if sim is not None else None
         for case_id in set(active) | ({sim_case} if sim_case else set()):
             _send_scene_input_mode(case_id, identify.id, ws)
+    if identify.role == "monitor":  # 매칭 전(예비 고지) 사건도 진행 중이다 — 목록에서 빠져 있어 다시 연결한 관제·spider가
+        active = sorted(set(active) | set(_pre_alerts))  # 방금 받은 예비 고지 사건을 바로 지웠다(2026-10-15)
     # 탭은 hub가 꺼졌다 켜져도 자동 재연결하며 화면 상태를 그대로 들고 있다 — 그 사이 끝난 사건(재시작 정리·
     # 방치 정리 등)은 case_closed를 못 받았으니, 지금 진행 중인 목록을 알려 나머지를 지우게 한다(2026-10-03).
     _send_to_socket(ws, {"type": "case_sync", "caseIds": active}, "사건 목록 동기화")

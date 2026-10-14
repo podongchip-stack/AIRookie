@@ -74,9 +74,16 @@ struct HospitalSection: View {
         guard let c = model.confirmed, !showOthers else { return r.hospitals }
         return r.hospitals.filter { $0.hospitalId == c.hospitalId }
     }
-    /// 병원 승인이 오면 승인 병원 중 최상위(hub 순위)를 "추천" — 자동 확정이 아니라 추천 + 탭 한 번
+    /// 병원 승인이 오면 승인 병원 중 최상위(hub 순위)를 "추천" — 자동 확정이 아니라 추천 + 탭 한 번.
+    /// 승인 뒤 응급실 병상 0이 확인됐거나 이 사건에서 제외·차단된 병원은 지금 보낼 수 없으니 건너뛴다(2026-10-15, spider 초록 줄과 같은 규칙)
     private func recommendedId(_ r: HubMatchResult) -> String? {
-        model.confirmed == nil ? r.hospitals.first { $0.status == "approved" }?.hospitalId : nil
+        model.confirmed == nil ? r.hospitals.first { Self.canTransportNow($0) }?.hospitalId : nil
+    }
+    static func canTransportNow(_ h: HospitalMatch) -> Bool {
+        guard h.status == "approved", h.unavailableReason == nil, h.excluded != true else { return false }
+        if (h.demoteReasons ?? []).contains(where: { $0 == "beds_full" || $0 == "severe_blocked" }) { return false }
+        if h.bedCountUnknown == true || h.bedDataStale == true { return true }
+        return (h.availableBedCount ?? 1) > 0
     }
     private func sceneOrdered(_ s: SceneCandidates) -> [SceneCandidate] {
         s.hospitals.filter { $0.firstCallRecommended == true } + s.hospitals.filter { $0.firstCallRecommended != true }

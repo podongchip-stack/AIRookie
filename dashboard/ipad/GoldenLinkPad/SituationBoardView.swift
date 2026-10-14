@@ -160,7 +160,7 @@ struct SituationBoardView: View {
                 }
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
-            SpiderWebView(url: Settings.spiderURL(apid: nil))
+            SpiderWebView(url: Settings.spiderURL(apid: nil, screen: "board"))
                 .id("board|" + hubBase + "|" + spiderBase)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .padding([.horizontal, .bottom], 8)

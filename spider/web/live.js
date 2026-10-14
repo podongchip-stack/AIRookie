@@ -32,7 +32,7 @@ function embedFocus(points) {
 }
 window.addEventListener('resize', () => {
   clearTimeout(embedResizeT);
-  embedResizeT = setTimeout(() => { if (FOLLOW && ONLY_APID) { const s = HUB.sims[ONLY_APID]; if (s && s.gps) { followTo(s.gps, 0); return; } } if (EMBED_FOCUS) { VIEW = { ...VIEW, ...EMBED_FOCUS, transitionDuration: 0 }; deckgl.setProps({ initialViewState: VIEW }); } }, 350);
+  embedResizeT = setTimeout(() => { if (FOLLOW && ONLY_APID) { const s = HUB.sims[ONLY_APID]; if (s && s.gps) { followTo(s.gps, 0); return; } } if (EMBED_FOCUS) { VIEW = { ...VIEW, ...EMBED_FOCUS, transitionDuration: 0 }; setCam(VIEW); } }, 350);
 });
 let EMBED_USER = false;   // 사람이 지도를 한 번이라도 만졌으면 자동 맞춤(전체 보기)을 하지 않는다
 ['pointerdown', 'touchstart', 'wheel'].forEach(t => document.getElementById('map').addEventListener(t, () => { EMBED_FOCUS = null; EMBED_USER = true; }, { passive: true }));
@@ -41,7 +41,9 @@ window.focusPoint = (lat, lng) => embedFocus([{ lat, lng }]);
 
 // ── 보기 유지(2026-10-15): 앱에서 구급차 화면 ↔ 상황판을 오가면 지도가 새로 열려 처음 보기로 돌아갔다. 줌·기울기·방향(상황판은 중심까지)을
 // 이 기기에 저장해 다시 열 때 그대로 띄운다. 구급차 화면은 중심을 내 구급차로 두고 줌·기울기만 이어 간다.
-const VIEW_KEY = 'spider.view.' + (ONLY_APID ? 'ambulance' : 'board');
+// 키는 앱이 알려 주는 화면(?screen=ambulance|board)이 우선 — auto 모드에서 출동 전 구급차 화면은 apid 없이 열려 상황판과 같은 키를 써서,
+// 구급차 화면에서 옮긴 보기가 상황판으로 돌아왔을 때 덮어써졌다(줄이 화면 밖에 있어 사라진 것처럼 보임, 2026-10-15)
+const VIEW_KEY = 'spider.view.' + (new URLSearchParams(location.search).get('screen') || (ONLY_APID ? 'ambulance' : 'board'));
 let FOLLOW = !!ONLY_APID, lastSavedView = '';
 function loadSavedView() { try { return JSON.parse(localStorage.getItem(VIEW_KEY) || 'null'); } catch (e) { return null; } }
 function saveView() {
@@ -59,20 +61,32 @@ setInterval(saveView, 1500);
   } else if (v) {    // 상황판: 마지막 보기 그대로 — 자동 전체 맞춤도 하지 않는다(사람이 맞춘 보기를 존중)
     VIEW = { ...VIEW, ...v }; EMBED_USER = true;
   }
-  deckgl.setProps({ initialViewState: { ...VIEW, transitionDuration: 0 } });
+  setCam({ ...VIEW, transitionDuration: 0 });
 })();
 // 손가락이 지도에 닿아 있는 동안은 따라가기를 잠시 쉰다 — 핀치 도중 카메라를 옮기면 제스처가 끊긴다
 let TOUCHING = 0;
 ['touchstart', 'pointerdown'].forEach(t => document.getElementById('map').addEventListener(t, () => { TOUCHING = Date.now(); }, { passive: true }));
 ['touchend', 'touchcancel', 'pointerup'].forEach(t => document.addEventListener(t, () => { TOUCHING = 0; }, { passive: true }));
-function followTo(gps, dur) {
-  if (!FOLLOW || !gps || (TOUCHING && Date.now() - TOUCHING < 8000)) return;
+function followTo(gps, dur, force) {
+  if (!FOLLOW || !gps || (!force && TOUCHING && Date.now() - TOUCHING < 8000)) return;
   VIEW = { ...VIEW, longitude: gps.lng, latitude: gps.lat, transitionDuration: dur };
-  deckgl.setProps({ initialViewState: VIEW });
+  setCam(VIEW);
+}
+// 내 구급차 위치 — 시뮬레이션 위치가 없으면(아직 상태를 못 받음) hub 구급차 목록의 위치(기지)
+function myGps() {
+  const s = HUB.sims[ONLY_APID]; if (s && s.gps) return s.gps;
+  const a = HUB.overview && (HUB.overview.ambulances || []).find(x => x.apid === ONLY_APID);
+  return a ? a.gps : null;
 }
 // 사람이 지도를 끌어 옮기면 따라가기를 멈춘다(확대·축소·회전은 따라가기 유지). 앱의 [내 구급차] 버튼이 followMine()으로 다시 켠다.
 window.onUserPan = () => { if (ONLY_APID) FOLLOW = false; };
-window.followMine = () => { FOLLOW = true; EMBED_FOCUS = null; const s = HUB.sims[ONLY_APID]; if (s && s.gps) followTo(s.gps, 700); };
+// 버튼은 사람이 직접 누른 것이라 손가락 쉬기(TOUCHING)를 따지지 않는다. 따라갈 구급차가 없는 화면(auto에서 출동 전)이면 전체 보기로
+window.followMine = () => {
+  EMBED_FOCUS = null;
+  if (!ONLY_APID) { window.fitAllNow(); return; }
+  FOLLOW = true; TOUCHING = 0;
+  followTo(myGps(), 700, true);
+};
 // 상황판 [전체 보기] — 모든 현장과 이송 병원이 다 보이게
 window.fitAllNow = () => { EMBED_USER = false; scheduleFitAll(); EMBED_USER = true; };
 // 상황판(embed, apid 없음): 새 사건이 생길 때마다 모든 현장이 다 보이게 맞춘다 — 사건마다 카메라가 튀지 않게 모아서 한 번
@@ -179,6 +193,16 @@ function casePos(c) {
   return null;
 }
 const caseConfirmed = c => (c.hospitals || []).find(h => h.status === 'confirmed') || null;
+// 지금 이 환자를 실제로 보낼 수 있는 승인 병원인가(2026-10-15) — 수용 승인을 눌렀어도 그 뒤 응급실 병상 0이 확인됐거나(E-Gen,
+// 이송 확정 차감 반영 — 미상·1일 넘은 값은 막지 않음), 이 사건에서 제외됐거나(이송 중 철회·도착 후 수용 불가), 병원 공지로 이 질환군을
+// 막았으면 초록 '최적' 줄을 긋지 않는다. 예전엔 hub 순위의 첫 승인 병원을 그대로 써서 병상 없는 병원이 '최적'으로 보였다.
+function transportable(ch) {
+  if (ch.status !== 'approved') return false;
+  if (ch.unavailableReason || ch.excluded) return false;
+  if ((ch.demoteReasons || []).some(r => r === 'beds_full' || r === 'severe_blocked')) return false;
+  if (!ch.bedCountUnknown && !ch.bedDataStale && ch.availableBedCount != null && ch.availableBedCount <= 0) return false;
+  return true;
+}
 function caseLabel(c) { return `#${c.num ?? '?'} K${caseK(c)}`; }
 // 경로 위에서 지금 위치에 가장 가까운 꼭짓점 — 지난 구간(회색)과 남은 구간(색)을 나눈다
 function splitPath(path, gps) {
@@ -237,12 +261,14 @@ function liveLayers(t) {
     // 줄은 "이 환자가 어디로 가나"만 보이게(2026-10-15): 확정되면 확정 병원 하나, 확정 전엔 수용 승인한 병원 중 hub 순위
     // 1위(=구급차 화면의 '추천', 이송 중 부하·포화·중증도 가산이 반영된 최적) 하나. 아직 승인한 곳이 없으면 요청이 나간 병원에
     // 아주 옅은 줄만(동시 전달 중이라는 표시). 예전엔 요청한 병원 전부에 줄이 그려져 어느 줄이 최적인지 알 수 없었다.
-    const best = confirmed || (c.hospitals || []).find(h => h.status === 'approved') || null;
-    if (best && !confirmed && !arrived) { const bh = hp(best.hospitalId); if (bh) bestTexts.push({ pos: top(bh), text: `${caseLabel(c)} 최적 · ${shortName(bh.name)}` }); }
+    // 승인 병원이 있어도 지금 보낼 수 없는 곳(병상 0 확인·제외·차단)은 건너뛴다 — 보낼 수 있는 승인 병원이 하나도 없으면 아직 응답을
+    // 기다리는 병원(판단 대기)에만 옅은 줄. 아이패드 상황판(embed, apid 없음)은 '최적' 이름표를 달지 않는다(사건이 몰리면 이름표가 겹친다 — 자리 재검토 중).
+    const best = confirmed || (c.hospitals || []).find(transportable) || null;
+    if (best && !confirmed && !arrived && (ONLY_APID || !document.body.classList.contains('embed'))) { const bh = hp(best.hospitalId); if (bh) bestTexts.push({ pos: top(bh), text: `${caseLabel(c)} 최적 · ${shortName(bh.name)}` }); }
     for (const ch of c.hospitals || []) {
       const h = hp(ch.hospitalId); if (!h) continue;
       const st = ch.status;
-      if (best ? ch.hospitalId !== best.hospitalId : (st === 'rejected' || ch.unavailableReason)) continue;
+      if (best ? ch.hospitalId !== best.hospitalId : (st !== 'pending' || ch.unavailableReason || ch.excluded)) continue;
       let col, w, a;
       if (st === 'confirmed') { col = kc; w = 3; a = 240; }
       else if (st === 'approved') { col = OK_COL; w = 3; a = 235; }
@@ -268,7 +294,8 @@ function liveLayers(t) {
       if (h) {
         sugLines.push({ a: [pos.lng, pos.lat, 0], b: [h.lng, h.lat, 0] });
         if (air) airLines.push({ a: [pos.lng, pos.lat, ZH(pz) * hs], b: top(h), col: [...SUG_COL, 150], w: 1.5 });
-        sugTexts.push({ pos: [(pos.lng + h.lng) / 2, (pos.lat + h.lat) / 2, 0], text: `거미줄 제안 → ${shortName(h.name)}${confirmed && confirmed.hospitalId !== sug.hpid ? ' (hub와 다름)' : ''}` });
+        // 상황판(apid 없음)에선 이름표를 달지 않는다 — 대량사고 현장에 사건마다 하나씩 붙어 구급차 노드를 가렸다(줄만, 2026-10-15)
+        if (ONLY_APID || !document.body.classList.contains('embed')) sugTexts.push({ pos: [(pos.lng + h.lng) / 2, (pos.lat + h.lat) / 2, 0], text: `거미줄 제안 → ${shortName(h.name)}${confirmed && confirmed.hospitalId !== sug.hpid ? ' (hub와 다름)' : ''}` });
       }
     }
   }
