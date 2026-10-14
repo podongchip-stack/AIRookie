@@ -49,8 +49,9 @@ enum Settings {
     }
 
     /// 거미줄 3D 실시간 화면(패널 없이 지도만). apid를 주면 그 구급차의 사건만 그린다.
-    static func spiderURL(apid: String?) -> URL? {
-        var s = effectiveSpiderBase + "/spider/?mode=live&embed=1"
+    /// screen: 지도 보기(확대·위치)를 화면별로 따로 저장하는 키 — 구급차 화면은 auto 출동 전에도 apid 없이 열려 상황판과 섞였다
+    static func spiderURL(apid: String?, screen: String) -> URL? {
+        var s = effectiveSpiderBase + "/spider/?mode=live&embed=1&screen=" + screen
         if let apid, !apid.isEmpty { s += "&apid=" + (apid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? apid) }
         return URL(string: s)
     }
