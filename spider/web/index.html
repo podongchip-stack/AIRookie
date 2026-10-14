@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="icon" href="data:,">
 <title>병원 역량 공간 — 전국</title>
@@ -99,6 +99,16 @@
   <button id="end">끝으로</button>
 </div>
 
+<script>
+// 앱 WebView(embed)에서 난 자바스크립트 오류를 화면 구석에 보인다 — 아이패드에선 개발자 도구 없이 원인을 볼 길이 이것뿐이다
+(function(){ if(new URLSearchParams(location.search).get('embed')!=='1') return;
+  function show(m){ let b=document.getElementById('jserr'); if(!b){ b=document.createElement('div'); b.id='jserr';
+    b.style.cssText='position:fixed;left:8px;bottom:8px;z-index:99;max-width:70%;padding:6px 9px;font:11px -apple-system;color:#fff;background:rgba(217,48,37,.9);border-radius:8px;white-space:pre-wrap';
+    (document.body||document.documentElement).appendChild(b);} b.textContent=(b.textContent?b.textContent+'\n':'')+String(m).slice(0,300); }
+  window.addEventListener('error',e=>show('JS 오류: '+e.message+' @'+(e.filename||'').split('/').pop()+':'+e.lineno));
+  window.addEventListener('unhandledrejection',e=>show('Promise 오류: '+(e.reason&&e.reason.message||e.reason)));
+})();
+</script>
 <script src="vendor/maplibre-gl.js"></script>
 <script src="vendor/deck.gl.min.js"></script>
 <script src="app.js"></script>

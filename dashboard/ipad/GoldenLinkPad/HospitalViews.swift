@@ -1,155 +1,342 @@
 import SwiftUI
 
-/// 오른쪽 단 — 2. 병원 수용 여부·병원 상태 + 4-1. 그 병원 정보가 얼마나 유효한가(정보 생존 모델)와 왜 그런가.
-/// 순서는 hub가 보낸 순위 그대로(이송 확정 → 승인 → 점수순 → 내림 → 거절).
-struct HospitalColumn: View {
+/// 아래 — 병원 후보 리스트(웹 HospitalCandidateListPanel과 같은 가로 스크롤 카드). 사고가 발생했을 때만 나타난다.
+/// 통화 전: 현장 주변 후보(도착 시간순, 첫 연락 추천). 통화 후: hub 순위 그대로 병원 응답·정보 유효성·[이송 승인].
+/// 카드를 누르면 "이 병원 정보가 얼마나 유효한가, 왜 그런가" 상세가 열린다.
+struct HospitalSection: View {
     @EnvironmentObject private var model: AppModel
-    @State private var detail: CaseHospital?
+    @State private var detail: HospitalMatch?
+    @State private var showOthers = false
 
     var body: some View {
-        VStack(spacing: 8) {
-            if let c = model.selectedCase {
-                let cnt = c.counts
-                SectionTitle(text: "병원 수용 여부 · 정보 유효성",
-                             sub: c.matched ? "대기 \(cnt.pending) · 승인 \(cnt.approved) · 불가 \(cnt.rejected)\(cnt.confirmed > 0 ? " · 확정" : "")" : "병원 요청 전")
-                legend
-                if c.hospitals.isEmpty {
-                    Spacer()
-                    Text(c.matched ? "후보 병원이 없습니다" : "현장 통화가 끝나면 존 안 병원에 동시 요청이 나갑니다").foregroundStyle(Theme.muted).font(.system(size: 12))
-                    Spacer()
-                } else {
-                    ScrollView {
-                        VStack(spacing: 6) {
-                            ForEach(Array(c.hospitals.enumerated()), id: \.element.hospitalId) { i, h in
-                                HospitalRow(rank: i + 1, h: h, now: model.now)
-                                    .onTapGesture { detail = h }
-                            }
+        VStack(alignment: .leading, spacing: 6) {
+            header
+            // LazyHStack은 같은 병원 ID의 카드를 단계(현장 후보 → 매칭 결과) 사이에 재사용해 두 종류 카드가 섞여 남았다 —
+            // 카드가 10여 장뿐이라 일반 HStack을 쓰고, 단계별로 id를 따로 붙인다(2026-10-14).
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    if let r = model.result {
+                        ForEach(visible(r)) { h in
+                            CandidateCard(h: h, recommended: h.hospitalId == recommendedId(r), confirmedId: model.confirmed?.hospitalId,
+                                          requesting: model.pendingConfirmId == h.hospitalId, onDetail: { detail = h })
+                                .id("m-\(r.caseId)-\(h.hospitalId)")
                         }
+                        if visible(r).count < 4 && model.confirmed == nil { ForEach(visible(r).count..<4, id: \.self) { i in SkeletonCard(index: i + 1).id("k-\(i)") } }
+                    } else if let s = model.scene {
+                        ForEach(sceneOrdered(s)) { h in SceneCard(h: h).id("s-\(s.caseId)-\(h.hospitalId)") }
+                    } else {
+                        ForEach(1...4, id: \.self) { i in SkeletonCard(index: i).id("k-\(i)") }
                     }
                 }
-            } else {
-                SectionTitle(text: "병원 수용 여부 · 정보 유효성")
-                Spacer()
-                Text("사건을 고르면 후보 병원이 여기에 뜹니다").foregroundStyle(Theme.muted).font(.system(size: 12))
-                Spacer()
+                .id(model.result != nil ? "match" : model.scene != nil ? "scene" : "wait")
+                .padding(.bottom, 4)
             }
+            .scrollIndicators(.visible)
         }
-        .panel(10)
-        .sheet(item: $detail) { h in
-            ValidityDetailView(h: h, caseState: model.selectedCase).environmentObject(model)
-        }
+        .sheet(item: $detail) { h in ValidityDetailView(h: h).environmentObject(model) }
     }
 
-    private var legend: some View {
-        HStack(spacing: 10) {
-            ForEach([("판단 대기", Theme.amber), ("수용 승인", Theme.ok), ("수용 불가", Theme.muted), ("이송 확정", Theme.ktas(2))], id: \.0) { item in
-                HStack(spacing: 4) { Circle().fill(item.1).frame(width: 7, height: 7); Text(item.0) }
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("병원 후보 리스트").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
+            if let r = model.result {
+                let zoneMax = max(1, r.zoneActive?.max() ?? 1)
+                if model.confirmed != nil {
+                    Text("이송 확정 병원으로 이동 중").font(.system(size: 12)).foregroundStyle(AD.ink3)
+                } else {
+                    (Text(zoneMax > 1 ? "Zone 1~\(zoneMax)" : "Zone 1").bold().foregroundColor(AD.blue) + Text(" · 현장 반경 \(zoneMax * 5)km · \(r.hospitals.count)곳"))
+                        .font(.system(size: 12)).foregroundStyle(AD.ink3)
+                }
+                Text("카드를 누르면 정보 유효성 근거").font(.system(size: 11.5)).foregroundStyle(AD.muted)
+            } else if let s = model.scene {
+                (Text("Zone \((s.zoneActive ?? [1]).map(String.init).joined(separator: ", "))").bold().foregroundColor(AD.blue) + Text(" · 환자 정보 전 도착 시간순 · \(s.hospitals.count)곳"))
+                    .font(.system(size: 12)).foregroundStyle(AD.ink3)
+                Text(s.reportedSymptom.map { "1차 신고(\($0)) 기반 가추천 — 통화가 끝나면 확정 순위로 바뀝니다" } ?? "통화가 끝나면 진료과·이동시간 기준 순위와 병원 응답으로 바뀝니다")
+                    .font(.system(size: 11.5)).foregroundStyle(AD.sub).lineLimit(1)
+            } else {
+                Text("현장 도착 후 후보가 나타납니다").font(.system(size: 12)).foregroundStyle(AD.ink3)
             }
             Spacer()
-            Text("유효 % = 병상 숫자가 아직 맞을 확률(AI)").foregroundStyle(Theme.muted)
-        }.font(.system(size: 10)).foregroundStyle(Theme.ink2)
+            if let r = model.result, model.confirmed != nil, r.hospitals.count > 1 {
+                Button { showOthers.toggle() } label: {
+                    Text(showOthers ? "다른 후보 접기" : "다른 후보 \(r.hospitals.count - 1)곳 보기 (재선택할 때)")
+                        .font(.system(size: 12)).foregroundStyle(AD.ink3)
+                        .padding(.horizontal, 12).frame(minHeight: 32)
+                        .overlay(Capsule().stroke(AD.gray, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    /// 이송이 확정되면 확정 병원만(웹과 같음) — 재선택을 위해 펼칠 수 있다
+    private func visible(_ r: HubMatchResult) -> [HospitalMatch] {
+        guard let c = model.confirmed, !showOthers else { return r.hospitals }
+        return r.hospitals.filter { $0.hospitalId == c.hospitalId }
+    }
+    /// 병원 승인이 오면 승인 병원 중 최상위(hub 순위)를 "추천" — 자동 확정이 아니라 추천 + 탭 한 번
+    private func recommendedId(_ r: HubMatchResult) -> String? {
+        model.confirmed == nil ? r.hospitals.first { $0.status == "approved" }?.hospitalId : nil
+    }
+    private func sceneOrdered(_ s: SceneCandidates) -> [SceneCandidate] {
+        s.hospitals.filter { $0.firstCallRecommended == true } + s.hospitals.filter { $0.firstCallRecommended != true }
     }
 }
 
-struct HospitalRow: View {
-    var rank: Int
-    var h: CaseHospital
-    var now: Date
+private let cardWidth: CGFloat = 340
 
-    private var live: BedReliability.Live? { h.bedReliability.map { BedReliability.live($0, now: now) } }
+/// 매칭 결과 카드 — 이름 · 거리 · ETA · 상태 | 병상 · AI 유효 · 전문의 | 칩 | 정보 유효성 한 줄 | [이송 승인]
+struct CandidateCard: View {
+    @EnvironmentObject private var model: AppModel
+    var h: HospitalMatch
+    var recommended: Bool
+    var confirmedId: String?
+    var requesting: Bool
+    var onDetail: () -> Void
+
+    private var confirmed: Bool { h.hospitalId == confirmedId }
     private var unavailable: Bool { h.status == "pending" && h.unavailableReason != nil }
+    private var statusKey: String { unavailable ? "rejected" : h.status }
+    private var live: BedReliability.Live? { h.bedReliability.map { BedReliability.live($0, now: model.now) } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Text("\(rank)").font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.muted).frame(width: 18)
-                Text(h.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(h.excluded == true ? Theme.muted : Theme.ink).lineLimit(1)
-                if let g = h.emergencyLevel { Chip(text: Labels.grade(g), color: Theme.grade(g)) }
+        VStack(alignment: .leading, spacing: 7) {
+            Button(action: onDetail) {
+                VStack(alignment: .leading, spacing: 7) {
+                    head
+                    stats
+                    chips
+                    validityLine
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+            actionButton
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frame(width: cardWidth, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(AD.card)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .stroke(confirmed ? AD.green : recommended ? AD.approve : AD.control, lineWidth: confirmed ? 3 : recommended ? 2 : 1))
+        .opacity(statusKey == "rejected" && !confirmed ? 0.72 : 1)
+    }
+
+    private var head: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(h.name).font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
+                HStack(spacing: 0) {
+                    Text(Labels.distance(km: h.distanceKm, road: h.roadDistanceKm)).foregroundStyle(AD.ink)
+                    if let e = h.etaMin { Text(" · ETA ").foregroundStyle(AD.ink3); Text("\(e)분").foregroundStyle(AD.ink) }
+                    else if let t = h.travelMin { Text(" · 약 \(Int(t.rounded()))분(직선 추정)").foregroundStyle(AD.ink3) }
+                }.font(.system(size: 12))
+            }
+            Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 4) {
+                let p = Theme.statusPill(statusKey)
+                Pill(text: statusText, bg: p.bg, fg: p.fg, bold: true)
+                if recommended { Pill(text: "추천", bg: AD.orangeSoft, fg: AD.approve, bold: true) }
+            }
+        }
+    }
+
+    private var statusText: String {
+        if requesting && !confirmed { return "확정 요청 중" }
+        if unavailable { return "수용 불가 · \(Labels.reject(h.unavailableReason))" }
+        if h.status == "rejected", h.rejectReason != nil { return "수용 불가 · \(Labels.reject(h.rejectReason))" }
+        return Labels.status(h.status)
+    }
+
+    private var stats: some View {
+        HStack(spacing: 8) {
+            bedBox
+            if let lv = live {
+                let t = Theme.validity(lv.rArrive)
+                StatBox(label: "AI 유효", value: "\(BedReliability.pct(lv.rArrive))\(h.bedReliability?.confirmedAgeSec != nil ? " ✓" : "")", bg: t.bg, fg: t.fg)
+            } else {
+                StatBox(label: "AI 유효", value: "—", bg: AD.chip, fg: AD.ink3)
+            }
+            StatBox(label: "전문의", value: h.specialtyMatch?.doctorCount.map { "\($0)명" } ?? "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
+        }
+    }
+
+    @ViewBuilder private var bedBox: some View {
+        let cap = h.erBedCapacity.map { "/\($0)" } ?? ""
+        if h.bedCountUnknown == true {
+            StatBox(label: "병상", value: "미상", bg: AD.chip, fg: AD.ink3)
+        } else if (h.availableBedCount ?? 0) <= 0 {
+            StatBox(label: h.erOccupancyPct.map { "병상 · \($0)%" } ?? "병상", value: h.erBedCapacity != nil ? "0\(cap)" : "없음", bg: AD.redSoft, fg: AD.red)
+        } else {
+            StatBox(label: [h.bedDataStale == true ? "병상 · 1일↑" : "병상", h.erOccupancyPct.map { "\($0)%" }].compactMap { $0 }.joined(separator: " · "),
+                    value: h.erBedCapacity != nil ? "\(h.availableBedCount ?? 0)\(cap)" : "\(h.availableBedCount ?? 0)석", bg: AD.limeSoft, fg: AD.lime)
+        }
+    }
+
+    private var chips: some View {
+        FlowLayout(spacing: 6) {
+            if let sm = h.specialtyMatch {
+                if sm.department == nil { Pill(text: "진료과 정보 미상") }
+                else if sm.basis != "exact", (sm.score ?? 0) < 0.3 { Pill(text: "\(sm.department ?? "") · 적합도 낮음 \(Int(((sm.score ?? 0) * 100).rounded()))%") }
+                else { Pill(text: "\(sm.department ?? "") · \(sm.basis == "exact" ? "필요 진료과 일치" : "적합도 \(Int(((sm.score ?? 0) * 100).rounded()))%")", bg: AD.blueSoft, fg: AD.blue) }
+            }
+            if let lvl = h.emergencyLevel, lvl.hasSuffix("센터") { Pill(text: lvl) }
+            if h.demoteReasons?.contains("declared_no") == true { Pill(text: "수용 불가 신고", bg: AD.redSoft, fg: AD.red) }
+            if h.demoteReasons?.contains("severe_blocked") == true { Pill(text: "병원 차단 메시지", bg: AD.redSoft, fg: AD.red) }
+            if let n = h.inFlightCount, n > 0 { Pill(text: "이송 중 \(n)건\(h.loadPenaltyMin.map { $0 > 0 ? " · 순위 +\(fmt($0))분" : "" } ?? "")", bg: AD.orangeSoft, fg: AD.orange) }
+            if let r = h.reliability { Pill(text: "\(r.group) · \(Labels.confidence(r.confidence))", bg: r.confidence == "high" ? AD.greenSoft : AD.chip, fg: r.confidence == "high" ? AD.green : AD.ink3) }
+            if let sf = h.severeFreshness { Pill(text: "\(sf.value == "Y" ? "수용가능 신고" : "수용불가 신고") \(Labels.age(sf.ageSec, isMin: sf.ageIsMin ?? false))") }
+        }
+    }
+
+    /// 정보 유효성(4-1) — 지금 / 도착 시 확률과 "왜"를 한 줄로: 정보 나이 · 도착까지 이동 · 병원 확인 · 1일 넘은 값
+    @ViewBuilder private var validityLine: some View {
+        if let lv = live, let br = h.bedReliability {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Text("AI · 병상 정보 지금 유효").foregroundStyle(AD.sub)
+                    Text(BedReliability.pct(lv.authority)).bold().foregroundStyle(Theme.validity(lv.authority).fg)
+                    Text("→ 도착 시").foregroundStyle(AD.sub)
+                    Text(BedReliability.pct(lv.rArrive)).bold().foregroundStyle(Theme.validity(lv.rArrive).fg)
+                    Spacer(minLength: 0)
+                    Image(systemName: "info.circle").foregroundStyle(AD.blue)
+                }.font(.system(size: 11.5))
+                ProbBar(value: lv.rArrive, height: 5)
+                Text(reasonLine(lv, br)).font(.system(size: 11)).foregroundStyle(AD.muted).lineLimit(1)
+            }
+        } else {
+            Text(h.bedCountUnknown == true ? "AI · 병상 미상 — 유효 확률을 내지 않습니다" : "AI · 병상 신뢰도 정보 없음")
+                .font(.system(size: 11.5)).foregroundStyle(AD.sub)
+        }
+    }
+
+    private func reasonLine(_ lv: BedReliability.Live, _ br: BedReliabilityMatch) -> String {
+        var parts: [String] = []
+        if let a = lv.ageSec { parts.append("정보 \(Labels.age(a))") }
+        parts.append("도착까지 \(Labels.minutes(br.horizonSec))")
+        if br.confirmedAgeSec != nil { parts.append("병원 확인 ✓") }
+        if h.bedDataStale == true { parts.append("⚠ 1일 넘은 값") }
+        if let byType = h.bedReliabilityByType, !byType.isEmpty {
+            let s = byType.sorted { $0.key < $1.key }.prefix(2).map { "\(Labels.bedField[$0.key] ?? $0.key) \(BedReliability.pct(BedReliability.live($0.value, now: model.now).rArrive))" }
+            parts.append(s.joined(separator: " "))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder private var actionButton: some View {
+        let approvable = h.status == "approved" || h.status == "confirmed"
+        if confirmed {
+            bigButton("이송 확정됨", bg: AD.greenSoft, fg: AD.green, border: AD.green)
+        } else if requesting {
+            bigButton("확정 요청 중…", bg: AD.orangeSoft, fg: AD.approve, border: AD.approve)
+        } else if approvable {
+            Button { model.approve(h.hospitalId) } label: { bigButton("이송 승인", bg: model.paused ? AD.gray : AD.approve, fg: .white, border: nil) }
+                .disabled(model.paused)
+        } else {
+            bigButton(h.excluded == true ? "이 사건에서 제외됨" : statusKey == "rejected" ? "수용 불가" : "병원 응답 대기", bg: AD.chip, fg: AD.muted, border: nil, small: true)
+        }
+    }
+
+    private func bigButton(_ t: String, bg: Color, fg: Color, border: Color?, small: Bool = false) -> some View {
+        Text(t).font(.system(size: small ? 13 : 15, weight: .bold)).foregroundStyle(fg)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(bg).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(border ?? .clear, lineWidth: 2))
+    }
+
+    private func fmt(_ v: Double) -> String { v.rounded() == v ? String(Int(v)) : String(format: "%.1f", v) }
+}
+
+/// 통화 전 현장 후보 카드(도착 시간순, 첫 연락 추천)
+struct SceneCard: View {
+    @EnvironmentObject private var model: AppModel
+    var h: SceneCandidate
+
+    var body: some View {
+        let live = h.bedReliability.map { BedReliability.live($0, now: model.now) }
+        let doctors = h.specialties?.reduce(0) { $0 + ($1.doctorCount ?? 0) } ?? 0
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(h.name).font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
+                    Text(Labels.distance(km: h.distanceKm, road: h.roadDistanceKm) + (h.etaMin.map { " · ETA \($0)분" } ?? ""))
+                        .font(.system(size: 12)).foregroundStyle(AD.ink3)
+                }
                 Spacer()
-                statusChip
+                if h.firstCallRecommended == true { Pill(text: "첫 연락 추천", bg: AD.greenSoft, fg: AD.green, bold: true) }
+                else { Pill(text: "통화 전", bold: true) }
             }
             HStack(spacing: 8) {
-                Text(bedsText).foregroundStyle(h.bedDataStale == true ? Theme.clash : Theme.ink2)
-                if let t = h.travelMin { Text("이동 \(String(format: "%.0f", t))분\(h.travelBasis == "estimate" ? "(직선)" : "")") }
-                if let s = h.finalScore { Text("순위 \(String(format: "%.2f", s))") }
-                if let n = h.inFlightCount, n > 0 { Text("이송 중 \(n)건").foregroundStyle(Theme.amber) }
-                Spacer()
-            }.font(.system(size: 11)).foregroundStyle(Theme.ink2)
-            // 4-1 정보 유효성 — 지금 / 도착 시
-            if let lv = live {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text("정보 유효").font(.system(size: 10)).foregroundStyle(Theme.muted)
-                            Text("지금 \(BedReliability.pct(lv.authority))").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.validity(lv.authority))
-                            Text("· 도착 시 \(BedReliability.pct(lv.rArrive))").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.validity(lv.rArrive))
-                            if h.bedReliability?.confirmedAgeSec != nil { Text("✓ 병원 확인").font(.system(size: 10)).foregroundStyle(Theme.ok) }
-                            if let a = lv.ageSec { Text("· 정보 \(Labels.age(a))").font(.system(size: 10)).foregroundStyle(Theme.muted) }
-                        }
-                        ProbBar(value: lv.rArrive)
-                    }
+                if h.bedCountUnknown == true { StatBox(label: "병상", value: "미상", bg: AD.chip, fg: AD.ink3) }
+                else if (h.availableBedCount ?? 0) <= 0 { StatBox(label: "병상", value: "없음", bg: AD.redSoft, fg: AD.red) }
+                else { StatBox(label: "병상", value: "\(h.availableBedCount ?? 0)석", bg: AD.limeSoft, fg: AD.lime) }
+                if let lv = live { let t = Theme.validity(lv.rArrive); StatBox(label: "AI 유효", value: BedReliability.pct(lv.rArrive), bg: t.bg, fg: t.fg) }
+                else { StatBox(label: "AI 유효", value: "—", bg: AD.chip, fg: AD.ink3) }
+                StatBox(label: "전문의", value: doctors > 0 ? "\(doctors)명" : "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
+            }
+            FlowLayout(spacing: 6) {
+                if let sp = h.specialties, !sp.isEmpty {
+                    Pill(text: sp.prefix(3).map(\.department).joined(separator: "·") + (sp.count > 3 ? " 외 \(sp.count - 3)과" : ""), bg: AD.blueSoft, fg: AD.blue)
                 }
-            } else {
-                Text(h.bedCountUnknown == true ? "정보 유효: 병상 미상 — 확률 없음" : "정보 유효: 모델 값 없음").font(.system(size: 10)).foregroundStyle(Theme.muted)
+                if let lvl = h.emergencyLevel, lvl.hasSuffix("센터") { Pill(text: lvl) }
             }
-            HStack(spacing: 6) {
-                if h.bedDataStale == true { Chip(text: "1일 넘은 값", color: Theme.clash) }
-                if let sf = h.severeFreshness { Chip(text: "\(sf.value == "Y" ? "수용가능 신고" : "수용불가 신고") \(Labels.age(sf.ageSec, isMin: sf.ageIsMin ?? false))", color: sf.value == "Y" ? Theme.ok : Theme.clash) }
-                if let r = h.reliability { Chip(text: "\(r.group) · 신뢰 \(Labels.confidence(r.confidence))", color: r.confidence == "high" ? Theme.ok : Theme.ink2) }
-                ForEach(h.demoteReasons ?? [], id: \.self) { d in Chip(text: Labels.demote(d), color: Theme.clash) }
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Theme.muted)
+            if let lv = live {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("AI · 지금 유효 \(BedReliability.pct(lv.authority)) → 도착 시 \(BedReliability.pct(lv.rArrive))\(lv.ageSec.map { " · 정보 \(Labels.age($0))" } ?? "")")
+                        .font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                    ProbBar(value: lv.rArrive, height: 5)
+                }
             }
+            Spacer(minLength: 0)
+            Text("통화 후 병원 응답을 받으면 승인").font(.system(size: 13, weight: .bold)).foregroundStyle(AD.muted)
+                .frame(maxWidth: .infinity, minHeight: 44).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .padding(8)
-        .background(h.status == "confirmed" ? Theme.panel2 : Theme.bg.opacity(0.5))
-        .overlay(RoundedRectangle(cornerRadius: 5).stroke(h.status == "confirmed" ? Theme.ktas(2).opacity(0.7) : Theme.line, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .opacity(h.excluded == true ? 0.55 : 1)
-        .contentShape(Rectangle())
-    }
-
-    private var statusChip: some View {
-        Group {
-            if unavailable {
-                Chip(text: "수용 불가 · \(Labels.reject(h.unavailableReason))", color: Theme.muted, filled: true)
-            } else if h.status == "rejected" {
-                Chip(text: "수용 불가 · \(Labels.reject(h.rejectReason))", color: Theme.muted, filled: true)
-            } else {
-                Chip(text: Labels.status(h.status), color: Theme.status(h.status), filled: h.status != "pending")
-            }
-        }
-    }
-
-    private var bedsText: String {
-        if h.bedCountUnknown == true { return "응급실 미상" }
-        guard let n = h.availableBedCount else { return "응급실 —" }
-        if let cap = h.erBedCapacity { return "응급실 \(n)/\(cap)\(h.erOccupancyPct.map { " · 포화 \($0)%" } ?? "")" }
-        return "응급실 \(n)"
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frame(width: cardWidth, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(h.firstCallRecommended == true ? AD.green : AD.control, lineWidth: h.firstCallRecommended == true ? 2 : 1))
     }
 }
 
-/// 4-1 상세 — 이 병원 정보가 얼마나 유효한가와 그 이유(정보 생존 모델·신고 신선도·심평원 대조·순위 근거·E-Gen 메시지)
+struct SkeletonCard: View {
+    var index: Int
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("후보 \(index)").font(.system(size: 14, weight: .bold)).foregroundStyle(AD.muted)
+            RoundedRectangle(cornerRadius: 5).fill(AD.line).frame(width: 150, height: 10)
+            HStack(spacing: 8) { ForEach(0..<3, id: \.self) { _ in RoundedRectangle(cornerRadius: 12).fill(Color(hex: 0xEEF0F4)).frame(height: 44) } }
+            RoundedRectangle(cornerRadius: 5).fill(AD.line).frame(width: 220, height: 10)
+            Spacer(minLength: 0)
+            RoundedRectangle(cornerRadius: 14).fill(AD.line).frame(height: 44)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frame(width: cardWidth).frame(maxHeight: .infinity, alignment: .top)
+        .background(AD.skeleton).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.gray, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+    }
+}
+
+/// 상세 — 이 병원 정보가 얼마나 유효한가와 그 이유(정보 생존 모델·신고 신선도·심평원 대조·순위 근거·E-Gen 공지)
 struct ValidityDetailView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    var h: CaseHospital
-    var caseState: AppModel.CaseState?
+    var h: HospitalMatch
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.bg.ignoresSafeArea()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        header
-                        survivalSection
-                        declarationSection
-                        rankSection
-                        messagesSection
-                    }.padding(16)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    header
+                    survivalSection
+                    declarationSection
+                    rankSection
+                    messagesSection
+                }.padding(18)
             }
+            .background(AD.bg)
             .navigationTitle(h.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("닫기") { dismiss() } } }
@@ -161,62 +348,62 @@ struct ValidityDetailView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            if let g = h.emergencyLevel { Chip(text: g, color: Theme.grade(g)) }
-            Chip(text: Labels.status(h.status), color: Theme.status(h.status), filled: true)
-            if let r = h.rejectReason ?? h.unavailableReason { Chip(text: Labels.reject(r), color: Theme.muted) }
-            if h.excluded == true { Chip(text: "이 사건에서 제외", color: Theme.clash) }
+            if let g = h.emergencyLevel { Pill(text: g, bg: AD.blueSoft, fg: AD.blue, bold: true) }
+            let p = Theme.statusPill(h.status)
+            Pill(text: Labels.status(h.status), bg: p.bg, fg: p.fg, bold: true)
+            if let r = h.rejectReason ?? h.unavailableReason { Pill(text: Labels.reject(r), bg: AD.redSoft, fg: AD.red) }
+            if h.excluded == true { Pill(text: "이 사건에서 제외", bg: AD.redSoft, fg: AD.red) }
             Spacer()
-            Text("직선 \(String(format: "%.1f", h.distanceKm)) km\(h.roadDistanceKm.map { " · 도로 \(String(format: "%.1f", $0)) km" } ?? "") · 존 \(h.zone)")
-                .font(.system(size: 12)).foregroundStyle(Theme.ink2)
+            Text("\(Labels.distance(km: h.distanceKm, road: h.roadDistanceKm)) · 존 \(h.zone ?? 1)").font(.system(size: 12)).foregroundStyle(AD.ink3)
         }
     }
 
-    /// 3·4-1 정보 생존 모델 — 병상 숫자가 아직 유효할 확률과 그 근거
     private var survivalSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             SectionTitle(text: "정보 생존 모델 — 응급실 병상 숫자가 아직 맞을 확률", sub: "AI · XGBoost AFT 생존모델")
             if let br = h.bedReliability, let lv = live {
-                HStack(spacing: 24) {
+                HStack(spacing: 28) {
                     bigStat("지금", lv.authority)
                     bigStat("도착 시 (\(Labels.minutes(br.horizonSec)) 뒤)", lv.rArrive)
                     VStack(alignment: .leading, spacing: 4) {
                         ProbBar(value: lv.rArrive, height: 10)
-                        Text(lv.live ? "초 단위로 감쇠 중 — 같은 곡선을 앱이 로컬로 계산" : "매칭 시점 값(곡선 파라미터 없음)").font(.system(size: 10)).foregroundStyle(Theme.muted)
+                        Text(lv.live ? "초 단위로 감쇠 중 — hub가 보낸 생존곡선을 앱이 같은 식으로 계산" : "매칭 시점 값(곡선 파라미터 없음)")
+                            .font(.system(size: 11)).foregroundStyle(AD.muted)
                     }
                 }
-                Divider().overlay(Theme.line)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("왜 이 확률인가").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.ink)
-                    if let a = lv.ageSec {
-                        reason("정보 나이", "이 병상 값이 생긴 지 \(Labels.age(a)) (\(Labels.minutes(a))). 값은 환자가 드나들 때마다 바뀌고, 시간이 갈수록 그대로일 확률이 내려갑니다.")
-                    }
-                    if let m = br.predictedSurvivalSec {
-                        reason("모델 예측 수명", "이 병원·이 시각·이 값이 \(Labels.minutes(m)) 안에 \(model.liveBoard?.theta ?? 3)석 이상 바뀔 확률이 반반(중앙값). 병원별 갱신 리듬·시간대·규모·정원 대비 비율로 학습한 값입니다.")
-                    }
-                    reason("도착까지", "이동 \(Labels.minutes(br.horizonSec)) — 순위에 쓴 이동시간(카카오 내비 ETA, 없으면 보정 추정)과 같은 값. 그만큼 더 지난 뒤의 확률이 '도착 시'입니다.")
-                    if br.confirmedAgeSec != nil {
-                        reason("병원 확인 ✓", "병원 대시보드가 '현재 정보가 맞습니다'를 눌렀습니다 — 확인 시점 기준 조건부 생존 S(a)/S(u)로 되올린 값입니다.")
-                    }
-                    if h.bedDataStale == true {
-                        reason("⚠ 1일 넘은 값", "마지막 갱신이 하루를 넘었거나 실시간 피드에 없는 병원 — 만실·확률 판단에 쓰지 않습니다(미상과 같은 취급).")
-                    }
-                    reason("모델", "\(br.modelTag ?? "infosurv") · 전국 E-Gen 스냅샷으로 학습·재보정, 순위(finalScore)에는 쓰지 않는 설명용 확률")
+                Divider().overlay(AD.line)
+                Text("왜 이 확률인가").font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy)
+                if let a = lv.ageSec {
+                    reason("정보 나이", "이 병상 값이 생긴 지 \(Labels.age(a)). 값은 환자가 드나들 때마다 바뀌고, 시간이 갈수록 그대로일 확률이 내려갑니다.")
                 }
+                if let m = br.predictedSurvivalSec {
+                    reason("모델 예측 수명", "이 병원·이 시각·이 값이 \(Labels.minutes(m)) 안에 \(model.liveBoard?.theta ?? 3)석 이상 바뀔 확률이 반반(중앙값). 병원별 갱신 리듬·시간대·규모·정원 대비 비율로 학습했습니다.")
+                }
+                reason("도착까지", "이동 \(Labels.minutes(br.horizonSec)) — 순위에 쓴 이동시간(카카오 내비 ETA, 없으면 보정 추정)과 같은 값. 그만큼 더 지난 뒤의 확률이 '도착 시'입니다.")
+                if br.confirmedAgeSec != nil {
+                    reason("병원 확인 ✓", "병원이 '현재 정보가 맞습니다'를 눌렀습니다 — 확인 시점 기준 조건부 생존으로 되올린 값입니다.")
+                }
+                if h.bedDataStale == true {
+                    reason("⚠ 1일 넘은 값", "마지막 갱신이 하루를 넘었거나 실시간 피드에 없는 병원 — 만실·확률 판단에 쓰지 않습니다.")
+                }
+                if let byType = h.bedReliabilityByType, !byType.isEmpty {
+                    reason("배후진료", byType.sorted { $0.key < $1.key }.map { "\(Labels.bedField[$0.key] ?? $0.key) 도착 시 \(BedReliability.pct(BedReliability.live($0.value, now: model.now).rArrive))" }.joined(separator: " · "))
+                }
+                reason("모델", "\(br.modelTag ?? "infosurv") · 순위(finalScore)에는 쓰지 않는 설명용 확률")
             } else {
                 Text(h.bedCountUnknown == true ? "병상 수가 미상이라 확률을 내지 않습니다 — 미상을 만실처럼 다루지 않는 원칙(뺑뺑이 방지)." : "이 병원에는 모델 값이 없습니다(구 데이터 또는 피드 없음).")
-                    .font(.system(size: 12)).foregroundStyle(Theme.ink2)
+                    .font(.system(size: 13)).foregroundStyle(AD.ink3)
             }
-        }.panel()
+        }.card(16)
     }
 
     private func bigStat(_ label: String, _ p: Double) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 11)).foregroundStyle(Theme.muted)
-            Text(BedReliability.pct(p)).font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.validity(p))
+            Text(label).font(.system(size: 12)).foregroundStyle(AD.sub)
+            Text(BedReliability.pct(p)).font(.system(size: 34, weight: .black)).foregroundStyle(Theme.validity(p).fg)
         }
     }
 
-    /// 중증질환 신고 신선도(규칙) + 심평원 대조 신뢰도
     private var declarationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: "병원 신고의 유효성", sub: "중증질환 수용 신고 · 심평원 대조")
@@ -224,17 +411,17 @@ struct ValidityDetailView: View {
                 reason("\(sf.group) 신고", "\(sf.value == "Y" ? "수용 가능" : "수용 불가") — \(Labels.age(sf.ageSec, isMin: sf.ageIsMin ?? false)) 신고\(sf.ageIsMin == true ? "(수집 시작 전부터라 실제론 더 오래됨)" : "")\(sf.ruleRemainingSec.map { $0 > 0 ? " · 통상 9시간 만료 규칙까지 \(Labels.minutes($0))" : " · 9시간 규칙 만료 뒤에도 유지 중(병원이 갱신 지속)" } ?? "")")
             }
             if let r = h.reliability {
-                reason("\(r.group) 심평원 대조", "신뢰 \(Labels.confidence(r.confidence)) · 점수 \(String(format: "%.1f", r.score)) (불가능 0.2 < 근거 없는 미상 0.4 < 전문의 있는 미상 0.6 < 전문병원 지정 미상 0.8 < 가능 신고 1.0)")
+                reason("\(r.group) 심평원 대조", "\(Labels.confidence(r.confidence)) · 점수 \(String(format: "%.1f", r.score)) (불가능 0.2 < 근거 없는 미상 0.4 < 전문의 있는 미상 0.6 < 전문병원 지정 미상 0.8 < 가능 신고 1.0)")
                 ForEach(r.basis ?? [], id: \.self) { b in
-                    HStack(alignment: .top, spacing: 6) { Text("·").foregroundStyle(Theme.muted); Text(b).font(.system(size: 12)).foregroundStyle(Theme.ink2) }.padding(.leading, 8)
+                    Text("· " + b).font(.system(size: 12)).foregroundStyle(AD.ink3).padding(.leading, 100)
                 }
             }
             if h.severeFreshness == nil && h.reliability == nil {
-                Text("이 사건의 질환군에 해당하는 신고가 없거나(일반 질환) 판정 데이터가 없습니다.").font(.system(size: 12)).foregroundStyle(Theme.ink2)
+                Text("이 환자의 질환군에 해당하는 신고가 없거나(일반 질환) 판정 데이터가 없습니다.").font(.system(size: 13)).foregroundStyle(AD.ink3)
             }
-            Text("둘은 다른 축입니다 — 신선도는 '언제 적 신고인가'(규칙), 심평원 대조는 '그 신고를 믿을 만한가'(전문의·전문병원 지정 근거). 순위에는 수용 불가 신고만 순서로 반영합니다.")
-                .font(.system(size: 10)).foregroundStyle(Theme.muted)
-        }.panel()
+            Text("신선도는 '언제 적 신고인가'(규칙), 심평원 대조는 '그 신고를 믿을 만한가'(전문의·전문병원 지정 근거). 순위에는 수용 불가 신고만 순서로 반영합니다.")
+                .font(.system(size: 11)).foregroundStyle(AD.muted)
+        }.card(16)
     }
 
     private var rankSection: some View {
@@ -244,35 +431,32 @@ struct ValidityDetailView: View {
             if let sm = h.specialtyMatch {
                 reason("진료과", "\(sm.department ?? "—") · \(sm.basis == "exact" ? "필요 진료과 정확 일치 1.0" : sm.basis == "embedding" ? "임베딩 적합도 \(Int(((sm.score ?? 0) * 100).rounded()))%" : "진료과 정보 없음")\(sm.doctorCount.map { " · 전문의 \($0)명" } ?? "")")
             }
-            if let t = h.travelMin { reason("이동시간", "\(String(format: "%.1f", t))분 (\(h.travelBasis == "eta" ? "카카오 내비 ETA" : "직선거리 보정 추정"))\(h.etaMin.map { " · ETA \($0)분" } ?? "")") }
+            if let t = h.travelMin { reason("이동시간", "\(String(format: "%.1f", t))분 (\(h.travelBasis == "eta" ? "카카오 내비 ETA" : "직선거리 보정 추정"))") }
             ForEach(h.bonusReasons ?? [], id: \.self) { b in reason("가산", b) }
             if let l = h.loadReason { reason("부하", l) }
             if let o = h.occupancyReason { reason("포화도", o) }
             ForEach(h.demoteReasons ?? [], id: \.self) { d in reason("뒤로 내림", Labels.demote(d)) }
-            if let at = h.respondedAt { reason("응답 시각", Labels.clock(at)) }
-        }.panel()
+        }.card(16)
     }
 
-    private var messagesSection: some View {
-        Group {
-            if let msgs = h.acceptanceMessages, !msgs.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    SectionTitle(text: "병원 공지(E-Gen 메시지)", sub: "병원이 직접 건 수용 제한")
-                    ForEach(Array(msgs.enumerated()), id: \.offset) { _, m in
-                        HStack(alignment: .top, spacing: 6) {
-                            Chip(text: m.kind == "severe" ? "중증" : "응급실", color: m.matched == true ? Theme.clash : Theme.muted)
-                            Text(m.message ?? "").font(.system(size: 12)).foregroundStyle(m.matched == true ? Theme.ink : Theme.ink2)
-                        }
+    @ViewBuilder private var messagesSection: some View {
+        if let msgs = h.acceptanceMessages, !msgs.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionTitle(text: "병원 공지(E-Gen 메시지)", sub: "병원이 직접 건 수용 제한")
+                ForEach(Array(msgs.enumerated()), id: \.offset) { _, m in
+                    HStack(alignment: .top, spacing: 6) {
+                        Pill(text: m.kind == "severe" ? "중증" : "응급실", bg: m.matched == true ? AD.redSoft : AD.chip, fg: m.matched == true ? AD.red : AD.ink3)
+                        Text(m.message ?? "").font(.system(size: 12)).foregroundStyle(m.matched == true ? AD.ink : AD.ink3)
                     }
-                }.panel()
-            }
+                }
+            }.card(16)
         }
     }
 
     private func reason(_ k: String, _ v: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(k).font(.system(size: 11)).foregroundStyle(Theme.muted).frame(width: 90, alignment: .leading)
-            Text(v).font(.system(size: 12)).foregroundStyle(Theme.ink)
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(k).font(.system(size: 12)).foregroundStyle(AD.sub).frame(width: 92, alignment: .leading)
+            Text(v).font(.system(size: 13)).foregroundStyle(AD.ink)
             Spacer(minLength: 0)
         }
     }
