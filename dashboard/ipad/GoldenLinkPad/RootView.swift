@@ -192,14 +192,16 @@ struct MapCard: View {
                 Spacer()
                 Pill(text: "초록 = 승인 병원 중 최적", bg: AD.greenSoft, fg: AD.green)
                 Pill(text: "민트 = 거미줄 제안", bg: Color(hex: 0xE6FBF4), fg: Color(hex: 0x0F7B5F))
-                // 지도를 손으로 옮기면 내 구급차 따라가기가 멈춘다 — 다시 켜는 버튼
+                // 지도를 손으로 옮기면 내 구급차 따라가기가 멈춘다 — 다시 켜는 버튼. auto에서 아직 따라갈 구급대가 없으면(출동 전·사건 종료 뒤)
+                // 지도엔 '내 구급차'가 없으니 같은 자리에서 전체 보기로 동작한다(spider followMine이 알아서 바꾼다)
                 Button { NotificationCenter.default.post(name: .spiderEval, object: nil, userInfo: ["js": "followMine()"]) } label: {
-                    Label("내 구급차", systemImage: "location.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
+                    Label(model.apid == nil ? "전체 보기" : "내 구급차", systemImage: model.apid == nil ? "arrow.up.left.and.arrow.down.right" : "location.fill")
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
                         .padding(.horizontal, 12).frame(minHeight: 30).background(AD.blue).clipShape(Capsule())
                 }
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
-            SpiderWebView(url: Settings.spiderURL(apid: model.apid))
+            SpiderWebView(url: Settings.spiderURL(apid: model.apid, screen: "ambulance"))
                 .id(hubBase + "|" + spiderBase + "|" + (model.apid ?? ""))   // 주소·구급차가 바뀌면 WebView를 새로 만든다
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .padding([.horizontal, .bottom], 8)

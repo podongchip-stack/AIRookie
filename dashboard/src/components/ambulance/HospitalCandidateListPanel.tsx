@@ -260,8 +260,10 @@ export function HospitalCandidateListPanel({
   // 병원 승인이 오면 승인 병원 중 최상위(hub 순위)를 "추천"으로 표시한다(2026-10-04).
   // 선착순 자동 확정이 아니라 추천 + 탭 한 번 — "최종 결정은 사람" 원칙. hub가 승인
   // 병원을 위로 올려 보내므로(rank_key) 목록에서 처음 만나는 approved가 곧 추천이다.
+  // 단, 승인 뒤 응급실 병상 0이 확인됐거나(미상·1일 넘은 값은 막지 않음) 이 사건에서 제외·차단된 병원은 지금 보낼 수 없으니
+  // 추천하지 않는다(2026-10-15 — 아이패드 앱·spider의 초록 '최적' 줄과 같은 규칙).
   const recommendedId = confirmedHospitalId == null
-    ? data.hospitals.find((h) => h.status === "approved")?.hospitalId ?? null
+    ? data.hospitals.find(canTransportNow)?.hospitalId ?? null
     : null;
   const visible = data.hospitals.filter((hospital) => !focusConfirmed || showOthers || hospital.hospitalId === confirmedHospitalId);
   const zoneMax = Math.max(1, ...data.zoneActive);
@@ -514,4 +516,11 @@ function AcceptanceMessages({ messages }: { messages?: AcceptanceMessage[] | nul
       )}
     </div>
   );
+}
+
+/** 지금 이 환자를 실제로 보낼 수 있는 승인 병원인가 — 추천 표시용(아이패드 앱 recommendedId·spider live.js transportable과 같은 규칙). */
+function canTransportNow(h: HospitalCandidate): boolean {
+  if (h.status !== "approved" || h.unavailableReason || h.excluded) return false;
+  if ((h.demoteReasons ?? []).some((r) => r === "beds_full" || r === "severe_blocked")) return false;
+  return h.bedCountUnknown || h.bedDataStale || h.availableBedCount > 0;
 }
