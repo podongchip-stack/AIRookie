@@ -114,9 +114,13 @@ const HS=()=>+$('hs').value;
 // 높이 변환: z(2~5)를 그대로 쓰면 기둥이 다 비슷해 보여서, 바닥(1.7)부터의 차이를 지수로 벌린다
 const ZH=z=>Math.pow(Math.max(0.15,z-1.7),+$('zexp').value);
 const gCol=g=>rgb(css('--g'+g)), kCol=k=>rgb(css('--k'+k));
+// 확대·축소에 따른 크기 배율(2026-10-15) — 공중 노드와 연결선(빛줄기)이 같이 쓴다. 줌 11.5에서 1배, 확대하면 작게(0.55배까지),
+// 축소하면 크게(1.5배까지). 픽셀 단위 선은 화면에서 늘 같은 굵기라 확대하면 지도에 비해 두꺼워 보이고 축소하면 묻혔다.
+const zoomK=()=>Math.max(0.55,Math.min(1.5,1+(11.5-VIEW.zoom)*0.14));
 let animTick=0;
 const ADD={blend:true,blendFunc:[770,1,770,1],depthTest:false};
 function layers(t){
+  const LK=zoomK();   // 연결선 굵기 배율(widthScale)
   const hs=HS(), rise=Math.min(1,(performance.now()-riseT0)/1800), ease=1-Math.pow(1-rise,3);
   const pulse=0.5+0.5*Math.sin(performance.now()/350);
   const L=[], live=LIVE;
@@ -130,11 +134,11 @@ function layers(t){
     L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
     L.push(new TextLayer({id:'h-name',data:live.filter(h=>h.g>=4||(VIEW.zoom>=9.5&&h.g>=3)),getPosition:top,getText:h=>shortName(h.name),getSize:11,characterSet:'auto',getColor:[242,241,236,230],getPixelOffset:[0,-18],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,150],backgroundPadding:[3,1],parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
   } else {
-  L.push(new LineLayer({id:'h-stem',data:live,getSourcePosition:h=>[h.lng,h.lat,0],getTargetPosition:top,getColor:h=>[...hcol(h),110],getWidth:1,widthUnits:'pixels',parameters:ADD,updateTriggers:{getTargetPosition:[ease]}}));
+  L.push(new LineLayer({id:'h-stem',widthScale:LK,data:live,getSourcePosition:h=>[h.lng,h.lat,0],getTargetPosition:top,getColor:h=>[...hcol(h),110],getWidth:1,widthUnits:'pixels',parameters:ADD,updateTriggers:{getTargetPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-shadow',data:live,radiusUnits:'meters',getRadius:60,radiusMinPixels:2,getPosition:h=>[h.lng,h.lat,0],getFillColor:h=>[...hcol(h),120],parameters:{depthTest:false}}));
   // 공중 노드는 화면 픽셀 크기(2026-10-15) — 예전엔 미터 단위라 확대할수록 커져 가독성이 떨어졌다. 확대하면 작아지고
   // 축소하면 커진다(줌 11.5 기준 1배, 확대 쪽 0.55배·축소 쪽 1.5배까지)
-  const nk=Math.max(0.55,Math.min(1.5,1+(11.5-VIEW.zoom)*0.14)), zkey=Math.round(VIEW.zoom*10);
+  const nk=zoomK(), zkey=Math.round(VIEW.zoom*10);
   L.push(new ScatterplotLayer({id:'h-glow',data:live,radiusUnits:'pixels',getRadius:h=>(h.g>=4?13:h.g===3?10:8)*nk*(1+0.12*pulse),getPosition:top,getFillColor:h=>[...hcol(h),60],parameters:ADD,updateTriggers:{getRadius:[animTick,zkey],getPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-node',data:live,radiusUnits:'pixels',getRadius:h=>(h.g>=4?6.5:h.g===3?5:3.8)*nk,getPosition:top,getFillColor:h=>[...hcol(h),255],stroked:true,getLineColor:[255,255,255,200],lineWidthUnits:'pixels',getLineWidth:1.2,pickable:true,parameters:{depthTest:false},updateTriggers:{getRadius:[zkey],getPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
@@ -167,16 +171,16 @@ function layers(t){
     });
     if(p.t0<=t&&!segs.some(s=>s.tStart<=t)){ lights.push({pos:[p.lng,p.lat,0],k:p.k,label:'#'+p.id+' K'+p.k}); if(air){airLights.push({pos:[p.lng,p.lat,ZH(p.z)*hs],k:p.k}); stems.push({a:[p.lng,p.lat,0],b:[p.lng,p.lat,ZH(p.z)*hs],k:p.k});} }
   });
-  L.push(new PathLayer({id:'gone',data:gone,getPath:d=>d.path,getColor:[124,123,116,120],getWidth:1.5,widthUnits:'pixels',parameters:{depthTest:false}}));
-  L.push(new PathLayer({id:'webs',data:webs,getPath:d=>d.path,getColor:d=>[...kCol(d.k).slice(0,3),d.forced?60:140],getWidth:d=>d.forced?1:2,widthUnits:'pixels',parameters:{depthTest:false}}));
+  L.push(new PathLayer({id:'gone',widthScale:LK,data:gone,getPath:d=>d.path,getColor:[124,123,116,120],getWidth:1.5,widthUnits:'pixels',parameters:{depthTest:false}}));
+  L.push(new PathLayer({id:'webs',widthScale:LK,data:webs,getPath:d=>d.path,getColor:d=>[...kCol(d.k).slice(0,3),d.forced?60:140],getWidth:d=>d.forced?1:2,widthUnits:'pixels',parameters:{depthTest:false}}));
   L.push(new TripsLayer({id:'trails',data:trails,getPath:d=>d.path,getTimestamps:d=>d.timestamps,getColor:d=>kCol(d.k).slice(0,3),widthMinPixels:4,trailLength:5,currentTime:t,opacity:.8,capRounded:true,jointRounded:true,fadeTrail:true,parameters:ADD}));
-  L.push(new LineLayer({id:'air-gone',data:airGone,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:[150,150,150,110],getWidth:1.2,widthUnits:'pixels',parameters:{depthTest:false}}));
-  L.push(new LineLayer({id:'air-glow',data:airWebs,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),70],getWidth:10,widthUnits:'pixels',parameters:ADD}));
-  L.push(new LineLayer({id:'air',data:airWebs,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),d.forced?110:240],getWidth:d=>d.forced?1.5:3,widthUnits:'pixels',parameters:{depthTest:false}}));
-  L.push(new LineLayer({id:'pstems',data:stems,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),130],getWidth:1.5,widthUnits:'pixels',parameters:ADD}));
+  L.push(new LineLayer({id:'air-gone',widthScale:LK,data:airGone,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:[150,150,150,110],getWidth:1.2,widthUnits:'pixels',parameters:{depthTest:false}}));
+  L.push(new LineLayer({id:'air-glow',widthScale:LK,data:airWebs,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),70],getWidth:10,widthUnits:'pixels',parameters:ADD}));
+  L.push(new LineLayer({id:'air',widthScale:LK,data:airWebs,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),d.forced?110:240],getWidth:d=>d.forced?1.5:3,widthUnits:'pixels',parameters:{depthTest:false}}));
+  L.push(new LineLayer({id:'pstems',widthScale:LK,data:stems,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),130],getWidth:1.5,widthUnits:'pixels',parameters:ADD}));
   L.push(new ScatterplotLayer({id:'air-light-glow',data:airLights,radiusUnits:'meters',getRadius:200+pulse*50,getPosition:d=>d.pos,getFillColor:d=>[...kCol(d.k).slice(0,3),100],parameters:ADD,updateTriggers:{getRadius:[animTick]}}));
   L.push(new ScatterplotLayer({id:'air-light',data:airLights,radiusUnits:'meters',getRadius:55,radiusMinPixels:5,getPosition:d=>d.pos,getFillColor:[255,255,255,245],stroked:true,getLineColor:d=>kCol(d.k),lineWidthMinPixels:2,parameters:{depthTest:false}}));
-  L.push(new LineLayer({id:'ups',data:ups,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),160],getWidth:2,widthUnits:'pixels',parameters:ADD}));
+  L.push(new LineLayer({id:'ups',widthScale:LK,data:ups,getSourcePosition:d=>d.a,getTargetPosition:d=>d.b,getColor:d=>[...kCol(d.k).slice(0,3),160],getWidth:2,widthUnits:'pixels',parameters:ADD}));
   const oh=Object.entries(occ).map(([id,ids])=>({h:hp(id),n:ids.length}));
   L.push(new ScatterplotLayer({id:'occ',data:oh,radiusUnits:'meters',getRadius:d=>200+d.n*90+pulse*60,getPosition:d=>[d.h.lng,d.h.lat,ZH(d.h.z)*hs],getFillColor:[79,209,255,0],stroked:true,getLineColor:[79,209,255,200],lineWidthMinPixels:2,parameters:{depthTest:false},updateTriggers:{getRadius:[animTick]}}));
   L.push(new TextLayer({id:'occ-txt',data:oh,getPosition:d=>[d.h.lng,d.h.lat,ZH(d.h.z)*hs],getText:d=>d.n+'명 점유',getSize:12,characterSet:'auto',getColor:[79,209,255,255],getPixelOffset:[0,-36],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,170],backgroundPadding:[4,2],parameters:{depthTest:false}}));
