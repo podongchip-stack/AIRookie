@@ -132,8 +132,11 @@ function layers(t){
   } else {
   L.push(new LineLayer({id:'h-stem',data:live,getSourcePosition:h=>[h.lng,h.lat,0],getTargetPosition:top,getColor:h=>[...hcol(h),110],getWidth:1,widthUnits:'pixels',parameters:ADD,updateTriggers:{getTargetPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-shadow',data:live,radiusUnits:'meters',getRadius:60,radiusMinPixels:2,getPosition:h=>[h.lng,h.lat,0],getFillColor:h=>[...hcol(h),120],parameters:{depthTest:false}}));
-  L.push(new ScatterplotLayer({id:'h-glow',data:live,radiusUnits:'meters',getRadius:300+pulse*40,radiusMinPixels:9,getPosition:top,getFillColor:h=>[...hcol(h),60],parameters:ADD,updateTriggers:{getRadius:[animTick],getPosition:[ease]}}));
-  L.push(new ScatterplotLayer({id:'h-node',data:live,radiusUnits:'meters',getRadius:h=>h.g>=4?120:h.g===3?95:70,radiusMinPixels:h=>h.g>=4?6:h.g===3?4.5:3,getPosition:top,getFillColor:h=>[...hcol(h),255],stroked:true,getLineColor:[255,255,255,200],lineWidthMinPixels:1.2,pickable:true,parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
+  // 공중 노드는 화면 픽셀 크기(2026-10-15) — 예전엔 미터 단위라 확대할수록 커져 가독성이 떨어졌다. 확대하면 작아지고
+  // 축소하면 커진다(줌 11.5 기준 1배, 확대 쪽 0.55배·축소 쪽 1.5배까지)
+  const nk=Math.max(0.55,Math.min(1.5,1+(11.5-VIEW.zoom)*0.14)), zkey=Math.round(VIEW.zoom*10);
+  L.push(new ScatterplotLayer({id:'h-glow',data:live,radiusUnits:'pixels',getRadius:h=>(h.g>=4?13:h.g===3?10:8)*nk*(1+0.12*pulse),getPosition:top,getFillColor:h=>[...hcol(h),60],parameters:ADD,updateTriggers:{getRadius:[animTick,zkey],getPosition:[ease]}}));
+  L.push(new ScatterplotLayer({id:'h-node',data:live,radiusUnits:'pixels',getRadius:h=>(h.g>=4?6.5:h.g===3?5:3.8)*nk,getPosition:top,getFillColor:h=>[...hcol(h),255],stroked:true,getLineColor:[255,255,255,200],lineWidthUnits:'pixels',getLineWidth:1.2,pickable:true,parameters:{depthTest:false},updateTriggers:{getRadius:[zkey],getPosition:[ease]}}));
   L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
   L.push(new TextLayer({id:'h-name',data:live.filter(h=>h.g>=4||(VIEW.zoom>=9.5&&h.g>=3)),getPosition:top,getText:h=>shortName(h.name),getSize:11,characterSet:'auto',getColor:[242,241,236,230],getPixelOffset:[0,-16],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,150],backgroundPadding:[3,1],parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
   }
