@@ -5,8 +5,9 @@ import type { CSSProperties, ReactNode } from "react";
 import { distanceLabel, distanceTitle } from "@/lib/distance";
 import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { AD, pill } from "@/components/ambulance/ambulance-design";
+import { BackupCapacityButton } from "@/components/ambulance/BackupCapacityButton";
 import { formatDeclarationAge, liveBedReliability } from "@/lib/bedReliability";
-import type { HospitalCandidate, HospitalStatus, HubMatchResult, ReliabilityConfidence, SceneCandidates } from "@/types/dashboard";
+import type { AcceptanceMessage, HospitalCandidate, HospitalStatus, HubMatchResult, ReliabilityConfidence, SceneCandidates } from "@/types/dashboard";
 
 // 병원 후보 리스트(2026-10-05 디자인 시안) — 화면 아래쪽 가로 스크롤 카드 줄. 카드마다 이름 · 거리 · ETA · 상태,
 // 병상 · AI 유효 · 전문의 세 칸, 진료과·등급 칩, AI 배후진료 한 줄, [이송 승인].
@@ -84,12 +85,30 @@ function Chip({ children, bg = AD.chip, fg = AD.ink3, title, border }: { childre
   );
 }
 
-function bedBox(available: number, unknown: boolean, stale?: boolean) {
+function bedBox(
+  available: number,
+  unknown: boolean,
+  stale?: boolean,
+  capacity?: number | null,
+  occupancyPct?: number | null,
+  occupancyReason?: string | null,
+) {
   // "확인된 만실"(빨강)과 "미상"(회색)을 다르게 둔다 — 미상을 만실처럼 보이면 구급대원이 실제로는 받아줄 수도
   // 있는 병원을 스스로 후보에서 빼게 된다(CLAUDE.md 참고).
-  if (unknown) return <StatBox label="병상" value="미상" bg={AD.chip} fg={AD.ink3} title="E-Gen 병상 값이 없습니다 — 만실이 아니라 데이터가 없는 것" />;
-  if (available <= 0) return <StatBox label="병상" value="없음" bg={AD.redSoft} fg={AD.red} title={stale ? "1일 넘게 갱신 안 된 값" : undefined} />;
-  return <StatBox label={stale ? "병상 · 1일↑" : "병상"} value={`${available}석`} bg={AD.limeSoft} fg={AD.lime} title={stale ? "1일 넘게 갱신 안 된 값" : undefined} />;
+  // 정원이 오면(hub 2026-10-07~) "가용/정원"과 포화도를 같이 보인다 — 같은 2석이 정원 10인 곳인지 40인 곳인지(규칙).
+  // 포화도는 순위에도 들어간다(이동시간 최대 +5분, occupancyReason) — 툴팁에 그 분을 밝힌다.
+  const ofCapacity = capacity ? `/${capacity}` : "";
+  const capacityTitle = capacity
+    ? [`응급실 정원 ${capacity}석${occupancyPct != null ? ` · 포화도 ${occupancyPct}%` : ""} (E-Gen)`, occupancyReason ? `순위 ${occupancyReason}` : null]
+        .filter(Boolean)
+        .join(" · ")
+    : undefined;
+  const staleTitle = stale ? "1일 넘게 갱신 안 된 값" : undefined;
+  const title = [staleTitle, capacityTitle].filter(Boolean).join(" · ") || undefined;
+  if (unknown) return <StatBox label="병상" value="미상" bg={AD.chip} fg={AD.ink3} title={["E-Gen 병상 값이 없습니다 — 만실이 아니라 데이터가 없는 것", capacityTitle].filter(Boolean).join(" · ")} />;
+  if (available <= 0) return <StatBox label={occupancyPct != null ? `병상 · ${occupancyPct}%` : "병상"} value={capacity ? `0${ofCapacity}` : "없음"} bg={AD.redSoft} fg={AD.red} title={title} />;
+  const label = [stale ? "병상 · 1일↑" : "병상", occupancyPct != null ? `${occupancyPct}%` : null].filter(Boolean).join(" · ");
+  return <StatBox label={label} value={capacity ? `${available}${ofCapacity}` : `${available}석`} bg={AD.limeSoft} fg={AD.lime} title={title} />;
 }
 
 function Skeletons({ from, count }: { from: number; count: number }) {
@@ -218,6 +237,7 @@ export function HospitalCandidateListPanel({
                   </Chip>
                 )}
                 {h.emergencyLevel && h.emergencyLevel.endsWith("센터") && <Chip>{h.emergencyLevel}</Chip>}
+                <BackupCapacityButton hospitalId={h.hospitalId} name={h.name} />
               </div>
               <button type="button" disabled style={approveButton("disabled")}>통화 후 병원 응답을 받으면 승인</button>
             </div>
@@ -344,7 +364,7 @@ function CandidateCard({
           <div
             style={{ fontSize: 13.5, fontWeight: 700, color: AD.navy }}
             // 순위 점수(finalScore) 설명 — 그동안 안 보이던 내부 값의 투명화(2026-10-04)
-            title={hospital.finalScore != null ? `순위 점수 ${hospital.finalScore.toFixed(3)} — 진료과 적합도 0.6 + 이동시간 0.4 (전문성·등급 가산, 이송 중 부하 반영)` : undefined}
+            title={hospital.finalScore != null ? `순위 점수 ${hospital.finalScore.toFixed(3)} — 진료과 적합도 0.6 + 이동시간 0.4 (전문성·등급 가산, 이송 중 부하·응급실 포화도 반영)` : undefined}
           >
             {hospital.name}
           </div>
@@ -370,7 +390,14 @@ function CandidateCard({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
-        {bedBox(hospital.availableBedCount, hospital.bedCountUnknown, hospital.bedDataStale)}
+        {bedBox(
+          hospital.availableBedCount,
+          hospital.bedCountUnknown,
+          hospital.bedDataStale,
+          hospital.erBedCapacity,
+          hospital.erOccupancyPct,
+          hospital.occupancyReason,
+        )}
         <StatBox
           label="AI 유효"
           value={live ? `${Math.round(live.rArrive * 100)}%${humanConfirmed ? " ✓" : ""}` : "—"}
@@ -397,10 +424,17 @@ function CandidateCard({
           </Chip>
         )}
         {hospital.emergencyLevel && hospital.emergencyLevel.endsWith("센터") && <Chip>{hospital.emergencyLevel}</Chip>}
+        <BackupCapacityButton hospitalId={hospital.hospitalId} name={hospital.name} />
         {/* 수용 불가 신고(declared_no 강등) — 제외하지 않고 순위만 내리는 원칙의 가시화(2026-10-04) */}
         {hospital.demoteReasons?.includes("declared_no") && (
           <Chip bg={AD.redSoft} fg={AD.red} title="이 질환군은 수용 불가라고 병원이 E-Gen에 신고한 상태 — 후보에서 빼지 않고 순위만 뒤로 내립니다">
             수용 불가 신고
+          </Chip>
+        )}
+        {/* 병원이 E-Gen에 이 질환군 차단 메시지를 걸어둠(severe_blocked 강등, 2026-10-07) — 신고와 같은 원칙으로 순위만 내린다 */}
+        {hospital.demoteReasons?.includes("severe_blocked") && (
+          <Chip bg={AD.redSoft} fg={AD.red} title="이 질환군은 지금 못 받는다고 병원이 E-Gen 메시지를 걸어둔 상태 — 후보에서 빼지 않고 순위만 뒤로 내립니다">
+            병원 차단 메시지
           </Chip>
         )}
         {(hospital.inFlightCount ?? 0) > 0 && (
@@ -427,6 +461,8 @@ function CandidateCard({
         )}
       </div>
 
+      <AcceptanceMessages messages={hospital.acceptanceMessages} />
+
       <div style={{ minHeight: 16, fontSize: 11.5, color: AD.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={byType ?? undefined}>
         {byType ? `AI · ${byType}` : live ? `AI · 응급실 지금 유효 ${Math.round(live.authority * 100)}%` : "AI · 배후진료 신뢰도 정보 없음"}
       </div>
@@ -443,6 +479,38 @@ function CandidateCard({
         <button type="button" disabled style={approveButton("disabled")}>
           {hospital.excluded ? "이 사건에서 제외됨" : statusKey === "rejected" ? "수용 불가" : "병원 응답 대기"}
         </button>
+      )}
+    </div>
+  );
+}
+
+/** 병원이 E-Gen에 걸어둔 수용 제한 메시지(규칙 기반, 2026-10-07). 이 환자에 해당하는 것만 펼쳐 보이고(최대 2건),
+ *  나머지는 건수만 — 원문은 툴팁에 다 있다. 메시지가 없으면 아무것도 그리지 않는다(구버전 hub 포함). */
+function AcceptanceMessages({ messages }: { messages?: AcceptanceMessage[] | null }) {
+  if (!messages?.length) return null;
+  const matched = messages.filter((m) => m.matched);
+  const others = messages.length - matched.length;
+  const line = (m: AcceptanceMessage) =>
+    `${m.kind === "severe" ? m.diseaseName ?? m.diseaseGroup ?? "중증질환" : m.department ?? "응급실"} — ${m.message}`;
+  return (
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 11.5 }}
+      title={["병원 공지(E-Gen 메시지 · 규칙)", ...messages.map(line)].join("\n")}
+    >
+      {matched.slice(0, 2).map((m, i) => (
+        <div key={i} style={{ color: m.kind === "severe" ? AD.red : AD.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          병원 공지 · {line(m)}
+        </div>
+      ))}
+      {(matched.length > 2 || others > 0) && (
+        <div style={{ color: AD.sub }}>
+          {[
+            matched.length > 2 ? `이 환자 관련 공지 ${matched.length - 2}건 더` : null,
+            others > 0 ? `다른 진료 공지 ${others}건` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
       )}
     </div>
   );

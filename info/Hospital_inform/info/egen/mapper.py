@@ -85,6 +85,22 @@ EQUIPMENT_TO_CAPABILITY: dict[str, str] = {
     "hvangioayn": "EQP_ANGIO_SUITE",  # 혈관촬영기가용
 }
 
+#: 장비 운영 여부 필드 -> 장비 코드(schema.EQUIPMENT_CODES) — `equipmentOperating`의 원천(2026-10-08).
+#: 값은 Y/N/N1 원값 그대로 보낸다. 14일 스냅샷에서 ECMO가 전국 1곳·2회만 바뀌었을 만큼 거의 고정인데, 고장·점검 때만
+#: 바뀌는 운영 상태라 정상이다 — "지금 몇 대 남았나"가 아니라 "운영하고 있나"로 읽는다.
+EQUIPMENT_OPERATING_FIELDS: dict[str, str] = {
+    "hvctayn": "CT",
+    "hvmriayn": "MRI",
+    "hvangioayn": "ANGIO",  # 혈관촬영기
+    "hvecmoayn": "ECMO",
+    "hvventiayn": "VENTILATOR",  # 인공호흡기(일반)
+    "hvventisoayn": "VENTILATOR_PRETERM",  # 인공호흡기(조산아)
+    "hvcrrtayn": "CRRT",  # 지속적 신대체요법
+    "hvhypoayn": "HYPOTHERMIA",  # 중심체온조절유도기
+    "hvincuayn": "INCUBATOR",
+    "hvoxyayn": "HYPERBARIC",  # 고압산소치료기
+}
+
 #: 가용병상 필드 -> 표준 병상 코드. [확인됨 — 활용가이드 V4]
 #: 어휘(schema.BED_CODES)의 6개 코드가 전부 여기서 채워진다.
 BED_FIELD_MAP: dict[str, str] = {
@@ -102,6 +118,16 @@ BED_FIELD_MAP: dict[str, str] = {
 # `hv11`(인큐베이터)·`hv5`(CT)·`hv7`(혈관촬영기)·`hv10`(VENTI 소아)은 이름과 달리
 # 병상 수가 아니라 Y/N로 온다. 예전에 `hv11`을 ER_PEDIATRIC으로 매핑해 두어 소아 병상이
 # 늘 "미상"이었다 — 실제 소아 응급실 병상은 `hv28`이다.
+
+#: 가용병상 필드 → 같은 종류의 정원 필드(`hvs*`) — `bedCapacityByType`의 원천(2026-10-07).
+#: [확인됨] 짝은 reliability/probe_regime.py가 전국 스냅샷의 등장 횟수 일치로 확인했고, 응급실 일반 정원(hvs01)은
+#: "내 손안의 응급실"의 총 병상과 서울 50곳 모두 같았다. 정원 필드가 없는 종류(음압·심장 중환자실)는 넣지 않는다.
+CAPACITY_FIELD_MAP: dict[str, str] = {
+    "hvs01": "ER_ADULT",  # 응급실 일반 (hvec의 짝)
+    "hvs02": "ER_PEDIATRIC",  # 응급실 소아 (hv28)
+    "hvs17": "ICU",  # 일반 중환자실 (hvicc)
+    "hvs22": "OR",  # 수술실 (hvoc)
+}
 
 #: 병원 총 병상 수(`hvs38`). 가용 병상이 이 값을 넘으면 입력 오류로 본다
 TOTAL_BED_FIELD = "hvs38"
@@ -248,6 +274,26 @@ def build_beds_by_type(bed_row: dict) -> dict[str, int]:
     return beds
 
 
+def build_bed_capacity(bed_row: dict) -> dict[str, int]:
+    """병상 종류별 정원. 0·미입력은 키를 넣지 않는다 — 정원 0은 그 병상이 없다는 뜻이라 포화도를 낼 수 없다."""
+    capacity: dict[str, int] = {}
+    for field_name, code in CAPACITY_FIELD_MAP.items():
+        count = clean_count(bed_row.get(field_name), field_name)
+        if count is not None and count > 0:
+            capacity[code] = count
+    return capacity
+
+
+def build_equipment_operating(bed_row: dict) -> dict[str, str]:
+    """장비 운영 여부(Y/N/N1 원값). 값이 없거나 그 밖의 값인 장비는 키를 넣지 않는다."""
+    status: dict[str, str] = {}
+    for field_name, code in EQUIPMENT_OPERATING_FIELDS.items():
+        value = str(bed_row.get(field_name) or "").strip()
+        if value in ("Y", "N", "N1"):
+            status[code] = value
+    return status
+
+
 def build_capabilities(severe_row: dict | None, bed_row: dict | None = None) -> list[str]:
     """표준 역량 코드 목록을 만든다.
 
@@ -388,6 +434,8 @@ def map_hospital(
         emergencyLevel=(location_row.get("dutyEmclsName") or "").strip() or None,
         updatedAt=parse_hvidate(bed_row.get("hvidate")) or fallback_ts,
         bedsByType=beds_by_type or None,
+        bedCapacityByType=build_bed_capacity(bed_row) or None,
+        equipmentOperating=build_equipment_operating(bed_row) or None,
         capabilities=capabilities,
     )
 

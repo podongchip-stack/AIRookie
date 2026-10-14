@@ -69,12 +69,16 @@ def main() -> None:
     _dispatch(case_id)
     assert _phases(amb) == ["dispatching"] and amb.sent[-1]["simulated"] is True and amb.sent[-1]["path"]
     assert app.engine.get_case_apid(case_id) == "A_SIM", "출동 때 사건을 구급차에 묶는다"
+    assert "scene_candidates" in _types(amb), "출동 즉시 현장 좌표 기준 가추천을 보낸다(2026-10-04)"
     _dispatch("case-other")
     assert app.sim.case_of("A_SIM") == case_id, "출동 중 재출동은 거부"
-    app._relay_call_signal(CallSignal(signal="call_started", timestamp="t", apid="A_SIM", caseId=case_id))
-    assert "scene_candidates" not in _types(amb), "현장 도착 전 통화 시작은 거부(후보도 안 보냄)"
-    assert not hosp.sent, "병원 탭은 출동 단계 위치를 받지 않는다"
-    print("  [확인] 출동 상태·경로 전송, 재출동·조기 통화 시작 거부")
+    amb.sent.clear()
+    app._relay_call_signal(CallSignal(signal="call_started", timestamp="t", apid="A_SIM", caseId=case_id), ws=amb)
+    assert _types(amb) == ["action_refused"] and amb.sent[0]["reason"] == "phase", (
+        "현장 도착 전 통화 시작은 거부 알림만 — 후보를 다시 보내지 않는다"
+    )
+    assert all(m.get("type") == "pre_alert" for m in hosp.sent), "병원 탭은 예비 고지만 받고 출동 단계 위치는 받지 않는다"
+    print("  [확인] 출동 상태·경로·가추천 전송, 재출동·조기 통화 시작 거부")
 
     print("=== [정지] → 위치·단계 그대로, [상황 재개] → 멈춘 자리에서 이어서 (2026-10-03) ===")
     app._handle_sim_command({"type": "sim_pause", "apid": "A_SIM", "caseId": case_id, "timestamp": "t"})
