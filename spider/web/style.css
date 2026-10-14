@@ -55,7 +55,13 @@ h2{font-size:.85rem;font-weight:600;margin:0 0 6px}
 .ticks span.ev{color:var(--clash);font-weight:600}
 .leg{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:.72rem;color:var(--ink-2);margin:8px 0 0}
 .leg span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0;background:var(--c);box-shadow:0 0 6px var(--c)}
-.maplibregl-ctrl-attrib{font-size:10px}
+/* 지도 출처(Esri·OSM·MapLibre) — 라이선스상 지울 수는 없어 아주 작고 흐리게(2026-10-15) */
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl{margin:0 3px 3px 0!important}
+.maplibregl-ctrl-attrib{font-size:6.5px!important;line-height:1.25!important;padding:0 3px!important;min-height:0!important;background:rgba(10,16,36,.35)!important;color:rgba(242,241,236,.45)!important;border-radius:3px!important}
+.maplibregl-ctrl-attrib a{color:rgba(242,241,236,.45)!important}
+.maplibregl-ctrl-attrib.maplibregl-compact{padding:1px 14px 1px 3px!important;min-height:12px!important}
+.maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show){padding:0!important;min-height:12px!important;width:12px!important}
+.maplibregl-ctrl-attrib-button{width:12px!important;height:12px!important;background-size:10px!important;background-position:center!important;background-repeat:no-repeat!important;background-color:rgba(242,241,236,.25)!important;opacity:.55}
 /* 아이패드 앱 WebView(?embed=1): 패널은 앱이 네이티브로 그리므로 지도만 남긴다 */
 body.embed #left,body.embed #right,body.embed #clock{display:none}
 /* 모드 전환(가상 시나리오 / 실시간)과 실시간 사건 카드 */
