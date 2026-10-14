@@ -43,7 +43,12 @@ let fitAllT = null;
 function scheduleFitAll() {
   if (!document.body.classList.contains('embed') || ONLY_APID || EMBED_USER) return;
   clearTimeout(fitAllT);
-  fitAllT = setTimeout(() => { const pts = myCases().map(casePos).filter(Boolean); if (pts.length) embedFocus(pts); }, 700);
+  fitAllT = setTimeout(() => {
+    // 현장과 이송 확정 병원이 다 들어오게(대량사고에서 환자가 흩어져 간 병원까지 한 화면에)
+    const pts = myCases().map(casePos).filter(Boolean);
+    for (const c of myCases()) { const h = caseConfirmed(c) && hp(caseConfirmed(c).hospitalId); if (h) pts.push({ lat: h.lat, lng: h.lng }); }
+    if (pts.length) embedFocus(pts);
+  }, 700);
 }
 
 function hubWsUrl() {
@@ -86,6 +91,7 @@ function handleHub(m) {
       const prev = HUB.cases[m.caseId] || {}; HUB.cases[m.caseId] = { ...prev, ...m, pre: false };
       // 패널이 없는 아이패드 WebView(embed)에선 새 사건이 매칭될 때 카메라를 그 현장으로 — 사람이 잡고 있으면 건드리지 않는다
       // (매칭 전 case_meta로 먼저 생긴 사건도 "처음 매칭"으로 본다)
+      if (!ONLY_APID && prev.caseId && !prev.pre && (caseConfirmed(prev) || {}).hospitalId !== (caseConfirmed(m) || {}).hospitalId) scheduleFitAll();
       if ((!prev.caseId || prev.pre) && document.body.classList.contains('embed')) {
         if (ONLY_APID) { if (m.apid === ONLY_APID) { const p = casePos(HUB.cases[m.caseId]); if (p) embedFocus([p]); } }
         else scheduleFitAll();
@@ -155,6 +161,36 @@ function splitPath(path, gps) {
   return { done: [...path.slice(0, bi + 1).map(ll), [gps.lng, gps.lat, 0]], left: [[gps.lng, gps.lat, 0], ...path.slice(bi + 1).map(ll)] };
 }
 
+// ── 이름표 겹침 줄이기(2026-10-15) ──
+// 대량사고는 한 지점에서 일어나 구급대·환자 이름표가 같은 자리에 겹쳐 읽을 수 없었다. 화면에서 가까운(이름표 한 칸 안) 것끼리
+// 묶어 이름표를 하나만 그린다 — "구급대 5대 · 이송 3 · 현장 2"처럼. 확대해 떨어지면 다시 하나씩 보인다.
+function screenCells(lat, cellPxW, cellPxH) {
+  const mpp = 78271.517 * Math.cos(lat * Math.PI / 180) / Math.pow(2, VIEW.zoom);   // deck(512px 타일) 기준 1px당 미터
+  return { w: cellPxW * mpp / (111320 * Math.cos(lat * Math.PI / 180)), h: cellPxH * mpp / 110540 };   // 도(°) 단위 칸 크기
+}
+function groupByScreen(items, cellPxW, cellPxH) {
+  if (!items.length) return [];
+  // 지도가 실제로 그리는 화면 좌표로 묶는다 — 기울인(pitch) 지도에선 위도·경도 거리와 화면 거리가 달라 칸 나누기로는 덜 묶였다
+  // 지도 준비 전(첫 그리기)엔 deck이 viewport를 아직 안 갖고 있어 getViewports가 assert로 멈춘다 — 그땐 칸 계산으로 대신
+  let vp = null;
+  try { vp = (deckgl.viewManager && deckgl.getViewports()[0]) || null; } catch (e) { vp = null; }
+  const c = vp ? null : screenCells(items[0].pos[1], cellPxW, cellPxH);
+  const pts = items.map(it => {
+    const p = vp ? vp.project([it.pos[0], it.pos[1], it.pos[2] || 0]) : [it.pos[0] / c.w * cellPxW, -it.pos[1] / c.h * cellPxH];
+    return { it, x: p[0], y: p[1] };
+  });
+  // 가까운 것끼리 차례로 붙인다(이름표 한 칸 안이면 같은 묶음)
+  const groups = [];
+  for (const p of pts) {
+    const g = groups.find(g => Math.abs(g.x - p.x) < cellPxW && Math.abs(g.y - p.y) < cellPxH);
+    if (g) { g.items.push(p.it); g.x = (g.x * (g.items.length - 1) + p.x) / g.items.length; g.y = (g.y * (g.items.length - 1) + p.y) / g.items.length; }
+    else groups.push({ items: [p.it], x: p.x, y: p.y });
+  }
+  return groups.map(g => ({ items: g.items, pos: [g.items.reduce((a, b) => a + b.pos[0], 0) / g.items.length, g.items.reduce((a, b) => a + b.pos[1], 0) / g.items.length, g.items[0].pos[2] || 0] }));
+}
+const shortUnit = n => String(n || '').replace(/119안전센터\s*/, ' ').replace(/\s+/g, ' ').trim();
+const PHASE_SHORT = { dispatching: '출동', on_scene: '현장', transporting: '이송', at_hospital: '도착', rerouting: '재선택', returning: '복귀' };
+
 function liveLayers(t) {
   const hs = HS(), pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350), air = $('air').checked;
   const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [];
@@ -211,12 +247,27 @@ function liveLayers(t) {
     const k = c ? caseK(c) : 5, kc = c ? kCol(k).slice(0, 3) : [200, 200, 200];
     ambs.push({ pos: [sim.gps.lng, sim.gps.lat, 0], col: sim.phase === 'returning' ? GRAY : kc });
     const name = (HUB.overview && (HUB.overview.ambulances.find(a => a.apid === sim.apid) || {}).name) || sim.apid;
-    ambTexts.push({ pos: [sim.gps.lng, sim.gps.lat, 0], text: `🚑 ${name} · ${PHASE_LABEL[sim.phase] || sim.phase}${sim.paused ? ' (정지)' : ''}` });
+    ambTexts.push({ pos: [sim.gps.lng, sim.gps.lat, 0], name: shortUnit(name), phase: sim.phase, paused: sim.paused });
     if (sim.path && (sim.phase === 'dispatching' || sim.phase === 'returning' || sim.phase === 'rerouting')) {
       const sp = splitPath(sim.path, sim.gps);
       if (sp.left.length > 1) paths.push({ path: sp.left, col: sim.phase === 'dispatching' ? [242, 241, 236] : GRAY, thin: true });
     }
   }
+  // 이름표 묶기 — 구급대(이름표 폭 약 170px), 환자 번호(약 70px), 병원 도착(병원별)
+  const ambLabels = groupByScreen(ambTexts, 180, 34).map(g => {
+    if (g.items.length === 1) { const a = g.items[0]; return { pos: g.pos, text: `🚑 ${a.name} · ${PHASE_LABEL[a.phase] || a.phase}${a.paused ? ' (정지)' : ''}` }; }
+    const cnt = {}; g.items.forEach(a => { cnt[a.phase] = (cnt[a.phase] || 0) + 1; });
+    return { pos: g.pos, text: `🚑 구급대 ${g.items.length}대 · ` + Object.entries(cnt).map(([p, n]) => `${PHASE_SHORT[p] || p} ${n}`).join(' · ') };
+  });
+  const lightLabels = groupByScreen(lights, 90, 30).map(g => {
+    if (g.items.length === 1) return { pos: g.pos, text: g.items[0].label, k: g.items[0].k };
+    const ids = g.items.map(i => i.label.split(' ')[0]);
+    const worst = Math.min(...g.items.map(i => i.k));
+    return { pos: g.pos, text: `${ids.slice(0, 4).join('·')}${ids.length > 4 ? ` 외 ${ids.length - 4}` : ''} · 환자 ${g.items.length}명`, k: worst };
+  });
+  const occByH = new Map();
+  for (const o of occ) { const e = occByH.get(o.h.hpid); if (e) e.labels.push(o.label); else occByH.set(o.h.hpid, { h: o.h, labels: [o.label] }); }
+  const occLabels = [...occByH.values()].map(e => ({ h: e.h, label: e.labels.length === 1 ? e.labels[0] : `환자 ${e.labels.length}명 · ${e.labels.map(l => l.split(' ')[0]).join('·')} 도착` }));
   const L = [];
   L.push(new LineLayer({ id: 'lv-lines', data: lines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new PathLayer({ id: 'lv-done', data: donePaths, getPath: d => d.path, getColor: [124, 123, 116, 120], getWidth: 1.5, widthUnits: 'pixels', parameters: { depthTest: false } }));
@@ -230,13 +281,13 @@ function liveLayers(t) {
   L.push(new ScatterplotLayer({ id: 'lv-air-light-glow', data: airLights, radiusUnits: 'meters', getRadius: 200 + pulse * 50, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 100], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
   L.push(new ScatterplotLayer({ id: 'lv-air-light', data: airLights, radiusUnits: 'meters', getRadius: 55, radiusMinPixels: 5, getPosition: d => d.pos, getFillColor: [255, 255, 255, 245], stroked: true, getLineColor: d => kCol(d.k), lineWidthMinPixels: 2, parameters: { depthTest: false } }));
   L.push(new ScatterplotLayer({ id: 'lv-occ', data: occ, radiusUnits: 'meters', getRadius: 290 + pulse * 60, getPosition: d => top(d.h), getFillColor: [79, 209, 255, 0], stroked: true, getLineColor: [79, 209, 255, 200], lineWidthMinPixels: 2, parameters: { depthTest: false }, updateTriggers: { getRadius: [animTick] } }));
-  L.push(new TextLayer({ id: 'lv-occ-txt', data: occ, getPosition: d => top(d.h), getText: d => d.label, getSize: 12, characterSet: 'auto', getColor: [79, 209, 255, 255], getPixelOffset: [0, -36], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  L.push(new TextLayer({ id: 'lv-occ-txt', data: occLabels, getPosition: d => top(d.h), getText: d => d.label, getSize: 12, characterSet: 'auto', getColor: [79, 209, 255, 255], getPixelOffset: [0, -36], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
   L.push(new ScatterplotLayer({ id: 'lv-light-glow', data: lights, radiusUnits: 'meters', getRadius: 160 + pulse * 40, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 90], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
   L.push(new ScatterplotLayer({ id: 'lv-light', data: lights, radiusUnits: 'meters', getRadius: 45, radiusMinPixels: 4, getPosition: d => d.pos, getFillColor: d => kCol(d.k), stroked: true, getLineColor: [255, 255, 255, 230], lineWidthMinPixels: 1.5, parameters: { depthTest: false } }));
-  L.push(new TextLayer({ id: 'lv-light-txt', data: lights, getPosition: d => d.pos, getText: d => d.label, getSize: 12, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, -16], fontFamily: css('--mono'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  L.push(new TextLayer({ id: 'lv-light-txt', data: lightLabels, getPosition: d => d.pos, getText: d => d.text, getSize: 12, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, -16], fontFamily: css('--mono'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
   L.push(new ScatterplotLayer({ id: 'lv-amb-glow', data: ambs, radiusUnits: 'meters', getRadius: 120 + pulse * 30, getPosition: d => d.pos, getFillColor: d => [...d.col, 110], parameters: ADD, updateTriggers: { getRadius: [animTick], getPosition: [performance.now() | 0] } }));
   L.push(new ScatterplotLayer({ id: 'lv-amb', data: ambs, radiusUnits: 'meters', getRadius: 40, radiusMinPixels: 5, getPosition: d => d.pos, getFillColor: [255, 255, 255, 255], stroked: true, getLineColor: d => [...d.col, 255], lineWidthMinPixels: 2.5, parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
-  L.push(new TextLayer({ id: 'lv-amb-txt', data: ambTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, 16], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
+  L.push(new TextLayer({ id: 'lv-amb-txt', data: ambLabels, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, 16], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
   return L;
 }
 
