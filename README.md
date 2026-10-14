@@ -31,20 +31,24 @@ AI는 의료진의 판단을 대체하지 않는다 — 환자 정보 구조화�
 AIRookie/
 ├── CLAUDE.md         공통 컨텍스트 (전 브랜치 동일 적용)
 ├── REPORT.md          통합 시스템 보고서 재료 (수식·통신·실측 근거)
-├── voice/            음성 수집·STT·오인식 교정·SBAR 구조화 (feature/voice)
+├── voice/            음성 수집·STT(Qwen3-ASR)·통화 구조화(MF_BERT) (feature/voice)
 ├── hub/              병원 매칭 엔진 + HTTP/WebSocket 서버 (feature/hub)
 ├── info/             병원 정보 관리: E-Gen·심평원 API·OCR (feature/info)
-└── dashboard/        구급차·병원 대시보드 (feature/dashboard)
+├── dashboard/        구급차·병원·관제 대시보드, 온디바이스 앱 (feature/dashboard)
+├── sim/              대량사고 분산 이송 시뮬레이션 — 발표·IR 검증 재료 (feature/sim)
+├── lidar3d/          3D 뷰어(선택, start-all --lidar)
+└── supabase/         E-Gen 스냅샷 클라우드 수집(Edge Function·cron)
 ```
 
 각 폴더의 상세 내용(모델, 스키마, 실행 방법)은 폴더별 문서를 참고한다.
 
 | 폴더 | 문서 | 담당 영역 |
 |---|---|---|
-| `voice/` | [voice/README.md](voice/README.md) | STT, 오인식 교정, SBAR 구조화 |
+| `voice/` | [voice/README.md](voice/README.md) | 통화 중 발화 단위 STT, v2 17필드 구조화(KTAS·주 호소·활력징후 등) |
 | `hub/` | [hub/README.md](hub/README.md), [hub/REPORT.md](hub/REPORT.md) | 존 기반 병원 매칭, 진료과 임베딩 매칭, HTTP/WebSocket 서버 |
 | `info/` | [info/README.md](info/README.md), [info/REPORT_NOTES.md](info/REPORT_NOTES.md) | E-Gen·심평원 API 병원 정보 정규화, 신뢰도 진단(`hospital_score`), 서류 OCR |
-| `dashboard/` | [dashboard/README.md](dashboard/README.md) | 구급차/병원 실시간 화면, 승인 워크플로우 |
+| `dashboard/` | [dashboard/README.md](dashboard/README.md) | 구급차/병원/관제 실시간 화면, 승인 워크플로우, 통화 요약 확인·수정 |
+| `sim/` | [sim/README.md](sim/README.md) | 대량사고(MCI) 분산 이송 시뮬레이션 |
 
 `info/ocr/`, `info/LLMdata/`, `info/simulation/`은 병원 서류 OCR 기반 정보
 추출 경로다(경로 B). 현재 상시 파이프라인은 `info/Hospital_inform/`(경로 A,
@@ -66,7 +70,7 @@ E-Gen·심평원 실 API)을 기준으로 하며, 경로 B는 아직 경로 A와
 - info-v2(`hospital_score/`)가 병원 신고 데이터의 신뢰도를 심평원 대조로
   진단해 hub·dashboard까지 전달됨(설명용) + `declared_no`(명시적 수용 불가
   신고)는 hub 순위 정렬에도 실제로 반영됨(2026-08-14)
-- 병상 차감은 hub 메모리의 TTL 오버레이(15분)로 처리 — info로 되돌려 쓰지 않음
+- 병상 차감은 hub 메모리의 오버레이로 처리(도착 예상 뒤 E-Gen 반영 시 해제, 상한 도착 예상 + 60분) — info로 되돌려 쓰지 않음
 - 여러 사건(구급차)이 동시에 처리돼도 `caseId`·`apid`로 격리됨
 - 존(Zone) 확장(거절 비율 기반), 신원 확인(`GET /identity`), dashboard의 거절
   사유 선택 UI까지 전부 구현·병합 완료
@@ -77,6 +81,10 @@ E-Gen·심평원 실 API)을 기준으로 하며, 경로 B는 아직 경로 A와
   로그로만 전달한다
 - hub 인메모리 위생: 확정된 지 60분 지난 사건 캐시 자동 정리(`_prune_old_cases`),
   의사결정 로그의 통화 전문은 지문(sha256)으로 치환
+- **구급대원 통화 요약 확인·수정(Override) 연결 완료(2026-10-13, PR #2·#3)**: AI 요약은 통화가 끝나자마자 병원에
+  "AI 요약 · 구급대원 확인 전"으로 가고, 구급대원이 [확인] 또는 [수정]→[확인·전송]하면 hub가 갱신본을 다시 보낸다(순위 칸이 바뀌면
+  재매칭, 병원 승인은 유지). 병원 카드엔 "✓ 구급대원 확인" 칩과 고친 칸(AI 값 → 구급대원 값) 상자가 뜨고, 고친 내용은 의사결정 로그
+  `patient_override`에 칸별로 남는다. 예전엔 [수정]이 구급차 화면 안에서만 바뀌었다
 
 **아직 범위 밖**
 - 서류 OCR(경로 B) → E-Gen 정규화(경로 A) 병합
@@ -108,7 +116,7 @@ E-Gen·심평원 실 API)을 기준으로 하며, 경로 B는 아직 경로 A와
 | `--no-sim-dispatch` | 출동 시뮬레이션(가짜 GPS) 끄기. 휴대폰 전화 앱은 시뮬레이션 사건으로만 통화해서, 이때는 `--dashboard-call`이 자동으로 켜진다 |
 | `--skip-build` | dashboard 빌드 생략(직전과 **같은 모드**로 다시 띄울 때만) |
 | `--no-info` | info(병원 정보 주기 전송)·E-Gen 스냅샷 수집·거절 로그 수신구를 띄우지 않는다 |
-| `--no-snapshot` | E-Gen 스냅샷 수집(20분 주기, 병상 신뢰도 모델 관측 기록)만 생략 |
+| `--no-snapshot` | E-Gen 스냅샷 동기화(클라우드 수집분 내려받기)만 생략 — 수집 자체는 클라우드(`supabase/`, 5분 주기)가 한다 |
 | `--lidar` | lidar3d(3D 뷰어)도 함께 — 병원 대시보드에 3D 버튼이 생긴다(기본 끔) |
 | `--setup-dns` | 처음 한 번만: `app.*` 호스트를 Cloudflare 터널에 DNS로 연결 |
 | `--help` | 옵션 설명 |
@@ -147,7 +155,8 @@ voice는 30초마다 hub에 다시 등록하므로 hub와 띄우는 순서는 �
 1. 구급차 대시보드(`A-A0000001`)에서 [이동] → 현장 도착
 2. 대원 휴대폰으로 `P-A0000001` 접속 → 병원 목록(첫 통화 추천이 맨 위)에서 병원을 골라 통화 → 말하기 → 종료
    - 고른 병원 대시보드엔 "📞 통화 중", 구급차 대시보드엔 통화 상태·실시간 자막, 관제 지도엔 📞 표시
-3. 통화 내용이 구조화(AI)돼 존 안의 후보 병원 전체에 동시에 전달 → 병원 대시보드에서 수용 승인·불가
+3. 통화 내용이 구조화(AI)돼 존 안의 후보 병원 전체에 동시에 전달("AI 요약 · 구급대원 확인 전") → 구급차 대시보드에서
+   요약을 [확인]하거나 [수정]→[확인·전송](병원 화면에 "✓ 구급대원 확인"과 고친 칸 표시) → 병원 대시보드에서 수용 승인·불가
 4. 구급차 대시보드에서 이송 승인 → 병원 도착 → 병원 대시보드 [환자 수용 완료] → 기지 복귀
 
 ---
@@ -213,7 +222,7 @@ conda activate rookie_info
 cd info
 python send_to_hub.py
 ```
-E-Gen·심평원 실 API에서 전국 병원 정보를 조회해 기본 30분 주기로 hub에 계속
+E-Gen·심평원 실 API에서 전국 병원 정보를 조회해 기본 5분 주기(`INFO_REFETCH_INTERVAL_SEC`)로 hub에 계속
 재전송하는 상시 프로세스다(1회성 아님). hub를 재시작하면 메모리 안의 병원
 정보가 초기화되므로, 다음 주기까지 기다리거나 이 스크립트를 다시 실행한다.
 

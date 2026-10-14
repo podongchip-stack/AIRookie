@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:,">
+<title>병원 역량 공간 — 전국</title>
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head><body>
+<div id="map"></div>
+<div id="busy">경로 계산 중…</div>
+
+<div id="left" class="panel">
+  <h1>병원 역량 공간 — 전국</h1>
+  <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0 4px"><span class="note" style="margin:0">병원 표시</span><button data-hmode="sphere">3D 구만 (순수 모델)</button><button data-hmode="node">공중 노드</button><button data-hmode="beams">빛기둥</button></div>
+  <p class="lead">병원은 역량 z 높이에 뜬 노드. 환자는 발생 시각에 켜져서 자기 높이 이상의 병원 중 도로 시간이 가장 짧은 줄을 잡고, <b>서버의 파이썬 엔진이 도로 그래프(OSM)로 계산한 최단경로</b>를 따라 흘러간다. 도로 그래프는 전국 3차로 이상 + 병원 주변 4 km 골목(OSM). 지도를 클릭하면 환자가 떨어진다.</p>
+  <div class="ctl">
+    <details open><summary>환자 떨어뜨리기 (분배 모델)</summary>
+      <div class="ctl" style="margin-top:8px">
+        <label>시나리오
+          <select id="scn"></select></label>
+        <div class="addrow">
+          <label>위치<select id="site"></select></label>
+          <label>KTAS<select id="ktas"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label>
+          <label>질환군<select id="cond"><option value="general">일반</option><option value="stemi">심근경색</option><option value="stroke">뇌졸중</option><option value="trauma">중증외상</option></select></label>
+          <label>발생(분)<input id="t0" type="number" min="0" max="180" step="1" value="0"></label>
+          <button id="add" class="pri">추가</button>
+        </div>
+        <details><summary>통화 요약(voice v2 JSON)으로 환자 추가</summary>
+          <div style="display:grid;gap:6px;margin-top:6px">
+            <textarea id="vsum" rows="5" style="font-size:.72rem;font-family:var(--mono)" placeholder='{"ktas_level": 2, "chief_complaint": {"major": "I 심혈관계", "minor": "흉통(심장성)"}, "suspected_diagnosis": [{"text": "경색 의심"}], "incidents": [{"type": "질병", "primary": true}], "disease_category": "심장질환"}'></textarea>
+            <div style="display:flex;gap:6px;align-items:center"><button id="vadd" class="pri">요약으로 추가</button><span id="vmsg" class="note" style="margin:0"></span></div>
+            <p class="note" style="margin:0">위치·발생(분)은 위 칸을 쓴다. KTAS는 요약의 ktas_level, 질환군은 예상 병명 키워드 규칙(뇌졸중 → 심근경색 → 외상 기전+KTAS 1·2 → 일반). 규칙은 서버의 <code>voice_to_patient.py</code> 하나다. 무작위 환자의 질환군은 여전히 주사위다.</p>
+          </div>
+        </details>
+        <div style="border:1px solid var(--line);border-radius:3px;padding:8px;display:grid;gap:6px">
+          <div style="font-size:.78rem;color:var(--ink);font-weight:600">완전 랜덤 생성</div>
+          <label>환자 수 <span id="rnv" class="pill">12</span><input id="rn" type="range" min="2" max="60" step="1" value="12"></label>
+          <label>발생 시간 폭 (분, 0~이 안에서 무작위) <span id="rwv" class="pill">20</span><input id="rw" type="range" min="0" max="90" step="5" value="20"></label>
+          <label>범위<select id="rs"><option value="seoul">서울 도로 위</option><option value="korea">전국 (병원 주변 10 km)</option></select></label>
+          <label>KTAS 분포<select id="rk"><option value="real">실제 비슷하게 (1:5% 2:15% 3:40% 4:30% 5:10%)</option><option value="severe">중증 위주 (1:30% 2:40% 3:30%)</option><option value="uniform">균등</option></select></label>
+          <div style="display:flex;gap:6px"><button id="rgen" class="pri">랜덤 생성</button><button id="radd">랜덤 추가</button></div>
+          <p class="note" style="margin:0">서울은 서울 안 도로 노드 중 무작위. 전국은 병원 주변 10 km 안 무작위.</p>
+        </div>
+        <ul id="plist"></ul>
+        <div style="display:flex;gap:6px"><button id="clear">전부 비우기</button><button id="rise">기둥 다시 올리기</button></div>
+        <label class="row"><input id="air" type="checkbox" checked> 공중에도 거미줄 (환자 높이 → 병원 꼭대기)</label>
+        <label>τ · 도착 시각이 이 안에 겹치면 같은 창 (분) <span id="tauv" class="pill">10</span><input id="tau" type="range" min="2" max="30" step="1" value="10"></label>
+        <label>동시 수용 한도 · 한 창 안에 받는 환자 수 <span id="capv" class="pill">2</span><input id="cap" type="range" min="1" max="6" step="1" value="2"></label>
+        <label>회전 · 도착 후 병상을 비우기까지 (분) <span id="dwellv" class="pill">30</span><input id="dwell" type="range" min="5" max="90" step="5" value="30"></label>
+        <label>μ · 중증이 한 단계 위로 가려고 더 갈 분 (KTAS 1·2) <span id="mu2v" class="pill">30</span><input id="mu2" type="range" min="0" max="60" step="5" value="30"></label>
+        <label>μ · KTAS 3 <span id="mu3v" class="pill">5</span><input id="mu3" type="range" min="0" max="60" step="5" value="5"></label>
+        <label>λ · 경증(KTAS 4·5)이 센터로 갈 때 물리는 분 <span id="lamv" class="pill">5</span><input id="lam" type="range" min="0" max="15" step="1" value="5"></label>
+        <label>시작 시각 (시, 야간 22~06은 얇은 병원 역량이 내려감) <span id="shv" class="pill">14</span><input id="sh" type="range" min="0" max="23" step="1" value="14"></label>
+        <label class="row"><input id="dyn" type="checkbox" checked> 유효 역량 사용 (전문의 두께·야간) + 부하 항</label>
+        <label class="row"><input id="wload" type="checkbox" checked> 부하 항 — 줄 길이에 분으로 (이송 중 건수 10×n/(n+가용) + 포화 최대 5분; 허브 공유 장부 전제, 각자 낡은 뷰면 끌 것)</label>
+        <label>높이 배율 <span id="hv" class="pill">500</span><input id="hs" type="range" min="100" max="1500" step="50" value="500"></label>
+        <label>높이 대비 (지수, 클수록 상급 병원이 더 솟음) <span id="zexpv" class="pill">2.0</span><input id="zexp" type="range" min="1" max="3" step="0.1" value="2.0"></label>
+      </div>
+    </details>
+    <details><summary>보기</summary>
+      <div class="ctl" style="margin-top:8px">
+        <label>시점
+          <div style="display:flex;gap:5px;flex-wrap:wrap"><button data-cam="korea">전국</button><button data-cam="seoul">서울</button><button data-cam="top">위에서</button><button data-cam="tilt">비스듬히</button><button data-cam="side">옆에서</button><button data-cam="low">낮게 옆에서</button><button id="spin">회전</button></div>
+          <p class="note" style="margin:4px 0 0">언제든 손으로 잡으면 회전·연출이 멈춘다. 드래그 이동 · 오른쪽 드래그(또는 Ctrl+드래그, 두 손가락) 돌리기·기울이기 · 휠/핀치 확대 · 방향키/Shift+방향키</p></label>
+        <label>바탕지도<select id="base"><option value="esri">어두운 회색 (Esri, 한글 지명)</option><option value="sat">위성 영상 어둡게 (Esri)</option><option value="street">길거리 지도 어둡게 (Esri)</option><option value="osm">OpenStreetMap 어둡게</option></select></label>
+        <label class="row"><input id="camauto" type="checkbox" checked> 카메라 연출 (재생 때 위에서 → 옆으로)</label>
+      </div>
+    </details>
+  </div>
+  <div class="leg">
+    <span style="--c:var(--g4)">권역센터</span><span style="--c:var(--g3)">지역센터</span><span style="--c:var(--g2)">지역기관</span>
+    <span style="--c:var(--k1)">K1</span><span style="--c:var(--k2)">K2</span><span style="--c:var(--k3)">K3</span><span style="--c:var(--k4)">K4·5</span>
+    <span style="--c:var(--occ)">점유 중</span><span style="--c:var(--clash)">충돌</span>
+  </div>
+  <p class="note" id="etanote"></p>
+</div>
+
+<div id="right" class="panel">
+  <h2>시간순 기록</h2>
+  <p class="summary" id="sum"></p>
+  <div id="log"></div>
+</div>
+
+<div id="clock" class="panel">
+  <div class="t"><span id="tv">0</span><small>분</small></div>
+  <div><input id="time" type="range" min="0" max="60" step="0.25" value="0"><div class="ticks" id="ticks"></div></div>
+  <button id="play" class="pri">▶ 재생</button>
+  <button id="end">끝으로</button>
+</div>
+
+<script src="vendor/maplibre-gl.js"></script>
+<script src="vendor/deck.gl.min.js"></script>
+<script src="app.js"></script>
+</body></html>

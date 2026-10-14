@@ -78,7 +78,7 @@ hub는 `groups[그룹명]`을 **딕셔너리로 조회**하면 끝이다 — 유
 | 3 | 스키마 계약 검증기 (`extra="forbid"`, 어휘·좌표·ISO8601) | `schema.py` | 완료 |
 | 4 | 변환 실행 진입점 (fixture / Supabase / 실 API 3소스) | `build_hospitals.py` | 완료 |
 | 5 | 원본 응답 시계열 축적 (전국 443곳 · 20분 · 가공 전 JSONL) | `snapshot.py` + `.bat` | **가동 중** |
-| 6 | hub로 주기적 재조회·재전송 상시 프로세스 (기본 30분) | `send_to_hub.py` | 완료 |
+| 6 | hub로 주기적 재조회·재전송 상시 프로세스 (기본 5분) | `send_to_hub.py` | 완료 |
 | 7 | 구급차 레지스트리 동기화 (별도 Supabase 프로젝트) | `send_to_hub.py` | 완료 |
 | 8 | hub의 병상 갱신 수신 서버 (`POST /hub/bed-update`, 5002) | `app.py` | 완료 |
 | 9 | 신뢰도 진단 리포트 6절 (API 호출 0회) | `hospital_score/report.py` | 완료 |
@@ -217,8 +217,8 @@ score가 tier와 어긋나지 않는다     (점수는 계층에서만 나온다
 
 | # | 방향 | 엔드포인트 | 페이로드 | 빈도 | 상태 |
 |---|---|---|---|---|---|
-| 1 | info → hub | `POST /info/hospitals` | `HospitalInfo` (병원 1곳당 1회) | 기본 30분 | 가동 |
-| 2 | info → hub | `POST /info/ambulances` | `AmbulanceInfo` | 기본 30분 | 가동 |
+| 1 | info → hub | `POST /info/hospitals` | `HospitalInfo` (병원 1곳당 1회) | 기본 5분 | 가동 |
+| 2 | info → hub | `POST /info/ambulances` | `AmbulanceInfo` | 기본 5분 | 가동 |
 | 3 | hub → info | `POST /hub/bed-update` | `HospitalBedUpdate` | `final_approval` 시 | 가동 |
 | 4 | hub → info | `POST /hub/rejection` | 거절 로그 (관대 수신) | 거절 발생 시 | **수신구 대기 중** |
 | 5 | (조회) | `GET /hub/rejection/summary` | 축별 집계 텍스트 | 수시 | 가동 |

@@ -149,8 +149,9 @@ $$
 \text{effectiveBedCount} = \max\!\Big(0,\ \text{availableBedCount} - \big|\{t \in \text{overlay}[\text{hpid}] : t > \text{now}\}\big|\Big)
 $$
 
-`BED_OVERLAY_TTL_MIN = 15`(분), 근거: `hvidate` 갱신 간격 실측(중앙값 5분,
-443곳 중 88.7~90.5%가 10분 이내, 2026-08-14 라이브 재확인).
+~~`BED_OVERLAY_TTL_MIN = 15`(분), 근거: `hvidate` 갱신 간격 실측(중앙값 5분,
+443곳 중 88.7~90.5%가 10분 이내, 2026-08-14 라이브 재확인).~~ → 2026-10-08 재설계: 그 5분은
+E-Gen 시스템의 묶음 주기였다. 이제 확정 + 예상 이동시간 + 20분은 무조건 유지 → 그 뒤 E-Gen 응급실 원값이 확정 당시보다 줄면 해제(줄어든 만큼만) → 끝까지 안 줄면 도착 예상 + 60분에 해제, 수용 완료 시 기준을 실제 도착으로 재설정(`BedHold`).
 
 ### 2-8. 신뢰도(assessment) 재매칭 — 설명용, finalScore와 별도 계산
 

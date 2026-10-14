@@ -57,6 +57,7 @@ from schema import (
     MciAllocate,
     MciPreview,
     MonitorCaseHospital,
+    PatientOverride,
     SceneEnd,
     SimControl,
     SimReset,
@@ -178,7 +179,7 @@ def receive_hospital_info():
 
     engine.update_hospital_info(info)
     # 그 병원 대시보드가 연결돼 있으면 "귀원 정보 현황"을 갱신해준다 —
-    # 30분 주기 재전송을 그대로 자기 화면 신선도 갱신으로 재사용.
+    # 주기 재전송(기본 5분)을 그대로 자기 화면 신선도 갱신으로 재사용.
     _send_self_info_to_hospital(info.hospitalId)
     return jsonify({"status": "ok", "hospitalId": info.hospitalId}), 200
 
@@ -361,6 +362,24 @@ def _run_match_job(voice: VoiceCallSummaryMessage) -> None:
         _release_call_hold(voice.caseId, "summary_applied")
     except Exception as e:  # noqa: BLE001
         print(f"  [매칭] caseId={voice.caseId} 매칭 실패: {e!r}")
+
+
+def _run_override_job(override: PatientOverride, ws=None) -> None:
+    """구급대원의 통화 요약 확인·수정(2026-10-13, Override)을 반영하고 갱신본을 그 구급차 탭과 후보 병원 탭에 다시
+    보낸다. 순위 칸이 바뀌면 재매칭(임베딩·카카오 호출)이 있어 통화 요약과 같은 작업 스레드에서 돈다."""
+    try:
+        ambulance_gps, _ = _resolve_ambulance_gps(override.caseId)
+        applied = engine.apply_patient_override(override, ambulance_gps)
+        if applied is None:
+            _notify_refused(ws, override.caseId, "no_case")
+            return
+        result, log = applied
+        _send_to_dashboard(result.model_dump())
+        changed = ", ".join(c["field"] for c in log["changes"]) or "수정 없음"
+        print(f"  [Override] case={override.caseId} 구급대원 확인 — {changed}"
+              f"{' · 재매칭' if log['rematched'] else ''}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  [Override] caseId={override.caseId} 반영 실패: {e!r}")
 
 
 def _mci_allocate(case_ids: list[str], ws=None) -> list[dict]:
@@ -604,6 +623,21 @@ def get_identity():
     response = jsonify({"role": role, "id": id_, "name": name, "known": known})
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response, 200
+
+
+@app.get("/hospital-backup")
+def get_hospital_backup():
+    """대시보드 [배후역량] 버튼(2026-10-08) — 한 병원의 배후진료를 보유(심평원)·운영/정원(E-Gen)·지금 가용(E-Gen,
+    이송 확정 차감 반영)으로 모아 돌려준다(HubEngine.build_backup_view). 매칭 결과에 싣지 않고 누를 때만 가져와
+    카드 데이터가 커지지 않게 했다. 인증 없는 조회라 /identity처럼 CORS를 연다."""
+    hospital_id = (request.args.get("id") or "").strip()
+    view = engine.build_backup_view(hospital_id) if hospital_id else None
+    if view is None:
+        response, status = jsonify({"error": f"모르는 병원입니다: {hospital_id or '(id 없음)'}"}), 404
+    else:
+        response, status = jsonify(view.model_dump()), 200
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
 
 
 #: 매칭 결과를 한 번이라도 받은 병원들(caseId -> hpid 집합). 후보에서 빠진 병원도
@@ -1833,6 +1867,24 @@ def dashboard_socket(ws):
                     print(f"  [통신] voice_summary 거부 — 구급차 소켓이 아니거나 다른 구급차의 사건 (caseId={voice.caseId})")
                     continue
                 _match_executor.submit(_run_match_job, voice)
+            elif payload.get("type") == "patient_override":
+                # 구급대원의 통화 요약 확인·수정(2026-10-13, Override). 그 사건을 연 구급차의 소켓에서 온 것만 받는다 —
+                # 병원·관제·다른 구급차는 환자 정보를 고칠 수 없다. 일시정지 중엔 다른 조작처럼 거부한다.
+                role, sock_apid = _socket_identity.get(ws, (None, None))
+                try:
+                    override = PatientOverride.model_validate(payload)
+                except ValidationError as exc:
+                    print(f"  [통신] 잘못된 patient_override 수신: {exc.errors()}")
+                    continue
+                case_apid = engine.get_case_apid(override.caseId)
+                if role != "ambulance" or case_apid is None or case_apid != sock_apid:
+                    print(f"  [통신] patient_override 거부 — 이 사건의 구급차 소켓이 아님 (caseId={override.caseId})")
+                    _notify_refused(ws, override.caseId, "not_owner")
+                    continue
+                if _case_paused(override.caseId):
+                    _notify_refused(ws, override.caseId, "paused")
+                    continue
+                _match_executor.submit(_run_override_job, override, ws)
             elif payload.get("type") == "info_confirm":
                 try:
                     confirm = HospitalInfoConfirm.model_validate(payload)

@@ -5,6 +5,7 @@ import { distanceLabel } from "@/lib/distance";
 import { REJECTION_REASON_GROUPS, rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { HD } from "@/components/hospital/hospital-design";
 import { FollowupCallBox } from "@/components/panels/FollowupCallBox";
+import { ConfirmationChip, OverrideChangesBox } from "@/components/panels/PatientConfirmation";
 import type {
   AmbulanceSimState, ApprovalAction, HospitalCandidate, HubMatchResult, RejectionReason, Severity,
 } from "@/types/dashboard";
@@ -145,6 +146,8 @@ export function RequestCard({
         {banner}
         {/* 이송 중 2차 통화로 갱신된 환자 정보 — 직전 통화와 바뀐 점(2026-10-05) */}
         <FollowupCallBox patientInfo={p} />
+        {/* 구급대원이 AI 요약을 고쳤으면 무엇이 바뀌었는지(2026-10-13, Override) — 승인은 유지되니 다시 판단할 근거 */}
+        <OverrideChangesBox patientInfo={p} />
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "10px 14px" }}>
           {/* KTAS */}
           <div
@@ -162,6 +165,7 @@ export function RequestCard({
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 8px" }}>
               <span style={{ fontSize: 13.5, fontWeight: 700, color: HD.navy }}>{result.ambulanceName ?? result.apid ?? "구급차"}</span>
               <span style={{ fontSize: 11.5, color: HD.muted }}>실시간 환자 정보 요약</span>
+              <ConfirmationChip patientInfo={p} />
               {(p.callRound ?? 1) > 1 && (
                 <span
                   style={{ fontSize: 10.5, fontWeight: 700, color: HD.orange, background: HD.orangeSoft, borderRadius: 999, padding: "2px 8px" }}

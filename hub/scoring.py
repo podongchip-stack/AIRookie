@@ -99,10 +99,35 @@ def load_penalty_min(in_flight: int, effective_beds: int, bed_count_unknown: boo
     return minutes, f"이송 중 {in_flight}건/남은 병상 {max(effective_beds, 0)} +{minutes:g}분"
 
 
+# ── 응급실 포화도 페널티 (2026-10-07) ────────────────────────────────────────────
+# 병원이 E-Gen에 신고한 응급실 포화도(=(정원 - 가용) ÷ 정원)만큼 이동시간에 분을 더한다 — 같은 "가용 2석"이라도
+# 정원 10석(80% 참)과 정원 40석(95% 참)은 다르게 본다. 포화도에 비례(선형)하고 상한이 있어 불변식이 같다:
+#   **포화도 페널티를 다 받아도 OCCUPANCY_PENALTY_MAX_MIN분 넘게 가까운 병원은 역전당하지 않는다.**
+# 이송 중 부하 페널티의 절반으로 둔 이유: 부하는 우리가 확정한 사실이고, 포화도는 병원 신고값이라 시간이 지나면
+# 틀릴 수 있다(병상 신뢰도 모델 참고). 이송 확정 차감(오버레이) 전의 E-Gen 값으로 계산해 같은 환자를 부하
+# 페널티와 두 번 세지 않는다. 병상 미상·오래된 값이면 0분 — 미상을 이유로 불리하게 두지 않는 원칙.
+# 값은 팀 합의 전 초기값(2026-10-07) — 거절·도착 로그가 쌓이면 재보정한다.
+OCCUPANCY_PENALTY_MAX_MIN = 5.0
+
+
+def occupancy_penalty_min(occupancy_pct: int | None) -> tuple[float, str | None]:
+    """(이동시간에 더할 분, 설명 문구). 포화도 0%면 0분, 100%면 OCCUPANCY_PENALTY_MAX_MIN분."""
+    if occupancy_pct is None or occupancy_pct <= 0:
+        return 0.0, None
+    minutes = round(OCCUPANCY_PENALTY_MAX_MIN * min(occupancy_pct, 100) / 100, 1)
+    return minutes, f"응급실 포화도 {occupancy_pct}%(E-Gen 신고) +{minutes:g}분"
+
+
 def final_score(
-    specialty_score: float, travel_min: float, bonus_min: float = 0.0, load_min: float = 0.0
+    specialty_score: float,
+    travel_min: float,
+    bonus_min: float = 0.0,
+    load_min: float = 0.0,
+    occupancy_min: float = 0.0,
 ) -> float:
-    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(max(0.0, travel_min - bonus_min + load_min))
+    return W_SPECIALTY * specialty_score + W_DISTANCE * travel_score(
+        max(0.0, travel_min - bonus_min + load_min + occupancy_min)
+    )
 
 
 def calibrate_min_per_km(samples: list[tuple[float, float]]) -> float:
@@ -130,7 +155,7 @@ def rank_key(
        (2026-10-01 — 예전엔 dashboard가 자체 정렬로 올려 줬다. 순위를 hub 한 곳에서만 정하도록
        옮겼다. 병원의 명시적 응답이 점수 추정보다 우선한다는 _demote_reasons()의 원칙과 같다)
     1) 이 사건에서 거절(rejected)한 병원은 맨 뒤
-    2) 그 앞은 declared_no(수용 불가 신고)·beds_full(확인된 만실)로 내린 병원
+    2) 그 앞은 declared_no(수용 불가 신고)·severe_blocked(E-Gen 차단 메시지)·beds_full(확인된 만실)로 내린 병원
     3) 나머지는 finalScore 내림차순, 같으면 가까운 순·ID 순(결정적 정렬)
 
     declared_no를 가중합으로 섞지 않는 이유: hospital_score의 5단계 score(0.2~1.0)는

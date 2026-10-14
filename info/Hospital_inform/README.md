@@ -217,7 +217,7 @@ python -m hospital_score.scoring --payload 한강성심     # hub로 보낼 합�
 
 ```bash
 python -m hospital_score.hira_files --fetch  # 전문병원 지정 현황 (API 2회)
-python -m hospital_score.hira --build-join   # 조인 + 전문의 수 (API 약 520회)
+python -m hospital_score.hira --build-join   # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
 ```
 
 캐시가 없어도 점수는 나오지만 **심평원 근거가 통째로 빠져 미상이 전부 `unknown_bare`로

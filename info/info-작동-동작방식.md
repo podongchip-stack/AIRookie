@@ -49,7 +49,7 @@ info/Hospital_inform/info/
 
 ## 3. 동작 방식 — 30분 사이클 (`send_to_hub.py`)
 
-**상시 프로세스**다(1회성 스크립트 아님). hub는 받은 병원 정보를 메모리에 들고만 있고 스스로 재조회하지 않으므로, 이 프로세스가 주기적으로 재조회·재전송한다(`INFO_REFETCH_INTERVAL_SEC`, 기본 30분). hub가 안 떠 있어도 죽지 않고 다음 주기에 재시도.
+**상시 프로세스**다(1회성 스크립트 아님). hub는 받은 병원 정보를 메모리에 들고만 있고 스스로 재조회하지 않으므로, 이 프로세스가 주기적으로 재조회·재전송한다(`INFO_REFETCH_INTERVAL_SEC`, 기본 5분). hub가 안 떠 있어도 죽지 않고 다음 주기에 재시도.
 
 한 사이클(`sync_once()`)의 순서:
 
@@ -78,7 +78,7 @@ info/Hospital_inform/info/
   ```bash
   cd info/Hospital_inform/info
   python -m hospital_score.hira_files --fetch    # API 2회
-  python -m hospital_score.hira --build-join     # API 약 520회, 이어받기 지원
+  python -m hospital_score.hira --build-join     # API 약 2,100회, 이어받기 지원
   ```
 - **폐기 판정 (되살리지 말 것, `python -m hospital_score.discarded`로 재현)**: ① 병상 수 예측 — P(만실 전환)=0.568%로 사전 등록 기준 2% 미달. ② 미상 추정 모델 — 관측 라벨 95.6%가 "가능"인 MNAR 편중이라 그대로 쓰면 "미신고 병원도 대부분 수용 가능"이라는 위험한 방향의 오류.
 
@@ -112,7 +112,7 @@ info/Hospital_inform/info/
 
 ```bash
 # 환경: dev conda env (xgboost 포함)
-cd info && python send_to_hub.py                          # 상시 프로세스 (30분 주기)
+cd info && python send_to_hub.py                          # 상시 프로세스 (5분 주기)
 cd info/Hospital_inform/info
 python -m reliability.selftest                            # 신뢰도 트랙 전체 검증 (API 0회) — "전부 통과" 확인
 python -m hospital_score.report                           # 관측치 리포트 (API 0회)

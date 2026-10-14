@@ -228,7 +228,7 @@ Supabase 대체 DB에 남겨두고(E-Gen이 조회 전용이라 hub의 확정 �
 쓸 방법이 없어서), hub가 그 차감을 Supabase에 다시 써서 재조회에도 유지되게
 하는 왕복 구조(아래 "2번" 메시지, `info/app.py`)가 있었다. 이제 그 왕복
 자체가 없다 — 병상 차감은 hub 쪽 **TTL 오버레이**(짧은 시간만 hub 메모리에
-얹어 보여주는 방식, `hub/hub_engine.py`의 `BED_OVERLAY_TTL_MIN`)로 대신
+얹어 보여주는 방식, `hub/hub_engine.py`의 `BedHold` — 2026-10-08부터 사건 기준 유지·해제)로 대신
 처리한다. `info/app.py`(`POST /hub/bed-update` 수신 서버)는 삭제됐다.
 
 그래서 `feature/info`가 `feature/hub`로 보내는 메시지는 **`HospitalInfo`
@@ -279,8 +279,7 @@ voice가 보내는 "필요역량"과 여기서 올리는 "보유역량"이 같�
 > ~~🔴 병원 7곳만 hub로 흘러가던 문제~~ → **2026-08-13 해소됨.** 병상까지
 > 실 API로 읽게 되면서(`SUPABASE_TO_EGEN_HPID` 대응표·`_remap_to_supabase_hpid()`
 > 삭제) 이제 E-Gen이 주는 533곳 전부가 hub로 간다. 병상 차감은 hub 쪽 TTL
-> 오버레이(`BED_OVERLAY_TTL_MIN=15분`)로 대체됐다 — 근거는 `hvidate` 갱신
-> 경과 중앙값 5분(443곳 중 88.7~90.5%가 10분 이내). `hospitalId`도 실 hpid
+> 오버레이(당시 고정 15분, 2026-10-08 사건 기준 유지·해제로 재설계 — hub README 참고)로 대체됐다. `hospitalId`도 실 hpid
 > (`A1100017` 등)로 이미 전환 완료됐다 (2026-08-14 전국 확장까지 완료 —
 > 서울특별시 한정에서 전국 533곳으로 넓어짐, `egen/client.py`의 `stage1` 기본값
 > 변경).
@@ -501,7 +500,7 @@ python -m hospital_score.ingest                        # 거절 로그 수신 �
 
 ```bash
 python -m hospital_score.hira_files --fetch    # 전문병원 지정 현황 (API 2회)
-python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
 ```
 
 캐시가 없어도 점수는 나오지만 **심평원 근거가 통째로 빠져 미상이 전부
@@ -567,7 +566,7 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
 ├── README.md                      이 문서
 ├── DEVELOPMENT.md                 브랜치 전략
 ├── requirements.txt               서버 의존성 (Flask 등)
-├── send_to_hub.py                 E-Gen 실 API → hub 주기적 재조회 상시 프로세스 (기본 30분,
+├── send_to_hub.py                 E-Gen 실 API → hub 주기적 재조회 상시 프로세스 (기본 5분,
 │                                   병상 포함 전부 E-Gen에서 읽음 — Supabase 의존 없음, 2026-08-13)
 │
 ├── Hospital_inform/               [경로 A] E-Gen 공개 API → HospitalInfo   (규칙 기반)
@@ -748,7 +747,7 @@ info/                              (저장소 루트의 .gitignore, CLAUDE.md, p
   ```bash
   cd info/Hospital_inform/info
   python -m hospital_score.hira_files --fetch    # 전문병원 지정 (API 2회)
-  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 (API 약 520회)
+  python -m hospital_score.hira --build-join     # 조인 + 전문의 수 + 배후진료 재료 (API 약 2,100회)
   ```
 - **`hospital_score/`는 의도적으로 격리돼 있다.** 바깥 모듈을 import 하지 않고 바깥에서도
   이 폴더를 import 하지 않아, 폴더째 지워도 기존 경로가 멀쩡하다. 배선할 때 이 성질을
