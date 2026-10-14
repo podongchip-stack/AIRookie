@@ -3,17 +3,26 @@ import SwiftUI
 /// 구급차 대시보드(웹 /ambulance 시안)와 같은 배치 — 상단바 · 범례 → 위: 왼쪽 열(현장 상태 · 통화 요약) + 오른쪽 거미줄 3D 지도
 /// → 아래: 병원 후보 리스트(가로 스크롤 카드). 병원 리스트는 사고가 발생했을 때만 아래에서 올라온다.
 /// 상단바의 [정보 생존 모델]은 같은 화면 위에 전체 화면으로 덮는다.
+/// 상단바의 [구급차 | 상황판]으로 화면을 바꾼다 — 상황판은 이 구급차가 아니라 전체 사건(대량사고)을 본다(SituationBoardView).
+enum Screen: String { case ambulance, board }
+
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var board: BoardModel
+    @AppStorage("screen") private var screenRaw = Screen.ambulance.rawValue
     @State private var showSettings = false
     @State private var showSurvival = false
+    private var screen: Screen { Screen(rawValue: screenRaw) ?? .ambulance }
 
     var body: some View {
         ZStack(alignment: .top) {
             AD.bg.ignoresSafeArea()
             VStack(spacing: 8) {
-                TopBar(showSurvival: $showSurvival, showSettings: $showSettings)
+                TopBar(showSurvival: $showSurvival, showSettings: $showSettings, screenRaw: $screenRaw)
                 Legend()
+                if screen == .board {
+                    SituationBoardView()
+                } else {
                 if let call = model.callStatus, call.state == "calling" {
                     Text("휴대폰으로 \(call.hospitalName ?? "병원")과 통화 중 — 통화가 끝나면 환자 정보가 후보 병원에 동시에 전달됩니다")
                         .font(.system(size: 13, weight: .bold)).foregroundStyle(AD.green)
@@ -39,14 +48,15 @@ struct RootView: View {
                         .frame(maxHeight: .infinity)
                         // 사고가 없으면 병원 리스트 자리 없이 지도가 아래까지 — 사고가 생기면 아래에서 올라온다
                         if model.hasIncident {
-                            // 카드(병상·AI 유효·전문의 세 칸 + 칩 + 정보 유효성 + 이송 승인)가 약 300pt — 머리글까지 넣어 넘치지 않는 높이
+                            // 카드(병상·AI 유효·전문의 세 칸 + 칩 한 줄 + 정보 유효성 + 이송 승인)가 약 225pt — 지도를 가리지 않게 낮게(2026-10-14)
                             HospitalSection()
-                                .frame(height: min(max(g.size.height * 0.47, 336), 372))
+                                .frame(height: min(max(g.size.height * 0.36, 252), 268))
                                 .clipped()
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
                     .animation(.spring(response: 0.45, dampingFraction: 0.86), value: model.hasIncident)
+                }
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -60,17 +70,21 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: model.notice)
-        .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model) }
+        .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model).environmentObject(board) }
         .fullScreenCover(isPresented: $showSurvival) { SurvivalModelScreen(isPresented: $showSurvival).environmentObject(model) }
-        .onAppear { model.start() }
+        .onAppear { model.start(); if screen == .board { board.start() } }
+        .onChange(of: screenRaw) { _, v in if v == Screen.board.rawValue { board.start() } }
     }
 }
 
 /// 상단바 — 로고 · 버전 · 구급대 이름 | 정보 생존 모델 · 이송 상태 · 연결 · 경과 · 설정 (웹 AmbulanceTopBar)
 struct TopBar: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var board: BoardModel
     @Binding var showSurvival: Bool
     @Binding var showSettings: Bool
+    @Binding var screenRaw: String
+    private var isBoard: Bool { screenRaw == Screen.board.rawValue }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -78,12 +92,25 @@ struct TopBar: View {
                 (Text("골든").foregroundStyle(AD.navy) + Text("링크").foregroundStyle(AD.blue))
                     .font(.system(size: 20, weight: .black))
                 Pill(text: "v2.0", bg: AD.blueSoft, fg: AD.blue, bold: true)
-                Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true)
+                if isBoard { Pill(text: "상황판 · 전체 사건", bg: AD.navy, fg: .white, bold: true) }
+                else { Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true) }
             }
+            // 구급차 화면 ↔ 상황판(전체 사건, 대량사고용)
+            Picker("", selection: $screenRaw) {
+                Text("구급차").tag(Screen.ambulance.rawValue)
+                Text("상황판").tag(Screen.board.rawValue)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 170)
             Spacer(minLength: 8)
-            statusView
+            if isBoard {
+                let n = board.rows.count
+                HStack(spacing: 6) { Dot(color: n > 0 ? AD.orange : AD.gray); Text(n > 0 ? "진행 중 \(n)건" : "진행 중 사건 없음").font(.system(size: 12, weight: .bold)).foregroundStyle(n > 0 ? AD.orange : AD.gray) }
+            } else {
+                statusView
+            }
             connectionView
-            if let at = model.receivedAt {
+            if !isBoard, let at = model.receivedAt {
                 (Text("수신 후 ") + Text(Labels.elapsed(model.now.timeIntervalSince(at))).bold().foregroundColor(AD.navy) + Text(" 경과"))
                     .font(.system(size: 12)).foregroundStyle(AD.sub)
             }
@@ -122,7 +149,7 @@ struct TopBar: View {
 
     private var connectionView: some View {
         let (label, color): (String, Color) = {
-            switch model.connection {
+            switch isBoard ? board.connection : model.connection {
             case .live: return ("실시간 연동", AD.green)
             case .connecting: return ("hub 연결 중…", AD.orange)
             case .reconnecting: return ("hub 재연결 중…", AD.red)

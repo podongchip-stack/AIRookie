@@ -100,9 +100,9 @@ struct CandidateCard: View {
     private var live: BedReliability.Live? { h.bedReliability.map { BedReliability.live($0, now: model.now) } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 5) {
             Button(action: onDetail) {
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 5) {
                     head
                     stats
                     chips
@@ -114,7 +114,7 @@ struct CandidateCard: View {
             Spacer(minLength: 0)
             actionButton
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
+        .padding(.horizontal, 14).padding(.vertical, 10)
         .frame(width: cardWidth, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(AD.card)
@@ -135,10 +135,10 @@ struct CandidateCard: View {
                 }.font(.system(size: 12))
             }
             Spacer(minLength: 0)
-            VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 4) {
+                if recommended { Pill(text: "추천", bg: AD.orangeSoft, fg: AD.approve, bold: true) }
                 let p = Theme.statusPill(statusKey)
                 Pill(text: statusText, bg: p.bg, fg: p.fg, bold: true)
-                if recommended { Pill(text: "추천", bg: AD.orangeSoft, fg: AD.approve, bold: true) }
             }
         }
     }
@@ -175,26 +175,33 @@ struct CandidateCard: View {
         }
     }
 
+    /// 칩은 한 줄로 — 중요한 것부터 3개, 나머지는 "+N"(대량사고 때 칩이 여러 줄로 늘어 카드가 커지던 것, 2026-10-14). 전부는 상세에서.
     private var chips: some View {
-        FlowLayout(spacing: 6) {
-            if let sm = h.specialtyMatch {
-                if sm.department == nil { Pill(text: "진료과 정보 미상") }
-                else if sm.basis != "exact", (sm.score ?? 0) < 0.3 { Pill(text: "\(sm.department ?? "") · 적합도 낮음 \(Int(((sm.score ?? 0) * 100).rounded()))%") }
-                else { Pill(text: "\(sm.department ?? "") · \(sm.basis == "exact" ? "필요 진료과 일치" : "적합도 \(Int(((sm.score ?? 0) * 100).rounded()))%")", bg: AD.blueSoft, fg: AD.blue) }
-            }
-            if let lvl = h.emergencyLevel, lvl.hasSuffix("센터") { Pill(text: lvl) }
-            if h.demoteReasons?.contains("declared_no") == true { Pill(text: "수용 불가 신고", bg: AD.redSoft, fg: AD.red) }
-            if h.demoteReasons?.contains("severe_blocked") == true { Pill(text: "병원 차단 메시지", bg: AD.redSoft, fg: AD.red) }
-            if let n = h.inFlightCount, n > 0 { Pill(text: "이송 중 \(n)건\(h.loadPenaltyMin.map { $0 > 0 ? " · 순위 +\(fmt($0))분" : "" } ?? "")", bg: AD.orangeSoft, fg: AD.orange) }
-            if let r = h.reliability { Pill(text: "\(r.group) · \(Labels.confidence(r.confidence))", bg: r.confidence == "high" ? AD.greenSoft : AD.chip, fg: r.confidence == "high" ? AD.green : AD.ink3) }
-            if let sf = h.severeFreshness { Pill(text: "\(sf.value == "Y" ? "수용가능 신고" : "수용불가 신고") \(Labels.age(sf.ageSec, isMin: sf.ageIsMin ?? false))") }
+        var items: [(String, Color, Color)] = []
+        if h.demoteReasons?.contains("declared_no") == true { items.append(("수용 불가 신고", AD.redSoft, AD.red)) }
+        if h.demoteReasons?.contains("severe_blocked") == true { items.append(("병원 차단 메시지", AD.redSoft, AD.red)) }
+        if let sm = h.specialtyMatch {
+            if sm.department == nil { items.append(("진료과 정보 미상", AD.chip, AD.ink3)) }
+            else if sm.basis != "exact", (sm.score ?? 0) < 0.3 { items.append(("\(sm.department ?? "") · 적합도 낮음 \(Int(((sm.score ?? 0) * 100).rounded()))%", AD.chip, AD.ink3)) }
+            else { items.append(("\(sm.department ?? "") · \(sm.basis == "exact" ? "필요 진료과 일치" : "적합도 \(Int(((sm.score ?? 0) * 100).rounded()))%")", AD.blueSoft, AD.blue)) }
         }
+        if let n = h.inFlightCount, n > 0 { items.append(("이송 중 \(n)건\(h.loadPenaltyMin.map { $0 > 0 ? " · +\(fmt($0))분" : "" } ?? "")", AD.orangeSoft, AD.orange)) }
+        if let lvl = h.emergencyLevel, lvl.hasSuffix("센터") { items.append((lvl, AD.chip, AD.ink3)) }
+        if let r = h.reliability { items.append(("\(r.group) · \(Labels.confidence(r.confidence))", r.confidence == "high" ? AD.greenSoft : AD.chip, r.confidence == "high" ? AD.green : AD.ink3)) }
+        if let sf = h.severeFreshness { items.append(("\(sf.value == "Y" ? "수용가능 신고" : "수용불가 신고") \(Labels.age(sf.ageSec, isMin: sf.ageIsMin ?? false))", AD.chip, AD.ink3)) }
+        let shown = Array(items.prefix(3))
+        return HStack(spacing: 5) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, c in Pill(text: c.0, bg: c.1, fg: c.2) }
+            if items.count > shown.count { Pill(text: "+\(items.count - shown.count)", bg: AD.chip, fg: AD.sub, bold: true) }
+            Spacer(minLength: 0)
+        }
+        .lineLimit(1)
     }
 
     /// 정보 유효성(4-1) — 지금 / 도착 시 확률과 "왜"를 한 줄로: 정보 나이 · 도착까지 이동 · 병원 확인 · 1일 넘은 값
     @ViewBuilder private var validityLine: some View {
         if let lv = live, let br = h.bedReliability {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Text("AI · 병상 정보 지금 유효").foregroundStyle(AD.sub)
                     Text(BedReliability.pct(lv.authority)).bold().foregroundStyle(Theme.validity(lv.authority).fg)
@@ -240,8 +247,8 @@ struct CandidateCard: View {
     }
 
     private func bigButton(_ t: String, bg: Color, fg: Color, border: Color?, small: Bool = false) -> some View {
-        Text(t).font(.system(size: small ? 13 : 15, weight: .bold)).foregroundStyle(fg)
-            .frame(maxWidth: .infinity, minHeight: 44)
+        Text(t).font(.system(size: small ? 13 : 14, weight: .bold)).foregroundStyle(fg)
+            .frame(maxWidth: .infinity, minHeight: 38)
             .background(bg).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(border ?? .clear, lineWidth: 2))
     }
@@ -257,7 +264,7 @@ struct SceneCard: View {
     var body: some View {
         let live = h.bedReliability.map { BedReliability.live($0, now: model.now) }
         let doctors = h.specialties?.reduce(0) { $0 + ($1.doctorCount ?? 0) } ?? 0
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(h.name).font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
@@ -276,12 +283,13 @@ struct SceneCard: View {
                 else { StatBox(label: "AI 유효", value: "—", bg: AD.chip, fg: AD.ink3) }
                 StatBox(label: "전문의", value: doctors > 0 ? "\(doctors)명" : "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
             }
-            FlowLayout(spacing: 6) {
+            HStack(spacing: 5) {
                 if let sp = h.specialties, !sp.isEmpty {
                     Pill(text: sp.prefix(3).map(\.department).joined(separator: "·") + (sp.count > 3 ? " 외 \(sp.count - 3)과" : ""), bg: AD.blueSoft, fg: AD.blue)
                 }
                 if let lvl = h.emergencyLevel, lvl.hasSuffix("센터") { Pill(text: lvl) }
-            }
+                Spacer(minLength: 0)
+            }.lineLimit(1)
             if let lv = live {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("AI · 지금 유효 \(BedReliability.pct(lv.authority)) → 도착 시 \(BedReliability.pct(lv.rArrive))\(lv.ageSec.map { " · 정보 \(Labels.age($0))" } ?? "")")
@@ -291,9 +299,9 @@ struct SceneCard: View {
             }
             Spacer(minLength: 0)
             Text("통화 후 병원 응답을 받으면 승인").font(.system(size: 13, weight: .bold)).foregroundStyle(AD.muted)
-                .frame(maxWidth: .infinity, minHeight: 44).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .frame(maxWidth: .infinity, minHeight: 38).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
+        .padding(.horizontal, 14).padding(.vertical, 10)
         .frame(width: cardWidth, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -307,10 +315,10 @@ struct SkeletonCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("후보 \(index)").font(.system(size: 14, weight: .bold)).foregroundStyle(AD.muted)
             RoundedRectangle(cornerRadius: 5).fill(AD.line).frame(width: 150, height: 10)
-            HStack(spacing: 8) { ForEach(0..<3, id: \.self) { _ in RoundedRectangle(cornerRadius: 12).fill(Color(hex: 0xEEF0F4)).frame(height: 44) } }
+            HStack(spacing: 8) { ForEach(0..<3, id: \.self) { _ in RoundedRectangle(cornerRadius: 12).fill(Color(hex: 0xEEF0F4)).frame(height: 40) } }
             RoundedRectangle(cornerRadius: 5).fill(AD.line).frame(width: 220, height: 10)
             Spacer(minLength: 0)
-            RoundedRectangle(cornerRadius: 14).fill(AD.line).frame(height: 44)
+            RoundedRectangle(cornerRadius: 14).fill(AD.line).frame(height: 38)
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .frame(width: cardWidth).frame(maxHeight: .infinity, alignment: .top)
