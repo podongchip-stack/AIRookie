@@ -100,7 +100,7 @@ const deckgl = new DeckGL({
   container:'map', mapLib: maplibregl, mapStyle:BASE.esri,
   initialViewState:VIEW, controller:{maxPitch:80,inertia:!TOUCH,dragRotate:true,touchRotate:true,keyboard:true},
   // 사용자가 잡으면 회전·연출을 즉시 멈추고 손에 맡긴다
-  onViewStateChange:({viewState,interactionState})=>{VIEW=viewState; const u=interactionState||{}; if(u.isDragging||u.isPanning||u.isRotating||u.isZooming){ if(spinning){spinning=false;$('spin').textContent='회전';} clearTimeout(camT); }},
+  onViewStateChange:({viewState,interactionState})=>{VIEW=viewState; const u=interactionState||{}; if(u.isDragging||u.isPanning||u.isRotating||u.isZooming){ if(spinning){spinning=false;$('spin').textContent='회전';} clearTimeout(camT); } if(u.isPanning&&window.onUserPan) window.onUserPan();},
   getTooltip:({object})=>object&&object.hpid?{html:`<b>${object.name}</b><br>${object.grade}<br>z ${object.z} · 중증 가능 ${object.severeY}/28<br>응급실 ${object.hasBeds?(object.hvec===null?'미상':object.hvec)+' / '+(object.er_cap??'?'):'데이터 없음'}`,
     style:{background:'rgba(12,16,34,.95)',color:'#f2f1ec',fontSize:'12px',fontFamily:css('--font'),border:'1px solid #2b2d45',padding:'6px 8px'}}:null,
   onClick:info=>{ if(!META||MODE==='live') return; if(info.layer&&info.object&&info.object.hpid) return; if(!info.coordinate) return;

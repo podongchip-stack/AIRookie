@@ -5,6 +5,8 @@ extension Notification.Name {
     static let spiderReload = Notification.Name("spiderReload")
     /// 상황판 사건 목록을 눌렀을 때 지도를 그 현장으로 — userInfo ["lat", "lng"]
     static let spiderFocus = Notification.Name("spiderFocus")
+    /// 지도 페이지 함수 호출 — userInfo ["js"] (예: "followMine()" 내 구급차 따라가기, "fitAllNow()" 전체 보기)
+    static let spiderEval = Notification.Name("spiderEval")
 }
 
 /// 오른쪽 지도 — spider 서버의 거미줄 3D 실시간 화면(/spider/?mode=live&embed=1&apid=…). 패널은 숨기고 지도만 받는다.
@@ -48,6 +50,10 @@ struct SpiderWebView: UIViewRepresentable {
             guard let lat = n.userInfo?["lat"] as? Double, let lng = n.userInfo?["lng"] as? Double else { return }
             context.coordinator.web?.evaluateJavaScript("window.focusPoint && focusPoint(\(lat), \(lng))")
         }
+        context.coordinator.evalObserver = NotificationCenter.default.addObserver(forName: .spiderEval, object: nil, queue: .main) { n in
+            guard let js = n.userInfo?["js"] as? String else { return }
+            context.coordinator.web?.evaluateJavaScript("try{\(js)}catch(e){}")
+        }
         context.coordinator.load(url, force: true)
         return web
     }
@@ -59,12 +65,14 @@ struct SpiderWebView: UIViewRepresentable {
     static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
         if let o = coordinator.observer { NotificationCenter.default.removeObserver(o) }
         if let o = coordinator.focusObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = coordinator.evalObserver { NotificationCenter.default.removeObserver(o) }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate {
         weak var web: WKWebView?
         var observer: NSObjectProtocol?
         var focusObserver: NSObjectProtocol?
+        var evalObserver: NSObjectProtocol?
         private var loaded: URL?
 
         func load(_ url: URL?, force: Bool) {
