@@ -725,6 +725,10 @@ def _monitor_case(payload: dict) -> dict:
         ambulanceName=payload.get("ambulanceName"),
         ambulanceGps=payload.get("ambulanceGps"),
         severityTag=patient.get("severityTag"),
+        # spider 실시간 화면용 환자 요약(2026-10-14) — 전문·활력징후는 빼고 분류 결과만
+        ktasLevel=patient.get("ktasLevel"), expectedDiagnosis=patient.get("expectedDiagnosis"),
+        chiefComplaint=patient.get("chiefComplaint"), requiredDepartment=patient.get("requiredDepartment"),
+        patient=patient.get("patient"), confirmedBy=patient.get("confirmedBy"),
         zoneActive=payload.get("zoneActive") or [],
         zoneBandKm=ZONE_BAND_KM,
         hospitals=[

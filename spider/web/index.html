@@ -12,9 +12,11 @@
 
 <div id="left" class="panel">
   <h1>병원 역량 공간 — 전국</h1>
+  <div class="modebar"><button data-mode="sim" class="on">가상 시나리오</button><button data-mode="live">실시간 (hub 사건)</button></div>
   <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0 4px"><span class="note" style="margin:0">병원 표시</span><button data-hmode="sphere">3D 구만 (순수 모델)</button><button data-hmode="node">공중 노드</button><button data-hmode="beams">빛기둥</button></div>
   <p class="lead">병원은 역량 z 높이에 뜬 노드. 환자는 발생 시각에 켜져서 자기 높이 이상의 병원 중 도로 시간이 가장 짧은 줄을 잡고, <b>서버의 파이썬 엔진이 도로 그래프(OSM)로 계산한 최단경로</b>를 따라 흘러간다. 도로 그래프는 전국 3차로 이상 + 병원 주변 4 km 골목(OSM). 지도를 클릭하면 환자가 떨어진다.</p>
   <div class="ctl">
+    <div id="simctl">
     <details open><summary>환자 떨어뜨리기 (분배 모델)</summary>
       <div class="ctl" style="margin-top:8px">
         <label>시나리오
@@ -58,6 +60,14 @@
         <label>높이 대비 (지수, 클수록 상급 병원이 더 솟음) <span id="zexpv" class="pill">2.0</span><input id="zexp" type="range" min="1" max="3" step="0.1" value="2.0"></label>
       </div>
     </details>
+    </div>
+    <div id="livepanel" style="display:none" class="ctl">
+      <p class="lead" style="margin:0">구급차 대시보드에서 출동한 <b>실제 사건</b>을 hub가 보내는 대로 그린다 — 휴대폰 통화에서 뽑힌 KTAS·예상 병명·필요 진료과, 존 안 병원들의 승인·불가·확정, 이송 경로와 도착까지. 줄의 색은 hub의 결정(규칙 기반)이고, 민트색은 거미줄 모델이 같은 환자에게 골랐을 병원(제안, hub에 보내지 않음).</p>
+      <div id="livestatus" class="st"></div>
+      <label class="row"><input id="suggest" type="checkbox" checked> 거미줄 모델 제안 겹쳐 보기 (서버 엔진, 아래 "보기" 슬라이더 값 사용)</label>
+      <div class="leg" style="margin:0"><span style="--c:var(--k2)">판단 대기(가는 줄)</span><span style="--c:var(--ok)">수용 승인</span><span style="--c:var(--yield)">수용 불가</span><span style="--c:var(--k1)">이송 확정·경로</span><span style="--c:var(--sug)">거미줄 제안</span><span style="--c:var(--occ)">도착·수용</span></div>
+      <div id="livecases" class="ctl"></div>
+    </div>
     <details><summary>보기</summary>
       <div class="ctl" style="margin-top:8px">
         <label>시점
@@ -92,4 +102,5 @@
 <script src="vendor/maplibre-gl.js"></script>
 <script src="vendor/deck.gl.min.js"></script>
 <script src="app.js"></script>
+<script src="live.js"></script>
 </body></html>
