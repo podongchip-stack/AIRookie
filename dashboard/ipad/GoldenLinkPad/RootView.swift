@@ -188,10 +188,15 @@ struct MapCard: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text("거미줄 분배 · 실시간").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
-                Text("환자 → 병원 줄 · 이송 경로").font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                Text("내 구급차 기준 · 이송 경로").font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 Spacer()
-                Pill(text: "규칙 · hub 결정", bg: AD.chip, fg: AD.ink3)
+                Pill(text: "초록 = 승인 병원 중 최적", bg: AD.greenSoft, fg: AD.green)
                 Pill(text: "민트 = 거미줄 제안", bg: Color(hex: 0xE6FBF4), fg: Color(hex: 0x0F7B5F))
+                // 지도를 손으로 옮기면 내 구급차 따라가기가 멈춘다 — 다시 켜는 버튼
+                Button { NotificationCenter.default.post(name: .spiderEval, object: nil, userInfo: ["js": "followMine()"]) } label: {
+                    Label("내 구급차", systemImage: "location.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 12).frame(minHeight: 30).background(AD.blue).clipShape(Capsule())
+                }
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             SpiderWebView(url: Settings.spiderURL(apid: model.apid))

@@ -32,12 +32,49 @@ function embedFocus(points) {
 }
 window.addEventListener('resize', () => {
   clearTimeout(embedResizeT);
-  embedResizeT = setTimeout(() => { if (EMBED_FOCUS) { VIEW = { ...VIEW, ...EMBED_FOCUS, transitionDuration: 0 }; deckgl.setProps({ initialViewState: VIEW }); } }, 350);
+  embedResizeT = setTimeout(() => { if (FOLLOW && ONLY_APID) { const s = HUB.sims[ONLY_APID]; if (s && s.gps) { followTo(s.gps, 0); return; } } if (EMBED_FOCUS) { VIEW = { ...VIEW, ...EMBED_FOCUS, transitionDuration: 0 }; deckgl.setProps({ initialViewState: VIEW }); } }, 350);
 });
 let EMBED_USER = false;   // 사람이 지도를 한 번이라도 만졌으면 자동 맞춤(전체 보기)을 하지 않는다
 ['pointerdown', 'touchstart', 'wheel'].forEach(t => document.getElementById('map').addEventListener(t, () => { EMBED_FOCUS = null; EMBED_USER = true; }, { passive: true }));
 // 앱이 부르는 함수 — 상황판 사건 목록을 누르면 그 현장으로(아이패드 SpiderWebView의 spiderFocus)
 window.focusPoint = (lat, lng) => embedFocus([{ lat, lng }]);
+
+// ── 보기 유지(2026-10-15): 앱에서 구급차 화면 ↔ 상황판을 오가면 지도가 새로 열려 처음 보기로 돌아갔다. 줌·기울기·방향(상황판은 중심까지)을
+// 이 기기에 저장해 다시 열 때 그대로 띄운다. 구급차 화면은 중심을 내 구급차로 두고 줌·기울기만 이어 간다.
+const VIEW_KEY = 'spider.view.' + (ONLY_APID ? 'ambulance' : 'board');
+let FOLLOW = !!ONLY_APID, lastSavedView = '';
+function loadSavedView() { try { return JSON.parse(localStorage.getItem(VIEW_KEY) || 'null'); } catch (e) { return null; } }
+function saveView() {
+  if (!document.body.classList.contains('embed')) return;
+  const v = { longitude: VIEW.longitude, latitude: VIEW.latitude, zoom: VIEW.zoom, pitch: VIEW.pitch, bearing: VIEW.bearing };
+  const key = JSON.stringify(v); if (key === lastSavedView) return;
+  lastSavedView = key; try { localStorage.setItem(VIEW_KEY, key); } catch (e) { /* 저장 안 돼도 화면은 그대로 */ }
+}
+setInterval(saveView, 1500);
+(function restoreView() {
+  if (!document.body.classList.contains('embed')) return;
+  const v = loadSavedView();
+  if (ONLY_APID) {   // 구급차 화면: 중심은 내 구급차가 정한다 — 줌·기울기·방향만 되살린다(없으면 동네 단위)
+    VIEW = { ...VIEW, zoom: v ? v.zoom : 13.4, pitch: v ? v.pitch : 55, bearing: v ? v.bearing : -18 };
+  } else if (v) {    // 상황판: 마지막 보기 그대로 — 자동 전체 맞춤도 하지 않는다(사람이 맞춘 보기를 존중)
+    VIEW = { ...VIEW, ...v }; EMBED_USER = true;
+  }
+  deckgl.setProps({ initialViewState: { ...VIEW, transitionDuration: 0 } });
+})();
+// 손가락이 지도에 닿아 있는 동안은 따라가기를 잠시 쉰다 — 핀치 도중 카메라를 옮기면 제스처가 끊긴다
+let TOUCHING = 0;
+['touchstart', 'pointerdown'].forEach(t => document.getElementById('map').addEventListener(t, () => { TOUCHING = Date.now(); }, { passive: true }));
+['touchend', 'touchcancel', 'pointerup'].forEach(t => document.addEventListener(t, () => { TOUCHING = 0; }, { passive: true }));
+function followTo(gps, dur) {
+  if (!FOLLOW || !gps || (TOUCHING && Date.now() - TOUCHING < 8000)) return;
+  VIEW = { ...VIEW, longitude: gps.lng, latitude: gps.lat, transitionDuration: dur };
+  deckgl.setProps({ initialViewState: VIEW });
+}
+// 사람이 지도를 끌어 옮기면 따라가기를 멈춘다(확대·축소·회전은 따라가기 유지). 앱의 [내 구급차] 버튼이 followMine()으로 다시 켠다.
+window.onUserPan = () => { if (ONLY_APID) FOLLOW = false; };
+window.followMine = () => { FOLLOW = true; EMBED_FOCUS = null; const s = HUB.sims[ONLY_APID]; if (s && s.gps) followTo(s.gps, 700); };
+// 상황판 [전체 보기] — 모든 현장과 이송 병원이 다 보이게
+window.fitAllNow = () => { EMBED_USER = false; scheduleFitAll(); EMBED_USER = true; };
 // 상황판(embed, apid 없음): 새 사건이 생길 때마다 모든 현장이 다 보이게 맞춘다 — 사건마다 카메라가 튀지 않게 모아서 한 번
 let fitAllT = null;
 function scheduleFitAll() {
@@ -93,8 +130,7 @@ function handleHub(m) {
       // (매칭 전 case_meta로 먼저 생긴 사건도 "처음 매칭"으로 본다)
       if (!ONLY_APID && prev.caseId && !prev.pre && (caseConfirmed(prev) || {}).hospitalId !== (caseConfirmed(m) || {}).hospitalId) scheduleFitAll();
       if ((!prev.caseId || prev.pre) && document.body.classList.contains('embed')) {
-        if (ONLY_APID) { if (m.apid === ONLY_APID) { const p = casePos(HUB.cases[m.caseId]); if (p) embedFocus([p]); } }
-        else scheduleFitAll();
+        if (!ONLY_APID) scheduleFitAll();   // 구급차 화면은 내 구급차를 따라가므로 따로 맞추지 않는다
       }
       break;
     }
@@ -105,19 +141,11 @@ function handleHub(m) {
     }
     case 'case_sync': { const keep = new Set(m.caseIds || []); for (const id of Object.keys(HUB.cases)) if (!keep.has(id)) { delete HUB.cases[id]; delete HUB.suggest[id]; } break; }
     case 'ambulance_phase': {
-      const prevPhase = (HUB.sims[m.apid] || {}).phase;
       HUB.sims[m.apid] = { ...m };
-      // 아이패드 구급차 앱: 내 구급차가 출동하면 현장으로 카메라를 옮긴다
-      if (ONLY_APID && m.apid === ONLY_APID && m.phase !== prevPhase) {
-        if (m.phase === 'dispatching' && m.incident) embedFocus([m.incident]);
-        else if ((m.phase === 'transporting' || m.phase === 'rerouting') && m.incident) {
-          const h = m.hospitalId ? hp(m.hospitalId) : null;
-          embedFocus(h ? [m.incident, { lat: h.lat, lng: h.lng }] : [m.incident]);
-        }
-      }
+      if (ONLY_APID && m.apid === ONLY_APID) followTo(m.gps, 700);   // 내 구급차가 화면 가운데
       break;
     }
-    case 'ambulance_position': { const p = HUB.sims[m.apid] || {}; HUB.sims[m.apid] = { ...p, ...m, path: m.path || p.path || null }; caseChanged = false; break; }
+    case 'ambulance_position': { const p = HUB.sims[m.apid] || {}; HUB.sims[m.apid] = { ...p, ...m, path: m.path || p.path || null }; if (ONLY_APID && m.apid === ONLY_APID) followTo(m.gps, 950); caseChanged = false; break; }
     default: return;
   }
   if (caseChanged) hubCaseTick++;
@@ -194,7 +222,7 @@ const PHASE_SHORT = { dispatching: '출동', on_scene: '현장', transporting: '
 function liveLayers(t) {
   const LK = zoomK();   // 연결선 굵기 배율 — 확대하면 가늘게, 축소하면 굵게(공중 노드와 같은 배율)
   const hs = HS(), pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350), air = $('air').checked;
-  const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [];
+  const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [], bestTexts = [];
   const top = h => [h.lng, h.lat, ZH(h.z) * hs];
   for (const c of myCases()) {
     const pos = casePos(c); if (!pos) continue;
@@ -206,16 +234,19 @@ function liveLayers(t) {
       lights.push({ pos: [pos.lng, pos.lat, 0], k, label: caseLabel(c) });
       if (air) { airLights.push({ pos: [pos.lng, pos.lat, ZH(pz) * hs], k }); stems.push({ a: [pos.lng, pos.lat, 0], b: [pos.lng, pos.lat, ZH(pz) * hs], k }); }
     }
+    // 줄은 "이 환자가 어디로 가나"만 보이게(2026-10-15): 확정되면 확정 병원 하나, 확정 전엔 수용 승인한 병원 중 hub 순위
+    // 1위(=구급차 화면의 '추천', 이송 중 부하·포화·중증도 가산이 반영된 최적) 하나. 아직 승인한 곳이 없으면 요청이 나간 병원에
+    // 아주 옅은 줄만(동시 전달 중이라는 표시). 예전엔 요청한 병원 전부에 줄이 그려져 어느 줄이 최적인지 알 수 없었다.
+    const best = confirmed || (c.hospitals || []).find(h => h.status === 'approved') || null;
+    if (best && !confirmed && !arrived) { const bh = hp(best.hospitalId); if (bh) bestTexts.push({ pos: top(bh), text: `${caseLabel(c)} 최적 · ${shortName(bh.name)}` }); }
     for (const ch of c.hospitals || []) {
       const h = hp(ch.hospitalId); if (!h) continue;
       const st = ch.status;
-      // 이송이 확정되면 그 사건은 확정 병원 경로만 — 다른 후보 줄까지 그리면 대량사고 상황판이 줄로 뒤덮였다(2026-10-14)
-      if (confirmed && st !== 'confirmed') continue;
+      if (best ? ch.hospitalId !== best.hospitalId : (st === 'rejected' || ch.unavailableReason)) continue;
       let col, w, a;
       if (st === 'confirmed') { col = kc; w = 3; a = 240; }
-      else if (st === 'approved') { col = OK_COL; w = 2; a = 220; }
-      else if (st === 'rejected') { col = GRAY; w = 1; a = 70; }
-      else { col = kc; w = 1; a = 90; }
+      else if (st === 'approved') { col = OK_COL; w = 3; a = 235; }
+      else { col = kc; w = 1; a = 45; }
       if (st === 'confirmed' && sim && sim.path && (sim.phase === 'transporting' || sim.phase === 'at_hospital')) {
         // 확정 병원으로는 hub(카카오 내비)가 준 실제 이송 경로를 그린다 — 지나온 구간 회색, 남은 구간 KTAS 색
         const sp = splitPath(sim.path, sim.gps || pos);
@@ -224,8 +255,8 @@ function liveLayers(t) {
       } else if (!arrived) {
         lines.push({ a: [pos.lng, pos.lat, 0], b: [h.lng, h.lat, 0], col: [...col, a], w });
       }
-      if (air && !arrived && (st === 'confirmed' || st === 'approved' || st === 'pending')) {
-        airLines.push({ a: [pos.lng, pos.lat, ZH(pz) * hs], b: top(h), col: [...col, st === 'pending' ? 60 : a], w: st === 'pending' ? 1 : w });
+      if (air && !arrived) {
+        airLines.push({ a: [pos.lng, pos.lat, ZH(pz) * hs], b: top(h), col: [...col, st === 'pending' ? 35 : a], w: st === 'pending' ? 0.8 : w });
       }
       if (st === 'confirmed' || st === 'approved') ups.push({ a: [h.lng, h.lat, 0], b: top(h), col: [...col, 160] });
       if (arrived && st === 'confirmed') occ.push({ h, label: sim.phase === 'at_hospital' ? `${caseLabel(c)} 도착 · 수용 대기` : `${caseLabel(c)} 수용 완료` });
@@ -243,12 +274,13 @@ function liveLayers(t) {
   }
   // 구급차: 출동 중·이송 중·재선택·복귀 중인 것만(기지 대기는 관제 지도의 몫)
   for (const sim of mySims()) {
-    if (!sim.gps || !sim.phase || sim.phase === 'idle') continue;
+    // 아이패드 구급차 화면(apid)에선 기지 대기 중인 내 구급차도 보인다 — 어디 있는지가 기준점이다
+    if (!sim.gps || !sim.phase || (sim.phase === 'idle' && !(ONLY_APID && sim.apid === ONLY_APID))) continue;
     const c = sim.caseId ? HUB.cases[sim.caseId] : null;
     const k = c ? caseK(c) : 5, kc = c ? kCol(k).slice(0, 3) : [200, 200, 200];
-    ambs.push({ pos: [sim.gps.lng, sim.gps.lat, 0], col: sim.phase === 'returning' ? GRAY : kc });
+    ambs.push({ pos: [sim.gps.lng, sim.gps.lat, 0], col: sim.phase === 'returning' ? GRAY : kc, me: !!ONLY_APID && sim.apid === ONLY_APID });
     const name = (HUB.overview && (HUB.overview.ambulances.find(a => a.apid === sim.apid) || {}).name) || sim.apid;
-    ambTexts.push({ pos: [sim.gps.lng, sim.gps.lat, 0], name: shortUnit(name), phase: sim.phase, paused: sim.paused });
+    ambTexts.push({ pos: [sim.gps.lng, sim.gps.lat, 0], name: shortUnit(name), phase: sim.phase, paused: sim.paused, me: !!ONLY_APID && sim.apid === ONLY_APID });
     if (sim.path && (sim.phase === 'dispatching' || sim.phase === 'returning' || sim.phase === 'rerouting')) {
       const sp = splitPath(sim.path, sim.gps);
       if (sp.left.length > 1) paths.push({ path: sp.left, col: sim.phase === 'dispatching' ? [242, 241, 236] : GRAY, thin: true });
@@ -256,7 +288,7 @@ function liveLayers(t) {
   }
   // 이름표 묶기 — 구급대(이름표 폭 약 170px), 환자 번호(약 70px), 병원 도착(병원별)
   const ambLabels = groupByScreen(ambTexts, 180, 34).map(g => {
-    if (g.items.length === 1) { const a = g.items[0]; return { pos: g.pos, text: `🚑 ${a.name} · ${PHASE_LABEL[a.phase] || a.phase}${a.paused ? ' (정지)' : ''}` }; }
+    if (g.items.length === 1) { const a = g.items[0]; return { pos: g.pos, text: `🚑 ${ONLY_APID && a.me ? '내 구급차' : a.name} · ${PHASE_LABEL[a.phase] || a.phase}${a.paused ? ' (정지)' : ''}` }; }
     const cnt = {}; g.items.forEach(a => { cnt[a.phase] = (cnt[a.phase] || 0) + 1; });
     return { pos: g.pos, text: `🚑 구급대 ${g.items.length}대 · ` + Object.entries(cnt).map(([p, n]) => `${PHASE_SHORT[p] || p} ${n}`).join(' · ') };
   });
@@ -275,6 +307,7 @@ function liveLayers(t) {
   L.push(new PathLayer({ id: 'lv-paths', widthScale: LK, data: paths, getPath: d => d.path, getColor: d => [...d.col, d.thin ? 110 : 220], getWidth: d => d.thin ? 1.5 : 3, widthUnits: 'pixels', parameters: { depthTest: false }, updateTriggers: { getPath: [hubCaseTick, performance.now() | 0] } }));
   L.push(new LineLayer({ id: 'lv-sug', widthScale: LK, data: sugLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: [...SUG_COL, 200], getWidth: 2, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-sug-txt', data: sugTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [...SUG_COL, 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  L.push(new TextLayer({ id: 'lv-best-txt', data: bestTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [94, 227, 127, 255], getPixelOffset: [0, -22], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 180], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
   L.push(new LineLayer({ id: 'lv-air-glow', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [d.col[0], d.col[1], d.col[2], 60], getWidth: 8, widthUnits: 'pixels', parameters: ADD }));
   L.push(new LineLayer({ id: 'lv-air', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new LineLayer({ id: 'lv-stems', widthScale: LK, data: stems, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [...kCol(d.k).slice(0, 3), 130], getWidth: 1.5, widthUnits: 'pixels', parameters: ADD }));
@@ -286,8 +319,11 @@ function liveLayers(t) {
   L.push(new ScatterplotLayer({ id: 'lv-light-glow', data: lights, radiusUnits: 'meters', getRadius: 160 + pulse * 40, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 90], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
   L.push(new ScatterplotLayer({ id: 'lv-light', data: lights, radiusUnits: 'meters', getRadius: 45, radiusMinPixels: 4, getPosition: d => d.pos, getFillColor: d => kCol(d.k), stroked: true, getLineColor: [255, 255, 255, 230], lineWidthMinPixels: 1.5, parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-light-txt', data: lightLabels, getPosition: d => d.pos, getText: d => d.text, getSize: 12, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, -16], fontFamily: css('--mono'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
-  L.push(new ScatterplotLayer({ id: 'lv-amb-glow', data: ambs, radiusUnits: 'meters', getRadius: 120 + pulse * 30, getPosition: d => d.pos, getFillColor: d => [...d.col, 110], parameters: ADD, updateTriggers: { getRadius: [animTick], getPosition: [performance.now() | 0] } }));
-  L.push(new ScatterplotLayer({ id: 'lv-amb', data: ambs, radiusUnits: 'meters', getRadius: 40, radiusMinPixels: 5, getPosition: d => d.pos, getFillColor: [255, 255, 255, 255], stroked: true, getLineColor: d => [...d.col, 255], lineWidthMinPixels: 2.5, parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
+  // 구급차는 화면 픽셀 크기(축소해도 보이게). 내 구급차는 크게 + 맥박 고리
+  const NK = zoomK();
+  L.push(new ScatterplotLayer({ id: 'lv-amb-glow', data: ambs, radiusUnits: 'pixels', getRadius: d => (d.me ? 22 : 11) * (1 + 0.25 * pulse), getPosition: d => d.pos, getFillColor: d => d.me ? [79, 209, 255, 110] : [...d.col, 110], parameters: ADD, updateTriggers: { getRadius: [animTick], getPosition: [performance.now() | 0] } }));
+  L.push(new ScatterplotLayer({ id: 'lv-amb-ring', data: ambs.filter(d => d.me), radiusUnits: 'pixels', getRadius: 13 + 10 * pulse, getPosition: d => d.pos, getFillColor: [0, 0, 0, 0], stroked: true, getLineColor: [79, 209, 255, Math.round(230 * (1 - pulse))], lineWidthUnits: 'pixels', getLineWidth: 2, parameters: { depthTest: false }, updateTriggers: { getRadius: [animTick], getLineColor: [animTick], getPosition: [performance.now() | 0] } }));
+  L.push(new ScatterplotLayer({ id: 'lv-amb', data: ambs, radiusUnits: 'pixels', getRadius: d => (d.me ? 9 : 5.5) * Math.max(0.8, NK), getPosition: d => d.pos, getFillColor: [255, 255, 255, 255], stroked: true, getLineColor: d => d.me ? [79, 209, 255, 255] : [...d.col, 255], lineWidthUnits: 'pixels', getLineWidth: d => d.me ? 3.5 : 2.5, parameters: { depthTest: false }, updateTriggers: { getRadius: [Math.round(VIEW.zoom * 10)], getPosition: [performance.now() | 0] } }));
   L.push(new TextLayer({ id: 'lv-amb-txt', data: ambLabels, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, 16], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
   return L;
 }
