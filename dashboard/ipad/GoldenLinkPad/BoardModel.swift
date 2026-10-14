@@ -99,6 +99,9 @@ final class BoardModel: ObservableObject {
         var bedUnknown = true
         var inFlight = 0
         var id: String { hospitalId }
+        /// 이 병원으로 가는 환자 수 — 사건의 이송 확정 수와 hub의 이송 중 건수(병상 차감 오버레이)는 같은 환자를 센 값이라
+        /// 더하지 않고 큰 쪽을 쓴다(더하면 두 번 세고, 이송 중 건수는 병원 목록이 올 때만 바뀌어 순위가 흔들렸다)
+        var load: Int { max(confirmed.count, inFlight) }
     }
 
     @Published var rows: [String: Row] = [:]
@@ -172,8 +175,16 @@ final class BoardModel: ObservableObject {
             }
         }
         // 확정된 환자가 있거나 승인한 병원만 — 요청만 받은 병원까지 다 넣으면 대량사고에서 목록이 수십 줄이 된다
+        // 순서: 가는 환자 많은 순 → 승인 많은 순 → 대기 많은 순 → 이름 → ID. 마지막 두 칸이 동점을 끊는다 — 예전엔 동점이면
+        // 사전(Dictionary) 꺼내는 순서를 그대로 써서, 화면이 1초마다 다시 그려질 때마다 동점 병원끼리 자리가 바뀌었다(2026-10-15)
         return m.values.filter { !$0.confirmed.isEmpty || $0.approved > 0 || $0.inFlight > 0 }
-            .sorted { ($0.confirmed.count + $0.inFlight, $0.approved) > ($1.confirmed.count + $1.inFlight, $1.approved) }
+            .sorted { a, b in
+                if a.load != b.load { return a.load > b.load }
+                if a.approved != b.approved { return a.approved > b.approved }
+                if a.pending != b.pending { return a.pending > b.pending }
+                if a.name != b.name { return a.name < b.name }
+                return a.hospitalId < b.hospitalId
+            }
     }
     var requestedHospitalCount: Int { Set(rows.values.flatMap { $0.hospitals.map(\.hospitalId) }).count }
 
