@@ -70,7 +70,7 @@ const BASE={
   osm:{version:8,sources:{b:{type:'raster',tiles:['https://tile.openstreetmap.de/{z}/{x}/{y}.png'],tileSize:256,maxzoom:18,attribution:'© OpenStreetMap contributors (openstreetmap.de)'}},layers:[{id:'b',type:'raster',source:'b',paint:{'raster-brightness-max':.42,'raster-saturation':-.7,'raster-contrast':.15}}]}};
 const {DeckGL, ColumnLayer, ScatterplotLayer, LineLayer, PathLayer, TripsLayer, TextLayer, SimpleMeshLayer} = deck;
 // 병원 표시 방식: sphere(3D 구만) / node(공중 노드+줄기) / beams(빛기둥)
-let HMODE='sphere';
+let HMODE='node';   // 기본은 공중 노드(2026-10-15 요청) — 버튼으로 3D 구·빛기둥으로 바꿀 수 있다
 // 단위 구 메시 (SimpleMeshLayer용) — 외부 의존 없이 직접 만든다
 const SPHERE=(()=>{const la=18,lo=36,pos=[],nor=[],idx=[];
   for(let i=0;i<=la;i++){const th=Math.PI*i/la,st=Math.sin(th),ct=Math.cos(th);
@@ -249,7 +249,7 @@ $('base').addEventListener('change',()=>{deckgl.setProps({mapStyle:BASE[$('base'
 $('dyn').addEventListener('change',()=>recompute(+$('time').value));
 $('wload').addEventListener('change',()=>recompute(+$('time').value));
 document.querySelectorAll('[data-hmode]').forEach(b=>b.addEventListener('click',()=>{HMODE=b.dataset.hmode; document.querySelectorAll('[data-hmode]').forEach(x=>x.classList.toggle('on',x===b));}));
-document.querySelector('[data-hmode="sphere"]').classList.add('on');
+document.querySelector('[data-hmode="node"]').classList.add('on');
 $('time').addEventListener('input',()=>{stopPlay();tick();});
 $('end').onclick=()=>{stopPlay();$('time').value=$('time').max;tick();};
 $('play').onclick=()=>{ if(timer){stopPlay();return;} const s=$('time'); if(+s.value>=+s.max) s.value=0; $('play').textContent='❚❚ 멈춤'; if(+s.value===0) choreograph();
