@@ -99,9 +99,9 @@ final class BoardModel: ObservableObject {
         var bedUnknown = true
         var inFlight = 0
         var id: String { hospitalId }
-        /// 이 병원으로 가는 환자 수 — 사건의 이송 확정 수와 hub의 이송 중 건수(병상 차감 오버레이)는 같은 환자를 센 값이라
-        /// 더하지 않고 큰 쪽을 쓴다(더하면 두 번 세고, 이송 중 건수는 병원 목록이 올 때만 바뀌어 순위가 흔들렸다)
-        var load: Int { max(confirmed.count, inFlight) }
+        /// 이 병원으로 가는 환자 수 — 지금 진행 중인 사건의 이송 확정 수만 센다. hub의 이송 중 건수(병상 차감 보류)는
+        /// 사건이 끝나도 E-Gen에 반영될 때까지(최대 도착 후 60분) 남아서, 그걸 같이 보면 끝난 사건의 병원이 계속 남았다(2026-10-15)
+        var load: Int { confirmed.count }
     }
 
     @Published var rows: [String: Row] = [:]
@@ -164,9 +164,10 @@ final class BoardModel: ObservableObject {
                 m[h.hospitalId] = l
             }
         }
+        // 병원 목록에서는 응급실 여유만 가져온다 — 진행 중 사건에 등장한 병원만(끝난 사건의 병원을 되살리지 않게)
         if let ov = overview {
-            for h in ov.hospitals where m[h.hospitalId] != nil || (h.inFlightCount ?? 0) > 0 {
-                var l = m[h.hospitalId] ?? HospitalLoad(hospitalId: h.hospitalId, name: h.name, level: h.emergencyLevel)
+            for h in ov.hospitals where m[h.hospitalId] != nil {
+                guard var l = m[h.hospitalId] else { continue }
                 l.level = l.level ?? h.emergencyLevel
                 l.available = h.availableBedCount
                 l.bedUnknown = h.bedCountUnknown ?? true
@@ -177,7 +178,7 @@ final class BoardModel: ObservableObject {
         // 확정된 환자가 있거나 승인한 병원만 — 요청만 받은 병원까지 다 넣으면 대량사고에서 목록이 수십 줄이 된다
         // 순서: 가는 환자 많은 순 → 승인 많은 순 → 대기 많은 순 → 이름 → ID. 마지막 두 칸이 동점을 끊는다 — 예전엔 동점이면
         // 사전(Dictionary) 꺼내는 순서를 그대로 써서, 화면이 1초마다 다시 그려질 때마다 동점 병원끼리 자리가 바뀌었다(2026-10-15)
-        return m.values.filter { !$0.confirmed.isEmpty || $0.approved > 0 || $0.inFlight > 0 }
+        return m.values.filter { !$0.confirmed.isEmpty || $0.approved > 0 }
             .sorted { a, b in
                 if a.load != b.load { return a.load > b.load }
                 if a.approved != b.approved { return a.approved > b.approved }
@@ -212,9 +213,9 @@ final class BoardModel: ObservableObject {
         case "ambulance_phase", "ambulance_position":
             if let m = try? dec.decode(AmbulanceSimState.self, from: data) {
                 sims[m.apid] = m
-                // 사건 없이 기지로 돌아가는 구급차의 매칭 전 사건(신고만 된 것)은 지운다
+                // 사건 없이 기지로 돌아가는 구급차의 사건은 끝난 것 — 지운다(case_closed를 놓쳤을 때의 보험, 2026-10-15)
                 if m.caseId == nil, ["idle", "returning"].contains(m.phase) {
-                    for (id, r) in rows where r.overview == nil && r.apid == m.apid { rows[id] = nil }
+                    for (id, r) in rows where r.apid == m.apid { rows[id] = nil }
                 }
             }
         default:
