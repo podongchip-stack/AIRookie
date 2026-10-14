@@ -169,7 +169,7 @@ struct SituationBoardView: View {
     // ── 병원별 분산 현황 ──
     private var hospitalLoad: some View {
         let loads = board.hospitalLoads
-        let maxN = max(1, loads.map { $0.confirmed.count + $0.inFlight }.max() ?? 1)
+        let maxN = max(1, loads.map(\.load).max() ?? 1)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("병원별 분산").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
@@ -196,7 +196,7 @@ struct SituationBoardView: View {
     }
 
     private func loadRow(_ l: BoardModel.HospitalLoad, maxN: Int) -> some View {
-        let n = max(l.confirmed.count, l.inFlight)
+        let n = l.load
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Text(l.name).font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
