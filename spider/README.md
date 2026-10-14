@@ -15,7 +15,7 @@ Mitzenmacher의 "낡은 정보로 고르면 몰린다"에서 착안했다. 2026-
 
 ```bash
 conda activate rookie_info        # numpy·scipy·flask
-cd spider && python serve.py      # → http://127.0.0.1:7000/spider/   (LAN·아이패드: --host 0.0.0.0)
+cd spider && python serve.py      # → http://127.0.0.1:7700/spider/   (LAN·아이패드: --host 0.0.0.0)
 ```
 
 `./start-all.sh`가 `spider/serve.py`가 있으면 자동으로 띄우고(`--no-spider`로 끔) 터널이 `https://app.rookie-goldenlink.xyz/spider/`로
@@ -59,7 +59,7 @@ KTAS 3는 얇은 지역기관의 1/3이 몇 분 거리 센터로. 밤에는 얇�
 | 파일 | 역할 |
 |---|---|
 | `engine/` | **파이썬 엔진(2026-10-14)** — `roads.py`(roads_data.js 로드·JS와 같은 격자 최근접·scipy 다익스트라 120분·경로 복원·출발점별 캐시 150), `model.py`(필요/유효 역량·줄 길이·질환군 벽·`Params` 슬라이더 값), `solve.py`(시간 기반 해소: τ 창 충돌·양보·이동 중 재투척·초과·기록 문구), `scenarios.py`(시나리오·무작위 환자, 시드 재현). hub가 나중에 가져다 쓸 모듈 — 다른 폴더 import 없음 |
-| `serve.py` | Flask 서버. `web/`를 `/spider/` 아래로 내주고 `api/meta`·`api/hospitals`·`api/solve`·`api/random`·`api/voice`. 포트 `SPIDER_PORT`(7000), 접두어 `SPIDER_PREFIX` |
+| `serve.py` | Flask 서버. `web/`를 `/spider/` 아래로 내주고 `api/meta`·`api/hospitals`·`api/solve`·`api/random`·`api/voice`. 포트 `SPIDER_PORT`(7700), 접두어 `SPIDER_PREFIX` |
 | `web/` | 화면(`index.html`·`app.js`·`style.css`) + `vendor/`(maplibre-gl 4.7.1, deck.gl 8.9.36). `app.js`는 `make_map.py`의 그리기 코드 그대로에 엔진 호출만 fetch로 바꾼 것 |
 | `parity_check.py` | 파이썬 엔진 ↔ JS 엔진 대조(node로 `map.html` 엔진 부분만 실행). 시나리오 5 + 슬라이더 변주 5 + 시드 무작위 4 = 14사례. 2026-10-14: 14/14 일치(한 사례는 같은 시간의 다른 경로를 복원한 km 차이만 — 모델 차이 아님) |
 | `make_map.py` → `map.html` | 예전 단일 파일 화면 + 엔진(JS). 검증용 쌍둥이로 남김 — 모델을 `engine/`에서 바꾸면 여기도 같이 바꿔 parity를 유지한다 |
