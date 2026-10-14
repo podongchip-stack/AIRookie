@@ -1,113 +1,179 @@
 import SwiftUI
 
-/// 가로 3단: [사건·환자 정보 | 거미줄 3D(WebView) | 병원 수용 여부·정보 유효성]. 위 탭으로 [정보 생존 모델] 전체 화면.
+/// 구급차 대시보드(웹 /ambulance 시안)와 같은 배치 — 상단바 · 범례 → 위: 왼쪽 열(현장 상태 · 통화 요약) + 오른쪽 거미줄 3D 지도
+/// → 아래: 병원 후보 리스트(가로 스크롤 카드). 병원 리스트는 사고가 발생했을 때만 아래에서 올라온다.
+/// 상단바의 [정보 생존 모델]은 같은 화면 위에 전체 화면으로 덮는다.
 struct RootView: View {
-    enum Tab: String, CaseIterable, Identifiable {
-        case control = "관제 · 거미줄 3D"
-        case survival = "정보 생존 모델"
-        var id: String { rawValue }
-    }
-
     @EnvironmentObject private var model: AppModel
-    @AppStorage("tab") private var tabRaw = Tab.control.rawValue   // 마지막 탭 기억
     @State private var showSettings = false
-    private var tab: Binding<Tab> { Binding(get: { Tab(rawValue: tabRaw) ?? .control }, set: { tabRaw = $0.rawValue }) }
-    @AppStorage("hubBase") private var hubBase = Settings.defaultHub
-    @AppStorage("spiderBase") private var spiderBase = ""
+    @State private var showSurvival = false
 
     var body: some View {
-        ZStack {
-            Theme.bg.ignoresSafeArea()
-            VStack(spacing: 10) {
-                topBar
-                switch tab.wrappedValue {
-                case .control: ControlView()
-                case .survival: SurvivalModelView()
+        ZStack(alignment: .top) {
+            AD.bg.ignoresSafeArea()
+            VStack(spacing: 8) {
+                TopBar(showSurvival: $showSurvival, showSettings: $showSettings)
+                Legend()
+                if let call = model.callStatus, call.state == "calling" {
+                    Text("휴대폰으로 \(call.hospitalName ?? "병원")과 통화 중 — 통화가 끝나면 환자 정보가 후보 병원에 동시에 전달됩니다")
+                        .font(.system(size: 13, weight: .bold)).foregroundStyle(AD.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.vertical, 8)
+                        .background(AD.greenSoft).clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                GeometryReader { g in
+                    let wide = g.size.width >= 1000
+                    VStack(spacing: 10) {
+                        HStack(alignment: .top, spacing: 14) {
+                            ScrollView {
+                                VStack(spacing: 8) {
+                                    SceneStatusCard()
+                                    if model.hasIncident { CallSummaryCard() }
+                                }
+                            }
+                            .scrollIndicators(.hidden)
+                            .frame(width: wide ? 360 : 320)
+                            .clipped()   // 넘치는 통화 요약이 아래 병원 리스트 제목 위로 비치지 않게
+                            MapCard()
+                        }
+                        .frame(maxHeight: .infinity)
+                        // 사고가 없으면 병원 리스트 자리 없이 지도가 아래까지 — 사고가 생기면 아래에서 올라온다
+                        if model.hasIncident {
+                            // 카드(병상·AI 유효·전문의 세 칸 + 칩 + 정보 유효성 + 이송 승인)가 약 300pt — 머리글까지 넣어 넘치지 않는 높이
+                            HospitalSection()
+                                .frame(height: min(max(g.size.height * 0.47, 336), 372))
+                                .clipped()
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+                    .animation(.spring(response: 0.45, dampingFraction: 0.86), value: model.hasIncident)
                 }
             }
-            .padding(12)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+
+            if let n = model.notice {
+                Text(n).font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                    .padding(.horizontal, 18).padding(.vertical, 10)
+                    .background(AD.navy.opacity(0.92)).clipShape(Capsule())
+                    .padding(.top, 70)
+                    .transition(.opacity)
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: model.notice)
         .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model) }
+        .fullScreenCover(isPresented: $showSurvival) { SurvivalModelScreen(isPresented: $showSurvival).environmentObject(model) }
         .onAppear { model.start() }
     }
-
-    private var topBar: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("골든링크 관제").font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.ink)
-                Text("거미줄 분배 모델 · 정보 생존 모델").font(.system(size: 11)).foregroundStyle(Theme.muted)
-            }
-            Picker("", selection: tab) {
-                ForEach(Tab.allCases) { t in Text(t.rawValue).tag(t) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 320)
-            Spacer()
-            connectionBadge
-            Text("사건 \(model.cases.count)건").font(.system(size: 12)).foregroundStyle(Theme.ink2)
-            Button { NotificationCenter.default.post(name: .spiderReload, object: nil); model.fetchLiveBoard() } label: {
-                Label("새로고침", systemImage: "arrow.clockwise")
-            }
-            Button { showSettings = true } label: { Label("설정", systemImage: "gearshape") }
-        }
-        .font(.system(size: 13))
-        .tint(Theme.ink2)
-    }
-
-    private var connectionBadge: some View {
-        let (text, color): (String, Color) = {
-            switch model.connection {
-            case .live: return ("hub 연결됨", Theme.ok)
-            case .connecting: return ("hub 연결 중", Theme.amber)
-            case .reconnecting: return ("hub 재연결 중", Theme.clash)
-            case .closed: return ("hub 주소 없음", Theme.clash)
-            }
-        }()
-        return HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(text).font(.system(size: 12)).foregroundStyle(Theme.ink2)
-            Text(hostLabel).font(.system(size: 11)).foregroundStyle(Theme.muted)
-        }
-    }
-
-    private var hostLabel: String { URL(string: hubBase)?.host ?? hubBase }
 }
 
-/// 관제 탭 — 3단 배치
-struct ControlView: View {
+/// 상단바 — 로고 · 버전 · 구급대 이름 | 정보 생존 모델 · 이송 상태 · 연결 · 경과 · 설정 (웹 AmbulanceTopBar)
+struct TopBar: View {
+    @EnvironmentObject private var model: AppModel
+    @Binding var showSurvival: Bool
+    @Binding var showSettings: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 10) {
+                (Text("골든").foregroundStyle(AD.navy) + Text("링크").foregroundStyle(AD.blue))
+                    .font(.system(size: 20, weight: .black))
+                Pill(text: "v2.0", bg: AD.blueSoft, fg: AD.blue, bold: true)
+                Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true)
+            }
+            Spacer(minLength: 8)
+            statusView
+            connectionView
+            if let at = model.receivedAt {
+                (Text("수신 후 ") + Text(Labels.elapsed(model.now.timeIntervalSince(at))).bold().foregroundColor(AD.navy) + Text(" 경과"))
+                    .font(.system(size: 12)).foregroundStyle(AD.sub)
+            }
+            Button { showSurvival = true } label: {
+                Text("정보 생존 모델").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                    .padding(.horizontal, 16).frame(minHeight: 36).background(AD.blue).clipShape(Capsule())
+            }
+            Button { NotificationCenter.default.post(name: .spiderReload, object: nil) } label: {
+                Image(systemName: "arrow.clockwise").font(.system(size: 15, weight: .semibold)).foregroundStyle(AD.ink3)
+                    .frame(width: 36, height: 36).background(AD.chip).clipShape(Circle())
+            }
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape").font(.system(size: 15, weight: .semibold)).foregroundStyle(AD.ink3)
+                    .frame(width: 36, height: 36).background(AD.chip).clipShape(Circle())
+            }
+        }
+        .padding(.horizontal, 18).frame(minHeight: 54)
+        .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
+    }
+
+    private var ambulanceLabel: String {
+        if let n = model.ambulanceName { return n }
+        if let a = model.apid { return "구급 \(a)" }
+        return model.autoFollow ? "출동 구급대 자동" : "구급차 미지정"
+    }
+
+    private var statusView: some View {
+        let (label, color): (String, Color) = {
+            if let c = model.confirmed { return ("이송 확정 · \(c.name)", AD.green) }
+            if model.hasIncident { return ("병원 선택 대기", AD.orange) }
+            return ("출동 대기", AD.gray)
+        }()
+        return HStack(spacing: 6) { Dot(color: color); Text(label).font(.system(size: 12, weight: .bold)).foregroundStyle(color).lineLimit(1) }
+    }
+
+    private var connectionView: some View {
+        let (label, color): (String, Color) = {
+            switch model.connection {
+            case .live: return ("실시간 연동", AD.green)
+            case .connecting: return ("hub 연결 중…", AD.orange)
+            case .reconnecting: return ("hub 재연결 중…", AD.red)
+            case .closed: return ("hub 주소 없음", AD.red)
+            }
+        }()
+        return HStack(spacing: 6) { Dot(color: color); Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(color) }
+    }
+}
+
+/// 범례 + AI 안내 한 줄 — AI 처리 / 규칙 기반 / 의료진 판단 영역을 색으로 구분(웹 AmbulanceLegend, CLAUDE.md 출처 표시 원칙)
+struct Legend: View {
+    var body: some View {
+        HStack(spacing: 18) {
+            item(AD.blue, "AI 처리")
+            item(AD.gray, "규칙 기반 · 센서 · API")
+            item(AD.orange, "의료진 판단 영역")
+            Spacer()
+            Text("AI는 환자 정보 구조화와 기록 자동화만 수행합니다. 이송 최종 승인은 구급대원의 판단입니다.")
+                .font(.system(size: 11.5)).foregroundStyle(AD.sub).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .padding(.horizontal, 6)
+    }
+    private func item(_ c: Color, _ t: String) -> some View {
+        HStack(spacing: 6) { Dot(color: c, size: 9); Text(t).font(.system(size: 11.5)).foregroundStyle(AD.ink3) }
+    }
+}
+
+/// 오른쪽 지도 — spider 거미줄 3D(이 구급차의 사건만). 계산·데이터는 전부 서버 쪽이라 앱은 주소만 가리킨다.
+struct MapCard: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("hubBase") private var hubBase = Settings.defaultHub
     @AppStorage("spiderBase") private var spiderBase = ""
 
     var body: some View {
-        // iPadOS 26은 앱을 창으로 띄울 수 있어 폭이 줄어든다 — 1,000pt 넘으면 3단, 아니면 위 거미줄 · 아래 2단
-        GeometryReader { g in
-            if g.size.width >= 1000 {
-                HStack(spacing: 10) {
-                    CaseColumn().frame(width: 330)
-                    web
-                    HospitalColumn().frame(width: 380)
-                }
-            } else {
-                VStack(spacing: 10) {
-                    web.frame(height: max(g.size.height * 0.42, 260))
-                    HStack(spacing: 10) {
-                        CaseColumn()
-                        HospitalColumn()
-                    }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("거미줄 분배 · 실시간").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
+                Text("환자 → 병원 줄 · 이송 경로").font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                Spacer()
+                Pill(text: "규칙 · hub 결정", bg: AD.chip, fg: AD.ink3)
+                Pill(text: "민트 = 거미줄 제안", bg: Color(hex: 0xE6FBF4), fg: Color(hex: 0x0F7B5F))
             }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            SpiderWebView(url: Settings.spiderURL(apid: model.apid))
+                .id(hubBase + "|" + spiderBase + "|" + (model.apid ?? ""))   // 주소·구급차가 바뀌면 WebView를 새로 만든다
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding([.horizontal, .bottom], 8)
         }
-        .id(hubBase + "|" + spiderBase)   // 주소가 바뀌면 WebView를 새로 만든다
-    }
-
-    private var web: some View {
-        SpiderWebView(url: Settings.spiderURL)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line, lineWidth: 1))
-            .overlay(alignment: .topTrailing) {
-                Text("거미줄 3D · spider 서버").font(.system(size: 11)).foregroundStyle(Theme.ink2)
-                    .padding(.horizontal, 8).padding(.vertical, 4).background(Theme.panel.opacity(0.85)).clipShape(RoundedRectangle(cornerRadius: 4)).padding(8)
-            }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
     }
 }

@@ -4,6 +4,10 @@
 // 환자 KTAS·예상 병명·진료과·병원별 승인 상태), ambulance_phase/position(출동 시뮬레이션 위치·경로), case_closed·case_sync.
 // 통화 전문·활력징후는 hub가 관제에 보내지 않으므로 여기도 없다. 이 파일은 상태 관리와 그리기만 하고 hub에 아무것도 보내지
 // 않는다(identify뿐). "누가 어디로 가는가"는 hub가 정한 것을 그대로 보여 주고, 거미줄 모델의 선택은 "제안"으로만 겹쳐 그린다.
+// ?apid=<구급차> 로 열면(아이패드 구급차 앱) 그 구급차의 사건·이동만 그린다
+const ONLY_APID = new URLSearchParams(location.search).get('apid') || null;
+const myCases = () => Object.values(HUB.cases).filter(c => !ONLY_APID || c.apid === ONLY_APID);
+const mySims = () => Object.values(HUB.sims).filter(s => !ONLY_APID || s.apid === ONLY_APID);
 const HUB = { connected: false, url: null, cases: {}, sims: {}, overview: null, log: [], suggest: {}, cond: {}, lastErr: null };
 let hubWs = null, hubRetry = null, hubWanted = false, hubCaseTick = 0, suggestTimer = null, suggestSeq = 0;
 const SEV_K = { high: 2, medium: 3, low: 4 };              // KTAS가 없을 때(예전 voice·매칭 전) 중증도 → 대표 KTAS
@@ -12,6 +16,25 @@ const LEVEL_G = { '권역응급의료센터': 4, '지역응급의료센터': 3, 
 const PHASE_LABEL = { idle: '대기', dispatching: '출동 중', on_scene: '현장', transporting: '이송 중', at_hospital: '병원 도착', rerouting: '재선택', returning: '복귀 중' };
 const STATUS_LABEL = { pending: '판단 대기', approved: '수용 승인', rejected: '수용 불가', confirmed: '이송 확정' };
 const OK_COL = [94, 227, 127], SUG_COL = [127, 255, 212], GRAY = [124, 123, 116];
+
+
+// ── 아이패드 구급차 앱(embed + apid): 카메라가 내 사건을 따라간다 ──
+// 출동하면 현장으로, 이송이 확정되면 현장~병원이 다 보이게. 앱 쪽 화면 배치가 바뀌어(병원 리스트가 아래에서 올라옴) 지도 크기가
+// 바뀌면 이동이 중간에 끊겼다 — 크기가 바뀐 뒤 마지막 목표로 다시 맞춘다. 사람이 지도를 만지면 그때부터는 따라가지 않는다.
+let EMBED_FOCUS = null, embedResizeT = null;
+function embedFocus(points) {
+  if (!document.body.classList.contains('embed') || !points.length) return;
+  const lngs = points.map(p => p.lng), lats = points.map(p => p.lat);
+  const span = Math.max((Math.max(...lngs) - Math.min(...lngs)) * 0.79, Math.max(...lats) - Math.min(...lats));
+  const zoom = points.length > 1 ? Math.min(13.2, Math.max(10.5, Math.log2(0.6 / Math.max(span, 0.01)) + 9.0)) : 12.6;
+  EMBED_FOCUS = { longitude: (Math.min(...lngs) + Math.max(...lngs)) / 2, latitude: (Math.min(...lats) + Math.max(...lats)) / 2, zoom, pitch: 55, bearing: -18 };
+  goCam(EMBED_FOCUS);
+}
+window.addEventListener('resize', () => {
+  clearTimeout(embedResizeT);
+  embedResizeT = setTimeout(() => { if (EMBED_FOCUS) { VIEW = { ...VIEW, ...EMBED_FOCUS, transitionDuration: 0 }; deckgl.setProps({ initialViewState: VIEW }); } }, 350);
+});
+['pointerdown', 'touchstart', 'wheel'].forEach(t => document.getElementById('map').addEventListener(t, () => { EMBED_FOCUS = null; }, { passive: true }));
 
 function hubWsUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -53,7 +76,7 @@ function handleHub(m) {
       const prev = HUB.cases[m.caseId] || {}; HUB.cases[m.caseId] = { ...prev, ...m, pre: false };
       // 패널이 없는 아이패드 WebView(embed)에선 새 사건이 매칭될 때 카메라를 그 현장으로 — 사람이 잡고 있으면 건드리지 않는다
       // (매칭 전 case_meta로 먼저 생긴 사건도 "처음 매칭"으로 본다)
-      if ((!prev.caseId || prev.pre) && document.body.classList.contains('embed')) { const p = casePos(HUB.cases[m.caseId]); if (p) goCam({ longitude: p.lng, latitude: p.lat, zoom: 12.3, pitch: 60, bearing: -20 }); }
+      if ((!prev.caseId || prev.pre) && document.body.classList.contains('embed') && (!ONLY_APID || m.apid === ONLY_APID)) { const p = casePos(HUB.cases[m.caseId]); if (p) embedFocus([p]); }
       break;
     }
     case 'case_closed': {
@@ -62,7 +85,19 @@ function handleHub(m) {
       break;
     }
     case 'case_sync': { const keep = new Set(m.caseIds || []); for (const id of Object.keys(HUB.cases)) if (!keep.has(id)) { delete HUB.cases[id]; delete HUB.suggest[id]; } break; }
-    case 'ambulance_phase': HUB.sims[m.apid] = { ...m }; break;
+    case 'ambulance_phase': {
+      const prevPhase = (HUB.sims[m.apid] || {}).phase;
+      HUB.sims[m.apid] = { ...m };
+      // 아이패드 구급차 앱: 내 구급차가 출동하면 현장으로 카메라를 옮긴다
+      if (ONLY_APID && m.apid === ONLY_APID && m.phase !== prevPhase) {
+        if (m.phase === 'dispatching' && m.incident) embedFocus([m.incident]);
+        else if ((m.phase === 'transporting' || m.phase === 'rerouting') && m.incident) {
+          const h = m.hospitalId ? hp(m.hospitalId) : null;
+          embedFocus(h ? [m.incident, { lat: h.lat, lng: h.lng }] : [m.incident]);
+        }
+      }
+      break;
+    }
     case 'ambulance_position': { const p = HUB.sims[m.apid] || {}; HUB.sims[m.apid] = { ...p, ...m, path: m.path || p.path || null }; caseChanged = false; break; }
     default: return;
   }
@@ -111,7 +146,7 @@ function liveLayers(t) {
   const hs = HS(), pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350), air = $('air').checked;
   const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [];
   const top = h => [h.lng, h.lat, ZH(h.z) * hs];
-  for (const c of Object.values(HUB.cases)) {
+  for (const c of myCases()) {
     const pos = casePos(c); if (!pos) continue;
     const k = caseK(c), kc = kCol(k).slice(0, 3), pz = KTAS_Z[k];
     const sim = c.apid ? HUB.sims[c.apid] : null;
@@ -155,7 +190,7 @@ function liveLayers(t) {
     }
   }
   // 구급차: 출동 중·이송 중·재선택·복귀 중인 것만(기지 대기는 관제 지도의 몫)
-  for (const sim of Object.values(HUB.sims)) {
+  for (const sim of mySims()) {
     if (!sim.gps || !sim.phase || sim.phase === 'idle') continue;
     const c = sim.caseId ? HUB.cases[sim.caseId] : null;
     const k = c ? caseK(c) : 5, kc = c ? kCol(k).slice(0, 3) : [200, 200, 200];
@@ -206,7 +241,7 @@ function renderLivePanel() {
     ? `<span style="color:var(--ok)">● hub 연결됨</span> <span class="st">${HUB.url}</span>`
     : `<span style="color:var(--k1)">○ hub 연결 안 됨 — 3초마다 재시도</span> <span class="st">${HUB.url || ''}${HUB.lastErr ? ' · ' + HUB.lastErr : ''}</span>`;
   const box = $('livecases'); box.innerHTML = '';
-  const cases = Object.values(HUB.cases).sort((a, b) => (a.num ?? 1e9) - (b.num ?? 1e9));
+  const cases = myCases().sort((a, b) => (a.num ?? 1e9) - (b.num ?? 1e9));
   if (!cases.length) { box.innerHTML = `<p class="note" style="margin:0">진행 중인 사건이 없습니다. 구급차 대시보드에서 [이동] → 현장 도착 → 휴대폰 전화 앱으로 통화하면 여기에 뜹니다.</p>`; return; }
   for (const c of cases) {
     const k = caseK(c), sim = c.apid ? HUB.sims[c.apid] : null, confirmed = caseConfirmed(c), n = caseStatusCounts(c), sug = HUB.suggest[c.caseId];
@@ -226,10 +261,10 @@ function renderLivePanel() {
 const LIVE_KIND_CLASS = { p: '', s: 's', r: 'y', x: 'c', a: 'a', t: 'w', c: 'f', d: 'o' };
 function renderLiveSide() {
   const rows = [];
-  for (const c of Object.values(HUB.cases)) for (const e of c.events || []) rows.push({ t: e.t, kind: e.kind, text: `<b>#${c.num ?? '?'}</b> ${e.text}` });
+  for (const c of myCases()) for (const e of c.events || []) rows.push({ t: e.t, kind: e.kind, text: `<b>#${c.num ?? '?'}</b> ${e.text}` });
   for (const e of HUB.log) rows.push(e);
   rows.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
-  const cases = Object.values(HUB.cases), moving = Object.values(HUB.sims).filter(s => s.phase === 'transporting').length;
+  const cases = myCases(), moving = mySims().filter(s => s.phase === 'transporting').length;
   $('sum').textContent = `실시간 · 사건 ${cases.length}건 · 이송 중 ${moving}대 · 병원 ${LIVE.length}곳${HUB.connected ? '' : ' · hub 연결 안 됨'}`;
   const L = $('log'); L.innerHTML = '';
   for (const r of rows.slice(-200)) {
@@ -251,7 +286,7 @@ async function condFor(c) {
 }
 async function refreshSuggest() {
   if (MODE !== 'live' || !$('suggest').checked) return;
-  const cases = Object.values(HUB.cases).filter(c => casePos(c));
+  const cases = myCases().filter(c => casePos(c));
   if (!cases.length) { HUB.suggest = {}; renderLivePanel(); return; }
   const seq = ++suggestSeq;
   const patients = [];
