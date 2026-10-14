@@ -670,7 +670,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
 - **통화 중 실시간 자막(2026-10-03)**: voice가 발화 하나를 인식할 때마다 `POST /voice/utterance`로 보내면 hub가 그 구급차 탭에만 `call_transcript`로 넘긴다(병원·관제 지도 X, 저장·로그 X). 대시보드 통화 시연 패널이 이걸 우선 보여주고, 없을 때만 브라우저 Web Speech 자막을 예비로 쓴다 — 예전엔 브라우저 자막뿐이라 voice는 잘 인식하는데 화면엔 안 떴다. voice 쪽 주소는 `HUB_VOICE_UTTERANCE_URL`(기본 HUB_BASE_URL/voice/utterance)
 - **이송 중 활력징후 모니터링(2.5단계, 2026-10-04 신설)**: 이송 확정 뒤 활력징후를 "입력 구멍"(`POST /vitals` HTTP + dashboard WS `transport_vitals` — 출처 voice/manual/monitor/demo 공용 형식, 장비 구매 없음 원칙)으로 받아, `hub/transport_triage.py` 규칙 엔진(공개 표준 **NEWS2** + 쇼크지수, 생성형·학습 모델 아님)이 record/hold/notify/review/heli_advisory 티어로 판정한다. "지속" = 연속 2회 측정(NEWS2 ≥ 7은 1회 즉시), 초과 1회째는 보류 — "오경보보다 침묵". notify 이상만 확정 병원 탭에 전달, review는 대체 병원 후보(승인/대기, 30분 안쪽, 최대 3곳) 동봉 — **제안일 뿐 결정은 구급대원·관제**. 대체 후보 0곳이면 헬기 대기 권고(관제 지도에도, 활력징후 상세 없이). 기준값은 **전문의 검토 전 초안**(`hub/TRANSPORT_TRIAGE.md` — 출처·한계 명시), 검증 `python test_transport_triage.py`(시연 시나리오 5종 픽스처), notify 이상은 의사결정 로그 기록(demo는 `demo: true`로 분리)
 - **이송 중 부하 분산 + 경증 역가산(2026-10-03)**: `scoring.load_penalty_min()` — TTL 오버레이의 이송 중 건수만큼 이동시간에 분을 더해(최대 10분) 만실 절벽 전에 연속적으로 분산시킨다(평시 0건이면 기존 순위와 동일). 경증(low)은 권역·지역센터에 +3분(`MILD_CENTER_PENALTY_MIN`, "경증은 센터를 아껴라" — 제외가 아니라 순위 조정). `inFlightCount`·`loadPenaltyMin`·`loadReason`으로 설명 노출, `final_approval`·도착 결과마다 관제 지도 overview 재전송. 같은 상수로 `sim/`의 MCI 시뮬레이션(일산 여성병원 화재 조건, 세 팔 비교)이 goldenlink 팔을 재현한다 — 쏠림 8.5배→1.0배, 중증→센터 0%→100%, 경증→센터 58%→6%(이태원 조건)
-- **관제 지도 역할(role=monitor, 2026-10-03)**: dashboard 관제 지도(보기 전용 — 병원 대시보드와는 분리, 병원 대시보드는 첫 페이지에서 접근 코드로 연다). hub는 monitor 소켓에 `map_overview`(전체 병원·구급차 목록 — 연결 때·병원 목록 한 주기 끝·구급차 정보 갱신 때), `case_overview`(사건 요약 — 매칭 결과가 나갈 때마다, 통화 전문·활력징후 없음, 병원별 status·zone 포함), 구급차 시뮬레이션 위치(전 구급차)를 보낸다. 거절 비율 존 확장은 기존 로직 그대로이고, 넓혀진 존의 병원이 `case_overview.hospitals`에 들어와 지도에 표시된다. hub/README.md "출력 스키마 7", 검증 `test_monitor_map.py`
+- **관제 지도 역할(role=monitor, 2026-10-03)**: dashboard 관제 지도(보기 전용 — 병원 대시보드와는 분리, 병원 대시보드는 첫 페이지에서 접근 코드로 연다). hub는 monitor 소켓에 `map_overview`(전체 병원·구급차 목록 — 연결 때·병원 목록 한 주기 끝·구급차 정보 갱신 때), `case_overview`(사건 요약 — 매칭 결과가 나갈 때마다, 통화 전문·활력징후 없음, 병원별 status·zone 포함), 구급차 시뮬레이션 위치(전 구급차)를 보낸다. 거절 비율 존 확장은 기존 로직 그대로이고, 넓혀진 존의 병원이 `case_overview.hospitals`에 들어와 지도에 표시된다. hub/README.md "출력 스키마 7", 검증 `test_monitor_map.py`. **2026-10-14** `case_overview`에 spider 실시간 화면용 환자 요약(`ktasLevel`·`expectedDiagnosis`·`chiefComplaint`·`requiredDepartment`·`patient`·`confirmedBy`, 모두 Optional)을 더했다 — 통화 전문·활력징후·의식은 여전히 안 보낸다. spider 페이지(`/spider/?mode=live`)도 같은 monitor 소켓으로 붙는다
 - **관제 지도 개편 · 시간 기반 존 확장 · 이송 30초(2026-10-04 밤)**
   - 관제 지도(`/map`)를 디자인 시안("골든링크 관제")대로 다시 그렸다 — 진행 중 사건 목록(번호·중증도·증상·경과·단계·대기/불가/승인 수·새 응답 배지), 선택 사건의 요청 병원 탭(응답 시각 포함), 지도(선택 사건 기준 병원 응답 색·말풍선·요청 범위, 구급차 사각형·사건 번호), 하단 구급차 패널(선택 사건 기준 가까운 순), 지난 사건 모달(오늘 종료 사건·진행 과정 타임라인). 화면 `app/map/page.tsx`·`components/map/ControlMapPanel.tsx`·`lib/control-map.ts`. 사건 상황판(`/case`)은 예전 `MonitorMapPanel` 그대로
   - 재료는 hub의 사건 기록기 `hub/case_history.py`(규칙 기반): 매칭 결과가 나갈 때마다 직전과 비교해 이벤트(요청 시작·첫 거절·범위 확장·승인·확정·완료/취소)와 병원별 응답 시각을 남기고, 사건 번호(하루 단위)·시작 시각·증상 한 줄을 매긴다. `MonitorCase`에 `num`·`startedAt`·`symptom`·`events`·`hospitals[].respondedAt`·`zoneExpandAt`, 새 메시지 `case_meta`(매칭 전 사건)·`case_history`(오늘 종료 사건, hub 상태 파일에 저장). 환자 상세는 여전히 안 보낸다
@@ -856,12 +856,22 @@ hub의 순위 상수들(부하 페널티·경증 역가산·중증 센터 가산
   3차로 이상 + 병원 4 km 골목, 노드 100만, 환자당 30 ms). `roads_data.js`는 재생성 가능하지만 팀원이 바로 열
   수 있게 커밋해 둠. pbf(290 MB)는 `spider/data/`에 두고 커밋 안 함.
 - **엔진을 파이썬으로, 화면은 서버에서(2026-10-14, develop 머지와 함께)**: `spider/engine/`(roads·model·solve·scenarios —
-  numpy·scipy, 다른 폴더 import 없음)이 JS 엔진을 그대로 옮긴 것이고, `spider/serve.py`(Flask, 포트 5050)가 `spider/web/`
+  numpy·scipy, 다른 폴더 import 없음)이 JS 엔진을 그대로 옮긴 것이고, `spider/serve.py`(Flask, 포트 2700)가 `spider/web/`
   (그리기만 하는 html/js/css + vendor deck.gl·MapLibre)를 `/spider/` 아래로 내준다. `start-all.sh`가 `spider/serve.py`가 있으면
   자동으로 띄우고(`--no-spider`) 터널이 `^/spider(/|$)`를 이 서버로 보낸다 → `https://app.rookie-goldenlink.xyz/spider/`
   (아이패드 앱 WebView 주소). 브라우저는 도로 그래프를 받지 않는다. `map.html`(JS 엔진)은 검증용 쌍둥이로 남기고
   `python parity_check.py`(node 필요)가 14사례를 대조한다 — 모델을 고치면 양쪽을 같이 고친다. 옮긴 이유는 언어 속도가
   아니라 계산 위치: 실제 사건을 받을 때 충돌·양보는 한 곳(hub)에서 계산해야 하고, 태블릿이 25 MB 그래프를 들 이유가 없다.
+- **실시간 모드(2026-10-14, `/spider/?mode=live`, `spider/web/live.js`)**: 화면 위 [실시간 (hub 사건)] 버튼. hub WebSocket에
+  관제 지도와 같은 `role: "monitor"`로 붙어 `map_overview`·`case_meta`·`case_overview`·`ambulance_phase/position`·`case_closed`를
+  받아 실제 사건을 거미줄로 그린다 — 환자 점(휴대폰 통화에서 뽑힌 KTAS·예상 병명·주 호소·필요 진료과·나이/성별·구급대원
+  확인 여부), 존 안 병원으로 가는 줄(판단 대기 가는 줄 / 승인 초록 / 불가 회색 / 확정 KTAS색), 확정 뒤엔 hub 이송 경로(지난 구간
+  회색·남은 구간 색)와 움직이는 구급차, 도착·수용 고리. "누가 어디로"는 hub 결정 그대로이고, 거미줄 모델의 선택은 같은 환자를
+  서버 엔진(`api/solve`)에 넣어 **민트색 "거미줄 제안"**으로만 겹쳐 그린다(hub에 아무것도 보내지 않음, 체크로 끔). 이를 위해 hub
+  `MonitorCase`에 `ktasLevel`·`expectedDiagnosis`·`chiefComplaint`·`requiredDepartment`·`patient`·`confirmedBy`를 Optional로
+  더했다(통화 전문·활력징후는 여전히 안 보냄). hub 주소는 `api/meta.hubWsUrl`(start-all의 `SPIDER_HUB_WS_URL`; 없으면 같은
+  호스트 `/ws/dashboard`, 127.0.0.1이면 접속 호스트로 치환 — 아이패드 LAN용). 임시 hub + 출동 시뮬레이션으로 출동 → 통화 요약 →
+  승인/불가 → 확정 → 이송 → 도착까지 E2E 확인(2026-10-14)
 - **오픈소스 검토 중**: 엔진(해소 루프·줄 길이 식·라우터 인터페이스)은 도메인 독립이라 복제본을 따로 만들어
   공개하고, 병원 어댑터·보정값·E-Gen 파이프라인은 비공개로 두는 방향(오픈 코어). 분리가 아니라 **복제**로
   간다(2026-10-11 결정) — 이 폴더는 그대로 두고 복제본에서 병원 흔적을 걷어낸다.

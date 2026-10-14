@@ -1,0 +1,258 @@
+// 실시간 모드(2026-10-14) — hub WebSocket에 관제 지도와 같은 역할(role=monitor)로 붙어, 실제 사건(구급차 대시보드에서
+// 출동 → 휴대폰 통화로 뽑힌 환자 정보 → 병원 승인·불가 → 이송 확정 → 이송 → 도착)을 거미줄 3D로 그린다.
+// 받는 메시지는 관제 지도(/map)와 똑같다: map_overview(병원·구급차 전체), case_meta(매칭 전 사건), case_overview(사건 요약 —
+// 환자 KTAS·예상 병명·진료과·병원별 승인 상태), ambulance_phase/position(출동 시뮬레이션 위치·경로), case_closed·case_sync.
+// 통화 전문·활력징후는 hub가 관제에 보내지 않으므로 여기도 없다. 이 파일은 상태 관리와 그리기만 하고 hub에 아무것도 보내지
+// 않는다(identify뿐). "누가 어디로 가는가"는 hub가 정한 것을 그대로 보여 주고, 거미줄 모델의 선택은 "제안"으로만 겹쳐 그린다.
+const HUB = { connected: false, url: null, cases: {}, sims: {}, overview: null, log: [], suggest: {}, cond: {}, lastErr: null };
+let hubWs = null, hubRetry = null, hubWanted = false, hubCaseTick = 0, suggestTimer = null, suggestSeq = 0;
+const SEV_K = { high: 2, medium: 3, low: 4 };              // KTAS가 없을 때(예전 voice·매칭 전) 중증도 → 대표 KTAS
+const SEV_LABEL = { high: '중증', medium: '중등증', low: '경증' };
+const LEVEL_G = { '권역응급의료센터': 4, '지역응급의료센터': 3, '지역응급의료기관': 2, '응급실운영신고기관': 1 };
+const PHASE_LABEL = { idle: '대기', dispatching: '출동 중', on_scene: '현장', transporting: '이송 중', at_hospital: '병원 도착', rerouting: '재선택', returning: '복귀 중' };
+const STATUS_LABEL = { pending: '판단 대기', approved: '수용 승인', rejected: '수용 불가', confirmed: '이송 확정' };
+const OK_COL = [94, 227, 127], SUG_COL = [127, 255, 212], GRAY = [124, 123, 116];
+
+function hubWsUrl() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const u = META && META.hubWsUrl;
+  if (!u) return `${proto}://${location.host}/ws/dashboard`;   // 같은 호스트 — 터널이 /ws/dashboard 를 hub로 보낸다
+  try {
+    const x = new URL(u);
+    // start-all이 로컬 모드로 준 127.0.0.1은 이 맥북 기준이다 — 아이패드가 LAN으로 열었으면 자기 접속 호스트로 바꾼다
+    if ((x.hostname === '127.0.0.1' || x.hostname === 'localhost') && !['127.0.0.1', 'localhost'].includes(location.hostname)) x.hostname = location.hostname;
+    return x.toString();
+  } catch (e) { return u; }
+}
+function hubConnect() {
+  hubWanted = true;
+  if (hubWs) return;
+  const url = hubWsUrl(); HUB.url = url;
+  let ws;
+  try { ws = new WebSocket(url); } catch (e) { HUB.lastErr = String(e); hubScheduleRetry(); onHubChange(true); return; }
+  hubWs = ws;
+  ws.onopen = () => { HUB.connected = true; HUB.lastErr = null; ws.send(JSON.stringify({ type: 'identify', role: 'monitor', id: 'spider' })); onHubChange(true); };
+  ws.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } handleHub(m); };
+  ws.onclose = () => { HUB.connected = false; hubWs = null; onHubChange(true); if (hubWanted) hubScheduleRetry(); };
+  ws.onerror = () => { HUB.lastErr = '연결 실패 — hub가 떠 있는지, 주소가 맞는지 확인'; };
+}
+function hubScheduleRetry() { clearTimeout(hubRetry); hubRetry = setTimeout(() => { if (hubWanted && !hubWs) hubConnect(); }, 3000); }
+function hubDisconnect() { hubWanted = false; clearTimeout(hubRetry); if (hubWs) { hubWs.close(); hubWs = null; } HUB.connected = false; }
+
+function handleHub(m) {
+  let caseChanged = true;
+  switch (m.type) {
+    case 'map_overview': applyOverview(m); break;
+    case 'case_meta': {
+      const c = HUB.cases[m.caseId] || { caseId: m.caseId, hospitals: [], events: [] };
+      Object.assign(c, { num: m.num, startedAt: m.startedAt, symptom: m.symptom ?? c.symptom, severityTag: m.severity || c.severityTag,
+        apid: m.apid || c.apid, ambulanceName: m.ambulanceName || c.ambulanceName, events: m.events || c.events, pre: true });
+      HUB.cases[m.caseId] = c; break;
+    }
+    case 'case_overview': { const prev = HUB.cases[m.caseId] || {}; HUB.cases[m.caseId] = { ...prev, ...m, pre: false }; break; }
+    case 'case_closed': {
+      const c = HUB.cases[m.caseId];
+      if (c) { HUB.log.push({ t: new Date().toISOString(), kind: m.reason === 'done' ? 'd' : 'c', text: `<b>#${c.num ?? '?'}</b> 사건 종료 (${m.reason})` }); delete HUB.cases[m.caseId]; delete HUB.suggest[m.caseId]; }
+      break;
+    }
+    case 'case_sync': { const keep = new Set(m.caseIds || []); for (const id of Object.keys(HUB.cases)) if (!keep.has(id)) { delete HUB.cases[id]; delete HUB.suggest[id]; } break; }
+    case 'ambulance_phase': HUB.sims[m.apid] = { ...m }; break;
+    case 'ambulance_position': { const p = HUB.sims[m.apid] || {}; HUB.sims[m.apid] = { ...p, ...m, path: m.path || p.path || null }; caseChanged = false; break; }
+    default: return;
+  }
+  if (caseChanged) hubCaseTick++;
+  onHubChange(caseChanged);
+}
+// 병원 전체 목록(관제 지도와 같은 것) — spider 병원 목록(E-Gen 스냅샷)의 응급실 가용을 hub 현재값으로 덮어 만실 색이 실시간이 되게
+// 하고, spider 목록에 없는 병원은 등급만으로 추가한다(z = 등급). 새 배열로 바꿔야 deck.gl이 색을 다시 계산한다.
+function applyOverview(m) {
+  HUB.overview = m;
+  for (const mh of m.hospitals || []) {
+    let h = HMAP.get(mh.hospitalId);
+    if (!h) {
+      const g = LEVEL_G[mh.emergencyLevel] || 1;
+      h = { hpid: mh.hospitalId, name: mh.name, lat: mh.gps.lat, lng: mh.gps.lng, grade: mh.emergencyLevel || '(등급 없음)', g, z: g, severeY: 0, severeNo: 0,
+        hvec: null, er_cap: null, icu: null, op: null, ct: null, angio: null, hasBeds: true, hasSevere: false, em: null, fromHub: true };
+      H.push(h); HMAP.set(h.hpid, h);
+    }
+    h.hasBeds = true;
+    h.hvec = mh.bedCountUnknown ? null : mh.availableBedCount;
+    h.inFlight = mh.inFlightCount || 0;
+  }
+  LIVE = H.filter(h => h.hasBeds); DEAD = H.filter(h => !h.hasBeds);
+}
+
+// ── 사건 → 화면 재료 ──
+const caseK = c => [1, 2, 3, 4, 5].includes(+c.ktasLevel) ? +c.ktasLevel : (SEV_K[c.severityTag] || 3);
+function casePos(c) {
+  const sim = c.apid ? HUB.sims[c.apid] : null;
+  if (sim && sim.incident) return sim.incident;
+  if (c.ambulanceGps) return c.ambulanceGps;
+  return null;
+}
+const caseConfirmed = c => (c.hospitals || []).find(h => h.status === 'confirmed') || null;
+function caseLabel(c) { return `#${c.num ?? '?'} K${caseK(c)}`; }
+// 경로 위에서 지금 위치에 가장 가까운 꼭짓점 — 지난 구간(회색)과 남은 구간(색)을 나눈다
+function splitPath(path, gps) {
+  if (!path || !path.length || !gps) return { done: [], left: [] };
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < path.length; i++) { const d = (path[i][0] - gps.lat) ** 2 + ((path[i][1] - gps.lng) * 0.79) ** 2; if (d < bd) { bd = d; bi = i; } }
+  const ll = p => [p[1], p[0], 0];
+  return { done: [...path.slice(0, bi + 1).map(ll), [gps.lng, gps.lat, 0]], left: [[gps.lng, gps.lat, 0], ...path.slice(bi + 1).map(ll)] };
+}
+
+function liveLayers(t) {
+  const hs = HS(), pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350), air = $('air').checked;
+  const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [];
+  const top = h => [h.lng, h.lat, ZH(h.z) * hs];
+  for (const c of Object.values(HUB.cases)) {
+    const pos = casePos(c); if (!pos) continue;
+    const k = caseK(c), kc = kCol(k).slice(0, 3), pz = KTAS_Z[k];
+    const sim = c.apid ? HUB.sims[c.apid] : null;
+    const confirmed = caseConfirmed(c);
+    const arrived = sim && (sim.phase === 'at_hospital' || sim.phase === 'returning') && confirmed;
+    if (!arrived) {
+      lights.push({ pos: [pos.lng, pos.lat, 0], k, label: caseLabel(c) });
+      if (air) { airLights.push({ pos: [pos.lng, pos.lat, ZH(pz) * hs], k }); stems.push({ a: [pos.lng, pos.lat, 0], b: [pos.lng, pos.lat, ZH(pz) * hs], k }); }
+    }
+    for (const ch of c.hospitals || []) {
+      const h = hp(ch.hospitalId); if (!h) continue;
+      const st = ch.status;
+      let col, w, a;
+      if (st === 'confirmed') { col = kc; w = 3; a = 240; }
+      else if (st === 'approved') { col = OK_COL; w = 2; a = 220; }
+      else if (st === 'rejected') { col = GRAY; w = 1; a = 70; }
+      else { col = kc; w = 1; a = 90; }
+      if (st === 'confirmed' && sim && sim.path && (sim.phase === 'transporting' || sim.phase === 'at_hospital')) {
+        // 확정 병원으로는 hub(카카오 내비)가 준 실제 이송 경로를 그린다 — 지나온 구간 회색, 남은 구간 KTAS 색
+        const sp = splitPath(sim.path, sim.gps || pos);
+        if (sp.done.length > 1) donePaths.push({ path: sp.done });
+        if (sp.left.length > 1) paths.push({ path: sp.left, col });
+      } else if (!arrived) {
+        lines.push({ a: [pos.lng, pos.lat, 0], b: [h.lng, h.lat, 0], col: [...col, a], w });
+      }
+      if (air && !arrived && (st === 'confirmed' || st === 'approved' || st === 'pending')) {
+        airLines.push({ a: [pos.lng, pos.lat, ZH(pz) * hs], b: top(h), col: [...col, st === 'pending' ? 60 : a], w: st === 'pending' ? 1 : w });
+      }
+      if (st === 'confirmed' || st === 'approved') ups.push({ a: [h.lng, h.lat, 0], b: top(h), col: [...col, 160] });
+      if (arrived && st === 'confirmed') occ.push({ h, label: sim.phase === 'at_hospital' ? `${caseLabel(c)} 도착 · 수용 대기` : `${caseLabel(c)} 수용 완료` });
+    }
+    // 거미줄 모델의 제안(비교용) — hub의 선택과 다른 병원이면 민트색 줄
+    const sug = HUB.suggest[c.caseId];
+    if (sug && $('suggest').checked && !arrived) {
+      const h = hp(sug.hpid);
+      if (h) {
+        sugLines.push({ a: [pos.lng, pos.lat, 0], b: [h.lng, h.lat, 0] });
+        if (air) airLines.push({ a: [pos.lng, pos.lat, ZH(pz) * hs], b: top(h), col: [...SUG_COL, 150], w: 1.5 });
+        sugTexts.push({ pos: [(pos.lng + h.lng) / 2, (pos.lat + h.lat) / 2, 0], text: `거미줄 제안 → ${shortName(h.name)}${confirmed && confirmed.hospitalId !== sug.hpid ? ' (hub와 다름)' : ''}` });
+      }
+    }
+  }
+  // 구급차: 출동 중·이송 중·재선택·복귀 중인 것만(기지 대기는 관제 지도의 몫)
+  for (const sim of Object.values(HUB.sims)) {
+    if (!sim.gps || !sim.phase || sim.phase === 'idle') continue;
+    const c = sim.caseId ? HUB.cases[sim.caseId] : null;
+    const k = c ? caseK(c) : 5, kc = c ? kCol(k).slice(0, 3) : [200, 200, 200];
+    ambs.push({ pos: [sim.gps.lng, sim.gps.lat, 0], col: sim.phase === 'returning' ? GRAY : kc });
+    const name = (HUB.overview && (HUB.overview.ambulances.find(a => a.apid === sim.apid) || {}).name) || sim.apid;
+    ambTexts.push({ pos: [sim.gps.lng, sim.gps.lat, 0], text: `🚑 ${name} · ${PHASE_LABEL[sim.phase] || sim.phase}${sim.paused ? ' (정지)' : ''}` });
+    if (sim.path && (sim.phase === 'dispatching' || sim.phase === 'returning' || sim.phase === 'rerouting')) {
+      const sp = splitPath(sim.path, sim.gps);
+      if (sp.left.length > 1) paths.push({ path: sp.left, col: sim.phase === 'dispatching' ? [242, 241, 236] : GRAY, thin: true });
+    }
+  }
+  const L = [];
+  L.push(new LineLayer({ id: 'lv-lines', data: lines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new PathLayer({ id: 'lv-done', data: donePaths, getPath: d => d.path, getColor: [124, 123, 116, 120], getWidth: 1.5, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new PathLayer({ id: 'lv-paths', data: paths, getPath: d => d.path, getColor: d => [...d.col, d.thin ? 110 : 220], getWidth: d => d.thin ? 1.5 : 3, widthUnits: 'pixels', parameters: { depthTest: false }, updateTriggers: { getPath: [hubCaseTick, performance.now() | 0] } }));
+  L.push(new LineLayer({ id: 'lv-sug', data: sugLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: [...SUG_COL, 200], getWidth: 2, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new TextLayer({ id: 'lv-sug-txt', data: sugTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [...SUG_COL, 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  L.push(new LineLayer({ id: 'lv-air-glow', data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [d.col[0], d.col[1], d.col[2], 60], getWidth: 8, widthUnits: 'pixels', parameters: ADD }));
+  L.push(new LineLayer({ id: 'lv-air', data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new LineLayer({ id: 'lv-stems', data: stems, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [...kCol(d.k).slice(0, 3), 130], getWidth: 1.5, widthUnits: 'pixels', parameters: ADD }));
+  L.push(new LineLayer({ id: 'lv-ups', data: ups, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: 2, widthUnits: 'pixels', parameters: ADD }));
+  L.push(new ScatterplotLayer({ id: 'lv-air-light-glow', data: airLights, radiusUnits: 'meters', getRadius: 200 + pulse * 50, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 100], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
+  L.push(new ScatterplotLayer({ id: 'lv-air-light', data: airLights, radiusUnits: 'meters', getRadius: 55, radiusMinPixels: 5, getPosition: d => d.pos, getFillColor: [255, 255, 255, 245], stroked: true, getLineColor: d => kCol(d.k), lineWidthMinPixels: 2, parameters: { depthTest: false } }));
+  L.push(new ScatterplotLayer({ id: 'lv-occ', data: occ, radiusUnits: 'meters', getRadius: 290 + pulse * 60, getPosition: d => top(d.h), getFillColor: [79, 209, 255, 0], stroked: true, getLineColor: [79, 209, 255, 200], lineWidthMinPixels: 2, parameters: { depthTest: false }, updateTriggers: { getRadius: [animTick] } }));
+  L.push(new TextLayer({ id: 'lv-occ-txt', data: occ, getPosition: d => top(d.h), getText: d => d.label, getSize: 12, characterSet: 'auto', getColor: [79, 209, 255, 255], getPixelOffset: [0, -36], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  L.push(new ScatterplotLayer({ id: 'lv-light-glow', data: lights, radiusUnits: 'meters', getRadius: 160 + pulse * 40, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 90], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
+  L.push(new ScatterplotLayer({ id: 'lv-light', data: lights, radiusUnits: 'meters', getRadius: 45, radiusMinPixels: 4, getPosition: d => d.pos, getFillColor: d => kCol(d.k), stroked: true, getLineColor: [255, 255, 255, 230], lineWidthMinPixels: 1.5, parameters: { depthTest: false } }));
+  L.push(new TextLayer({ id: 'lv-light-txt', data: lights, getPosition: d => d.pos, getText: d => d.label, getSize: 12, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, -16], fontFamily: css('--mono'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  L.push(new ScatterplotLayer({ id: 'lv-amb-glow', data: ambs, radiusUnits: 'meters', getRadius: 120 + pulse * 30, getPosition: d => d.pos, getFillColor: d => [...d.col, 110], parameters: ADD, updateTriggers: { getRadius: [animTick], getPosition: [performance.now() | 0] } }));
+  L.push(new ScatterplotLayer({ id: 'lv-amb', data: ambs, radiusUnits: 'meters', getRadius: 40, radiusMinPixels: 5, getPosition: d => d.pos, getFillColor: [255, 255, 255, 255], stroked: true, getLineColor: d => [...d.col, 255], lineWidthMinPixels: 2.5, parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
+  L.push(new TextLayer({ id: 'lv-amb-txt', data: ambTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, 16], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
+  return L;
+}
+
+// ── 패널 ──
+function onHubChange(caseChanged) {
+  if (MODE !== 'live') return;
+  if (caseChanged) { renderLivePanel(); renderLiveSide(); scheduleSuggest(); }
+}
+function caseStatusCounts(c) {
+  const n = { pending: 0, approved: 0, rejected: 0, confirmed: 0 };
+  for (const h of c.hospitals || []) n[h.status] = (n[h.status] || 0) + 1;
+  return n;
+}
+function renderLivePanel() {
+  const st = $('livestatus');
+  st.innerHTML = HUB.connected
+    ? `<span style="color:var(--ok)">● hub 연결됨</span> <span class="st">${HUB.url}</span>`
+    : `<span style="color:var(--k1)">○ hub 연결 안 됨 — 3초마다 재시도</span> <span class="st">${HUB.url || ''}${HUB.lastErr ? ' · ' + HUB.lastErr : ''}</span>`;
+  const box = $('livecases'); box.innerHTML = '';
+  const cases = Object.values(HUB.cases).sort((a, b) => (a.num ?? 1e9) - (b.num ?? 1e9));
+  if (!cases.length) { box.innerHTML = `<p class="note" style="margin:0">진행 중인 사건이 없습니다. 구급차 대시보드에서 [이동] → 현장 도착 → 휴대폰 전화 앱으로 통화하면 여기에 뜹니다.</p>`; return; }
+  for (const c of cases) {
+    const k = caseK(c), sim = c.apid ? HUB.sims[c.apid] : null, confirmed = caseConfirmed(c), n = caseStatusCounts(c), sug = HUB.suggest[c.caseId];
+    const div = document.createElement('div'); div.className = 'lcase';
+    const phase = sim ? (PHASE_LABEL[sim.phase] || sim.phase) : (c.pre ? '매칭 전' : '요청 중');
+    div.innerHTML = `
+      <div class="hd"><span class="pill k" style="--c:var(--k${k})">K${k}</span><span>#${c.num ?? '?'}</span><span class="st">${SEV_LABEL[c.severityTag] || ''}${c.ktasLevel ? '' : ' (KTAS 추정)'}</span><span class="st" style="margin-left:auto">${phase}${c.paused ? ' · 정지' : ''}</span></div>
+      <div>${c.expectedDiagnosis || c.symptom || '증상 정보 없음'}${c.chiefComplaint ? ` <span class="st">· ${c.chiefComplaint}</span>` : ''}</div>
+      <div class="st">${c.patient ? c.patient + ' · ' : ''}${c.requiredDepartment ? '필요 진료과 ' + c.requiredDepartment + ' · ' : ''}${c.ambulanceName || c.apid || ''}${c.confirmedBy ? ' · ' + (c.confirmedBy === 'paramedic' ? '구급대원 확인' : 'AI 요약(확인 전)') : ''}</div>
+      <div class="st">${c.pre ? '병원 요청 전' : `존 ${(c.zoneActive || []).length} · 대기 ${n.pending} · <span style="color:var(--ok)">승인 ${n.approved}</span> · 불가 ${n.rejected}`}${confirmed ? ` · <b style="color:var(--k${k})">확정 ${confirmed.name}</b>` : ''}</div>
+      ${sug ? `<div class="st" style="color:var(--sug)">거미줄 제안: ${hp(sug.hpid) ? hp(sug.hpid).name : sug.hpid} · 줄 길이 ${sug.len.toFixed(1)} (도로 ${sug.road.toFixed(1)}분)${confirmed ? (confirmed.hospitalId === sug.hpid ? ' · hub와 같음' : ' · hub와 다름') : ''}</div>` : ''}
+      <div style="display:flex;gap:6px"><button data-go="${c.caseId}">보기</button></div>`;
+    div.querySelector('[data-go]').onclick = () => { const p = casePos(c); if (p) { spinning = false; goCam({ longitude: p.lng, latitude: p.lat, zoom: 12.3, pitch: 60, bearing: -20 }); } };
+    box.appendChild(div);
+  }
+}
+const LIVE_KIND_CLASS = { p: '', s: 's', r: 'y', x: 'c', a: 'a', t: 'w', c: 'f', d: 'o' };
+function renderLiveSide() {
+  const rows = [];
+  for (const c of Object.values(HUB.cases)) for (const e of c.events || []) rows.push({ t: e.t, kind: e.kind, text: `<b>#${c.num ?? '?'}</b> ${e.text}` });
+  for (const e of HUB.log) rows.push(e);
+  rows.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+  const cases = Object.values(HUB.cases), moving = Object.values(HUB.sims).filter(s => s.phase === 'transporting').length;
+  $('sum').textContent = `실시간 · 사건 ${cases.length}건 · 이송 중 ${moving}대 · 병원 ${LIVE.length}곳${HUB.connected ? '' : ' · hub 연결 안 됨'}`;
+  const L = $('log'); L.innerHTML = '';
+  for (const r of rows.slice(-200)) {
+    const v = document.createElement('div'); v.className = 'ev ' + (LIVE_KIND_CLASS[r.kind] ?? '');
+    const hhmm = r.t ? new Date(r.t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
+    v.innerHTML = `<span class="tm">${hhmm}</span><span>${r.text}</span>`; L.appendChild(v);
+  }
+  if (L.lastChild) L.lastChild.scrollIntoView({ block: 'nearest' });
+}
+// ── 거미줄 모델 제안: 실제 사건을 그대로 환자로 넣어 서버 엔진에 묻는다(hub 결정과 비교용, hub엔 안 보낸다) ──
+function scheduleSuggest() { clearTimeout(suggestTimer); suggestTimer = setTimeout(refreshSuggest, 800); }
+async function condFor(c) {
+  const key = c.caseId + '|' + (c.expectedDiagnosis || '');
+  if (HUB.cond[key]) return HUB.cond[key];
+  // 질환군 규칙은 서버의 voice_to_patient.py 하나 — 예상 병명 문장을 의심 진단으로 넣어 같은 규칙을 태운다
+  try { const v = await api('api/voice', { summary: { ktas_level: caseK(c), suspected_diagnosis: [{ text: c.expectedDiagnosis || '' }], incidents: [] } }); HUB.cond[key] = v.cond; }
+  catch (e) { HUB.cond[key] = 'general'; }
+  return HUB.cond[key];
+}
+async function refreshSuggest() {
+  if (MODE !== 'live' || !$('suggest').checked) return;
+  const cases = Object.values(HUB.cases).filter(c => casePos(c));
+  if (!cases.length) { HUB.suggest = {}; renderLivePanel(); return; }
+  const seq = ++suggestSeq;
+  const patients = [];
+  for (const [i, c] of cases.entries()) { const p = casePos(c), k = caseK(c); patients.push({ id: i + 1, site: `#${c.num ?? '?'}`, k, t0: 0, lat: p.lat, lng: p.lng, z: KTAS_Z[k], cond: await condFor(c) }); }
+  let j; try { j = await api('api/solve', { patients, params: readParams() }); } catch (e) { return; }
+  if (seq !== suggestSeq) return;
+  const out = {};
+  cases.forEach((c, i) => { const idx = j.cur[String(i + 1)]; const seg = idx != null ? j.hist[String(i + 1)][idx] : null; if (seg) out[c.caseId] = { hpid: seg.hpid, len: seg.len, road: seg.road }; });
+  HUB.suggest = out; renderLivePanel();
+}

@@ -842,6 +842,14 @@ class MonitorCase(BaseModel):
     zonePausedLeftSec: Optional[int] = None
     # 시연 일시정지 중(2026-10-05) — 콘솔·관제 화면이 조작을 막는다
     paused: Optional[bool] = None
+    # spider 거미줄 3D 실시간 화면(2026-10-14)용 환자 요약 — 통화에서 뽑은 KTAS·예상 병명·주 호소·필요 진료과·환자(나이·성별)와
+    # 구급대원 확인 여부(ai/paramedic). 통화 전문·활력징후·의식·처치는 여전히 보내지 않는다(요청을 받은 병원 탭만). 모두 Optional.
+    ktasLevel: Optional[int] = None
+    expectedDiagnosis: Optional[str] = None
+    chiefComplaint: Optional[str] = None
+    requiredDepartment: Optional[str] = None
+    patient: Optional[str] = None
+    confirmedBy: Optional[str] = None
     source: Literal["rule"] = "rule"
 
 
