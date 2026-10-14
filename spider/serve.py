@@ -81,6 +81,9 @@ def meta():
         "kdist": list(KDIST.keys()),
         "defaults": Params().__dict__,
         "engine": engine().describe(),
+        # 실시간 모드가 붙을 hub WebSocket(role=monitor). start-all.sh가 SPIDER_HUB_WS_URL로 넘긴다. 없으면 화면이
+        # 같은 호스트의 /ws/dashboard(터널 규칙이 hub로 보냄)로 추정한다.
+        "hubWsUrl": os.environ.get("SPIDER_HUB_WS_URL") or None,
     })
 
 

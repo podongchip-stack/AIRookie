@@ -23,6 +23,17 @@ cd spider && python serve.py      # → http://127.0.0.1:2700/spider/   (LAN·�
 올려 두고 브라우저는 결과만 받으므로 가벼운 기기에서도 돈다. deck.gl·MapLibre는 `web/vendor/`에 들어 있어 CDN이 막혀도 뜬다
 (바탕 지도 타일만 인터넷 필요).
 
+**실시간 모드(2026-10-14)** — 화면 위 [실시간 (hub 사건)] 또는 `/spider/?mode=live`. hub WebSocket에 관제 지도와 같은
+`role: "monitor"`로 붙어(`web/live.js`) 구급차 대시보드에서 출동한 **실제 사건**을 그린다: 휴대폰 통화에서 뽑힌 환자(KTAS·예상
+병명·주 호소·필요 진료과·나이/성별·구급대원 확인 여부)가 현장에 켜지고, 존 안 병원으로 줄이 걸린다(판단 대기 = 가는 줄, 수용
+승인 = 초록, 수용 불가 = 회색, 이송 확정 = KTAS 색). 확정되면 hub가 준 실제 이송 경로(지난 구간 회색·남은 구간 색)를 따라 구급차가
+움직이고, 도착하면 병원에 "도착 · 수용 대기" 고리가 뜬다. 오른쪽 기록은 hub의 사건 진행 과정(요청 시작·승인·불가·확정·완료).
+"누가 어디로 가는가"는 hub의 결정(규칙 기반)을 그대로 보여 주고, **거미줄 모델의 선택은 민트색 "거미줄 제안"**으로만 겹친다 —
+같은 환자(KTAS·위치·질환군)를 이 서버의 엔진(`api/solve`)에 넣은 결과이고 hub에는 아무것도 보내지 않는다(체크로 끔, 슬라이더
+값은 "보기" 아래 그대로 쓴다). hub 주소는 `api/meta.hubWsUrl`(start-all이 `SPIDER_HUB_WS_URL`로 넘김; 없으면 같은 호스트의
+`/ws/dashboard`). 아이패드가 LAN으로 열면 127.0.0.1을 접속 호스트로 바꿔 쓴다. hub `MonitorCase`에 환자 요약 6필드를 Optional로
+더했다(hub/schema.py) — 통화 전문·활력징후는 여전히 관제·spider로 가지 않는다.
+
 **예전 방식(검증용 쌍둥이)** — `map.html`을 브라우저로 직접 연다(로컬 파일 그대로, 인터넷은 deck.gl·MapLibre·지도 타일 때문에 필요).
 같은 폴더에 `roads_data.js`(25.8 MB)와 `hospitals_xyz.json`이 있어야 한다. 엔진이 JS 안에 통째로 있어 서버 없이 돌지만,
 이제 모델 수정은 `engine/`에서 하고 `map.html`은 `python parity_check.py`가 같은 입력에 같은 답을 내는지 대조하는 용도로 둔다.
@@ -60,7 +71,7 @@ KTAS 3는 얇은 지역기관의 1/3이 몇 분 거리 센터로. 밤에는 얇�
 |---|---|
 | `engine/` | **파이썬 엔진(2026-10-14)** — `roads.py`(roads_data.js 로드·JS와 같은 격자 최근접·scipy 다익스트라 120분·경로 복원·출발점별 캐시 150), `model.py`(필요/유효 역량·줄 길이·질환군 벽·`Params` 슬라이더 값), `solve.py`(시간 기반 해소: τ 창 충돌·양보·이동 중 재투척·초과·기록 문구), `scenarios.py`(시나리오·무작위 환자, 시드 재현). hub가 나중에 가져다 쓸 모듈 — 다른 폴더 import 없음 |
 | `serve.py` | Flask 서버. `web/`를 `/spider/` 아래로 내주고 `api/meta`·`api/hospitals`·`api/solve`·`api/random`·`api/voice`. 포트 `SPIDER_PORT`(2700), 접두어 `SPIDER_PREFIX` |
-| `web/` | 화면(`index.html`·`app.js`·`style.css`) + `vendor/`(maplibre-gl 4.7.1, deck.gl 8.9.36). `app.js`는 `make_map.py`의 그리기 코드 그대로에 엔진 호출만 fetch로 바꾼 것 |
+| `web/` | 화면(`index.html`·`app.js`·`style.css`·`live.js`) + `vendor/`(maplibre-gl 4.7.1, deck.gl 8.9.36). `app.js`는 `make_map.py`의 그리기 코드 그대로에 엔진 호출만 fetch로 바꾼 것, `live.js`는 실시간 모드(hub monitor 소켓 수신·사건 카드·거미줄 제안) |
 | `parity_check.py` | 파이썬 엔진 ↔ JS 엔진 대조(node로 `map.html` 엔진 부분만 실행). 시나리오 5 + 슬라이더 변주 5 + 시드 무작위 4 = 14사례. 2026-10-14: 14/14 일치(한 사례는 같은 시간의 다른 경로를 복원한 km 차이만 — 모델 차이 아님) |
 | `make_map.py` → `map.html` | 예전 단일 파일 화면 + 엔진(JS). 검증용 쌍둥이로 남김 — 모델을 `engine/`에서 바꾸면 여기도 같이 바꿔 parity를 유지한다 |
 | `build_xyz.py` → `hospitals_xyz.json` | 스냅샷 최신 폴링에서 전국 병원 x·y·z·장비·병상·전문의 수. z = 등급 + 중증 신고 비율 |

@@ -2,7 +2,7 @@
   --bg:#0a1024; --panel:rgba(12,16,34,.86); --ink:#f2f1ec; --ink-2:#b9b8ae; --muted:#7c7b74; --line:#2b2d45;
   --g1:#7fb6ff; --g2:#4f9cff; --g3:#2a7ff0; --g4:#9ad0ff;
   --k1:#ff5c5c; --k2:#ff7a45; --k3:#ffb039; --k4:#ffd96b; --k5:#d8d08a;
-  --yield:#7c7b74; --clash:#ff3b3b; --occ:#4fd1ff;
+  --yield:#7c7b74; --clash:#ff3b3b; --occ:#4fd1ff; --ok:#5ee37f; --sug:#7fffd4;
   --font:"IBM Plex Sans KR",system-ui,"Malgun Gothic",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;overscroll-behavior:none}
 #map{position:absolute;inset:0;touch-action:none}
@@ -56,3 +56,10 @@ h2{font-size:.85rem;font-weight:600;margin:0 0 6px}
 .leg{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:.72rem;color:var(--ink-2);margin:8px 0 0}
 .leg span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0;background:var(--c);box-shadow:0 0 6px var(--c)}
 .maplibregl-ctrl-attrib{font-size:10px}
+/* 모드 전환(가상 시나리오 / 실시간)과 실시간 사건 카드 */
+.modebar{display:flex;gap:4px;margin:6px 0 4px}
+.modebar button{flex:1}
+.st{color:var(--muted);font-size:.72rem;line-height:1.4}
+.lcase{border:1px solid var(--line);border-radius:3px;padding:7px 9px;display:grid;gap:3px;font-size:.8rem}
+.lcase .hd{display:flex;gap:6px;align-items:center;font-weight:600}
+.lcase button{padding:2px 8px;font-size:.72rem}
