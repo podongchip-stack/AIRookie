@@ -56,6 +56,8 @@ h2{font-size:.85rem;font-weight:600;margin:0 0 6px}
 .leg{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:.72rem;color:var(--ink-2);margin:8px 0 0}
 .leg span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:0;background:var(--c);box-shadow:0 0 6px var(--c)}
 .maplibregl-ctrl-attrib{font-size:10px}
+/* 아이패드 앱 WebView(?embed=1): 패널은 앱이 네이티브로 그리므로 지도만 남긴다 */
+body.embed #left,body.embed #right,body.embed #clock{display:none}
 /* 모드 전환(가상 시나리오 / 실시간)과 실시간 사건 카드 */
 .modebar{display:flex;gap:4px;margin:6px 0 4px}
 .modebar button{flex:1}

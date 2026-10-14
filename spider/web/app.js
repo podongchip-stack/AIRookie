@@ -281,5 +281,7 @@ $('suggest').addEventListener('change',()=>{ if(!$('suggest').checked){ HUB.sugg
   $('site').innerHTML=Object.keys(META.sites).map(s=>`<option>${s}</option>`).join('');
   riseT0=performance.now();
   loadScenario();
-  if(new URLSearchParams(location.search).get('mode')==='live') setMode('live'); else recompute();
+  const q=new URLSearchParams(location.search);
+  if(q.get('embed')==='1') document.body.classList.add('embed');   // 아이패드 앱: 패널 없이 지도만
+  if(q.get('mode')==='live') setMode('live'); else recompute();
 })();

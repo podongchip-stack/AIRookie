@@ -816,6 +816,32 @@ class MonitorCaseHospital(BaseModel):
     zone: int
     # 이 병원이 이 사건에 응답(승인·불가·확정)한 시각(2026-10-04, case_history 기록) — 관제 지도의 응답 시각 칸
     respondedAt: Optional[str] = None
+    # ── 아이패드 관제 앱·spider 실시간 화면용 설명 필드(2026-10-14, 모두 Optional — 예전 관제 지도는 무시한다) ──
+    # HospitalMatch의 같은 이름 필드를 그대로 옮긴다: "이 병원 정보가 얼마나 유효한가, 왜 이 순위인가"를 사건 밖(관제)에서도
+    # 보게 하기 위함. 환자 정보는 아니다. 병상 유효 확률(bedReliability, AI)·심평원 대조 신뢰도(reliability)·중증 신고 신선도
+    # (severeFreshness, 규칙)·순위 근거(finalScore·travelMin·가산/페널티 문구·내림 이유)·E-Gen 메시지.
+    gps: Optional[GpsPoint] = None
+    emergencyLevel: Optional[str] = None
+    availableBedCount: Optional[int] = None
+    bedCountUnknown: Optional[bool] = None
+    bedDataStale: Optional[bool] = None
+    erBedCapacity: Optional[int] = None
+    erOccupancyPct: Optional[int] = None
+    travelMin: Optional[float] = None
+    travelBasis: Optional[TravelBasis] = None
+    etaMin: Optional[int] = None
+    finalScore: Optional[float] = None
+    specialtyMatch: Optional[SpecialtyMatch] = None
+    bedReliability: Optional[BedReliabilityMatch] = None
+    reliability: Optional[ReliabilityInfo] = None
+    severeFreshness: Optional[SevereFreshness] = None
+    demoteReasons: Optional[list[str]] = None
+    bonusReasons: Optional[list[str]] = None
+    loadReason: Optional[str] = None
+    occupancyReason: Optional[str] = None
+    inFlightCount: Optional[int] = None
+    excluded: Optional[bool] = None
+    acceptanceMessages: Optional[list[AcceptanceMessageMatch]] = None
 
 
 class MonitorCase(BaseModel):
