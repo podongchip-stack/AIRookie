@@ -7,8 +7,8 @@
 경로는 SPIDER_PREFIX(기본 /spider) 아래에 둔다 — start-all.sh의 Cloudflare 터널이 `^/spider(/|$)`를 이 서버로 보내고
 나머지는 dashboard로 가므로, 다른 대시보드와 같은 도메인에서 열린다. 화면의 주소는 전부 상대 경로라 접두어를 바꿔도 된다.
 
-    SPIDER_PORT=5050 python serve.py            # http://127.0.0.1:5050/spider/
-    python serve.py --port 5050 --host 0.0.0.0  # LAN(아이패드 개발용)
+    SPIDER_PORT=7000 python serve.py            # http://127.0.0.1:7000/spider/
+    python serve.py --port 7000 --host 0.0.0.0  # LAN(아이패드 개발용)
 """
 from __future__ import annotations
 
@@ -126,7 +126,7 @@ def voice():
 
 def main():
     ap = argparse.ArgumentParser(description="spider 거미줄 3D 서버")
-    ap.add_argument("--port", type=int, default=int(os.environ.get("SPIDER_PORT", "5050")))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("SPIDER_PORT", "7000")))
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
     engine()  # 요청 전에 미리 올려 둔다(첫 요청이 수 초 걸리지 않게)

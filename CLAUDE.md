@@ -856,7 +856,7 @@ hub의 순위 상수들(부하 페널티·경증 역가산·중증 센터 가산
   3차로 이상 + 병원 4 km 골목, 노드 100만, 환자당 30 ms). `roads_data.js`는 재생성 가능하지만 팀원이 바로 열
   수 있게 커밋해 둠. pbf(290 MB)는 `spider/data/`에 두고 커밋 안 함.
 - **엔진을 파이썬으로, 화면은 서버에서(2026-10-14, develop 머지와 함께)**: `spider/engine/`(roads·model·solve·scenarios —
-  numpy·scipy, 다른 폴더 import 없음)이 JS 엔진을 그대로 옮긴 것이고, `spider/serve.py`(Flask, 포트 5050)가 `spider/web/`
+  numpy·scipy, 다른 폴더 import 없음)이 JS 엔진을 그대로 옮긴 것이고, `spider/serve.py`(Flask, 포트 7000)가 `spider/web/`
   (그리기만 하는 html/js/css + vendor deck.gl·MapLibre)를 `/spider/` 아래로 내준다. `start-all.sh`가 `spider/serve.py`가 있으면
   자동으로 띄우고(`--no-spider`) 터널이 `^/spider(/|$)`를 이 서버로 보낸다 → `https://app.rookie-goldenlink.xyz/spider/`
   (아이패드 앱 WebView 주소). 브라우저는 도로 그래프를 받지 않는다. `map.html`(JS 엔진)은 검증용 쌍둥이로 남기고
