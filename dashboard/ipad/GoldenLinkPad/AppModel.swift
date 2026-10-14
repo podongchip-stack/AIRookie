@@ -1,62 +1,52 @@
 import Foundation
 import SwiftUI
 
-/// 앱 상태 — hub 메시지를 받아 사건·구급차·병원 목록을 들고, 화면이 그린다. hub에는 identify 외에 보내지 않는다.
+/// 앱 상태 — 이 아이패드가 실린 구급차 한 대의 화면(웹 /ambulance?id=와 같은 역할).
+/// 구급차 소켓(role=ambulance)으로 자기 사건(매칭 결과·현장 후보·통화·이동)을 받고, apid가 "auto"면 감시 소켓(role=monitor)으로
+/// 출동하는 구급차를 찾아 그 구급차로 넘어간다(웹 AmbulanceAutoFollow · 아이폰 앱과 같은 규칙).
 @MainActor
 final class AppModel: ObservableObject {
-    struct CaseState: Identifiable {
-        let caseId: String
-        var meta: CaseMeta?
-        var overview: MonitorCase?
-        var id: String { caseId }
-
-        var num: Int? { overview?.num ?? meta?.num }
-        var severity: String? { overview?.severityTag ?? meta?.severity }
-        /// KTAS — voice v2가 준 값. 없으면(매칭 전·예전 voice) 중증도로 추정(중증 2 · 중등증 3 · 경증 4)
-        var ktas: Int {
-            if let k = overview?.ktasLevel, (1...5).contains(k) { return k }
-            switch severity { case "high": return 2; case "medium": return 3; case "low": return 4; default: return 3 }
-        }
-        var ktasEstimated: Bool { !((1...5).contains(overview?.ktasLevel ?? 0)) }
-        var symptom: String? { overview?.symptom ?? meta?.symptom }
-        var apid: String? { overview?.apid ?? meta?.apid }
-        var ambulanceName: String? { overview?.ambulanceName ?? meta?.ambulanceName }
-        var startedAt: String? { overview?.startedAt ?? meta?.startedAt }
-        var hospitals: [CaseHospital] { overview?.hospitals ?? [] }
-        var events: [CaseEvent] { overview?.events ?? meta?.events ?? [] }
-        var confirmed: CaseHospital? { hospitals.first { $0.status == "confirmed" } }
-        var matched: Bool { overview != nil }
-        var counts: (pending: Int, approved: Int, rejected: Int, confirmed: Int) {
-            var p = 0, a = 0, r = 0, c = 0
-            for h in hospitals {
-                switch h.status { case "approved": a += 1; case "rejected": r += 1; case "confirmed": c += 1; default: p += 1 }
-            }
-            return (p, a, r, c)
-        }
-    }
-
-    @Published var overview: MapOverview?
-    @Published var cases: [String: CaseState] = [:]
-    @Published var sims: [String: AmbulanceSimState] = [:]
-    @Published var selectedCaseId: String?
+    // 연결
     @Published var connection: HubSocket.State = .connecting
+    @Published private(set) var apid: String?        // 지금 따라가는 구급차(auto면 출동 전엔 nil)
+    @Published var ambulanceName: String?
+    @Published var simDispatch = false
+
+    // 이 구급차의 상태
+    @Published var sim: AmbulanceSimState?
+    @Published var result: HubMatchResult?
+    @Published var scene: SceneCandidates?
+    @Published var callStatus: CallStatus?
+    @Published var transcript: [CallTranscriptLine] = []
+    @Published var pendingConfirmId: String?
+    @Published var notice: String?
+    @Published var receivedAt: Date?
+
+    // 공통
     @Published var now = Date()
-    @Published var closedLog: [CaseEvent] = []
     @Published var liveBoard: LiveBoard?
     @Published var liveBoardError: String?
     @Published var liveBoardLoading = false
     @Published var liveBoardFetchedAt: Date?
 
-    private var socket: HubSocket?
+    private var monitor: HubSocket?
+    private var ambulance: HubSocket?
+    private var monitorSims: [String: AmbulanceSimState] = [:]
     private var clock: Timer?
     private var started = false
-    private var hospitalGps: [String: GpsPoint] = [:]
+    private var noticeTask: Task<Void, Never>?
 
-    var orderedCases: [CaseState] { cases.values.sorted { ($0.num ?? Int.max, $0.caseId) < ($1.num ?? Int.max, $1.caseId) } }
-    var selectedCase: CaseState? {
-        if let id = selectedCaseId, let c = cases[id] { return c }
-        return orderedCases.first
+    var autoFollow: Bool { Settings.apid.trimmingCharacters(in: .whitespaces).lowercased() == "auto" }
+
+    /// 지금 사건 id — 출동 시뮬레이션이 들고 있는 caseId가 기준(웹과 같음), 없으면 매칭 결과·현장 후보
+    var caseId: String? { sim?.caseId ?? result?.caseId ?? scene?.caseId }
+    /// "사고가 발생했는가" — 출동 중·현장·이송·도착·재선택 중이거나 이 구급차 사건의 결과가 있으면 true
+    var hasIncident: Bool {
+        if let s = sim, s.caseId != nil, !["idle", "returning"].contains(s.phase) { return true }
+        return result != nil || scene != nil
     }
+    var confirmed: HospitalMatch? { result?.hospitals.first { $0.status == "confirmed" } }
+    var paused: Bool { sim?.paused == true && sim?.pauseReason != "call" || result?.paused == true }
 
     func start() {
         guard !started else { return }
@@ -73,77 +63,138 @@ final class AppModel: ObservableObject {
         fetchLiveBoard()
     }
 
-    /// 설정이 바뀌었을 때 — 소켓을 새 주소로 다시 붙이고 보드를 다시 받는다
+    /// 설정이 바뀌었을 때 — 소켓을 새 주소·새 구급차로 다시 붙이고 보드를 다시 받는다
     func reconnect() {
-        socket?.close()
-        socket = nil
-        cases = [:]; sims = [:]; overview = nil; hospitalGps = [:]
+        monitor?.close(); monitor = nil
+        ambulance?.close(); ambulance = nil
+        apid = nil
+        clearCase()
+        monitorSims = [:]
         connect()
         liveBoard = nil; liveBoardError = nil
         fetchLiveBoard()
     }
 
     private func connect() {
-        socket = HubSocket(role: "monitor", id: "ipad",
-                           onMessage: { [weak self] type, data in self?.handle(type, data) },
-                           onState: { [weak self] s in self?.connection = s })
+        if autoFollow {
+            monitor = HubSocket(role: "monitor", id: "ipad-auto",
+                                onMessage: { [weak self] t, d in self?.handleMonitor(t, d) },
+                                onState: { [weak self] s in if self?.ambulance == nil { self?.connection = s } })
+        } else {
+            follow(Settings.apid.trimmingCharacters(in: .whitespaces))
+        }
     }
 
-    // ── 위치 ──
-    func position(of c: CaseState) -> GpsPoint? {
-        if let apid = c.apid, let inc = sims[apid]?.incident { return inc }
-        return c.overview?.ambulanceGps
+    private func follow(_ next: String?) {
+        guard next != apid || (next != nil && ambulance == nil) else { return }
+        ambulance?.close(); ambulance = nil
+        apid = next
+        clearCase()
+        ambulanceName = nil
+        guard let next, !next.isEmpty else { return }
+        ambulance = HubSocket(role: "ambulance", id: next,
+                              onMessage: { [weak self] t, d in self?.handleAmbulance(t, d) },
+                              onState: { [weak self] s in self?.connection = s })
     }
-    func sim(for c: CaseState) -> AmbulanceSimState? { c.apid.flatMap { sims[$0] } }
-    func gps(of hospitalId: String) -> GpsPoint? { hospitalGps[hospitalId] }
-    func ambulanceName(_ apid: String) -> String { overview?.ambulances.first { $0.apid == apid }?.name ?? apid }
 
-    // ── 메시지 ──
-    private func handle(_ type: String, _ data: Data) {
+    private func clearCase() {
+        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; receivedAt = nil
+    }
+
+    // ── 자동 따라가기(monitor 소켓) ──
+    private func handleMonitor(_ type: String, _ data: Data) {
+        guard type == "ambulance_phase" || type == "ambulance_position",
+              let m = try? JSONDecoder().decode(AmbulanceSimState.self, from: data) else { return }
+        monitorSims[m.apid] = m
+        func active(_ s: AmbulanceSimState?) -> Bool { s?.caseId != nil && !["idle", "returning"].contains(s?.phase ?? "idle") }
+        // 지금 보는 구급차의 사건이 진행 중이면 넘어가지 않는다
+        if let apid, active(monitorSims[apid]) { return }
+        let next = monitorSims.values.filter { active($0) }.map(\.apid).sorted().first
+        if let next { follow(next) }
+        else if let apid, let s = monitorSims[apid], s.caseId == nil, ["idle", "returning"].contains(s.phase) { follow(nil) }
+    }
+
+    // ── 구급차 소켓 ──
+    private func handleAmbulance(_ type: String, _ data: Data) {
         let dec = JSONDecoder()
         switch type {
-        case "map_overview":
-            if let m = try? dec.decode(MapOverview.self, from: data) {
-                overview = m
-                for h in m.hospitals { hospitalGps[h.hospitalId] = h.gps }
+        case "identity_info":
+            if let m = try? dec.decode(IdentityInfo.self, from: data) {
+                ambulanceName = m.name ?? ambulanceName
+                simDispatch = m.simDispatch ?? simDispatch
             }
-        case "case_meta":
-            if let m = try? dec.decode(CaseMeta.self, from: data) {
-                var c = cases[m.caseId] ?? CaseState(caseId: m.caseId)
-                c.meta = m
-                cases[m.caseId] = c
-                if selectedCaseId == nil || cases[selectedCaseId!] == nil { selectedCaseId = m.caseId }
+        case "match_result":
+            if let m = try? dec.decode(HubMatchResult.self, from: data) {
+                if let apid, let a = m.apid, a != apid { return }
+                // 출동 시뮬레이션이 다른 사건을 들고 있으면 지난 사건의 따라잡기는 무시
+                if let c = sim?.caseId, c != m.caseId { return }
+                result = m
+                receivedAt = Date()
+                if m.ambulanceName != nil { ambulanceName = m.ambulanceName }
+                if let p = pendingConfirmId, m.hospitals.contains(where: { $0.hospitalId == p && $0.status == "confirmed" }) { pendingConfirmId = nil }
             }
-        case "case_overview":
-            if let m = try? dec.decode(MonitorCase.self, from: data) {
-                var c = cases[m.caseId] ?? CaseState(caseId: m.caseId)
-                c.overview = m
-                cases[m.caseId] = c
-                for h in m.hospitals { if let g = h.gps { hospitalGps[h.hospitalId] = g } }
-                if selectedCaseId == nil || cases[selectedCaseId!] == nil { selectedCaseId = m.caseId }
+        case "scene_candidates":
+            if let m = try? dec.decode(SceneCandidates.self, from: data) {
+                if let c = sim?.caseId, c != m.caseId { return }
+                scene = m
+            }
+        case "ambulance_phase", "ambulance_position":
+            if let m = try? dec.decode(AmbulanceSimState.self, from: data), m.apid == apid {
+                let previousCase = sim?.caseId
+                sim = m
+                // 새 출동(다른 caseId)이 시작되면 지난 사건 화면을 비운다
+                if let c = m.caseId, c != previousCase {
+                    if result?.caseId != c { result = nil }
+                    if scene?.caseId != c { scene = nil }
+                    transcript = []
+                }
+                // 사건이 끝나 기지로(복귀·대기) — 결과를 접는다
+                if m.caseId == nil, ["idle", "returning"].contains(m.phase) { result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil }
+            }
+        case "call_status":
+            if let m = try? dec.decode(CallStatus.self, from: data), m.apid == nil || m.apid == apid { callStatus = m }
+        case "call_transcript":
+            if let m = try? dec.decode(CallTranscriptLine.self, from: data), m.apid == nil || m.apid == apid {
+                transcript.append(m)
+                if transcript.count > 200 { transcript.removeFirst(transcript.count - 200) }
             }
         case "case_closed":
-            if let m = try? dec.decode(CaseClosed.self, from: data), let c = cases[m.caseId] {
-                closedLog.append(CaseEvent(t: ISO8601DateFormatter().string(from: Date()), kind: "c",
-                                           text: "#\(c.num.map(String.init) ?? "?") 사건 종료 (\(m.reason ?? ""))"))
-                cases[m.caseId] = nil
-                if selectedCaseId == m.caseId { selectedCaseId = orderedCases.first?.caseId }
+            if let m = try? dec.decode(CaseClosed.self, from: data), m.caseId == result?.caseId || m.caseId == scene?.caseId {
+                result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil
             }
         case "case_sync":
             if let m = try? dec.decode(CaseSync.self, from: data) {
                 let keep = Set(m.caseIds)
-                for id in cases.keys where !keep.contains(id) { cases[id] = nil }
-                if let sel = selectedCaseId, cases[sel] == nil { selectedCaseId = orderedCases.first?.caseId }
+                if let c = result?.caseId, !keep.contains(c) { result = nil }
+                if let c = scene?.caseId, !keep.contains(c), sim?.caseId != c { scene = nil }
             }
-        case "ambulance_phase":
-            if let m = try? dec.decode(AmbulanceSimState.self, from: data) { sims[m.apid] = m }
-        case "ambulance_position":
-            if var m = try? dec.decode(AmbulanceSimState.self, from: data) {
-                if m.path == nil { m.path = sims[m.apid]?.path }
-                sims[m.apid] = m
+        case "action_refused":
+            if let m = try? dec.decode(ActionRefused.self, from: data) {
+                pendingConfirmId = nil
+                show(m.reason == "paused" ? "현재 시연 일시정지 중입니다." : "hub가 요청을 거부했습니다 (\(m.reason ?? ""))")
             }
         default:
             break
+        }
+    }
+
+    // ── 이송 승인(구급대원 판단) — 웹 handleApprove와 같은 형식. 병원이 승인한 병원에만 버튼이 열린다 ──
+    func approve(_ hospitalId: String) {
+        if paused { show("현재 시연 일시정지 중입니다."); return }
+        guard let caseId = result?.caseId ?? caseId, let ambulance else { return }
+        pendingConfirmId = hospitalId
+        if !ambulance.send(ApprovalAction(caseId: caseId, hospital_id: hospitalId, timestamp: ISO.now())) {
+            pendingConfirmId = nil
+            show("hub에 연결되지 않아 보내지 못했습니다.")
+        }
+    }
+
+    func show(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(2500))
+            if !Task.isCancelled { self?.notice = nil }
         }
     }
 
