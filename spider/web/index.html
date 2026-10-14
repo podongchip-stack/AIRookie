@@ -7,6 +7,11 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="style.css">
 </head><body>
+<script>
+// 아이패드 앱(?embed=1): 패널(왼쪽 콘솔·오른쪽 기록·시계)은 앱이 네이티브로 그리므로 처음부터 숨긴다. 예전엔 app.js가 병원 목록을
+// 서버에서 받은 뒤에야 숨겨서, 불러오는 몇 초 동안 웹용 왼쪽 콘솔이 보였다가 사라졌다(손으로 지도를 만질 때 없어지는 것처럼 보임).
+if(new URLSearchParams(location.search).get('embed')==='1') document.body.classList.add('embed');
+</script>
 <div id="map"></div>
 <div id="busy">경로 계산 중…</div>
 
