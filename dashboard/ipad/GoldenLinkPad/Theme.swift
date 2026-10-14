@@ -119,10 +119,10 @@ struct StatBox: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label).font(.system(size: 11.5, weight: .medium)).foregroundStyle(fg).lineLimit(1)
-            Text(value).font(.system(size: 19, weight: .black)).foregroundStyle(valueColor ?? fg).lineLimit(1).minimumScaleFactor(0.7)
+            Text(value).font(.system(size: 17, weight: .black)).foregroundStyle(valueColor ?? fg).lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10).padding(.vertical, 5)
+        .padding(.horizontal, 10).padding(.vertical, 4)
         .background(bg)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }

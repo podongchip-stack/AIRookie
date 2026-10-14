@@ -7,11 +7,13 @@ import SwiftUI
 @main
 struct GoldenLinkPadApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var board = BoardModel()   // 상황판(전체 사건) — 상황판을 처음 열 때 연결한다
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(model)
+                .environmentObject(board)
                 .preferredColorScheme(.light)
         }
     }
