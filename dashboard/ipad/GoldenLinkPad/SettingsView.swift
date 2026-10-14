@@ -3,6 +3,7 @@ import SwiftUI
 /// 설정 — 이 아이패드가 실린 구급차, 서버 주소(hub / spider), 연결 확인. 바꾸면 소켓을 다시 붙이고 지도를 다시 연다.
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var board: BoardModel
     @Environment(\.dismiss) private var dismiss
     @AppStorage("hubBase") private var hubBase = Settings.defaultHub
     @AppStorage("spiderBase") private var spiderBase = ""
@@ -59,6 +60,7 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("적용") {
                         model.reconnect()
+                        board.reconnect()
                         NotificationCenter.default.post(name: .spiderReload, object: nil)
                         dismiss()
                     }

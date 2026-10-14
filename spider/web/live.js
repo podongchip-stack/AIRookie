@@ -34,7 +34,17 @@ window.addEventListener('resize', () => {
   clearTimeout(embedResizeT);
   embedResizeT = setTimeout(() => { if (EMBED_FOCUS) { VIEW = { ...VIEW, ...EMBED_FOCUS, transitionDuration: 0 }; deckgl.setProps({ initialViewState: VIEW }); } }, 350);
 });
-['pointerdown', 'touchstart', 'wheel'].forEach(t => document.getElementById('map').addEventListener(t, () => { EMBED_FOCUS = null; }, { passive: true }));
+let EMBED_USER = false;   // 사람이 지도를 한 번이라도 만졌으면 자동 맞춤(전체 보기)을 하지 않는다
+['pointerdown', 'touchstart', 'wheel'].forEach(t => document.getElementById('map').addEventListener(t, () => { EMBED_FOCUS = null; EMBED_USER = true; }, { passive: true }));
+// 앱이 부르는 함수 — 상황판 사건 목록을 누르면 그 현장으로(아이패드 SpiderWebView의 spiderFocus)
+window.focusPoint = (lat, lng) => embedFocus([{ lat, lng }]);
+// 상황판(embed, apid 없음): 새 사건이 생길 때마다 모든 현장이 다 보이게 맞춘다 — 사건마다 카메라가 튀지 않게 모아서 한 번
+let fitAllT = null;
+function scheduleFitAll() {
+  if (!document.body.classList.contains('embed') || ONLY_APID || EMBED_USER) return;
+  clearTimeout(fitAllT);
+  fitAllT = setTimeout(() => { const pts = myCases().map(casePos).filter(Boolean); if (pts.length) embedFocus(pts); }, 700);
+}
 
 function hubWsUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -70,13 +80,16 @@ function handleHub(m) {
       const c = HUB.cases[m.caseId] || { caseId: m.caseId, hospitals: [], events: [] };
       Object.assign(c, { num: m.num, startedAt: m.startedAt, symptom: m.symptom ?? c.symptom, severityTag: m.severity || c.severityTag,
         apid: m.apid || c.apid, ambulanceName: m.ambulanceName || c.ambulanceName, events: m.events || c.events, pre: true });
-      HUB.cases[m.caseId] = c; break;
+      HUB.cases[m.caseId] = c; scheduleFitAll(); break;
     }
     case 'case_overview': {
       const prev = HUB.cases[m.caseId] || {}; HUB.cases[m.caseId] = { ...prev, ...m, pre: false };
       // 패널이 없는 아이패드 WebView(embed)에선 새 사건이 매칭될 때 카메라를 그 현장으로 — 사람이 잡고 있으면 건드리지 않는다
       // (매칭 전 case_meta로 먼저 생긴 사건도 "처음 매칭"으로 본다)
-      if ((!prev.caseId || prev.pre) && document.body.classList.contains('embed') && (!ONLY_APID || m.apid === ONLY_APID)) { const p = casePos(HUB.cases[m.caseId]); if (p) embedFocus([p]); }
+      if ((!prev.caseId || prev.pre) && document.body.classList.contains('embed')) {
+        if (ONLY_APID) { if (m.apid === ONLY_APID) { const p = casePos(HUB.cases[m.caseId]); if (p) embedFocus([p]); } }
+        else scheduleFitAll();
+      }
       break;
     }
     case 'case_closed': {
@@ -159,6 +172,8 @@ function liveLayers(t) {
     for (const ch of c.hospitals || []) {
       const h = hp(ch.hospitalId); if (!h) continue;
       const st = ch.status;
+      // 이송이 확정되면 그 사건은 확정 병원 경로만 — 다른 후보 줄까지 그리면 대량사고 상황판이 줄로 뒤덮였다(2026-10-14)
+      if (confirmed && st !== 'confirmed') continue;
       let col, w, a;
       if (st === 'confirmed') { col = kc; w = 3; a = 240; }
       else if (st === 'approved') { col = OK_COL; w = 2; a = 220; }
