@@ -49,7 +49,13 @@ function handleHub(m) {
         apid: m.apid || c.apid, ambulanceName: m.ambulanceName || c.ambulanceName, events: m.events || c.events, pre: true });
       HUB.cases[m.caseId] = c; break;
     }
-    case 'case_overview': { const prev = HUB.cases[m.caseId] || {}; HUB.cases[m.caseId] = { ...prev, ...m, pre: false }; break; }
+    case 'case_overview': {
+      const prev = HUB.cases[m.caseId] || {}; HUB.cases[m.caseId] = { ...prev, ...m, pre: false };
+      // 패널이 없는 아이패드 WebView(embed)에선 새 사건이 매칭될 때 카메라를 그 현장으로 — 사람이 잡고 있으면 건드리지 않는다
+      // (매칭 전 case_meta로 먼저 생긴 사건도 "처음 매칭"으로 본다)
+      if ((!prev.caseId || prev.pre) && document.body.classList.contains('embed')) { const p = casePos(HUB.cases[m.caseId]); if (p) goCam({ longitude: p.lng, latitude: p.lat, zoom: 12.3, pitch: 60, bearing: -20 }); }
+      break;
+    }
     case 'case_closed': {
       const c = HUB.cases[m.caseId];
       if (c) { HUB.log.push({ t: new Date().toISOString(), kind: m.reason === 'done' ? 'd' : 'c', text: `<b>#${c.num ?? '?'}</b> 사건 종료 (${m.reason})` }); delete HUB.cases[m.caseId]; delete HUB.suggest[m.caseId]; }

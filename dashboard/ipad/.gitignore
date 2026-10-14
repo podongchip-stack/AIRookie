@@ -1,0 +1,5 @@
+# 생성물 — 커밋하지 않는다 (project.yml이 원본, ./setup.sh 로 다시 만든다)
+GoldenLinkPad.xcodeproj/
+DerivedData/
+xcuserdata/
+.build/
