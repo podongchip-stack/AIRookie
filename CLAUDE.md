@@ -855,6 +855,13 @@ hub의 순위 상수들(부하 페널티·경증 역가산·중증 센터 가산
 - **경로**: 외부 서버·RoutingKit 없이 브라우저 안 다익스트라(OSM 남한 pbf → `roads_data.js` 25.8 MB, 전국
   3차로 이상 + 병원 4 km 골목, 노드 100만, 환자당 30 ms). `roads_data.js`는 재생성 가능하지만 팀원이 바로 열
   수 있게 커밋해 둠. pbf(290 MB)는 `spider/data/`에 두고 커밋 안 함.
+- **엔진을 파이썬으로, 화면은 서버에서(2026-10-14, develop 머지와 함께)**: `spider/engine/`(roads·model·solve·scenarios —
+  numpy·scipy, 다른 폴더 import 없음)이 JS 엔진을 그대로 옮긴 것이고, `spider/serve.py`(Flask, 포트 5050)가 `spider/web/`
+  (그리기만 하는 html/js/css + vendor deck.gl·MapLibre)를 `/spider/` 아래로 내준다. `start-all.sh`가 `spider/serve.py`가 있으면
+  자동으로 띄우고(`--no-spider`) 터널이 `^/spider(/|$)`를 이 서버로 보낸다 → `https://app.rookie-goldenlink.xyz/spider/`
+  (아이패드 앱 WebView 주소). 브라우저는 도로 그래프를 받지 않는다. `map.html`(JS 엔진)은 검증용 쌍둥이로 남기고
+  `python parity_check.py`(node 필요)가 14사례를 대조한다 — 모델을 고치면 양쪽을 같이 고친다. 옮긴 이유는 언어 속도가
+  아니라 계산 위치: 실제 사건을 받을 때 충돌·양보는 한 곳(hub)에서 계산해야 하고, 태블릿이 25 MB 그래프를 들 이유가 없다.
 - **오픈소스 검토 중**: 엔진(해소 루프·줄 길이 식·라우터 인터페이스)은 도메인 독립이라 복제본을 따로 만들어
   공개하고, 병원 어댑터·보정값·E-Gen 파이프라인은 비공개로 두는 방향(오픈 코어). 분리가 아니라 **복제**로
   간다(2026-10-11 결정) — 이 폴더는 그대로 두고 복제본에서 병원 흔적을 걷어낸다.

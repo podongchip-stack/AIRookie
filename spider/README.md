@@ -11,8 +11,21 @@ Mitzenmacher의 "낡은 정보로 고르면 몰린다"에서 착안했다. 2026-
 
 ## 열어 보기
 
-`map.html`을 브라우저로 연다(로컬 파일 그대로, 인터넷은 deck.gl·MapLibre·지도 타일 때문에 필요).
-같은 폴더에 `roads_data.js`(25.8 MB)와 `hospitals_xyz.json`이 있어야 한다.
+**서버 방식(2026-10-14부터 기본)** — 계산은 파이썬, 화면은 그리기만:
+
+```bash
+conda activate rookie_info        # numpy·scipy·flask
+cd spider && python serve.py      # → http://127.0.0.1:5050/spider/   (LAN·아이패드: --host 0.0.0.0)
+```
+
+`./start-all.sh`가 `spider/serve.py`가 있으면 자동으로 띄우고(`--no-spider`로 끔) 터널이 `https://app.rookie-goldenlink.xyz/spider/`로
+연다 — 다른 대시보드와 같은 도메인이라 아이패드 앱은 이 주소를 WebView로 띄우면 된다. 도로 그래프(25.8 MB)는 서버가 한 번
+올려 두고 브라우저는 결과만 받으므로 가벼운 기기에서도 돈다. deck.gl·MapLibre는 `web/vendor/`에 들어 있어 CDN이 막혀도 뜬다
+(바탕 지도 타일만 인터넷 필요).
+
+**예전 방식(검증용 쌍둥이)** — `map.html`을 브라우저로 직접 연다(로컬 파일 그대로, 인터넷은 deck.gl·MapLibre·지도 타일 때문에 필요).
+같은 폴더에 `roads_data.js`(25.8 MB)와 `hospitals_xyz.json`이 있어야 한다. 엔진이 JS 안에 통째로 있어 서버 없이 돌지만,
+이제 모델 수정은 `engine/`에서 하고 `map.html`은 `python parity_check.py`가 같은 입력에 같은 답을 내는지 대조하는 용도로 둔다.
 
 - 병원 530곳이 역량 높이에 뜬 노드로 보이고(병상 데이터 없는 114곳은 바닥의 빈 원), 환자는 발생 시각에
   켜져 **브라우저 안에서 계산한 실제 도로 최단경로**를 따라 흘러간다. 공중엔 환자 점 → 병원 점 직선 거미줄.
@@ -45,7 +58,11 @@ KTAS 3는 얇은 지역기관의 1/3이 몇 분 거리 센터로. 밤에는 얇�
 
 | 파일 | 역할 |
 |---|---|
-| `make_map.py` → `map.html` | 화면 + 엔진(JS). 바꾸면 다시 생성 |
+| `engine/` | **파이썬 엔진(2026-10-14)** — `roads.py`(roads_data.js 로드·JS와 같은 격자 최근접·scipy 다익스트라 120분·경로 복원·출발점별 캐시 150), `model.py`(필요/유효 역량·줄 길이·질환군 벽·`Params` 슬라이더 값), `solve.py`(시간 기반 해소: τ 창 충돌·양보·이동 중 재투척·초과·기록 문구), `scenarios.py`(시나리오·무작위 환자, 시드 재현). hub가 나중에 가져다 쓸 모듈 — 다른 폴더 import 없음 |
+| `serve.py` | Flask 서버. `web/`를 `/spider/` 아래로 내주고 `api/meta`·`api/hospitals`·`api/solve`·`api/random`·`api/voice`. 포트 `SPIDER_PORT`(5050), 접두어 `SPIDER_PREFIX` |
+| `web/` | 화면(`index.html`·`app.js`·`style.css`) + `vendor/`(maplibre-gl 4.7.1, deck.gl 8.9.36). `app.js`는 `make_map.py`의 그리기 코드 그대로에 엔진 호출만 fetch로 바꾼 것 |
+| `parity_check.py` | 파이썬 엔진 ↔ JS 엔진 대조(node로 `map.html` 엔진 부분만 실행). 시나리오 5 + 슬라이더 변주 5 + 시드 무작위 4 = 14사례. 2026-10-14: 14/14 일치(한 사례는 같은 시간의 다른 경로를 복원한 km 차이만 — 모델 차이 아님) |
+| `make_map.py` → `map.html` | 예전 단일 파일 화면 + 엔진(JS). 검증용 쌍둥이로 남김 — 모델을 `engine/`에서 바꾸면 여기도 같이 바꿔 parity를 유지한다 |
 | `build_xyz.py` → `hospitals_xyz.json` | 스냅샷 최신 폴링에서 전국 병원 x·y·z·장비·병상·전문의 수. z = 등급 + 중증 신고 비율 |
 | `build_roads_kr.py` → `roads_data.js` | OSM 남한 pbf → 도로 그래프(전국 3차로 이상 + 병원 4 km 안 골목, 15 m 단순화, 노드 100만). pbf는 `data/`에 두고 커밋 안 함 |
 | `voice_to_patient.py` | voice v2 통화 요약(MF_BERT 17필드) → 환자 입력 {KTAS, 질환군, 예상 병명}. 규칙 기반, hub의 키워드·조립 규칙을 4개 질환군만 옮겨 적음(hub import 없음). `map.html`의 "통화 요약으로 환자 추가"와 같은 규칙. 실행하면 자체 검사 |
@@ -59,6 +76,19 @@ KTAS 3는 얇은 지역기관의 1/3이 몇 분 거리 센터로. 밤에는 얇�
 | `ttl_probe.py` → `ttl_probe_<날짜>_<명>.json` | 검증 ⑦: 되먹임 막는 시간 30~240분 스윕(⑥ 세계, 서울) |
 
 재생성: `conda activate rookie_info`, Windows는 `PYTHONUTF8=1`. 도로 그래프는 `pip install osmium` 후 pbf 다운로드, 약 70초.
+
+## 서버·파이썬 엔진으로 옮긴 이유와 다음 단계 (2026-10-14)
+
+- 아이패드 앱(WebView)에서 띄우려는데 25.8 MB 도로 그래프와 노드 100만 다익스트라를 태블릿 브라우저가 들고 있을 이유가 없고,
+  나중에 **실제 사건**을 받으면 "누가 어느 병원으로"는 구급차마다 따로가 아니라 한 곳(hub)에서 계산해야 τ 창 충돌·양보가 성립한다.
+  그래서 엔진을 파이썬으로 옮기고 화면은 결과만 그린다. 언어를 바꿔서 빨라진 게 아니라 **계산 위치**가 바뀐 것이다.
+- 속도: 그래프 로드 0.5~1.3초, 출발점 한 곳당 scipy 다익스트라 60~80 ms(탐색 약 40만 노드), 시나리오 6명 0.3~0.5초, 무작위 60명
+  약 4초(JS 브라우저 판 2.4초 — 파이썬이 약 1.7배 느리다). 출발점별 표는 캐시돼 슬라이더만 바꾸면 수 ms. 더 빠르게 하려면
+  병원 416곳에서 역방향 다익스트라를 한 번만 돌려 "모든 노드 → 각 병원 분" 표를 미리 두는 쪽이 언어 교체보다 효과가 크다.
+- JS와 같은 답을 내도록 세부를 맞췄다: 간선 가중치 Float32, 격자 고리 최근접(cKDTree 아님), 길이 0 간선 1e-9, 평행 간선은 짧은 쪽,
+  출발점 캐시 키 소수 5자리·FIFO 150, 기록 문구의 `toFixed` 반올림(십진 반올림, 동률은 큰 쪽).
+- 다음: hub 연동 때 `engine/`을 hub가 import 하고(폴더 원칙상 복사 또는 패키지화), 화면은 `api/solve` 대신 hub WebSocket으로 결과를
+  받는다. 그때 `map.html`은 그대로 검증 쌍둥이로 남긴다.
 
 ## 주의
 

@@ -4,6 +4,7 @@
 # 도메인 하나(rookie-goldenlink.xyz)를 Cloudflare named 터널 하나로 나눠 쓴다:
 #
 #   https://app.rookie-goldenlink.xyz     /ws/dashboard, /identity, /route, /geocode, /verification, /hospital-backup → hub (127.0.0.1:5001)
+#                                         /spider/*                  → spider 거미줄 3D (127.0.0.1:5050, spider/ 폴더가 있을 때만)
 #                                         그 밖의 모든 경로           → dashboard (127.0.0.1:3000)
 #   https://lidar.rookie-goldenlink.xyz   전체                        → lidar3d   (127.0.0.1:8000)
 #
@@ -27,6 +28,8 @@
 #                                     --no-sim-dispatch면 휴대폰 앱을 쓸 수 없어 자동으로 켠다
 #   ./start-all.sh --lidar            lidar3d(3D 뷰어·아이폰 앱 업로드 서버)도 함께 — 병원 대시보드에 3D 버튼이 생긴다
 #                                     (기본은 끔: 3D는 당분간 시연에서 뺀다. 끄면 버튼도 자동으로 숨겨진다)
+#   ./start-all.sh --no-spider        spider 거미줄 3D 서버 생략 — 기본은 spider/ 폴더가 있으면 켬(/spider/ 로 열린다,
+#                                     아이패드 앱이 이 주소를 WebView로 띄운다). 계산은 서버가 하고 화면은 그리기만 한다
 #
 # voice는 여기서 띄우지 않는다 — 따로 ./voice/start-voice.sh(인자 없이 = 중앙 voice 1대, 휴대폰·대시보드 브라우저 음성을
 # hub 경유로 받음. 구급차 번호를 주면 그 장비 마이크 전용). HUB_BASE_URL로 이 hub를 가리킨다.
@@ -74,6 +77,7 @@ env_py(){ if [ "$OS" = windows ]; then echo "$CONDA_ENVS/$1/python.exe"; else ec
 HUB_PY="${HUB_PY:-$(env_py rookie_hub)}"
 INFO_PY="${INFO_PY:-$(env_py rookie_info)}"
 LIDAR_PY="${LIDAR_PY:-$(env_py labs)}"
+SPIDER_PY="${SPIDER_PY:-$INFO_PY}"   # spider 엔진은 numpy·scipy·flask뿐이라 info 환경을 그대로 쓴다
 
 case "$OS" in
   mac)     CF_INSTALL="brew install cloudflared" ;;
@@ -106,9 +110,11 @@ LIDAR_HOST="${LIDAR_HOST:-lidar.rookie-goldenlink.xyz}"
 HUB_PORT=5001          # dashboard·info·voice가 모두 이 포트를 기본값으로 알고 있다
 DASH_PORT="${DASH_PORT:-3000}"
 LIDAR_PORT="${LIDAR_PORT:-8000}"
+SPIDER_PORT="${SPIDER_PORT:-5050}"
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
 MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0; SIM_DISPATCH=1; DASHBOARD_CALL=0
+RUN_SPIDER=0; [ -f spider/serve.py ] && RUN_SPIDER=1   # spider/ 가 없는 체크아웃(옛 develop·다른 브랜치)에서는 조용히 건너뛴다
 for a in "$@"; do
   case "$a" in
     --local)      MODE=local ;;
@@ -120,6 +126,8 @@ for a in "$@"; do
     --dashboard-call) DASHBOARD_CALL=1 ;;
     --lidar)      RUN_LIDAR=1 ;;
     --no-lidar)   RUN_LIDAR=0 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
+    --spider)     RUN_SPIDER=1 ;;
+    --no-spider)  RUN_SPIDER=0 ;;
     --setup-dns)
       [ -n "$CF_BIN" ] || { echo "❌ cloudflared가 없습니다: $CF_INSTALL"; exit 1; }
       echo "터널 '$TUNNEL_NAME'에 $APP_HOST 를 연결합니다 (Cloudflare DNS에 CNAME 생성)..."
@@ -181,6 +189,7 @@ port_free hub "$HUB_PORT" ""
 [ "$RUN_INFO" = 1 ] && port_free "거절 로그 수신구" 5003 ""
 port_free dashboard "$DASH_PORT" DASH_PORT
 [ "$RUN_LIDAR" = 1 ] && port_free lidar3d "$LIDAR_PORT" LIDAR_PORT
+[ "$RUN_SPIDER" = 1 ] && port_free spider "$SPIDER_PORT" SPIDER_PORT
 
 # 포트가 응답할 때까지 기다린다. 먼저 뜬 서버 없이 다음 단계로 가면 연결 실패(502 등)가 난다.
 wait_http(){  # 이름, URL, pid, 로그, 최대초
@@ -290,6 +299,18 @@ if [ "$RUN_LIDAR" = 1 ]; then
   wait_http lidar3d "http://127.0.0.1:$LIDAR_PORT/health?token=$LIDAR_TOKEN" "$LIDAR_PID" "$LOG_DIR/lidar3d.log" 60
 fi
 
+# ── 3b. spider (거미줄 3D — 2026-10-14) ──
+# 화면(spider/web)은 그리기만 하고 계산(줄 길이·충돌·재투척·도로 최단경로)은 이 파이썬 서버가 한다. 도로 그래프 25 MB를
+# 브라우저가 내려받지 않아 아이패드 WebView에서도 가볍다. 경로 접두어 /spider 는 터널 규칙(아래 5)과 짝이다.
+if [ "$RUN_SPIDER" = 1 ]; then
+  need "$SPIDER_PY" spider SPIDER_PY
+  echo "spider 시작 (포트 $SPIDER_PORT, 도로 그래프 로드에 몇 초)..."
+  (cd spider && SPIDER_PREFIX=/spider exec "$SPIDER_PY" -u serve.py --host 0.0.0.0 --port "$SPIDER_PORT") \
+      > "$LOG_DIR/spider.log" 2>&1 &
+  SPIDER_PID=$!; PIDS+=("$SPIDER_PID")
+  wait_http spider "http://127.0.0.1:$SPIDER_PORT/spider/api/health" "$SPIDER_PID" "$LOG_DIR/spider.log" 120
+fi
+
 # ── 4. dashboard ──
 # NEXT_PUBLIC_* 값은 빌드할 때 코드에 박힌다. 그래서 모드(공개/로컬)가 바뀌면 반드시 다시 빌드해야 한다.
 # 여기서 넘기는 환경변수가 dashboard/.env.local 보다 우선한다.
@@ -332,6 +353,11 @@ if [ "$MODE" = public ]; then
     echo "  - hostname: $APP_HOST"
     echo "    path: ^/(ws/dashboard|identity|route|geocode|verification|hospital-backup)"
     echo "    service: http://127.0.0.1:$HUB_PORT"
+    if [ "$RUN_SPIDER" = 1 ]; then
+      echo "  - hostname: $APP_HOST"
+      echo "    path: ^/spider(/|$)"
+      echo "    service: http://127.0.0.1:$SPIDER_PORT"
+    fi
     echo "  - hostname: $APP_HOST"
     echo "    service: http://127.0.0.1:$DASH_PORT"
     if [ "$RUN_LIDAR" = 1 ]; then
@@ -365,6 +391,9 @@ cat <<BANNER
   🚑 구급차 대시보드  $DASH_URL/ambulance?id=<구급차 apid>
   🔑 코드 입력 화면   $DASH_URL/   (병원 H-<hpid>, 구급차 A-<apid>)
 BANNER
+if [ "$RUN_SPIDER" = 1 ]; then
+  if [ "$MODE" = public ]; then echo "  🕸️ 거미줄 3D       $DASH_URL/spider/   (아이패드 앱 WebView 주소)"; else echo "  🕸️ 거미줄 3D       http://127.0.0.1:$SPIDER_PORT/spider/   (LAN: http://<이 장비 IP>:$SPIDER_PORT/spider/)"; fi
+fi
 if [ "$RUN_LIDAR" = 1 ]; then
   echo "  🧊 3D 뷰어         $VIEWER_URL"
   echo "     (병원 대시보드 상단의 [3D 현장 뷰어] 버튼으로도 열림)"
@@ -373,7 +402,7 @@ fi
 cat <<BANNER
 
   voice(구급차 노트북)는 HUB_BASE_URL=http://<이 장비의 LAN IP>:$HUB_PORT 로 따로 실행하세요.
-  로그: $LOG_DIR/{hub,info,snapshot,rejection,lidar3d,dashboard,cloudflared}.log
+  로그: $LOG_DIR/{hub,info,snapshot,rejection,lidar3d,spider,dashboard,cloudflared}.log
   Ctrl-C 로 전부 종료합니다.
 ==============================================================
 
