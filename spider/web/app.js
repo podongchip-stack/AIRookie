@@ -35,6 +35,8 @@ function readParams(){ return {tau:+$('tau').value,cap:+$('cap').value,dwell:+$(
 
 // ---------- 환자·시나리오 ----------
 let P=[], nextId=1, RES=null, timer=null, riseT0=performance.now();
+// 'sim' = 환자 떨어뜨리기(가상, 이 화면이 환자를 만들고 서버 엔진이 푼다) / 'live' = hub의 실제 사건을 그대로 그린다(live.js)
+let MODE='sim';
 function addPatient(site,k,t0,lat,lng){
   if(lat===undefined){[lat,lng]=META.sites[site];}
   const id=nextId++;
@@ -98,7 +100,7 @@ const deckgl = new DeckGL({
   onViewStateChange:({viewState,interactionState})=>{VIEW=viewState; const u=interactionState||{}; if(u.isDragging||u.isPanning||u.isRotating||u.isZooming){ if(spinning){spinning=false;$('spin').textContent='회전';} clearTimeout(camT); }},
   getTooltip:({object})=>object&&object.hpid?{html:`<b>${object.name}</b><br>${object.grade}<br>z ${object.z} · 중증 가능 ${object.severeY}/28<br>응급실 ${object.hasBeds?(object.hvec===null?'미상':object.hvec)+' / '+(object.er_cap??'?'):'데이터 없음'}`,
     style:{background:'rgba(12,16,34,.95)',color:'#f2f1ec',fontSize:'12px',fontFamily:css('--font'),border:'1px solid #2b2d45',padding:'6px 8px'}}:null,
-  onClick:info=>{ if(!META) return; if(info.layer&&info.object&&info.object.hpid) return; if(!info.coordinate) return;
+  onClick:info=>{ if(!META||MODE==='live') return; if(info.layer&&info.object&&info.object.hpid) return; if(!info.coordinate) return;
     const [lng,lat]=info.coordinate;
     const t=+$('time').value; addPatient('지도 클릭',+$('ktas').value,Math.round(t),lat,lng); $('scn').value='custom'; recompute(t); }
 });
@@ -137,6 +139,7 @@ function layers(t){
     L.push(beam('beam-halo',150,10,12)); L.push(beam('beam-mid',60,38,12)); L.push(beam('beam-core',18,230,10));
     L.push(new ScatterplotLayer({id:'top-halo',data:live,radiusUnits:'meters',getRadius:420+pulse*90,getPosition:top,getFillColor:h=>full(h)?[255,60,60,45]:[...gCol(h.g).slice(0,3),55],parameters:ADD,updateTriggers:{getRadius:[animTick],getPosition:[ease]}}));
   }
+  if(MODE==='live') return L.concat(liveLayers(t));
   if(!RES) return L;
   const dwell=RES.dwell, webs=[], gone=[], trails=[], lights=[], occ={}, ups=[], airWebs=[], airGone=[], airLights=[], stems=[];
   const air=$('air').checked;
@@ -204,11 +207,12 @@ function renderList(){
     li.querySelector('button').onclick=()=>{P=P.filter(q=>q.id!==p.id);$('scn').value='custom';recompute();}; ul.appendChild(li);});
 }
 let lastSideT=-1;
-function tick(){ const t=+$('time').value; if(t!==lastSideT){lastSideT=t; renderSide(t);} }
+function tick(){ if(MODE==='live') return; const t=+$('time').value; if(t!==lastSideT){lastSideT=t; renderSide(t);} }
 function stopPlay(){clearInterval(timer);timer=null;$('play').textContent='▶ 재생';}
 // 계산은 서버로 — 환자 목록과 슬라이더 값을 보내고 결과를 받아 그린다. 늦게 온 응답이 새 요청 결과를 덮지 않게 번호를 센다.
 let solveSeq=0;
 async function recompute(keepT){
+  if(MODE==='live'){ scheduleSuggest(); return; }   // 실시간 모드에선 슬라이더가 거미줄 제안 계산에만 쓰인다
   stopPlay(); renderList(); showBusy('경로 계산 중…');
   const seq=++solveSeq; const t0=performance.now();
   let j;
@@ -248,6 +252,24 @@ $('end').onclick=()=>{stopPlay();$('time').value=$('time').max;tick();};
 $('play').onclick=()=>{ if(timer){stopPlay();return;} const s=$('time'); if(+s.value>=+s.max) s.value=0; $('play').textContent='❚❚ 멈춤'; if(+s.value===0) choreograph();
   timer=setInterval(()=>{if(+s.value>=+s.max){stopPlay();return;} s.value=Math.min(+s.max,+s.value+0.25); tick();},100); };
 
+// ---------- 모드 전환 ----------
+// 실시간 모드: 가상 환자·시계를 감추고 hub에 붙는다(live.js). 가상 모드로 돌아오면 hub 연결을 끊고 마지막 시나리오를 다시 그린다.
+// 아이패드 앱은 /spider/?mode=live 로 열어 바로 실시간으로 시작한다.
+function setMode(m){
+  if(m===MODE) return;
+  MODE=m; stopPlay();
+  document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
+  $('simctl').style.display=m==='live'?'none':'';
+  $('livepanel').style.display=m==='live'?'':'none';
+  $('clock').style.display=m==='live'?'none':'';
+  $('right').style.display='';
+  if(m==='live'){ RES=null; hideBusy(); hubConnect(); renderLivePanel(); renderLiveSide(); $('etanote').textContent='실시간: 병원·사건·구급차 위치는 hub(관제 지도와 같은 소켓)에서, 거미줄 제안만 이 서버의 파이썬 엔진에서.'; }
+  else { hubDisconnect(); lastSideT=-1; recompute(); }
+  const u=new URL(location.href); if(m==='live') u.searchParams.set('mode','live'); else u.searchParams.delete('mode'); history.replaceState(null,'',u);
+}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+$('suggest').addEventListener('change',()=>{ if(!$('suggest').checked){ HUB.suggest={}; renderLivePanel(); } else scheduleSuggest(); });
+
 // ---------- 시작: 서버에서 병원·시나리오를 받은 뒤 첫 시나리오를 돌린다 ----------
 (async function init(){
   showBusy('서버에서 병원 목록 받는 중…');
@@ -258,5 +280,6 @@ $('play').onclick=()=>{ if(timer){stopPlay();return;} const s=$('time'); if(+s.v
   $('scn').innerHTML=META.scenarios.map(s=>`<option value="${s.id}">${s.label}</option>`).join('');
   $('site').innerHTML=Object.keys(META.sites).map(s=>`<option>${s}</option>`).join('');
   riseT0=performance.now();
-  loadScenario(); recompute();
+  loadScenario();
+  if(new URLSearchParams(location.search).get('mode')==='live') setMode('live'); else recompute();
 })();

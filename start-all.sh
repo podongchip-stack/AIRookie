@@ -4,7 +4,7 @@
 # 도메인 하나(rookie-goldenlink.xyz)를 Cloudflare named 터널 하나로 나눠 쓴다:
 #
 #   https://app.rookie-goldenlink.xyz     /ws/dashboard, /identity, /route, /geocode, /verification, /hospital-backup → hub (127.0.0.1:5001)
-#                                         /spider/*                  → spider 거미줄 3D (127.0.0.1:5050, spider/ 폴더가 있을 때만)
+#                                         /spider/*                  → spider 거미줄 3D (127.0.0.1:2700, spider/ 폴더가 있을 때만)
 #                                         그 밖의 모든 경로           → dashboard (127.0.0.1:3000)
 #   https://lidar.rookie-goldenlink.xyz   전체                        → lidar3d   (127.0.0.1:8000)
 #
@@ -110,7 +110,7 @@ LIDAR_HOST="${LIDAR_HOST:-lidar.rookie-goldenlink.xyz}"
 HUB_PORT=5001          # dashboard·info·voice가 모두 이 포트를 기본값으로 알고 있다
 DASH_PORT="${DASH_PORT:-3000}"
 LIDAR_PORT="${LIDAR_PORT:-8000}"
-SPIDER_PORT="${SPIDER_PORT:-5050}"
+SPIDER_PORT="${SPIDER_PORT:-2700}"   # 2700: spider 전용 — 2700 spider · 3000 dashboard · 5000대 hub/info · 8000 lidar3d 순. 5000·7000은 macOS AirPlay 수신기가 잡고 있어 피했다
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
 MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0; SIM_DISPATCH=1; DASHBOARD_CALL=0
@@ -305,7 +305,9 @@ fi
 if [ "$RUN_SPIDER" = 1 ]; then
   need "$SPIDER_PY" spider SPIDER_PY
   echo "spider 시작 (포트 $SPIDER_PORT, 도로 그래프 로드에 몇 초)..."
-  (cd spider && SPIDER_PREFIX=/spider exec "$SPIDER_PY" -u serve.py --host 0.0.0.0 --port "$SPIDER_PORT") \
+  # SPIDER_HUB_WS_URL: 실시간 모드(/spider/?mode=live)가 붙을 hub 소켓 — 공개 모드는 터널 주소, 로컬은 127.0.0.1:5001
+  # (아이패드가 LAN으로 열면 화면이 127.0.0.1을 자기 접속 호스트로 바꿔 쓴다)
+  (cd spider && SPIDER_PREFIX=/spider SPIDER_HUB_WS_URL="$WS_URL" exec "$SPIDER_PY" -u serve.py --host 0.0.0.0 --port "$SPIDER_PORT") \
       > "$LOG_DIR/spider.log" 2>&1 &
   SPIDER_PID=$!; PIDS+=("$SPIDER_PID")
   wait_http spider "http://127.0.0.1:$SPIDER_PORT/spider/api/health" "$SPIDER_PID" "$LOG_DIR/spider.log" 120

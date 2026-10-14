@@ -753,7 +753,7 @@ dashboard의 관제 지도(`/map`, 보기 전용 — 병원 대시보드와는 �
 |---|---|---|
 | `identity_info` | 연결 직후 | `name: "관제 지도"`, `known: true` |
 | `map_overview` | 연결 직후 · 병원 목록 한 주기 끝(`POST /info/hospitals/roster`) · 구급차 정보 갱신 | `hospitals[] {hospitalId, name, gps, emergencyLevel}`, `ambulances[] {apid, name, gps(시뮬레이션 위치 우선), base}`, `simDispatch` |
-| `case_overview` | 연결 직후(진행 중 사건 전부) · 매칭 결과가 나갈 때마다 | `caseId, apid, ambulanceName, ambulanceGps, severityTag, zoneActive, zoneBandKm(5), hospitals[] {hospitalId, name, status, distanceKm, zone}` — 거절 비율로 존이 넓혀지면 바깥 존 병원이 `hospitals`에 새로 들어온다 |
+| `case_overview` | 연결 직후(진행 중 사건 전부) · 매칭 결과가 나갈 때마다 | `caseId, apid, ambulanceName, ambulanceGps, severityTag, zoneActive, zoneBandKm(5), hospitals[] {hospitalId, name, status, distanceKm, zone}` — 거절 비율로 존이 넓혀지면 바깥 존 병원이 `hospitals`에 새로 들어온다. **2026-10-14** spider 실시간 화면(`/spider/?mode=live`, 같은 monitor 소켓)용 환자 요약 `ktasLevel, expectedDiagnosis, chiefComplaint, requiredDepartment, patient, confirmedBy`(모두 Optional) 추가 — 통화 전문·활력징후·의식은 여전히 안 보낸다 |
 | `ambulance_phase`·`ambulance_position` | 연결 직후(구급차 전부) · 이동 중 1초마다 | 출동 시뮬레이션 상태(구급차 탭과 같은 형식, 전 구급차) |
 | `case_closed` | 사건이 끝날 때 | 지도에서 그 사건의 요청 표시·존 범위를 지운다 |
 | `case_sync` | 연결(재연결) 직후 따라잡기 끝(모든 역할 공통, 2026-10-03) | `caseIds` — 지금 진행 중인 사건. 탭은 이 목록에 없는 사건을 지운다(hub 재시작 등으로 그 사이 끝난 사건). 구급차 탭은 매칭 결과 전(출동·통화 중) 사건도 포함 |
