@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -21,23 +22,38 @@ import decision_log
 from disease_group import match_group
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
+    AcceptanceMessage,
+    AcceptanceMessageMatch,
     AmbulanceInfo,
     ApprovalAction,
     ArrivalResult,
+    BackupBedRow,
+    BackupEquipmentRow,
     GpsPoint,
+    HospitalBackupView,
     HospitalInfo,
     HospitalMatch,
     HospitalStatus,
     HubMatchResult,
+    OverrideRecord,
     PatientInfo,
+    PatientOverride,
     PatientUpdate,
     ReliabilityInfo,
     SevereFreshness,
     SpecialtyMatch,
     VoiceCallSummaryMessage,
 )
-from scoring import calibrate_min_per_km, expertise_bonus_min, final_score, load_penalty_min, rank_key
+from scoring import (
+    calibrate_min_per_km,
+    expertise_bonus_min,
+    final_score,
+    load_penalty_min,
+    occupancy_penalty_min,
+    rank_key,
+)
 from specialty_matcher import SpecialtyMatcher
+from voice_v2 import KTAS_TO_SEVERITY
 
 if TYPE_CHECKING:
     from routing import KakaoRouting
@@ -45,11 +61,51 @@ if TYPE_CHECKING:
 # 병상 차감을 지속시키는 방식(2026-08-13 변경). 예전엔 hub가 깎은 값을
 # feature/info의 Supabase에 써서 다음 재조회 때도 유지시켰는데, info가 이제
 # Supabase 없이 E-Gen 실 API만 쓰면서(조회 전용이라 쓰기 자체가 불가능) 그
-# 경로가 사라졌다. 대신 hub가 짧은 시간만 자기 메모리에 차감분을 얹어 보여주는
-# TTL 오버레이로 대체한다 — 그 시간이 지나면 E-Gen 자신이 갱신한 진짜 값을
-# 그대로 믿는다. 15분은 hvidate 갱신 간격 실측(중앙값 5분, 88.7%가 10분
-# 이내)에서 여유를 둔 값이다.
-BED_OVERLAY_TTL_MIN = 15
+# 경로가 사라졌다. 대신 hub가 자기 메모리에 차감분을 얹어 보여주는 오버레이로 대체한다.
+#
+# 언제 푸는가(2026-10-08 재설계 — 예전엔 확정 뒤 고정 15분). 15분의 근거였던 "hvidate 갱신 간격
+# 중앙값 5분"은 병원 입력 주기가 아니라 E-Gen 시스템의 5분 묶음 주기였다. hub가 "병원이 우리 환자를
+# 반영한 값"을 보려면 이송 + 병원 입력 + E-Gen 묶음(≤5분) + info 수집(≤5분)이 지나야 해서, 15분이면
+# 구급차가 도착하기도 전에 차감이 풀려 같은 병상이 다시 비어 보이고 부하 페널티도 꺼졌다.
+# 반대로 무작정 길게 두면 병원이 이미 고친 뒤 이중 차감이 돼 작은 응급실이 "확인된 만실"로 떨어진다.
+#   1) 최소 유지: 확정 + 예상 이동시간 + BED_HOLD_GRACE_MIN까지는 무조건 유지
+#   2) 조기 해제: 그 뒤 E-Gen 응급실 원값이 확정 당시(baseline)보다 줄었으면 병원이 반영한 것으로 보고 해제
+#   3) 상한: 끝까지 안 줄어도 도착 예상 + BED_HOLD_MAX_AFTER_ARRIVAL_MIN에 해제
+#   4) 병원이 수용 완료(arrival_accepted)를 누르면 1)·3)의 기준을 예상 도착이 아니라 실제 도착 시각으로 다시 잡는다
+# 2)는 다른 환자의 입원으로 값이 줄어도 해제되는 근사다 — 그때는 E-Gen 값 자체가 현실에 가까워진 뒤라 받아들인다.
+# 숫자는 정답 데이터 없이 정한 초기값이다(도착 결과 로그가 쌓이면 다시 맞춘다).
+BED_HOLD_GRACE_MIN = 20  # E-Gen 묶음 5 + info 수집 5 + 병원 입력 여유 10
+BED_HOLD_MAX_AFTER_ARRIVAL_MIN = 60
+BED_HOLD_DEFAULT_TRAVEL_MIN = 15  # 확정 병원의 이동시간을 모를 때
+
+
+@dataclass(eq=False)
+class BedHold:
+    """이송 확정 하나가 얹은 병상 차감(eq=False — 같은 값의 두 확정을 서로 다른 차감으로 센다)."""
+
+    case_id: str | None
+    confirmed_at: datetime
+    hold_until: datetime  # 이때까지는 무조건 유지
+    expires_at: datetime  # 이때는 무조건 해제(상한)
+    baseline: int | None  # 확정 순간 E-Gen 응급실 원값(info.availableBedCount). None이면 조기 해제 안 함
+
+    def to_json(self) -> dict:
+        return {
+            "caseId": self.case_id,
+            "confirmedAt": self.confirmed_at.isoformat(),
+            "holdUntil": self.hold_until.isoformat(),
+            "expiresAt": self.expires_at.isoformat(),
+            "baseline": self.baseline,
+        }
+
+
+def _bed_hold_window(anchor: datetime, travel_min: float) -> tuple[datetime, datetime]:
+    """(최소 유지 끝, 상한). anchor는 확정 시각(travel_min = 예상 이동시간) 또는 실제 도착 시각(travel_min = 0)."""
+    arrival = anchor + timedelta(minutes=max(travel_min, 0.0))
+    return (
+        arrival + timedelta(minutes=BED_HOLD_GRACE_MIN),
+        arrival + timedelta(minutes=BED_HOLD_MAX_AFTER_ARRIVAL_MIN),
+    )
 
 # 이송이 확정(final_approval)된 사건을 인메모리 캐시에 얼마나 더 들고 있을지.
 # hub는 상시 정리 스레드가 없는 순수 요청-응답 구조라, 사건별 dict
@@ -77,6 +133,27 @@ STATE_VERSION = 1
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _override_to_json(override: dict | None) -> dict | None:
+    """구급대원 확인 상태(_case_override 항목) -> 상태 파일용 dict."""
+    if override is None:
+        return None
+    return {"confirmedAt": override["confirmedAt"],
+            "records": [r.model_dump() for r in override["records"].values()]}
+
+
+def _override_from_json(raw: dict | None) -> dict | None:
+    if not raw or not raw.get("confirmedAt"):
+        return None
+    records = {}
+    for item in raw.get("records") or []:
+        try:
+            record = OverrideRecord.model_validate(item)
+        except Exception:  # noqa: BLE001 — 항목 하나가 깨져도 나머지는 살린다
+            continue
+        records[record.field] = record
+    return {"confirmedAt": raw["confirmedAt"], "records": records}
 
 
 def _parse_iso(value: str) -> datetime | None:
@@ -268,6 +345,86 @@ def _should_demote(info: HospitalInfo, group: str | None) -> bool:
     return group_score is not None and group_score.tier == "declared_no"
 
 
+def _er_capacity(info: HospitalInfo, effective_beds: int, bed_unknown: bool, bed_stale: bool) -> tuple[int | None, int | None]:
+    """응급실 일반 정원과 포화도(%). 가용은 이송 확정 차감(TTL 오버레이)까지 반영한 값을 쓴다. info가 과밀(음수)을
+    0으로 보내므로 포화도는 100%가 상한이다. 정원이 없거나 병상이 미상·오래된 값이면 포화도를 내지 않는다."""
+    capacity = (info.bedCapacityByType or {}).get("ER_ADULT")
+    if capacity is None or capacity <= 0 or bed_unknown or bed_stale:
+        return capacity, None
+    occupied = capacity - max(effective_beds, 0)
+    return capacity, max(0, min(100, round(100 * occupied / capacity)))
+
+
+#: [배후역량] 장비 줄(2026-10-08): E-Gen 운영 코드 → (화면 이름, 심평원 장비명 또는 None, 설명). 심평원 장비명이 None인
+#: 줄은 심평원에 그 항목이 없다는 뜻이다(혈관조영장치는 전국 어디에도 항목이 없었다 — info hira.py 주석).
+BACKUP_EQUIPMENT: tuple[tuple[str, str, str | None, str | None], ...] = (
+    ("ECMO", "ECMO", "ECMO", None),
+    ("VENTILATOR", "인공호흡기", "인공호흡기", None),
+    ("CRRT", "CRRT(지속 투석)", None, "심평원은 일반 혈액투석기 대수만 있다(아래 줄)"),
+    ("HD", "혈액투석기", "혈액투석을위한인공신장기", None),
+    ("ANGIO", "혈관조영", None, "심평원 장비 목록에 항목이 없다"),
+    ("CT", "CT", "CT", None),
+    ("MRI", "MRI", "MRI", None),
+    ("HYPOTHERMIA", "저체온 치료기", None, None),
+    ("INCUBATOR", "인큐베이터", "인큐베이터", None),
+    ("VENTILATOR_PRETERM", "조산아 인공호흡기", None, None),
+    ("HYPERBARIC", "고압산소", None, None),
+)
+
+
+def _hold_from_state(raw: Any) -> BedHold | None:
+    """상태 파일의 병상 차감 하나. 예전 형식(만료 시각 문자열 하나, 고정 15분 TTL 시절)은 그 시각에 풀리는
+    차감으로 옮긴다(확정 당시 값을 몰라 조기 해제는 안 함)."""
+    if isinstance(raw, str):
+        expires = _parse_iso(raw)
+        return None if expires is None else BedHold(None, expires - timedelta(minutes=15), expires, expires, None)
+    if not isinstance(raw, dict):
+        return None
+    times = [_parse_iso(raw.get(k) or "") for k in ("confirmedAt", "holdUntil", "expiresAt")]
+    if any(t is None for t in times):
+        return None
+    baseline = raw.get("baseline")
+    return BedHold(raw.get("caseId"), *times, baseline if isinstance(baseline, int) else None)
+
+
+def _active_messages(info: HospitalInfo, now: datetime) -> list[AcceptanceMessage]:
+    """E-Gen 수용 제한 메시지 중 지금 유효한 것(시작 ≤ 지금 < 종료). info는 30분마다 보내므로 그 사이에
+    끝나거나 시작되는 메시지를 여기서 다시 거른다. 시각이 없거나 깨진 쪽은 열린 구간으로 본다."""
+    active = []
+    for msg in info.acceptanceMessages or []:
+        start = _parse_iso(msg.startAt) if msg.startAt else None
+        end = _parse_iso(msg.endAt) if msg.endAt else None
+        if (start is None or start <= now) and (end is None or now < end):
+            active.append(msg)
+    return active
+
+
+def _severe_blocked(info: HospitalInfo, group: str | None, now: datetime) -> bool:
+    """사건 질환군에 대해 병원이 지금 유효한 중증질환 차단 메시지를 걸어뒀는지(2026-10-07). declared_no와
+    같은 원칙으로 순서만 내린다 — 병원이 미리 밝힌 "못 받는다"라서 근거 강도는 신고와 같다."""
+    if group is None:
+        return False
+    return any(m.kind == "severe" and m.diseaseGroup == group for m in _active_messages(info, now))
+
+
+def _acceptance_messages_for(
+    info: HospitalInfo, group: str | None, required_department: str | None, now: datetime
+) -> list[AcceptanceMessageMatch] | None:
+    """매칭 결과에 실을 메시지. 이 환자에 해당하는 것(matched)을 앞에 둔다. 응급실 메시지는 진료과가
+    필요 진료과와 같거나 응급실 전체 공지("문의 후 이송")일 때 해당한다."""
+    out = []
+    for msg in _active_messages(info, now):
+        if msg.kind == "severe":
+            matched = group is not None and msg.diseaseGroup == group
+        else:
+            matched = msg.department == "응급실" or (
+                required_department is not None and msg.department == required_department
+            )
+        out.append(AcceptanceMessageMatch(**msg.model_dump(), matched=matched))
+    out.sort(key=lambda m: not m.matched)
+    return out or None
+
+
 def _demote_reasons(
     info: HospitalInfo,
     group: str | None,
@@ -275,12 +432,13 @@ def _demote_reasons(
     effective_beds: int,
     bed_unknown: bool,
     bed_stale: bool,
+    now: datetime,
 ) -> list[str]:
     """이 병원을 순위 뒤쪽으로 내릴 이유들(2026-09-28). 비면 finalScore 순서 그대로다.
 
     - 이 사건에 대해 병원이 거절했으면 rejected 하나로 맨 뒤.
     - 병원이 이 사건에 승인·확정 응답을 했으면 내리지 않는다 — 그 병원의 명시적 응답이
-      미리 해둔 신고(declared_no)나 병상 숫자보다 우선이다. 특히 확정 직후 오버레이로 병상이
+      미리 해둔 신고(declared_no)·차단 메시지(severe_blocked)나 병상 숫자보다 우선이다. 특히 확정 직후 오버레이로 병상이
       0이 된 병원이 자기 사건에서 만실로 밀려나면 안 된다.
     - beds_full은 "확인된 만실"일 때만. 미상·오래된 값은 순위를 막지 않는다(미상을 이유로
       밀어내면 뺑뺑이가 오히려 늘어난다는 기존 원칙).
@@ -292,6 +450,8 @@ def _demote_reasons(
     reasons = []
     if _should_demote(info, group):
         reasons.append("declared_no")
+    if _severe_blocked(info, group, now):
+        reasons.append("severe_blocked")
     if not bed_unknown and not bed_stale and effective_beds <= 0:
         reasons.append("beds_full")
     return reasons
@@ -332,6 +492,7 @@ def _display_signature(result: HubMatchResult | None) -> tuple | None:
                 h.bedDataStale,
                 h.etaMin,
                 tuple(h.demoteReasons),
+                len(h.acceptanceMessages or ()),
                 round(h.bedReliability.authority, 2) if h.bedReliability else None,
                 round(h.bedReliability.rArrive, 2) if h.bedReliability else None,
             )
@@ -419,12 +580,12 @@ class HubEngine:
         self._case_group: dict[str, str | None] = {}
         # 사건별로 구급차 좌표가 기본 좌표로 대체됐는지. 재계산 결과에도 같은 표시를 싣는다.
         self._case_gps_fallback: dict[str, bool] = {}
-        # (caseId, hospitalId) -> 그 확정이 얹은 병상 차감의 만료 시각. 이송 병원을 다시
-        # 고르면 이전 병원의 차감을 이것으로 찾아 회수한다(2026-09-28).
-        self._case_overlay: dict[tuple[str, str], datetime] = {}
-        # hospitalId -> 아직 유효한 차감 만료 시각 목록. final_approval마다 하나씩
-        # 추가되고, effective_bed_count()가 조회 시점에 만료분을 걸러낸다.
-        self._bed_overlay: dict[str, list[datetime]] = {}
+        # (caseId, hospitalId) -> 그 확정이 얹은 병상 차감. 이송 병원을 다시 고르면 이전 병원의
+        # 차감을 이것으로 찾아 회수하고(2026-09-28), 수용 완료 때 기준 시각을 다시 잡는다(2026-10-08).
+        self._case_overlay: dict[tuple[str, str], BedHold] = {}
+        # hospitalId -> 아직 유효한 병상 차감 목록. final_approval마다 하나씩 추가되고,
+        # _prune_and_count_overlay()가 조회 시점에 풀 것을 걸러낸다(BED_HOLD_* 규칙).
+        self._bed_overlay: dict[str, list[BedHold]] = {}
         # caseId -> 이송이 확정된 시각(UTC). 위 dict들과 달리 이건 정리용이다 —
         # process_voice_summary()/apply_approval_action() 진입 때마다 여기서
         # CASE_RETENTION_MIN이 지난 사건을 골라 모든 사건 dict에서 걷어낸다
@@ -436,6 +597,10 @@ class HubEngine:
         self._case_excluded: set[tuple[str, str]] = set()
         # caseId -> 앞선 통화 요약들(2026-10-05, 덧붙이기) — 새 통화 요약이 오면 직전 patientInfo를 여기 쌓는다
         self._case_prev_calls: dict[str, list[PatientUpdate]] = {}
+        # caseId -> 구급대원 확인 상태(2026-10-13, Override): {"confirmedAt": iso, "records": {field: OverrideRecord}}.
+        # 고친 값 자체는 _case_voice의 요약에 반영돼 이후 재계산(60초 주기·존 확장)에도 유지되고, 여기는 "누가·언제·
+        # 무엇을 고쳤나"만 둔다. 새 통화 회차가 오면 지운다(새 AI 요약은 아직 확인 전).
+        self._case_override: dict[str, dict] = {}
         # hospitalId -> 병원 대시보드가 "현재 정보 확인"을 누른 시각(2026-09-29).
         # infosurv의 조건부 생존 갱신 S(a)/S(u)에 쓰는 유효 확인 이력 —
         # E-Gen 자기 신고 바깥에서 처음 생기는 관측이다. 값이 바뀌면(새 claim
@@ -482,15 +647,75 @@ class HubEngine:
             return removed, kept
 
     def clear_bed_overlay(self) -> None:
-        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감(TTL 오버레이)을 비운다.
-        실운영 경로에서는 부르지 않는다(차감은 TTL로만 풀리는 게 원칙)."""
+        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감을 비운다.
+        실운영 경로에서는 부르지 않는다(차감은 BED_HOLD_* 규칙으로만 풀리는 게 원칙)."""
         with self._lock:
             self._bed_overlay.clear()
+            self._case_overlay.clear()
             self._dirty = True
 
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
         with self._lock:
             return self._hospitals.get(hospital_id)
+
+    def build_backup_view(self, hospital_id: str) -> HospitalBackupView | None:
+        """대시보드 [배후역량] 버튼(GET /hospital-backup, 2026-10-08) — 한 병원의 배후진료를 세 층으로 모은다.
+        보유(심평원, 월 단위) · 운영/정원(E-Gen) · 지금 가용(E-Gen 5분, 이송 확정 차감 반영)과 그 숫자의 지금 유효
+        확률(AI). 장비는 지금 남은 대수가 공개 정보에 없어 보유·운영만 싣는다. 순위와 무관한 열람용이다."""
+        with self._lock:
+            info = self._hospitals.get(hospital_id)
+            if info is None:
+                return None
+            now = _utcnow()
+            confirmed = self._info_confirmations.get(hospital_id)
+            hira = info.backupCapacity
+            capacity = info.bedCapacityByType or {}
+            beds_by_type = info.bedsByType or {}
+            by_field = info.bedReliabilityByType or {}
+
+            def authority(payload: Any) -> float | None:
+                match = bed_reliability.evaluate(payload, 0.0, now=now, horizon_sec=0.0, confirmed_at=confirmed)
+                return round(match.authority, 3) if match is not None else None
+
+            unknown = _is_bed_count_unknown(info)
+            beds = [
+                BackupBedRow(key="ER_ADULT", label="응급실(일반)", egenCapacity=capacity.get("ER_ADULT"),
+                             available=None if unknown else self.effective_bed_count(info),
+                             authority=authority(info.bedReliability)),
+                BackupBedRow(key="ER_PEDIATRIC", label="응급실(소아)", egenCapacity=capacity.get("ER_PEDIATRIC"),
+                             available=beds_by_type.get("ER_PEDIATRIC"), authority=authority(by_field.get("hv28"))),
+                BackupBedRow(key="OR", label="수술실", hiraCapacity=hira.operatingRooms if hira else None,
+                             egenCapacity=capacity.get("OR"), available=beds_by_type.get("OR"),
+                             authority=authority(by_field.get("hvoc"))),
+                BackupBedRow(key="ICU", label="중환자실", hiraCapacity=hira.icuTotal if hira else None,
+                             egenCapacity=capacity.get("ICU"), available=beds_by_type.get("ICU"),
+                             note="심평원 값은 중환자실 총량, E-Gen은 일반 중환자실만"),
+                BackupBedRow(key="NICU", label="신생아 중환자실", hiraCapacity=hira.nicu if hira else None),
+                BackupBedRow(key="WARD", label="입원실", hiraCapacity=hira.generalWard if hira else None,
+                             authority=authority(by_field.get("hvgc"))),
+            ]
+            operating = info.equipmentOperating or {}
+            owned = hira.equipment if hira else {}
+            equipment = [
+                BackupEquipmentRow(key=key, label=label, hiraCount=owned.get(hira_name) if hira_name else None,
+                                   egenOperating=operating.get(key), note=note)
+                for key, label, hira_name, note in BACKUP_EQUIPMENT
+            ]
+            return HospitalBackupView(
+                hospitalId=hospital_id,
+                name=info.name,
+                emergencyLevel=info.emergencyLevel,
+                beds=[row for row in beds if row.hiraCapacity is not None or row.egenCapacity is not None
+                      or row.available is not None],
+                equipment=[row for row in equipment if row.hiraCount is not None or row.egenOperating is not None],
+                specialties=[s for s in info.specialties if s.doctorCount > 0],
+                nursingGrade=hira.nursingGrade if hira else None,
+                severeDeclarations=info.severeDeclarations,
+                acceptanceMessages=_active_messages(info, now),
+                inFlightCount=self._prune_and_count_overlay(hospital_id, now),
+                egenUpdatedAt=info.updatedAt,
+                hiraCollectedAt=hira.collectedAt if hira else None,
+            )
 
     def list_hospitals(self) -> list[HospitalInfo]:
         """관제 지도(2026-10-03)에 병원 마커를 찍기 위한 전체 목록."""
@@ -678,6 +903,7 @@ class HubEngine:
         self._case_confirmed_at.pop(case_id, None)
         self._case_arrival.pop(case_id, None)
         self._case_prev_calls.pop(case_id, None)
+        self._case_override.pop(case_id, None)
         self._case_excluded = {k for k in self._case_excluded if k[0] != case_id}
         for key in [k for k in self._reject_reason if k[0] == case_id]:
             del self._reject_reason[key]
@@ -689,7 +915,7 @@ class HubEngine:
         (2026-10-01). 예전엔 확정된 사건만 60분 뒤 지워서, 취소·중단된 사건이 병원 대시보드
         따라잡기 목록에 영원히 떴다. 이송 확정된 사건은 기본적으로 지우지 않는다(기존 60분 정리를
         따른다). include_confirmed=True면 확정 사건도 지운다(출동 시뮬레이션 재시작, 2026-10-03) —
-        병상 차감(_bed_overlay)은 병원 단위로 따로 남아 TTL대로 풀리므로 사건을 지워도 그대로다.
+        병상 차감(_bed_overlay)은 병원 단위로 따로 남아 BED_HOLD_* 규칙대로 풀리므로 사건을 지워도 그대로다.
         지웠으면 True."""
         with self._lock:
             if case_id in self._case_confirmed_at and not include_confirmed:
@@ -701,16 +927,47 @@ class HubEngine:
             return existed
 
     def _prune_and_count_overlay(self, hospital_id: str, now: datetime) -> int:
-        """만료된 차감 기록을 걷어내고, 아직 유효한 개수를 돌려준다."""
-        expirations = self._bed_overlay.get(hospital_id)
-        if not expirations:
+        """풀 차감을 걷어내고 아직 유효한 개수를 돌려준다(락 안에서만 호출). 상한이 지났거나, 최소 유지가 끝났고
+        E-Gen 응급실 원값이 확정 당시(baseline)보다 줄어 있으면 푼다. 줄어든 만큼만 푼다 — 먼저 확정된 것부터 풀고,
+        풀 때마다 그 1석을 "써 버린" 것으로 남은 차감들의 baseline을 1 낮춘다(다음 조회 때 같은 감소로 또 풀리지
+        않게). 단 지금 E-Gen 값 아래로는 낮추지 않는다 — 이미 줄어든 값으로 확정된 차감까지 깎으면 그 환자가
+        반영돼도 풀리지 않는다."""
+        holds = self._bed_overlay.get(hospital_id)
+        if not holds:
             return 0
-        active = [expires_at for expires_at in expirations if expires_at > now]
-        if active:
-            self._bed_overlay[hospital_id] = active
+        info = self._hospitals.get(hospital_id)
+        current = None if info is None or _is_bed_count_unknown(info) else info.availableBedCount
+        kept: list[BedHold] = []
+        ordered = sorted(holds, key=lambda h: h.confirmed_at)
+        for i, hold in enumerate(ordered):
+            if now >= hold.expires_at:
+                self._log_hold_released(hospital_id, hold, "max_age", current)
+            elif (
+                current is not None and hold.baseline is not None and now >= hold.hold_until
+                and hold.baseline - current >= 1
+            ):
+                self._log_hold_released(hospital_id, hold, "egen_reflected", current)
+                for later in ordered[i + 1:]:
+                    if later.baseline is not None:
+                        later.baseline = max(current, later.baseline - 1)
+            else:
+                kept.append(hold)
+                continue
+            for key in [k for k, v in self._case_overlay.items() if v is hold]:
+                del self._case_overlay[key]
+            self._dirty = True
+        if kept:
+            self._bed_overlay[hospital_id] = kept
         else:
             del self._bed_overlay[hospital_id]
-        return len(active)
+        return len(kept)
+
+    @staticmethod
+    def _log_hold_released(hospital_id: str, hold: BedHold, cause: str, current: int | None) -> None:
+        """차감이 풀린 이유를 남긴다 — 유지 시간 상수를 도착 결과 로그와 대조해 다시 맞출 재료다."""
+        decision_log.log_decision("bed_hold_released", {
+            "hospitalId": hospital_id, "cause": cause, "egenNow": current, "hold": hold.to_json(),
+        })
 
     def effective_bed_count(self, info: HospitalInfo) -> int:
         """TTL 오버레이가 적용된 실제 표시용 병상 수. 0 미만으로는 안 내려간다
@@ -739,12 +996,15 @@ class HubEngine:
             beds = self.effective_bed_count(info)
             unknown = _is_bed_count_unknown(info)
             stale = _is_bed_data_stale(info, now)
+            capacity, occupancy = _er_capacity(info, beds, unknown, stale)
             update.update(
                 availableBedCount=beds,
                 bedCountUnknown=unknown,
                 bedDataStale=stale,
+                erBedCapacity=capacity,
+                erOccupancyPct=occupancy,
                 demoteReasons=_demote_reasons(
-                    info, self._case_group.get(case_id), status, beds, unknown, stale
+                    info, self._case_group.get(case_id), status, beds, unknown, stale, now
                 ),
             )
             update["unavailableReason"] = _unavailable_reason(status, update["demoteReasons"])
@@ -831,6 +1091,11 @@ class HubEngine:
                 # 실제 수용 — 이송이 끝났다. status는 confirmed 그대로, 결과만 기록한다.
                 arrival = ArrivalResult(hospitalId=action.hospital_id, result="accepted", at=action.timestamp)
                 self._case_arrival[action.caseId] = arrival
+                # 병상 차감의 기준을 예상 도착에서 실제 도착(지금)으로 다시 잡는다 — 병원은 이제부터 입력한다
+                hold = self._case_overlay.get(status_key)
+                if hold is not None:
+                    hold.hold_until, hold.expires_at = _bed_hold_window(_utcnow(), 0.0)
+                    self._dirty = True
                 cached = self._case_results.get(action.caseId)
                 if cached is not None:
                     self._case_results[action.caseId] = cached.model_copy(update={"arrival": arrival})
@@ -897,9 +1162,14 @@ class HubEngine:
                 )
                 return True
 
-            expires_at = _utcnow() + timedelta(minutes=BED_OVERLAY_TTL_MIN)
-            self._bed_overlay.setdefault(info.hospitalId, []).append(expires_at)
-            self._case_overlay[status_key] = expires_at
+            now = _utcnow()
+            cached = self._case_results.get(action.caseId)
+            match = next((h for h in cached.hospitals if h.hospitalId == info.hospitalId), None) if cached else None
+            travel_min = match.travelMin if match is not None and match.travelMin is not None else BED_HOLD_DEFAULT_TRAVEL_MIN
+            hold_until, expires_at = _bed_hold_window(now, travel_min)
+            hold = BedHold(action.caseId, now, hold_until, expires_at, info.availableBedCount)
+            self._bed_overlay.setdefault(info.hospitalId, []).append(hold)
+            self._case_overlay[status_key] = hold
             # 병상 차감(오버레이)이 실제로 얹힌 뒤에 패치해야 dashboard 캐시에도 새
             # 병상 수가 반영된다 — 얹기 전에 패치하면 status만 바뀌고 병상 배지는
             # 옛날 값 그대로 남는다.
@@ -912,7 +1182,8 @@ class HubEngine:
                     "bedOverlay": {
                         "hospitalId": info.hospitalId,
                         "effectiveBedCount": self.effective_bed_count(info),
-                        "expiresAt": expires_at.isoformat(),
+                        "travelMin": travel_min,
+                        **hold.to_json(),
                     },
                 },
             )
@@ -929,11 +1200,11 @@ class HubEngine:
         """
         new_status = "rejected" if cause in _EXCLUDING_CAUSES else "approved"
         self._approval_status[(case_id, hospital_id)] = new_status
-        expires_at = self._case_overlay.pop((case_id, hospital_id), None)
+        hold = self._case_overlay.pop((case_id, hospital_id), None)
         overlay = self._bed_overlay.get(hospital_id, [])
-        reclaimed = expires_at in overlay  # 이미 만료돼 정리됐으면 회수할 것이 없다
+        reclaimed = hold is not None and hold in overlay  # 이미 풀려 정리됐으면 회수할 것이 없다
         if reclaimed:
-            overlay.remove(expires_at)
+            overlay.remove(hold)
             if not overlay:
                 del self._bed_overlay[hospital_id]
         result = self._case_results.get(case_id)
@@ -1126,9 +1397,14 @@ class HubEngine:
                 # 건수(병원 단위 — 다른 사건 포함)만큼 이동시간에 분을 더한다. 평시엔 0.
                 in_flight = self._prune_and_count_overlay(info.hospitalId, now)
                 load_min, load_reason = load_penalty_min(in_flight, beds, unknown)
+                # 응급실 포화도 페널티(2026-10-07): 차감 전 E-Gen 값 기준 — 이송 중 환자는 위 부하 페널티가 센다.
+                occupancy_min, occupancy_reason = occupancy_penalty_min(
+                    _er_capacity(info, info.availableBedCount, unknown, stale)[1]
+                )
                 # 병원의 "현재 정보 확인" 이력 — 현재 claim에 유효한지는
                 # evaluate()가 bornAt과 대조해 판단한다.
                 confirmed = self._info_confirmations.get(info.hospitalId)
+                er_capacity, er_occupancy = _er_capacity(info, beds, unknown, stale)
                 matches.append(
                     HospitalMatch(
                         hospitalId=info.hospitalId,
@@ -1141,6 +1417,8 @@ class HubEngine:
                         ),
                         availableBedCount=beds,
                         bedCountUnknown=unknown,
+                        erBedCapacity=er_capacity,
+                        erOccupancyPct=er_occupancy,
                         status=status,
                         reliability=_reliability_for(info, best_group) if best_group is not None else None,
                         # 병상 숫자 자체의 유효 확률(infosurv 모델, source: "ai"). 설명용 —
@@ -1167,16 +1445,19 @@ class HubEngine:
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
                         roadDistanceKm=round(eta[1] / 1000.0, 2) if eta is not None else None,
-                        finalScore=round(final_score(similarity, travel_min, bonus_min, load_min), 6),
+                        finalScore=round(final_score(similarity, travel_min, bonus_min, load_min, occupancy_min), 6),
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),
                         bonusReasons=bonus_reasons,
                         inFlightCount=in_flight,
                         loadPenaltyMin=load_min,
                         loadReason=load_reason,
+                        occupancyPenaltyMin=occupancy_min,
+                        occupancyReason=occupancy_reason,
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
-                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale)),
+                        acceptanceMessages=_acceptance_messages_for(info, best_group, required, now),
+                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale, now)),
                         rejectReason=self._reject_reason_for(voice.caseId, info.hospitalId, status),
                         unavailableReason=_unavailable_reason(status, demote),
                         bedDataStale=stale,
@@ -1207,6 +1488,11 @@ class HubEngine:
         """통화 요약 → 대시보드의 환자 정보. 앞선 통화가 있으면(2026-10-05 덧붙이기) 회차와 앞선 요약을 함께 싣는다."""
         with self._lock:
             previous = list(self._case_prev_calls.get(voice.caseId, []))
+            override = self._case_override.get(voice.caseId)
+        confirmation = {} if override is None else {
+            "confirmedBy": "paramedic", "confirmedAt": override["confirmedAt"],
+            "overrides": list(override["records"].values()),
+        }
         return PatientInfo(
             injuryStatus=voice.summary.symptoms,
             expectedDiagnosis=voice.summary.mechanism,
@@ -1223,7 +1509,83 @@ class HubEngine:
             requiredDepartment=voice.summary.required_department,
             callRound=len(previous) + 1,
             previousCalls=previous,
+            **confirmation,
         )
+
+    # 순위에 쓰이는 칸 — 바뀌면(이송 확정 전) 다시 매칭한다. 주 호소·증상은 표시용이라 환자 정보만 갈아 끼운다.
+    _OVERRIDE_RANKING_FIELDS = frozenset({"expectedDiagnosis", "ktasLevel", "requiredDepartment"})
+    # PatientOverride 칸 -> VoiceSummary 칸
+    _OVERRIDE_SUMMARY_FIELD = {
+        "expectedDiagnosis": "mechanism", "injuryStatus": "symptoms", "ktasLevel": "ktas_level",
+        "requiredDepartment": "required_department", "chiefComplaint": "chief_complaint",
+    }
+
+    def apply_patient_override(
+        self, override: PatientOverride, ambulance_gps: GpsPoint
+    ) -> tuple[HubMatchResult, dict] | None:
+        """구급대원의 통화 요약 확인·수정(2026-10-13, Override)을 사건에 반영한다.
+
+        보낸 칸만 사건의 통화 요약(_case_voice)에 덮어쓴다 — 이후 60초 재계산·존 확장도 고친 값으로 돈다. KTAS를
+        바꾸면 중증도도 따라 바뀐다. 순위 칸(예상 병명·KTAS·필요 진료과)이 실제로 바뀌었고 이송 확정 전이면 다시
+        매칭한다(넓힌 존 유지 — process_voice_summary가 승인 상태를 그대로 읽어 병원 승인은 유지된다). 확정 사건이거나
+        표시용 칸만 바뀌었으면 병원 목록·순서는 그대로 두고 환자 정보만 바꾼다. 아무 칸도 안 보내면 "수정 없이 확인"이다.
+
+        사건이 없으면 None. 반환: (새 결과, 의사결정 로그에 남긴 요약)."""
+        case_id = override.caseId
+        now = _utcnow().isoformat(timespec="seconds")
+        with self._lock:
+            voice = self._case_voice.get(case_id)
+            old = self._case_results.get(case_id)
+            if voice is None or old is None:
+                return None
+            confirmed = case_id in self._case_confirmed_at
+            max_zone = self._case_max_zone.get(case_id, 1)
+            gps_fallback = self._case_gps_fallback.get(case_id, False)
+            state = self._case_override.setdefault(case_id, {"confirmedAt": now, "records": {}})
+            state["confirmedAt"] = now
+            summary_updates: dict = {}
+            changes = []
+            for field in sorted(override.model_fields_set & set(self._OVERRIDE_SUMMARY_FIELD)):
+                value = getattr(override, field)
+                if field == "injuryStatus":
+                    value = [v.strip() for v in (value or []) if v and v.strip()]
+                elif isinstance(value, str):
+                    value = value.strip() or None
+                if field in ("expectedDiagnosis", "ktasLevel") and value is None:
+                    continue  # 예상 병명·KTAS는 비울 수 없다(매칭 입력)
+                summary_key = self._OVERRIDE_SUMMARY_FIELD[field]
+                before = getattr(voice.summary, summary_key)
+                if before == value:
+                    continue
+                summary_updates[summary_key] = value
+                if field == "ktasLevel":
+                    summary_updates["severity_tag"] = KTAS_TO_SEVERITY[value]
+                record = state["records"].get(field)
+                ai_value = record.ai if record is not None else before
+                if ai_value == value:
+                    state["records"].pop(field, None)  # AI 값으로 되돌렸다 — 고친 칸이 아니다
+                else:
+                    state["records"][field] = OverrideRecord(field=field, ai=ai_value, value=value, at=now)
+                changes.append({"field": field, "before": before, "after": value})
+            if summary_updates:
+                voice = voice.model_copy(update={"summary": voice.summary.model_copy(update=summary_updates)})
+                self._case_voice[case_id] = voice
+            self._dirty = True
+
+        ranking_changed = any(c["field"] in self._OVERRIDE_RANKING_FIELDS for c in changes)
+        rematched = ranking_changed and not confirmed
+        if rematched:
+            result = self.process_voice_summary(voice, ambulance_gps, max_zone=max_zone, gps_fallback=gps_fallback)
+        else:
+            patient = self._patient_info(voice)
+            with self._lock:
+                result = self._case_results[case_id].model_copy(update={"patientInfo": patient})
+                self._case_results[case_id] = result
+                self._dirty = True
+        log = {"caseId": case_id, "confirmedOnly": not changes, "rematched": rematched,
+               "caseConfirmed": confirmed, "changes": changes}
+        decision_log.log_decision("patient_override", log)
+        return result, log
 
     def add_call_summary(
         self,
@@ -1257,6 +1619,7 @@ class HubEngine:
             ))
             round_no = len(prev) + 1
             confirmed = voice.caseId in self._case_confirmed_at
+            self._case_override.pop(voice.caseId, None)  # 새 AI 요약은 아직 구급대원 확인 전
             current_zone = self._case_max_zone.get(voice.caseId, 1)
         marker = f"\n\n── {round_no}차 통화 ──\n"
         merged = voice.model_copy(update={"transcript": voice.transcript.model_copy(update={
@@ -1312,7 +1675,9 @@ class HubEngine:
                     else:
                         load_min = 0.0
                     travel = h.travelMin if h.travelMin is not None else h.distanceKm * 3.0
-                    score = final_score(h.specialtyMatch.score, travel, h.travelBonusMin or 0.0, load_min)
+                    score = final_score(
+                        h.specialtyMatch.score, travel, h.travelBonusMin or 0.0, load_min, h.occupancyPenaltyMin
+                    )
                     if best is None or score > best[0] + 1e-9:
                         best = (score, rank, h, load_min)
                 if best is None:
@@ -1542,6 +1907,7 @@ class HubEngine:
                     "confirmedAt": confirmed_at.isoformat() if confirmed_at else None,
                     "voice": _voice_without_transcript(voice) if voice else None,
                     "result": _result_without_transcript(result) if result else None,
+                    "override": _override_to_json(self._case_override.get(cid)),
                 }
             return {
                 "version": STATE_VERSION,
@@ -1549,8 +1915,7 @@ class HubEngine:
                 "hospitals": [h.model_dump() for h in self._hospitals.values()],
                 "ambulances": [a.model_dump() for a in self._ambulances.values()],
                 "approvalStatus": [[cid, hid, status] for (cid, hid), status in self._approval_status.items()],
-                "bedOverlay": {hid: [t.isoformat() for t in times] for hid, times in self._bed_overlay.items()},
-                "caseOverlay": [[cid, hid, t.isoformat()] for (cid, hid), t in self._case_overlay.items()],
+                "bedOverlay": {hid: [h.to_json() for h in holds] for hid, holds in self._bed_overlay.items()},
                 "infoConfirmations": {hid: t.isoformat() for hid, t in self._info_confirmations.items()},
                 "cases": cases,
             }
@@ -1579,17 +1944,22 @@ class HubEngine:
                     continue
                 self._ambulances[amb.apid] = amb
                 counts["ambulances"] += 1
-            for cid, hid, at in state.get("caseOverlay", []):
-                parsed_at = _parse_iso(at)
-                if parsed_at is not None:
-                    self._case_overlay[(cid, hid)] = parsed_at
             for cid, hid, status in state.get("approvalStatus", []):
                 if status in _ACTION_TO_STATUS.values():
                     self._approval_status[(cid, hid)] = status
-            for hid, times in state.get("bedOverlay", {}).items():
-                parsed = [t for t in (_parse_iso(x) for x in times) if t is not None]
-                if parsed:
-                    self._bed_overlay[hid] = parsed
+            for hid, raws in state.get("bedOverlay", {}).items():
+                holds = [h for h in (_hold_from_state(raw) for raw in raws) if h is not None]
+                if holds:
+                    self._bed_overlay[hid] = holds
+                    for hold in holds:
+                        if hold.case_id is not None:
+                            self._case_overlay[(hold.case_id, hid)] = hold
+            for cid, hid, at in state.get("caseOverlay", []):  # 예전 형식: 사건 ↔ 차감을 만료 시각으로 이었다
+                expires = _parse_iso(at)
+                hold = next((h for h in self._bed_overlay.get(hid, []) if h.expires_at == expires), None)
+                if hold is not None:
+                    hold.case_id = cid
+                    self._case_overlay[(cid, hid)] = hold
             for hid, raw_ts in state.get("infoConfirmations", {}).items():
                 ts = _parse_iso(raw_ts)
                 if ts is not None:
@@ -1610,6 +1980,9 @@ class HubEngine:
                             self._case_arrival[cid] = arrival
                     self._case_group[cid] = case.get("group")
                     self._case_gps_fallback[cid] = bool(case.get("gpsFallback"))
+                    override = _override_from_json(case.get("override"))
+                    if override is not None:
+                        self._case_override[cid] = override
                     confirmed_at = _parse_iso(case["confirmedAt"]) if case.get("confirmedAt") else None
                     if confirmed_at is not None:
                         self._case_confirmed_at[cid] = confirmed_at

@@ -229,6 +229,53 @@ class SevereDeclarations(Strict):
     source: Literal["rule"] = "rule"
 
 
+class AcceptanceMessage(Strict):
+    """병원이 E-Gen에 걸어둔 수용 제한 메시지 하나 (egen/messages.py, 2026-10-07)."""
+
+    kind: Literal["er", "severe"] = Field(
+        description="er = 응급실 메시지(진료과 단위 자유 텍스트), severe = 중증질환 차단(질환 코드 있음)"
+    )
+    message: str = Field(min_length=1, description="병원이 쓴 원문")
+    department: Optional[str] = Field(default=None, description="E-Gen 진료과 이름(trtPrtCodMag)")
+    diseaseCode: Optional[str] = Field(default=None, description="중증질환 코드(Y0010 등). severe만")
+    diseaseName: Optional[str] = Field(default=None, description="E-Gen 항목명. severe만")
+    diseaseGroup: Optional[str] = Field(
+        default=None, description="hospital_score의 15개 질환군 이름. severe만, hub가 사건 질환군과 비교한다"
+    )
+    startAt: Optional[str] = Field(default=None, description="ISO 8601 (KST)")
+    endAt: Optional[str] = Field(default=None, description="ISO 8601 (KST)")
+
+    @field_validator("startAt", "endAt")
+    @classmethod
+    def _iso8601(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else _validate_iso8601(value)
+
+
+#: E-Gen 장비 운영 여부 코드(egen/mapper.py EQUIPMENT_OPERATING_FIELDS의 값). `equipmentOperating`의 키로 쓴다
+EQUIPMENT_CODES: frozenset[str] = frozenset(
+    {"CT", "MRI", "ANGIO", "ECMO", "VENTILATOR", "VENTILATOR_PRETERM", "CRRT", "HYPOTHERMIA", "INCUBATOR", "HYPERBARIC"}
+)
+
+
+class BackupCapacity(Strict):
+    """심평원 기준 배후진료 보유 역량(hospital_score/hira.py summarize_backup, 2026-10-08). 월 단위로 바뀌는 구조 정보 —
+    지금 쓰고 있는 대수·당직은 담지 않는다. 필드 뜻의 근거는 hira.py BACKUP_DETAIL_PATHS 주석."""
+
+    equipment: dict[str, int] = Field(default_factory=dict, description="심평원 장비명 → 보유 대수(1대 이상만)")
+    operatingRooms: Optional[int] = Field(default=None, description="수술실 수(soprmCnt, E-Gen hvs22와 95% 일치)")
+    icuTotal: Optional[int] = Field(default=None, description="중환자실 병상 총량으로 보이는 값(aduChldSprmCnt, 미확인)")
+    nicu: Optional[int] = Field(default=None, description="신생아 중환자실 병상(nbySprmCnt, E-Gen hvs08과 87% 일치)")
+    generalWard: Optional[int] = Field(default=None, description="일반 입원실 병상(stdSickbdCnt)")
+    nursingGrade: Optional[str] = Field(default=None, description="간호등급(건강보험 기준 careGrd)")
+    collectedAt: str = Field(description="심평원 캐시를 받은 시각, ISO 8601")
+    source: Literal["hira"] = "hira"
+
+    @field_validator("collectedAt")
+    @classmethod
+    def _iso8601(cls, value: str) -> str:
+        return _validate_iso8601(value)
+
+
 class HospitalInfo(Strict):
     """병원 1곳의 정보. feature/hub로 보내는 단위."""
 
@@ -254,6 +301,11 @@ class HospitalInfo(Strict):
     bedsByType: Optional[dict[str, int]] = Field(
         default=None,
         description="병상 종류별 가용 수. 성인/소아 분기의 핵심. 미상인 종류는 키를 넣지 않는다",
+    )
+    bedCapacityByType: Optional[dict[str, int]] = Field(
+        default=None,
+        description="병상 종류별 정원(E-Gen hvs01 등, 2026-10-07). 키는 bedsByType과 같고, 정원이 없거나 0인"
+        " 종류는 키를 넣지 않는다. hub가 응급실 포화도(설명용)를 낸다",
     )
     capabilities: list[str] = Field(
         default_factory=list,
@@ -283,6 +335,20 @@ class HospitalInfo(Strict):
         "hvgc(입원실)·hv28(소아) 등 train_field.py 관문을 통과한 필드만."
         " 값 구조는 bedReliability와 동일.",
     )
+    equipmentOperating: Optional[dict[str, str]] = Field(
+        default=None,
+        description="E-Gen 장비 운영 여부(코드 → Y/N/N1 원값, 2026-10-08). 고장·점검 때만 바뀌는 운영 상태라 거의"
+        " 고정이다 — 몇 대가 지금 쓰이는지는 담지 않는다. 값이 없는 장비는 키를 넣지 않는다",
+    )
+    backupCapacity: Optional[BackupCapacity] = Field(
+        default=None,
+        description="심평원 배후진료 보유 역량(2026-10-08). 캐시가 없거나 조인 안 된 병원은 None",
+    )
+    acceptanceMessages: Optional[list[AcceptanceMessage]] = Field(
+        default=None,
+        description="E-Gen 응급실·중증질환 메시지(규칙 기반, 2026-10-07). 메시지가 없는 병원이나"
+        " 조회 실패 시 None — assessment와 같은 fail-soft.",
+    )
 
     @field_validator("updatedAt")
     @classmethod
@@ -309,6 +375,33 @@ class HospitalInfo(Strict):
                 f"병상 수가 음수인 항목: {negative}. "
                 "E-Gen의 -1(미입력)은 키를 넣지 않는 방식으로 처리한다"
             )
+        return value
+
+    @field_validator("equipmentOperating")
+    @classmethod
+    def _known_equipment(cls, value: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
+        if value is None:
+            return None
+        unknown = sorted(set(value) - EQUIPMENT_CODES)
+        if unknown:
+            raise ValueError(f"어휘에 없는 장비 코드: {unknown}")
+        bad = sorted(code for code, flag in value.items() if flag not in ("Y", "N", "N1"))
+        if bad:
+            raise ValueError(f"장비 운영 값이 Y/N/N1이 아닌 항목: {bad}")
+        return value
+
+    @field_validator("bedCapacityByType")
+    @classmethod
+    def _positive_capacity(cls, value: Optional[dict[str, int]]) -> Optional[dict[str, int]]:
+        """정원은 어휘 안의 병상 코드여야 하고 1 이상이어야 한다(0이면 키를 빼는 게 약속)."""
+        if value is None:
+            return None
+        unknown = sorted(set(value) - BED_CODES)
+        if unknown:
+            raise ValueError(f"어휘에 없는 병상 코드: {unknown}")
+        bad = sorted(code for code, count in value.items() if count < 1)
+        if bad:
+            raise ValueError(f"정원이 1 미만인 항목: {bad}")
         return value
 
     @field_validator("capabilities")

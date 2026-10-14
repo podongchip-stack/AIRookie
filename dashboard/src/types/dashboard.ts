@@ -27,6 +27,33 @@ export interface PatientInfo {
   // 추가 통화 덧붙이기(2026-10-05): 몇 번째 통화 요약인지와 앞선 요약들. 1이면 현장 첫 통화(구버전 hub면 없음).
   callRound?: number;
   previousCalls?: PatientUpdate[];
+  // 구급대원 확인·수정(Override, 2026-10-13). "ai"면 AI 요약 그대로(구급대원 확인 전), "paramedic"이면 구급대원이
+  // 확인한 갱신본. overrides는 고친 칸별 AI 값 → 구급대원 값. 구버전 hub면 없다.
+  confirmedBy?: "ai" | "paramedic";
+  confirmedAt?: string | null;
+  overrides?: OverrideRecord[];
+}
+
+export interface OverrideRecord {
+  field: "expectedDiagnosis" | "injuryStatus" | "ktasLevel" | "requiredDepartment" | "chiefComplaint";
+  ai: string | number | string[] | null;
+  value: string | number | string[] | null;
+  at: string;
+}
+
+// 구급대원의 통화 요약 확인·수정(dashboard → hub, WebSocket). 보낸 칸만 바뀌고, 아무 칸도 없으면 "수정 없이 확인".
+export interface PatientOverrideChanges {
+  expectedDiagnosis?: string;
+  injuryStatus?: string[];
+  ktasLevel?: number;
+  requiredDepartment?: string | null;
+  chiefComplaint?: string | null;
+}
+
+export interface PatientOverrideMessage extends PatientOverrideChanges {
+  type: "patient_override";
+  caseId: string;
+  timestamp: string;
 }
 
 // 앞선 통화 요약 한 건(hub PatientUpdate) — 환자 상태가 바뀌어 다시 통화하면 최신 요약이 patientInfo가 되고 이전 것은 여기 쌓인다
@@ -219,6 +246,62 @@ export interface HospitalCandidate {
   inFlightCount?: number;
   loadPenaltyMin?: number;
   loadReason?: string | null;
+  // hub 2026-10-07~: 응급실 일반 정원과 포화도(%, (정원-가용)÷정원, 이송 확정 차감 반영). 규칙 기반. 병상 미상이면 포화도 null.
+  erBedCapacity?: number | null;
+  erOccupancyPct?: number | null;
+  // 포화도 페널티 — 차감 전 E-Gen 포화도에 비례해 이동시간에 더한 분(최대 5분)과 설명 문구. 미상이면 0/null.
+  occupancyPenaltyMin?: number;
+  occupancyReason?: string | null;
+  // hub 2026-10-07~: 병원이 E-Gen에 걸어둔 지금 유효한 수용 제한 메시지(규칙 기반). 이 환자에 해당하는
+  // 것(matched)이 앞이다. 사건 질환군의 중증질환 차단이 있으면 demoteReasons에 "severe_blocked"가 붙는다.
+  acceptanceMessages?: AcceptanceMessage[] | null;
+}
+
+// hub GET /hospital-backup(2026-10-08) — [배후역량] 버튼. 보유(심평원, 월 단위)·정원/운영(E-Gen)·지금 가용(E-Gen 5분,
+// 이송 확정 차감 반영)을 나란히. 장비는 지금 남은 대수가 공개 정보에 없어 보유·운영만 온다. 순위와 무관한 열람용(규칙).
+export interface BackupBedRow {
+  key: string;
+  label: string;
+  hiraCapacity?: number | null;
+  egenCapacity?: number | null;
+  available?: number | null;
+  authority?: number | null; // 지금 이 가용 숫자를 믿어도 될 확률(AI)
+  note?: string | null;
+}
+
+export interface BackupEquipmentRow {
+  key: string;
+  label: string;
+  hiraCount?: number | null;
+  egenOperating?: "Y" | "N" | "N1" | null;
+  note?: string | null;
+}
+
+export interface HospitalBackupView {
+  hospitalId: string;
+  name: string;
+  emergencyLevel?: string | null;
+  beds: BackupBedRow[];
+  equipment: BackupEquipmentRow[];
+  specialties: { department: string; doctorCount: number }[];
+  nursingGrade?: string | null;
+  severeDeclarations?: SevereDeclarations | null;
+  acceptanceMessages: Omit<AcceptanceMessage, "matched">[];
+  inFlightCount: number;
+  egenUpdatedAt?: string | null;
+  hiraCollectedAt?: string | null;
+  source: "rule";
+}
+
+export interface AcceptanceMessage {
+  kind: "er" | "severe"; // er = 응급실 메시지(진료과 단위), severe = 중증질환 차단(질환군 있음)
+  message: string;
+  department?: string | null;
+  diseaseName?: string | null;
+  diseaseGroup?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  matched: boolean;
 }
 
 // 확정 병원 도착 뒤 병원이 기록한 수용 결과(hub 2026-10-01~). 수용만 남는다(수용 불가는 그 병원이 rejected로 바뀜).
