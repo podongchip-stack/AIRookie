@@ -192,6 +192,7 @@ const shortUnit = n => String(n || '').replace(/119안전센터\s*/, ' ').replac
 const PHASE_SHORT = { dispatching: '출동', on_scene: '현장', transporting: '이송', at_hospital: '도착', rerouting: '재선택', returning: '복귀' };
 
 function liveLayers(t) {
+  const LK = zoomK();   // 연결선 굵기 배율 — 확대하면 가늘게, 축소하면 굵게(공중 노드와 같은 배율)
   const hs = HS(), pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350), air = $('air').checked;
   const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [];
   const top = h => [h.lng, h.lat, ZH(h.z) * hs];
@@ -269,15 +270,15 @@ function liveLayers(t) {
   for (const o of occ) { const e = occByH.get(o.h.hpid); if (e) e.labels.push(o.label); else occByH.set(o.h.hpid, { h: o.h, labels: [o.label] }); }
   const occLabels = [...occByH.values()].map(e => ({ h: e.h, label: e.labels.length === 1 ? e.labels[0] : `환자 ${e.labels.length}명 · ${e.labels.map(l => l.split(' ')[0]).join('·')} 도착` }));
   const L = [];
-  L.push(new LineLayer({ id: 'lv-lines', data: lines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
-  L.push(new PathLayer({ id: 'lv-done', data: donePaths, getPath: d => d.path, getColor: [124, 123, 116, 120], getWidth: 1.5, widthUnits: 'pixels', parameters: { depthTest: false } }));
-  L.push(new PathLayer({ id: 'lv-paths', data: paths, getPath: d => d.path, getColor: d => [...d.col, d.thin ? 110 : 220], getWidth: d => d.thin ? 1.5 : 3, widthUnits: 'pixels', parameters: { depthTest: false }, updateTriggers: { getPath: [hubCaseTick, performance.now() | 0] } }));
-  L.push(new LineLayer({ id: 'lv-sug', data: sugLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: [...SUG_COL, 200], getWidth: 2, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new LineLayer({ id: 'lv-lines', widthScale: LK, data: lines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new PathLayer({ id: 'lv-done', widthScale: LK, data: donePaths, getPath: d => d.path, getColor: [124, 123, 116, 120], getWidth: 1.5, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new PathLayer({ id: 'lv-paths', widthScale: LK, data: paths, getPath: d => d.path, getColor: d => [...d.col, d.thin ? 110 : 220], getWidth: d => d.thin ? 1.5 : 3, widthUnits: 'pixels', parameters: { depthTest: false }, updateTriggers: { getPath: [hubCaseTick, performance.now() | 0] } }));
+  L.push(new LineLayer({ id: 'lv-sug', widthScale: LK, data: sugLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: [...SUG_COL, 200], getWidth: 2, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-sug-txt', data: sugTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [...SUG_COL, 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
-  L.push(new LineLayer({ id: 'lv-air-glow', data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [d.col[0], d.col[1], d.col[2], 60], getWidth: 8, widthUnits: 'pixels', parameters: ADD }));
-  L.push(new LineLayer({ id: 'lv-air', data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
-  L.push(new LineLayer({ id: 'lv-stems', data: stems, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [...kCol(d.k).slice(0, 3), 130], getWidth: 1.5, widthUnits: 'pixels', parameters: ADD }));
-  L.push(new LineLayer({ id: 'lv-ups', data: ups, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: 2, widthUnits: 'pixels', parameters: ADD }));
+  L.push(new LineLayer({ id: 'lv-air-glow', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [d.col[0], d.col[1], d.col[2], 60], getWidth: 8, widthUnits: 'pixels', parameters: ADD }));
+  L.push(new LineLayer({ id: 'lv-air', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new LineLayer({ id: 'lv-stems', widthScale: LK, data: stems, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [...kCol(d.k).slice(0, 3), 130], getWidth: 1.5, widthUnits: 'pixels', parameters: ADD }));
+  L.push(new LineLayer({ id: 'lv-ups', widthScale: LK, data: ups, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: 2, widthUnits: 'pixels', parameters: ADD }));
   L.push(new ScatterplotLayer({ id: 'lv-air-light-glow', data: airLights, radiusUnits: 'meters', getRadius: 200 + pulse * 50, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 100], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
   L.push(new ScatterplotLayer({ id: 'lv-air-light', data: airLights, radiusUnits: 'meters', getRadius: 55, radiusMinPixels: 5, getPosition: d => d.pos, getFillColor: [255, 255, 255, 245], stroked: true, getLineColor: d => kCol(d.k), lineWidthMinPixels: 2, parameters: { depthTest: false } }));
   L.push(new ScatterplotLayer({ id: 'lv-occ', data: occ, radiusUnits: 'meters', getRadius: 290 + pulse * 60, getPosition: d => top(d.h), getFillColor: [79, 209, 255, 0], stroked: true, getLineColor: [79, 209, 255, 200], lineWidthMinPixels: 2, parameters: { depthTest: false }, updateTriggers: { getRadius: [animTick] } }));
