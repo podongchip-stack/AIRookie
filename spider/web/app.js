@@ -77,7 +77,10 @@ const SPHERE=(()=>{const la=18,lo=36,pos=[],nor=[],idx=[];
     for(let j=0;j<=lo;j++){const ph=2*Math.PI*j/lo,x=st*Math.cos(ph),y=st*Math.sin(ph),z=ct; pos.push(x,y,z); nor.push(x,y,z);}}
   for(let i=0;i<la;i++)for(let j=0;j<lo;j++){const a=i*(lo+1)+j,b=a+lo+1; idx.push(a,b,a+1,b,b+1,a+1);}
   return {positions:{value:new Float32Array(pos),size:3},normals:{value:new Float32Array(nor),size:3},indices:{value:new Uint32Array(idx)}};})();
-let VIEW={longitude:127.7,latitude:36.3,zoom:6.6,pitch:50,bearing:-10}, spinning=false;
+// 터치 기기(아이패드)에선 관성을 끈다 — 핀치 뒤 손을 떼도 관성으로 확대·축소가 계속 이어져 '너무 많이 확대/축소'됐다(2026-10-14).
+// 확대 범위도 전국(5)~골목(16.5)으로 묶어 한 번의 핀치로 지구 밖·건물 안까지 튀지 않게 한다.
+const TOUCH=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+let VIEW={longitude:127.7,latitude:36.3,zoom:6.6,pitch:50,bearing:-10,minZoom:5,maxZoom:16.5}, spinning=false;
 const CAMS={korea:{longitude:127.7,latitude:36.3,zoom:6.6,pitch:50,bearing:-10},seoul:{longitude:126.99,latitude:37.53,zoom:11,pitch:58,bearing:-18},top:{pitch:0,bearing:0,zoom:11},tilt:{pitch:58,bearing:-18,zoom:11},side:{pitch:75,bearing:-30,zoom:11.4},low:{pitch:78,bearing:20,zoom:12.2}};
 function goCam(c){VIEW={...VIEW,...c,transitionDuration:900}; deckgl.setProps({initialViewState:VIEW});}
 // 카메라 연출: 환자들 위에서 내려다보다가 3초 뒤 천천히 옆으로 기울어진다
@@ -95,7 +98,7 @@ function choreograph(){
 }
 const deckgl = new DeckGL({
   container:'map', mapLib: maplibregl, mapStyle:BASE.esri,
-  initialViewState:VIEW, controller:{maxPitch:80,inertia:true,dragRotate:true,touchRotate:true,keyboard:true},
+  initialViewState:VIEW, controller:{maxPitch:80,inertia:!TOUCH,dragRotate:true,touchRotate:true,keyboard:true},
   // 사용자가 잡으면 회전·연출을 즉시 멈추고 손에 맡긴다
   onViewStateChange:({viewState,interactionState})=>{VIEW=viewState; const u=interactionState||{}; if(u.isDragging||u.isPanning||u.isRotating||u.isZooming){ if(spinning){spinning=false;$('spin').textContent='회전';} clearTimeout(camT); }},
   getTooltip:({object})=>object&&object.hpid?{html:`<b>${object.name}</b><br>${object.grade}<br>z ${object.z} · 중증 가능 ${object.severeY}/28<br>응급실 ${object.hasBeds?(object.hvec===null?'미상':object.hvec)+' / '+(object.er_cap??'?'):'데이터 없음'}`,
@@ -272,6 +275,9 @@ $('suggest').addEventListener('change',()=>{ if(!$('suggest').checked){ HUB.sugg
 
 // ---------- 시작: 서버에서 병원·시나리오를 받은 뒤 첫 시나리오를 돌린다 ----------
 (async function init(){
+  // live.js(실시간 모드)는 이 파일 뒤에 실린다 — 서버가 아주 빨리 답하는 환경(아이패드 WebView·로컬 서버)에선 병원 목록이 live.js보다
+  // 먼저 도착해 setMode('live')가 hubConnect를 못 찾고 멈췄다(2026-10-14). 문서의 스크립트가 다 실린 뒤 시작한다.
+  if(document.readyState==='loading') await new Promise(r=>document.addEventListener('DOMContentLoaded',r,{once:true}));
   showBusy('서버에서 병원 목록 받는 중…');
   try{
     [META, H] = await Promise.all([api('api/meta'), api('api/hospitals')]);
@@ -282,6 +288,10 @@ $('suggest').addEventListener('change',()=>{ if(!$('suggest').checked){ HUB.sugg
   riseT0=performance.now();
   loadScenario();
   const q=new URLSearchParams(location.search);
-  if(q.get('embed')==='1') document.body.classList.add('embed');   // 아이패드 앱: 패널 없이 지도만
+  if(q.get('embed')==='1'){
+    document.body.classList.add('embed');   // 아이패드 앱: 패널 없이 지도만
+    // Safari의 페이지 확대 제스처(gesture*)를 막는다 — 핀치가 페이지 확대와 지도 확대에 동시에 걸리던 문제
+    ['gesturestart','gesturechange','gestureend'].forEach(t=>document.addEventListener(t,e=>e.preventDefault(),{passive:false}));
+  }
   if(q.get('mode')==='live') setMode('live'); else recompute();
 })();
