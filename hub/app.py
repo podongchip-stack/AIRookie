@@ -709,6 +709,14 @@ def _send_to_dashboard(payload: dict) -> None:
 # 활력징후 등 환자 상세는 보내지 않는다 — 그건 요청을 받은 병원 대시보드(role=hospital)만 받는다.
 
 
+#: case_overview 병원 항목에 그대로 옮기는 HospitalMatch 설명 필드(2026-10-14) — schema.MonitorCaseHospital 참고
+_MONITOR_EXPLAIN_FIELDS = (
+    "gps", "emergencyLevel", "availableBedCount", "bedCountUnknown", "bedDataStale", "erBedCapacity", "erOccupancyPct",
+    "travelMin", "travelBasis", "etaMin", "finalScore", "specialtyMatch", "bedReliability", "reliability", "severeFreshness",
+    "demoteReasons", "bonusReasons", "loadReason", "occupancyReason", "inFlightCount", "excluded", "acceptanceMessages",
+)
+
+
 def _monitor_case(payload: dict) -> dict:
     """매칭 결과(HubMatchResult를 dump한 dict) → 관제 지도용 사건 요약."""
     patient = payload.get("patientInfo") or {}
@@ -740,6 +748,8 @@ def _monitor_case(payload: dict) -> dict:
                 distanceKm=h["distanceKm"], roadDistanceKm=h.get("roadDistanceKm"), zone=zone_of(h["distanceKm"]),
                 rejectReason=h.get("rejectReason"), unavailableReason=h.get("unavailableReason"),
                 respondedAt=responded.get(h["hospitalId"]),
+                # 설명 필드(2026-10-14, 아이패드 관제·spider 실시간) — HospitalMatch 값 그대로
+                **{k: h.get(k) for k in _MONITOR_EXPLAIN_FIELDS},
             )
             for h in payload.get("hospitals") or []
         ],

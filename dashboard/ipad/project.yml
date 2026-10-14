@@ -1,0 +1,28 @@
+# XcodeGen 정의 — `xcodegen generate`(또는 ./setup.sh)가 GoldenLinkPad.xcodeproj를 만든다.
+# .xcodeproj는 생성물이라 커밋하지 않는다(이 파일이 원본). 서명 팀·번들 ID만 Xcode에서 바꾸면 된다.
+# 아이폰 앱(../iphone)과 달리 온디바이스 모델이 없다 — WebView(spider 거미줄 3D) + hub WebSocket + 네이티브 패널뿐이라 가볍다.
+name: GoldenLinkPad
+options:
+  bundleIdPrefix: com.goldenlink
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+targets:
+  GoldenLinkPad:
+    type: application
+    platform: iOS
+    sources:
+      - path: GoldenLinkPad
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.goldenlink.pad   # 내 Apple ID로 서명할 때 겹치지 않게 바꾼다
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "2"                     # iPad 전용
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""                            # Xcode > Signing & Capabilities에서 팀 선택
+        INFOPLIST_FILE: GoldenLinkPad/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SUPPORTS_MACCATALYST: NO
