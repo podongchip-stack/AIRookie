@@ -288,7 +288,8 @@ function candidates(){
 /* ── 거미줄 지도: 각도는 실제 방위, 반경은 '줄 길이' ───────────────── */
 function drawWeb(rows){
   var cv=document.getElementById('web'); if(!cv) return;
-  var W=cv.clientWidth||520, H=Math.round(W*0.82), r=window.devicePixelRatio||1;
+  /* 넓은 화면에서 캔버스가 세로로 과하게 커지지 않게 상한을 둔다 */
+  var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.82),560), r=window.devicePixelRatio||1;
   cv.width=W*r; cv.height=H*r; cv.style.height=H+'px';
   var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,W,H);
   var cx=W/2, cy=H/2+6, maxMin=Math.max(12, rows.length?rows[Math.min(rows.length,11)-1]._len:30);
@@ -379,8 +380,17 @@ function renderMap(){
   var ped=near.filter(function(h){return h.pd>0||h.pc>0;}).length;
   var busy=near.filter(function(h){return h.oc!=null&&h.oc>=50;}).length;
   var blk=near.filter(function(h){return activeMsgs(h).filter(function(m){return m[5];}).length;}).length;
-  box.innerHTML='<div class="head"><b>내 주변 응급실</b><span>'+ASOF+' 기준</span></div>'
-    +'<div class="inner"><canvas id="web"></canvas>'
+  function tile(k,v,t,col,on){
+    return '<div'+(on?' class="on"':'')+'><div class="k">'+k+'</div><div class="v">'+v+'</div>'
+      +'<div class="t"><i style="background:'+col+'"></i>'+t+'</div></div>';
+  }
+  box.innerHTML='<div class="tiles">'
+    + tile('60km 안 응급실', near.length, '전부', 'var(--mapdim)')
+    + tile('소아 진료 정보 있음', ped, '추천은 이 안에서', 'var(--accent)', true)
+    + tile('집계 때 붐빔', busy, '순위에서 뒤로', '#d9892b')
+    + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
+    + '</div>'
+    +'<div class="plot"><canvas id="web"></canvas>'
     +'<p class="maplabel">가운데가 내 위치입니다. 방향은 실제 방위이고, <b>거리는 km가 아니라 '
     +'“가는 데 드는 분”</b>입니다 — 가까워도 소아 진료 여건이 얕거나 붐비면 더 멀리 그려집니다.</p>'
     +'<div class="legend">'
@@ -388,13 +398,7 @@ function renderMap(){
     +'<span><i style="background:#d9892b"></i>집계 때 붐빔</span>'
     +'<span><i style="background:#e05c54"></i>진료 제한 공지</span>'
     +'<span><i style="background:var(--mapdim)"></i>그 밖 · 점 크기는 소아 진료 여건</span>'
-    +'</div></div>'
-    +'<div class="tiles">'
-    +'<div><div class="v">'+near.length+'</div><div class="k">60km 안 응급실</div></div>'
-    +'<div class="good"><div class="v">'+ped+'</div><div class="k">소아 진료 정보 있음</div></div>'
-    +'<div class="warn"><div class="v">'+busy+'</div><div class="k">집계 때 붐빔</div></div>'
-    +'<div class="bad"><div class="v">'+blk+'</div><div class="k">진료 제한 공지</div></div>'
-    +'</div>';
+    +'</div></div>';
   drawWeb(rows);
 }
 function places(){
@@ -458,7 +462,7 @@ fetch('data.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():nul
 
 
 #: 아이콘은 그린다 — 이모지를 아이콘 자리에 쓰지 않는다. 획 두께 1.6으로 통일.
-LOGO = ('<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" '
+LOGO = ('<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" '
         'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         '<path d="M12 21s-7-4.6-7-10a4.6 4.6 0 0 1 7-3.9A4.6 4.6 0 0 1 19 11c0 5.4-7 10-7 10Z"/>'
         '<path d="M12 10v4M10 12h4"/></svg>')
@@ -491,42 +495,47 @@ def build(rows: list[dict], meta: dict) -> str:
     A('<meta name="robots" content="index,follow">')
     A(f"<style>{CSS}</style></head><body>")
 
-    A('<nav class="bar"><div class="in"><span class="logo">' + LOGO + "우리 아이 응급 길잡이</span>")
-    A('<span class="sp"></span><a class="tel" href="tel:119">119 전화</a></div></nav>')
+    A('<nav class="bar"><div class="in"><span class="logo"><span class="mark">' + LOGO + "</span>우리 아이 응급 길잡이</span>")
+    A('<nav><a href="#tool">지금 어떻게 하죠</a><a href="#why">왜 만들었나</a>'
+      '<a href="#how">어떻게 고르나</a><a href="#faq">자주 묻는 것</a></nav>')
+    A('<a class="cta" href="tel:119">119 전화하기</a></div></nav>')
 
     A('<header class="hero">')
-    A("<h1>아이가 아픈데,<br><em>어디로</em> 가야 할까요</h1>")
+    A("<h1>아이가 아픈데,<br><em>어디로</em> 가야 할까요?</h1>")
     A(
-        '<p class="lead">두 가지만 고르면 지금 무엇을 해야 할지 알려 드립니다. '
+        '<p class="lead">아이 나이와 증상을 두 번만 고르면 지금 무엇을 해야 할지 알려 드립니다. '
         "고른 내용과 위치는 이 화면 밖으로 나가지 않습니다.</p>"
     )
-    A('<div class="ctas"><a class="btn btn-call" href="tel:119">119 전화하기</a>')
-    A('<button class="btn btn-ghost" id="loc">내 주변 응급실 보기</button></div>')
+    A('<div class="ctas"><button class="btn btn-ghost" id="loc">내 주변 응급실 보기</button>')
+    A('<a class="btn btn-call" href="tel:119">119 전화하기</a></div>')
     A('<p class="fine">숨을 못 쉬거나 · 반응이 없거나 · 경련이 멈추지 않으면 고르지 말고 지금 119입니다</p>')
     A('<p id="status"></p>')
     A("</header>")
 
-    A('<div class="wrap">')
-    A('<div class="frame" id="mapPanel" style="display:none"></div>')
-    A(
-        f'<p class="stale">{esc(meta["asOf"])}에 받은 공개 데이터로 만든 시연본입니다. '
-        "실제 서비스는 5분마다 다시 받습니다.</p>"
-    )
-
-    A('<h2>아이 나이</h2><div class="opts">')
+    # ── 창 모양 프레임: 선택 → 지표 → 그림. 앱토의 대시보드 자리 ──
+    A('<section class="frame" id="tool"><div class="win">')
+    A('<div class="chrome"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i>'
+      '<i style="background:#28c840"></i><span class="path">우리아이응급길잡이 / 내 주변</span></div>')
+    A('<div class="body">')
+    A('<div class="topline"><span class="crumb">우리 아이 <b>상태</b></span>'
+      f'<span class="stamp">{esc(meta["asOf"])} 기준</span></div>')
+    A('<div class="picks">')
+    A('<div class="pick"><p class="lb">아이 나이</p><div class="opts">')
     for i, label in enumerate(RULES_AGE):
         A(f'<button class="opt" data-age="{i}" aria-pressed="false">{esc(label)}</button>')
-    A("</div>")
-
-    A('<h2>무슨 일인가요 · 여러 개 고르셔도 됩니다</h2><div class="opts">')
+    A("</div></div>")
+    A('<div class="pick"><p class="lb">무슨 일인가요 · 여러 개 고르셔도 됩니다</p><div class="opts">')
     for key, label in RULES_SYM:
         A(f'<button class="opt" data-sym="{key}" aria-pressed="false">{esc(label)}</button>')
+    A("</div></div>")
     A("</div>")
+    A('<div id="mapPanel"></div>')
+    A("</div></div></section>")
 
-    A('<div id="result" class="reveal"></div>')
+    A('<div class="results"><div class="in reveal" id="result"></div></div>')
 
     # ── 랜딩: 왜 필요한가 (전부 우리가 직접 잰 공개 데이터 수치) ──
-    A('<section class="sec"><h3>왜 이런 걸 만들었나</h3>')
+    A('<section class="sec" id="why"><div class="in"><h2 class="st">왜 이런 걸 만들었나</h2>')
     A(
         '<p class="desc">아이가 아플 때 보호자가 가장 먼저 부딪히는 건 "어디로 가야 하나"입니다. '
         "그런데 공개된 정보만으로는 답하기 어렵게 돼 있습니다. 직접 세어 봤습니다.</p>"
@@ -547,10 +556,10 @@ def build(rows: list[dict], meta: dict) -> str:
         "<b>3개월 이하 발열 진료불가</b> 같은 문장이 공개돼 있는데도 "
         "정작 그 아기를 안고 있는 보호자에게는 보이지 않습니다.</p>"
     )
-    A("</section>")
+    A("</div></section>")
 
     # ── 랜딩: 어떻게 고르나 ──
-    A('<section class="sec"><h3>어떻게 고르나요</h3>')
+    A('<section class="sec" id="how"><div class="in"><h2 class="st">어떻게 고르나요</h2>')
     A('<p class="desc">점수가 아니라 <b>분(分)</b>으로 계산합니다. 그래야 왜 이 순서인지 설명할 수 있습니다.</p>')
     A('<div class="steps">')
     for i, (t, d) in enumerate([
@@ -565,10 +574,10 @@ def build(rows: list[dict], meta: dict) -> str:
          "그 공지가 우리 아이에게 해당되는지는 저희가 판단하지 않습니다."),
     ]):
         A(f'<div class="step"><div class="k">{i+1}</div><div><b>{t}</b><p>{d}</p></div></div>')
-    A("</div></section>")
+    A("</div></div></section>")
 
     # ── FAQ ──
-    A('<section class="sec"><h3>자주 묻는 것</h3><div class="faq">')
+    A('<section class="sec" id="faq"><div class="in"><h2 class="st">자주 묻는 것</h2><div class="faq">')
     for q, a in [
         ("지금 자리가 있는지 알 수 있나요?",
          "응급실 전체 혼잡도는 보여 드리지만 <b>소아 병상은 알 수 없습니다.</b> "
@@ -586,9 +595,9 @@ def build(rows: list[dict], meta: dict) -> str:
          "119는 상담도 합니다."),
     ]:
         A(f"<details><summary>{q}</summary><p>{a}</p></details>")
-    A("</div></section>")
+    A("</div></div></section>")
 
-    A('<div class="note"><p><strong>이 화면이 할 수 있는 일과 못 하는 일</strong></p><ul>')
+    A('<section class="sec"><div class="in"><div class="note"><p><strong>이 화면이 할 수 있는 일과 못 하는 일</strong></p><ul>')
     A(
         "<li><strong>전화를 대신하지 못합니다.</strong> 오늘 밤 소아과 당직이 누구인지는 공개된 "
         "데이터 어디에도 없습니다. 이 화면은 <strong>갈 필요가 없는 곳을 줄여 주는 것</strong>까지만 "
@@ -637,7 +646,7 @@ def build(rows: list[dict], meta: dict) -> str:
         "응급 상황에서는 <b>먼저 119</b>에 전화하세요. 이 화면은 의료 조언이 아닙니다."
         "</footer>"
     )
-    A("</div>")
+    A("</div></section>")
 
     data = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
     js = (JS_TMPL.replace("__DATA__", data).replace("__ASOF__", meta["asOf"])
