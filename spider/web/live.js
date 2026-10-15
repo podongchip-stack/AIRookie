@@ -196,6 +196,16 @@ const caseConfirmed = c => (c.hospitals || []).find(h => h.status === 'confirmed
 // 지금 이 환자를 실제로 보낼 수 있는 승인 병원인가(2026-10-15) — 수용 승인을 눌렀어도 그 뒤 응급실 병상 0이 확인됐거나(E-Gen,
 // 이송 확정 차감 반영 — 미상·1일 넘은 값은 막지 않음), 이 사건에서 제외됐거나(이송 중 철회·도착 후 수용 불가), 병원 공지로 이 질환군을
 // 막았으면 초록 '최적' 줄을 긋지 않는다. 예전엔 hub 순위의 첫 승인 병원을 그대로 써서 병상 없는 병원이 '최적'으로 보였다.
+// 병원 응답을 기다리는 사건(이송 확정 전)의 요청 존 병원 — 공중 노드를 초록으로 칠한다(app.js layers, 2026-10-15). 아직 받을 수 있는
+// 병원만(판단 대기·승인). 수용 불가·병상 0(E-Gen)·제외 병원은 원래 색(만실이면 빨강) 그대로 — 초록이면 받을 수 있는 것처럼 보인다
+window.liveZoneSet = () => {
+  const s = new Set();
+  for (const c of myCases()) {
+    if (c.pre || caseConfirmed(c)) continue;
+    for (const ch of c.hospitals || []) if ((ch.status === 'pending' || ch.status === 'approved') && !ch.unavailableReason && !ch.excluded) s.add(ch.hospitalId);
+  }
+  return s;
+};
 function transportable(ch) {
   if (ch.status !== 'approved') return false;
   if (ch.unavailableReason || ch.excluded) return false;
@@ -259,16 +269,17 @@ function liveLayers(t) {
       if (air) { airLights.push({ pos: [pos.lng, pos.lat, ZH(pz) * hs], k }); stems.push({ a: [pos.lng, pos.lat, 0], b: [pos.lng, pos.lat, ZH(pz) * hs], k }); }
     }
     // 줄은 "이 환자가 어디로 가나"만 보이게(2026-10-15): 확정되면 확정 병원 하나, 확정 전엔 수용 승인한 병원 중 hub 순위
-    // 1위(=구급차 화면의 '추천', 이송 중 부하·포화·중증도 가산이 반영된 최적) 하나. 아직 승인한 곳이 없으면 요청이 나간 병원에
-    // 아주 옅은 줄만(동시 전달 중이라는 표시). 예전엔 요청한 병원 전부에 줄이 그려져 어느 줄이 최적인지 알 수 없었다.
-    // 승인 병원이 있어도 지금 보낼 수 없는 곳(병상 0 확인·제외·차단)은 건너뛴다 — 보낼 수 있는 승인 병원이 하나도 없으면 아직 응답을
-    // 기다리는 병원(판단 대기)에만 옅은 줄. 아이패드 상황판(embed, apid 없음)은 '최적' 이름표를 달지 않는다(사건이 몰리면 이름표가 겹친다 — 자리 재검토 중).
+    // 1위(=구급차 화면의 '추천', 이송 중 부하·포화·중증도 가산이 반영된 최적) 하나. 예전엔 요청한 병원 전부에 줄이 그려져 어느 줄이
+    // 최적인지 알 수 없었다.
+    // 승인 병원이 있어도 지금 보낼 수 없는 곳(병상 0 확인·제외·차단)은 건너뛴다 — 보낼 수 있는 승인 병원이 하나도 없으면 줄이 없다
+    // (요청 존 병원은 공중 노드가 초록으로 보인다 — liveZoneSet). 아이패드 상황판(embed, apid 없음)은 '최적' 이름표를 달지 않는다(사건이 몰리면 이름표가 겹친다 — 자리 재검토 중).
     const best = confirmed || (c.hospitals || []).find(transportable) || null;
     if (best && !confirmed && !arrived && (ONLY_APID || !document.body.classList.contains('embed'))) { const bh = hp(best.hospitalId); if (bh) bestTexts.push({ pos: top(bh), text: `${caseLabel(c)} 최적 · ${shortName(bh.name)}` }); }
     for (const ch of c.hospitals || []) {
       const h = hp(ch.hospitalId); if (!h) continue;
       const st = ch.status;
-      if (best ? ch.hospitalId !== best.hospitalId : (st !== 'pending' || ch.unavailableReason || ch.excluded)) continue;
+      // 줄은 보낼 수 있는 승인 병원 중 최적(또는 확정 병원) 하나만 — 응답을 기다리는 동안엔 줄 없이 존 병원 노드만 초록(2026-10-15)
+      if (!best || ch.hospitalId !== best.hospitalId) continue;
       let col, w, a;
       if (st === 'confirmed') { col = kc; w = 3; a = 240; }
       else if (st === 'approved') { col = OK_COL; w = 3; a = 235; }
