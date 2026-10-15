@@ -116,9 +116,12 @@ def candidates(row: dict, frm: dict, p: dict, t_now: float, ctx: Ctx, prm: Param
     mu = mu0 * max(0.0, 1 - ctx.inflight_severe / 10.0) if k <= 3 else mu0
     wall = COND.get(p.get("cond") or "general", COND["general"])["wall"]
     nu = NU[k]
+    # 환자별 제외 병원(p["exclude"]) — 실시간 모드에서 hub가 이 사건에 수용 불가(병상 0·불가·제외)로 본 병원(2026-10-15).
+    # 초과로 붙일 때도 이 후보 목록을 쓰므로 거기서도 빠진다. 가상 시나리오엔 없다(map.html과 같은 규칙)
+    exclude = set(p.get("exclude") or ())
     out = []
     for h in live:
-        if is_full(h) or not wall(h):
+        if is_full(h) or not wall(h) or h["hpid"] in exclude:
             continue
         road = row.get(h["hpid"])
         if road is None:
