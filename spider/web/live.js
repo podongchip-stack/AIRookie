@@ -58,7 +58,9 @@ window.focusPoint = (lat, lng) => embedFocus([{ lat, lng }]);
 // 이 기기에 저장해 다시 열 때 그대로 띄운다. 구급차 화면은 중심을 내 구급차로 두고 줌·기울기만 이어 간다.
 // 키는 앱이 알려 주는 화면(?screen=ambulance|board)이 우선 — auto 모드에서 출동 전 구급차 화면은 apid 없이 열려 상황판과 같은 키를 써서,
 // 구급차 화면에서 옮긴 보기가 상황판으로 돌아왔을 때 덮어써졌다(줄이 화면 밖에 있어 사라진 것처럼 보임, 2026-10-15)
-const VIEW_KEY = 'spider.view.' + (new URLSearchParams(location.search).get('screen') || (ONLY_APID ? 'ambulance' : 'board'));
+// 구급차 화면이라도 따라갈 구급대가 없을 때(auto 출동 전)는 전국 보기라 키를 따로 둔다 — 같은 키를 쓰면 그 넓은 줌이 출동 뒤
+// 내 구급차 따라가기에 되살아나 지도가 전국으로 축소돼 보였다(2026-10-16)
+const VIEW_KEY = 'spider.view.' + (new URLSearchParams(location.search).get('screen') || (ONLY_APID ? 'ambulance' : 'board')) + (ONLY_APID ? '' : '-all');
 let FOLLOW = !!ONLY_APID, lastSavedView = '';
 function loadSavedView() { try { return JSON.parse(localStorage.getItem(VIEW_KEY) || 'null'); } catch (e) { return null; } }
 function saveView() {
@@ -72,7 +74,7 @@ setInterval(saveView, 1500);
   if (!document.body.classList.contains('embed')) return;
   const v = loadSavedView();
   if (ONLY_APID) {   // 구급차 화면: 중심은 내 구급차가 정한다 — 줌·기울기·방향만 되살린다(없으면 동네 단위)
-    VIEW = { ...VIEW, zoom: v ? v.zoom : 13.4, pitch: v ? v.pitch : 55, bearing: v ? v.bearing : -18 };
+    VIEW = { ...VIEW, zoom: v && v.zoom >= 11 ? v.zoom : 13.4, pitch: v ? v.pitch : 55, bearing: v ? v.bearing : -18 };   // 동네 단위보다 넓으면 기본값
   } else if (v) {    // 상황판: 마지막 보기 그대로 — 자동 전체 맞춤도 하지 않는다(사람이 맞춘 보기를 존중)
     VIEW = { ...VIEW, ...v }; EMBED_USER = true;
   }
@@ -277,6 +279,13 @@ window.liveZoneLayers = () => {
     new TextLayer({ id: 'lv-zone-txt', data: labels, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: d => [...d.col.slice(0, 3), 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 150], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [key] } }),
   ];
 };
+// 이송 중 "더 나은 병원"(2026-10-16) — 아이패드 앱이 계산해 보낸다(AppModel.betterHospitals: 지금 목적지보다 도착 시 병상 정보 유효
+// 확률이 15%p 이상 높은 승인 병원, 최대 2곳). 지도엔 작게만: 병원 꼭대기 호박색 고리 + 이름표(이름 · 유효 % · 병상), 내 구급차에서
+// 옅은 줄. 목적지 변경은 앱의 [변경] → 확인으로 한다(지도 노드는 작아 이동 중 잘못 누르기 쉽다)
+let BETTER = [];
+window.setBetterHospitals = list => { BETTER = Array.isArray(list) ? list.filter(b => b && b.hpid) : []; };
+const BETTER_COL = [255, 196, 64];
+
 // 병원 응답 단계에서 지도에 남길 병원(app.js layers) — 요청 존(zoneActive) 안 병원 + 다른 사건의 이송 확정 병원 + 거미줄 제안
 // 병원(민트 줄 끝이 허공이 되지 않게). 응답을 기다리는 사건이 없으면 null(전부 그림)
 window.liveVisibleSet = () => {
@@ -438,6 +447,14 @@ function liveLayers(t) {
   L.push(new ScatterplotLayer({ id: 'lv-light-glow', data: lights, radiusUnits: 'meters', getRadius: 160 + pulse * 40, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 90], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
   L.push(new ScatterplotLayer({ id: 'lv-light', data: lights, radiusUnits: 'meters', getRadius: 45, radiusMinPixels: 4, getPosition: d => d.pos, getFillColor: d => kCol(d.k), stroked: true, getLineColor: [255, 255, 255, 230], lineWidthMinPixels: 1.5, parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-light-txt', data: lightLabels, getPosition: d => d.pos, getText: d => d.text, getSize: 12, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, -16], fontFamily: css('--mono'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  // 이송 중 더 나은 병원(앱이 보낸 것) — 내 구급차 화면에서만
+  if (ONLY_APID && BETTER.length) {
+    const me = HUB.sims[ONLY_APID], from = me && me.gps;
+    const rows = BETTER.map(b => ({ b, h: hp(b.hpid) })).filter(x => x.h);
+    L.push(new ScatterplotLayer({ id: 'lv-better-ring', data: rows, radiusUnits: 'pixels', getRadius: 14 + 4 * pulse, getPosition: d => top(d.h), getFillColor: [0, 0, 0, 0], stroked: true, getLineColor: [...BETTER_COL, 230], lineWidthUnits: 'pixels', getLineWidth: 2, parameters: { depthTest: false }, updateTriggers: { getRadius: [animTick] } }));
+    if (from) L.push(new LineLayer({ id: 'lv-better-line', widthScale: LK, data: rows, getSourcePosition: () => [from.lng, from.lat, 0], getTargetPosition: d => [d.h.lng, d.h.lat, 0], getColor: [...BETTER_COL, 110], getWidth: 1.4, widthUnits: 'pixels', parameters: { depthTest: false }, updateTriggers: { getSourcePosition: [performance.now() | 0] } }));
+    L.push(new TextLayer({ id: 'lv-better-txt', data: rows, getPosition: d => top(d.h), getText: d => d.b.label || shortName(d.h.name), getSize: 11, characterSet: 'auto', getColor: [...BETTER_COL, 255], getPixelOffset: [0, -24], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 190], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  }
   // 구급차는 화면 픽셀 크기(축소해도 보이게). 내 구급차는 크게 + 맥박 고리
   const NK = zoomK();
   L.push(new ScatterplotLayer({ id: 'lv-amb-glow', data: ambs, radiusUnits: 'pixels', getRadius: d => (d.me ? 22 : 11) * (1 + 0.25 * pulse), getPosition: d => d.pos, getFillColor: d => d.me ? [79, 209, 255, 110] : [...d.col, 110], parameters: ADD, updateTriggers: { getRadius: [animTick], getPosition: [performance.now() | 0] } }));
