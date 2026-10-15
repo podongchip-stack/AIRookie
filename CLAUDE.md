@@ -5,6 +5,13 @@
 > `demo`로 가져가는 것(develop → demo)만 하고, 반대 방향(demo → develop, demo → main) 병합·체리픽은 하지 않는다.
 > GitHub 설정으로 막아 두지 않았으니 직접 지켜야 한다.
 
+> 🧪 **`test` 브랜치(2026-10-15)** — develop(spider 병합 전, `df681a96`)과 feature/spider(develop 병합 전, `5ff3d303`)를
+> 합친 뒤, **hub의 병원 순위를 spider 거미줄 분배 모델의 매칭 규칙으로 바꾼 실험 브랜치**다. develop·main에 병합하지 않는다.
+> 규칙은 `hub/spider_rule.py`(원본 `spider/map.html`·`spider/voice_to_patient.py`): 줄 길이 = 도로 분 − μ×역량 이득(모자라면
+> + ν×모자람) + 부하, 질환군 벽, τ(10분) 창 충돌 시 KTAS 낮은 숫자·같으면 먼저 닿는 사건이 남고 나머지는 다음 병원으로 양보.
+> 진료과 임베딩 점수·전문성/등급 가산·경증 역가산은 순위에서 빠지고(설명으로만) μ·λ·ν가 대신한다. 승인·확정 병원이 앞에 오는
+> 정렬과 거절·만실·declared_no 내림은 그대로. 대량사고 분배(`plan_mci`)도 같은 줄 길이·창 규칙. 검증 `python hub/test_spider_rule.py`.
+
 이 파일은 Claude Code가 이 저장소에서 작업할 때 참고하는 공통 컨텍스트입니다.
 모든 브랜치(main, develop, feature/voice, feature/info, feature/hub, feature/dashboard, feature/sim)에서 동일하게 적용됩니다.
 
