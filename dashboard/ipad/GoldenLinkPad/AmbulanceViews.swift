@@ -79,7 +79,16 @@ struct CallSummaryCard: View {
     @EnvironmentObject private var model: AppModel
     @State private var showTranscript = false
 
+    /// true면 왼쪽 열의 남는 높이를 채운다(구급차 화면, 2026-10-16) — 내용은 위부터, 넘치면 카드 안에서 스크롤
+    var fill = false
+
     var body: some View {
+        Group { if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner } }
+            .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
+            .card()
+    }
+
+    private var inner: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -151,7 +160,6 @@ struct CallSummaryCard: View {
                 }
             }
         }
-        .card()
     }
 
     private var calling: Bool { model.callStatus?.state == "calling" }
