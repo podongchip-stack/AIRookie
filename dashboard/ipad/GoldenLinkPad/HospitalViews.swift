@@ -1,96 +1,18 @@
 import SwiftUI
 
-/// 아래 — 병원 후보 리스트(웹 HospitalCandidateListPanel과 같은 가로 스크롤 카드). 사고가 발생했을 때만 나타난다.
-/// 통화 전: 현장 주변 후보(도착 시간순, 첫 연락 추천). 통화 후: hub 순위 그대로 병원 응답·정보 유효성·[이송 승인].
-/// 카드를 누르면 "이 병원 정보가 얼마나 유효한가, 왜 그런가" 상세가 열린다.
-struct HospitalSection: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var detail: HospitalMatch?
-    @State private var showOthers = false
+/// 병원 후보 카드들(2026-10-16) — 병원 리스트 화면(HospitalListScreen.swift)의 격자에 들어간다. 예전엔 구급차 화면 아래
+/// 가로 스크롤 띠였다. 카드 폭은 격자 칸에 맞춘다.
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            header
-            // LazyHStack은 같은 병원 ID의 카드를 단계(현장 후보 → 매칭 결과) 사이에 재사용해 두 종류 카드가 섞여 남았다 —
-            // 카드가 10여 장뿐이라 일반 HStack을 쓰고, 단계별로 id를 따로 붙인다(2026-10-14).
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 14) {
-                    if let r = model.result {
-                        ForEach(visible(r)) { h in
-                            CandidateCard(h: h, recommended: h.hospitalId == recommendedId(r), confirmedId: model.confirmed?.hospitalId,
-                                          requesting: model.pendingConfirmId == h.hospitalId, onDetail: { detail = h })
-                                .id("m-\(r.caseId)-\(h.hospitalId)")
-                        }
-                        if visible(r).count < 4 && model.confirmed == nil { ForEach(visible(r).count..<4, id: \.self) { i in SkeletonCard(index: i + 1).id("k-\(i)") } }
-                    } else if let s = model.scene {
-                        ForEach(sceneOrdered(s)) { h in SceneCard(h: h).id("s-\(s.caseId)-\(h.hospitalId)") }
-                    } else {
-                        ForEach(1...4, id: \.self) { i in SkeletonCard(index: i).id("k-\(i)") }
-                    }
-                }
-                .id(model.result != nil ? "match" : model.scene != nil ? "scene" : "wait")
-                .padding(.bottom, 4)
-            }
-            .scrollIndicators(.visible)
-        }
-        .sheet(item: $detail) { h in ValidityDetailView(h: h).environmentObject(model) }
-    }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text("병원 후보 리스트").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-            if let r = model.result {
-                let zoneMax = max(1, r.zoneActive?.max() ?? 1)
-                if model.confirmed != nil {
-                    Text("이송 확정 병원으로 이동 중").font(.system(size: 12)).foregroundStyle(AD.ink3)
-                } else {
-                    (Text(zoneMax > 1 ? "Zone 1~\(zoneMax)" : "Zone 1").bold().foregroundColor(AD.blue) + Text(" · 현장 반경 \(zoneMax * 5)km · \(r.hospitals.count)곳"))
-                        .font(.system(size: 12)).foregroundStyle(AD.ink3)
-                }
-                Text("카드를 누르면 정보 유효성 근거").font(.system(size: 11.5)).foregroundStyle(AD.muted)
-            } else if let s = model.scene {
-                (Text("Zone \((s.zoneActive ?? [1]).map(String.init).joined(separator: ", "))").bold().foregroundColor(AD.blue) + Text(" · 환자 정보 전 도착 시간순 · \(s.hospitals.count)곳"))
-                    .font(.system(size: 12)).foregroundStyle(AD.ink3)
-                Text(s.reportedSymptom.map { "1차 신고(\($0)) 기반 가추천 — 통화가 끝나면 확정 순위로 바뀝니다" } ?? "통화가 끝나면 진료과·이동시간 기준 순위와 병원 응답으로 바뀝니다")
-                    .font(.system(size: 11.5)).foregroundStyle(AD.sub).lineLimit(1)
-            } else {
-                Text("현장 도착 후 후보가 나타납니다").font(.system(size: 12)).foregroundStyle(AD.ink3)
-            }
-            Spacer()
-            if let r = model.result, model.confirmed != nil, r.hospitals.count > 1 {
-                Button { showOthers.toggle() } label: {
-                    Text(showOthers ? "다른 후보 접기" : "다른 후보 \(r.hospitals.count - 1)곳 보기 (재선택할 때)")
-                        .font(.system(size: 12)).foregroundStyle(AD.ink3)
-                        .padding(.horizontal, 12).frame(minHeight: 32)
-                        .overlay(Capsule().stroke(AD.gray, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-                }
-            }
-        }
-        .padding(.horizontal, 4)
-    }
-
-    /// 이송이 확정되면 확정 병원만(웹과 같음) — 재선택을 위해 펼칠 수 있다
-    private func visible(_ r: HubMatchResult) -> [HospitalMatch] {
-        guard let c = model.confirmed, !showOthers else { return r.hospitals }
-        return r.hospitals.filter { $0.hospitalId == c.hospitalId }
-    }
-    /// 병원 승인이 오면 승인 병원 중 최상위(hub 순위)를 "추천" — 자동 확정이 아니라 추천 + 탭 한 번.
-    /// 승인 뒤 응급실 병상 0이 확인됐거나 이 사건에서 제외·차단된 병원은 지금 보낼 수 없으니 건너뛴다(2026-10-15, spider 초록 줄과 같은 규칙)
-    private func recommendedId(_ r: HubMatchResult) -> String? {
-        model.confirmed == nil ? r.hospitals.first { Self.canTransportNow($0) }?.hospitalId : nil
-    }
+/// 지금 이 환자를 실제로 보낼 수 있는 승인 병원인가 — "추천"·"더 나은 병원"이 같은 규칙을 쓴다(spider 초록 줄·웹과 같음, 2026-10-15)
+enum HospitalRules {
     static func canTransportNow(_ h: HospitalMatch) -> Bool {
         guard h.status == "approved", h.unavailableReason == nil, h.excluded != true else { return false }
         if (h.demoteReasons ?? []).contains(where: { $0 == "beds_full" || $0 == "severe_blocked" }) { return false }
         if h.bedCountUnknown == true || h.bedDataStale == true { return true }
         return (h.availableBedCount ?? 1) > 0
     }
-    private func sceneOrdered(_ s: SceneCandidates) -> [SceneCandidate] {
-        s.hospitals.filter { $0.firstCallRecommended == true } + s.hospitals.filter { $0.firstCallRecommended != true }
-    }
 }
 
-private let cardWidth: CGFloat = 340
 
 /// 매칭 결과 카드 — 이름 · 거리 · ETA · 상태 | 병상 · AI 유효 · 전문의 | 칩 | 정보 유효성 한 줄 | [이송 승인]
 struct CandidateCard: View {
@@ -99,6 +21,8 @@ struct CandidateCard: View {
     var recommended: Bool
     var confirmedId: String?
     var requesting: Bool
+    /// 병원 리스트 화면처럼 넓을 때는 칩을 접지 않고 줄바꿈으로 다 보인다
+    var allChips = false
     var onDetail: () -> Void
 
     private var confirmed: Bool { h.hospitalId == confirmedId }
@@ -122,7 +46,7 @@ struct CandidateCard: View {
             actionButton
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .frame(width: cardWidth, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(AD.card)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -183,7 +107,7 @@ struct CandidateCard: View {
     }
 
     /// 칩은 한 줄로 — 중요한 것부터 3개, 나머지는 "+N"(대량사고 때 칩이 여러 줄로 늘어 카드가 커지던 것, 2026-10-14). 전부는 상세에서.
-    private var chips: some View {
+    private var chips: AnyView {
         var items: [(String, Color, Color)] = []
         if h.demoteReasons?.contains("declared_no") == true { items.append(("수용 불가 신고", AD.redSoft, AD.red)) }
         if h.demoteReasons?.contains("severe_blocked") == true { items.append(("병원 차단 메시지", AD.redSoft, AD.red)) }
@@ -196,13 +120,17 @@ struct CandidateCard: View {
         if let lvl = h.emergencyLevel, lvl.hasSuffix("센터") { items.append((lvl, AD.chip, AD.ink3)) }
         if let r = h.reliability { items.append(("\(r.group) · \(Labels.confidence(r.confidence))", r.confidence == "high" ? AD.greenSoft : AD.chip, r.confidence == "high" ? AD.green : AD.ink3)) }
         if let sf = h.severeFreshness { items.append(("\(sf.value == "Y" ? "수용가능 신고" : "수용불가 신고") \(Labels.age(sf.ageSec, isMin: sf.ageIsMin ?? false))", AD.chip, AD.ink3)) }
+        if allChips {
+            return AnyView(FlowLayout(spacing: 5) { ForEach(Array(items.enumerated()), id: \.offset) { _, c in Pill(text: c.0, bg: c.1, fg: c.2).lineLimit(1) } }
+                .frame(maxWidth: .infinity, alignment: .leading))
+        }
         let shown = Array(items.prefix(3))
-        return HStack(spacing: 5) {
+        return AnyView(HStack(spacing: 5) {
             ForEach(Array(shown.enumerated()), id: \.offset) { _, c in Pill(text: c.0, bg: c.1, fg: c.2) }
             if items.count > shown.count { Pill(text: "+\(items.count - shown.count)", bg: AD.chip, fg: AD.sub, bold: true) }
             Spacer(minLength: 0)
         }
-        .lineLimit(1)
+        .lineLimit(1))
     }
 
     /// 정보 유효성(4-1) — 지금 / 도착 시 확률과 "왜"를 한 줄로: 정보 나이 · 도착까지 이동 · 병원 확인 · 1일 넘은 값
@@ -309,7 +237,7 @@ struct SceneCard: View {
                 .frame(maxWidth: .infinity, minHeight: 38).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .frame(width: cardWidth, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(h.firstCallRecommended == true ? AD.green : AD.control, lineWidth: h.firstCallRecommended == true ? 2 : 1))
@@ -328,7 +256,7 @@ struct SkeletonCard: View {
             RoundedRectangle(cornerRadius: 14).fill(AD.line).frame(height: 38)
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
-        .frame(width: cardWidth).frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity).frame(maxHeight: .infinity, alignment: .top)
         .background(AD.skeleton).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.gray, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
