@@ -68,7 +68,7 @@ const BASE={
     layers:[{id:'b',type:'raster',source:'b',paint:{'raster-brightness-max':.45,'raster-saturation':-.6,'raster-contrast':.15}}]},
   esri:{version:8,sources:{b:{type:'raster',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],tileSize:256,maxzoom:16,attribution:'Esri, HERE, Garmin, © OpenStreetMap contributors'}},layers:[{id:'b',type:'raster',source:'b'}]},
   osm:{version:8,sources:{b:{type:'raster',tiles:['https://tile.openstreetmap.de/{z}/{x}/{y}.png'],tileSize:256,maxzoom:18,attribution:'© OpenStreetMap contributors (openstreetmap.de)'}},layers:[{id:'b',type:'raster',source:'b',paint:{'raster-brightness-max':.42,'raster-saturation':-.7,'raster-contrast':.15}}]}};
-const {DeckGL, ColumnLayer, ScatterplotLayer, LineLayer, PathLayer, TripsLayer, TextLayer, SimpleMeshLayer} = deck;
+const {DeckGL, ColumnLayer, ScatterplotLayer, LineLayer, PathLayer, PolygonLayer, TripsLayer, TextLayer, SimpleMeshLayer} = deck;
 // 병원 표시 방식: sphere(3D 구만) / node(공중 노드+줄기) / beams(빛기둥)
 let HMODE='node';   // 기본은 공중 노드(2026-10-15 요청) — 버튼으로 3D 구·빛기둥으로 바꿀 수 있다
 // 단위 구 메시 (SimpleMeshLayer용) — 외부 의존 없이 직접 만든다
@@ -133,6 +133,8 @@ function layers(t){
   const hs=HS(), rise=Math.min(1,(performance.now()-riseT0)/1800), ease=1-Math.pow(1-rise,3);
   const pulse=0.5+0.5*Math.sin(performance.now()/350);
   const L=[], live=LIVE;
+  // 실시간 모드: 요청 존 영역(바닥 띠)을 병원·줄보다 먼저(아래에) 깐다 — live.js liveZoneLayers
+  if(MODE==='live'&&window.liveZoneLayers) L.push(...liveZoneLayers());
   // 병원 노드: 높이에 뜬 점 + 바닥까지 가는 가는 선 + 바닥 그림자
   const top=h=>[h.lng,h.lat,ZH(h.z)*hs*ease];
   // 실시간 모드: 병원 응답을 기다리는 사건의 요청 존 병원은 공중 노드를 초록으로(live.js liveZoneSet, 2026-10-15)
