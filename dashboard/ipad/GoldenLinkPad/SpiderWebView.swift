@@ -5,7 +5,8 @@ extension Notification.Name {
     static let spiderReload = Notification.Name("spiderReload")
     /// 상황판 사건 목록을 눌렀을 때 지도를 그 현장으로 — userInfo ["lat", "lng"]
     static let spiderFocus = Notification.Name("spiderFocus")
-    /// 지도 페이지 함수 호출 — userInfo ["js"] (예: "followMine()" 내 구급차 따라가기, "fitAllNow()" 전체 보기)
+    /// 지도 페이지 함수 호출 — userInfo ["js"] (예: "followMine()" 내 구급차 따라가기, "fitAllNow()" 전체 보기).
+    /// ["key"]도 주면 '상태'로 기억해 두었다가 페이지를 다시 불러올 때마다 다시 보낸다(예: "pad" — 떠 있는 패널 폭)
     static let spiderEval = Notification.Name("spiderEval")
 }
 
@@ -52,6 +53,7 @@ struct SpiderWebView: UIViewRepresentable {
         }
         context.coordinator.evalObserver = NotificationCenter.default.addObserver(forName: .spiderEval, object: nil, queue: .main) { n in
             guard let js = n.userInfo?["js"] as? String else { return }
+            if let key = n.userInfo?["key"] as? String { context.coordinator.stateJS[key] = js }
             context.coordinator.web?.evaluateJavaScript("try{\(js)}catch(e){}")
         }
         context.coordinator.load(url, force: true)
@@ -73,6 +75,8 @@ struct SpiderWebView: UIViewRepresentable {
         var observer: NSObjectProtocol?
         var focusObserver: NSObjectProtocol?
         var evalObserver: NSObjectProtocol?
+        /// 페이지가 다시 열려도 유지할 상태 호출(key → js) — 불러오기가 끝나면(didFinish) 다시 보낸다
+        var stateJS: [String: String] = [:]
         private var loaded: URL?
 
         func load(_ url: URL?, force: Bool) {
@@ -93,6 +97,7 @@ struct SpiderWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             webView.scrollView.setZoomScale(1, animated: false)
             webView.scrollView.pinchGestureRecognizer?.isEnabled = false
+            for js in stateJS.values { webView.evaluateJavaScript("try{\(js)}catch(e){}") }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             showError(webView, error.localizedDescription)
