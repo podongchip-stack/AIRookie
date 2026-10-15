@@ -93,7 +93,10 @@ def solve(patients: list[dict], prm: Params, roads, live: list[dict]) -> dict:
         def check(c):
             """후보 하나를 지금 잡을 수 있는지(병상·창·우선순위) 판정."""
             t_arr, h = t_now + c["road"], c["h"]
-            if occupancy(h["hpid"], t_arr, pid) >= beds(h):
+            # 정보 생존 모델(실시간 모드): 도착 때 그 병상 숫자가 아직 맞을 확률만큼만 병상으로 센다(기대 병상 = 가용 × r).
+            # 확률이 낮은 병원엔 여럿이 몰리지 않는다. 미상(hvec 없음)·곡선 없는 병원은 그대로
+            cap_beds = beds(h) * c["r"] if (c.get("r") is not None and h.get("hvec") is not None) else beds(h)
+            if occupancy(h["hpid"], t_arr, pid) >= cap_beds:
                 return {"ok": False, "why": h["name"] + "(병상 참)"}
             win = [s for s in assigned(h["hpid"]) if s["pid"] != pid and abs(s["tArr"] - t_arr) <= tau]
             fixed = [s for s in win if s["tArr"] <= t_now]
