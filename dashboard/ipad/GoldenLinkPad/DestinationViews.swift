@@ -12,7 +12,18 @@ struct DestinationCard: View {
     private var live: BedReliability.Live? { h.bedReliability.map { BedReliability.live($0, now: model.now) } }
     private var emDoctors: Int? { backup?.specialties.first { $0.department == "응급의학과" }?.doctorCount }
 
+    /// true면 왼쪽 열의 남는 높이를 채운다(구급차 화면, 2026-10-16) — 내용은 위부터, 넘치면 카드 안에서 스크롤
+    var fill = false
+
     var body: some View {
+        Group { if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner } }
+            .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
+            .card()
+            .task(id: h.hospitalId) { backup = await HospitalBackup.fetch(h.hospitalId) }
+            .sheet(isPresented: $showBackup) { BackupSheet(name: h.name, backup: backup, hospitalId: h.hospitalId) }
+    }
+
+    private var inner: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline) {
                 Text("목적지").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
@@ -52,9 +63,6 @@ struct DestinationCard: View {
             }
             .buttonStyle(.plain)
         }
-        .card()
-        .task(id: h.hospitalId) { backup = await HospitalBackup.fetch(h.hospitalId) }
-        .sheet(isPresented: $showBackup) { BackupSheet(name: h.name, backup: backup, hospitalId: h.hospitalId) }
     }
 
     private var arrivalText: String {
