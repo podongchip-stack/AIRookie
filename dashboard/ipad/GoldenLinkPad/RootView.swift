@@ -93,7 +93,7 @@ struct TopBar: View {
         HStack(spacing: 14) {
             HStack(spacing: 10) {
                 (Text("골든").foregroundStyle(AD.navy) + Text("링크").foregroundStyle(AD.blue))
-                    .font(.system(size: 20, weight: .black))
+                    .font(.system(size: 20, weight: .black)).fixedSize()
                 Pill(text: "v2.0", bg: AD.blueSoft, fg: AD.blue, bold: true)
                 if isBoard { Pill(text: "상황판 · 전체 사건", bg: AD.navy, fg: .white, bold: true) }
                 else { Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true) }

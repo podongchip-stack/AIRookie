@@ -8,22 +8,24 @@ struct HospitalListScreen: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            ScrollView {
-                VStack(spacing: 8) {
-                    SceneStatusCard()
-                    // 병원 응답 현황(기본) + 수용 승인 2곳 이상이면 선택 비교(2026-10-16) — 이송 확정 전까지
-                    if let r = model.result, model.confirmed == nil {
-                        ResponseStatusCard(r: r)
-                        let approved = r.hospitals.filter { $0.status == "approved" && $0.excluded != true }
-                        if approved.count >= 2 {
-                            CompareCard(hospitals: approved, recommendedId: r.hospitals.first { HospitalRules.canTransportNow($0) }?.hospitalId)
-                        }
+            // 왼쪽 열은 화면 높이에 고정(2026-10-16) — 열 전체가 밀려 스크롤되던 것을, 병원 응답 현황(응답 기록)과 통화 요약이 남는 높이를
+            // 나눠 갖고 각자 안에서 스크롤되게. 현장 상태·선택 비교는 내용 높이 그대로
+            VStack(spacing: 8) {
+                SceneStatusCard().fixedSize(horizontal: false, vertical: true)
+                // 병원 응답 현황(기본) + 수용 승인 2곳 이상이면 선택 비교(2026-10-16) — 이송 확정 전까지
+                if let r = model.result, model.confirmed == nil {
+                    ResponseStatusCard(r: r).frame(minHeight: 130)
+                    let approved = r.hospitals.filter { $0.status == "approved" && $0.excluded != true }
+                    if approved.count >= 2 {
+                        CompareCard(hospitals: approved, recommendedId: r.hospitals.first { HospitalRules.canTransportNow($0) }?.hospitalId)
                     }
-                    if model.hasIncident { CallSummaryCard() }
                 }
+                if model.hasIncident { CallSummaryCard(fill: true).frame(minHeight: 90) }
+                if !model.hasIncident { Spacer(minLength: 0) }
             }
-            .scrollIndicators(.hidden)
             .frame(width: 360)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .clipped()   // 어떤 경우에도 화면 밖으로 넘치지 않게(넘치면 상단바까지 밀려 올라갔다)
             HospitalListPanel()
         }
     }
@@ -199,9 +201,12 @@ struct ResponseStatusCard: View {
             Divider()
             if model.responseLog.isEmpty {
                 Text("병원 응답을 기다리는 중 — 응답이 오면 여기에 순서대로 쌓입니다").font(.system(size: 12)).foregroundStyle(AD.muted)
+                Spacer(minLength: 0)
             } else {
+                // 응답 기록은 카드 안에서 스크롤(2026-10-16) — 최근 것이 위, 최대 20줄
+                ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(model.responseLog.prefix(5)) { e in
+                    ForEach(model.responseLog) { e in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Dot(color: color(e.kind), size: 7)
                             Text(e.hospital).font(.system(size: 12.5, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
@@ -211,8 +216,12 @@ struct ResponseStatusCard: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollIndicators(.visible)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .card()
     }
 
@@ -271,6 +280,9 @@ struct CompareCard: View {
                 Spacer()
             }
             cells(["", "병상", "유효", "도착", "전문의"], header: true)
+            // 승인 병원이 많으면 표 줄만 카드 안에서 스크롤(2026-10-16) — 높이는 줄 수만큼, 최대 약 5줄
+            ScrollView {
+            VStack(spacing: 4) {
             ForEach(rows, id: \.h.hospitalId) { r in
                 HStack(spacing: 4) {
                     HStack(spacing: 4) {
@@ -289,6 +301,10 @@ struct CompareCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .opacity(r.ok ? 1 : 0.5)
             }
+            }
+            }
+            .scrollIndicators(.visible)
+            .frame(height: min(CGFloat(rows.count) * 36, 150))
             Text("유효 = 도착 때 병상 숫자가 맞을 확률(AI) · 초록 굵게 = 그 칸 최고 · 결정은 오른쪽 카드의 [이송 승인]")
                 .font(.system(size: 11)).foregroundStyle(AD.muted).fixedSize(horizontal: false, vertical: true)
         }
