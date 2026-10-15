@@ -41,7 +41,7 @@ struct RootView: View {
                                 // 통화 요약은 내용 높이 그대로(스크롤 없이, 단 왼쪽 열의 55%까지), 목적지가 나머지를 채운다
                                 GeometryReader { g2 in
                                     VStack(spacing: 0) {
-                                        CallSummaryCard(fit: true, extraV: 5).frame(maxHeight: g2.size.height * 0.55).layoutPriority(1)
+                                        CallSummaryCard(fitMax: g2.size.height * 0.55, extraV: 5)
                                         DestinationCard(h: c, fill: true)
                                     }
                                 }
