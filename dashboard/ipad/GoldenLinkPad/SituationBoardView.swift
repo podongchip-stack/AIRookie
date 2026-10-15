@@ -8,6 +8,7 @@ struct SituationBoardView: View {
     @AppStorage("hubBase") private var hubBase = Settings.defaultHub
     @AppStorage("spiderBase") private var spiderBase = ""
     @State private var selected: String?
+    @State private var showLoadInfo = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -23,7 +24,7 @@ struct SituationBoardView: View {
     }
 
     /// 떠 있는 병원별 분산 카드 폭(카드 + 여백) — 지도가 [전체 보기]·자동 맞춤 때 이만큼 오른쪽을 비운다
-    private static let floatWidth: CGFloat = 300
+    private static let floatWidth: CGFloat = 252
     private func sendPadding(_ shown: Bool) {
         NotificationCenter.default.post(name: .spiderEval, object: nil,
                                         userInfo: ["js": "setViewPadding(\(shown ? Int(Self.floatWidth + 28) : 0))", "key": "pad"])
@@ -190,60 +191,83 @@ struct SituationBoardView: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
     }
 
-    // ── 병원별 분산 현황(지도 위에 떠 있는 카드) ──
+    // ── 병원별 분산 현황(지도 위에 떠 있는 카드) — 글자를 줄였다(2026-10-16): 제목 한 줄 + 병원당 두 줄(이름·센터·병상 / 몰림 막대·
+    // 확정·승인·대기 숫자·사건 번호). 설명 문장은 ⓘ를 누를 때만, 색 점의 뜻은 맨 아래 범례 한 줄. 글자는 11pt 아래로 내리지 않는다.
     private func floatingLoad(_ loads: [BoardModel.HospitalLoad], maxHeight: CGFloat) -> some View {
         let maxN = max(1, loads.map(\.load).max() ?? 1)
-        // 목록 높이는 내용만큼(줄당 약 70pt), 지도 높이를 넘으면 스크롤
-        let listHeight = min(CGFloat(loads.count) * 70, max(80, maxHeight - 76))
+        let listHeight = min(CGFloat(loads.count) * 52, max(80, maxHeight - 70))   // 줄당 약 52pt, 넘치면 스크롤
         return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("병원별 분산").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
-                Text("확정·승인 \(loads.count)곳").font(.system(size: 11)).foregroundStyle(AD.muted)
+            HStack(spacing: 6) {
+                Text("분산 \(loads.count)곳").font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy)
                 Spacer()
-            }
-            Text("한 병원으로 몰리면 hub가 다음 환자를 다른 병원으로 돌린다(규칙)")
-                .font(.system(size: 10.5)).foregroundStyle(AD.sub).lineLimit(2)
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(loads) { l in loadRow(l, maxN: maxN) }
+                Button { showLoadInfo.toggle() } label: {
+                    Image(systemName: showLoadInfo ? "info.circle.fill" : "info.circle").font(.system(size: 14)).foregroundStyle(AD.muted)
                 }
+                .buttonStyle(.plain)
+            }
+            if showLoadInfo {
+                Text("확정·승인 병원. 한 병원으로 몰리면 hub가 다음 환자를 다른 병원으로 돌린다(규칙)")
+                    .font(.system(size: 11)).foregroundStyle(AD.sub).fixedSize(horizontal: false, vertical: true)
+            }
+            ScrollView {
+                VStack(spacing: 4) { ForEach(loads) { l in loadRow(l, maxN: maxN) } }
             }
             .scrollIndicators(.hidden)
             .frame(height: listHeight)
+            HStack(spacing: 8) {
+                legend(AD.green, "확정"); legend(AD.blue, "승인"); legend(AD.orange, "대기")
+                Spacer(minLength: 0)
+                Text("석 = 응급실 여유").font(.system(size: 11)).foregroundStyle(AD.muted)
+            }
         }
-        .padding(12)
+        .padding(10)
         .frame(width: Self.floatWidth)
         .background(AD.card.opacity(0.96))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AD.line, lineWidth: 1))
-        .shadow(color: .black.opacity(0.28), radius: 14, y: 6)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AD.line, lineWidth: 1))
+        .shadow(color: .black.opacity(0.28), radius: 12, y: 5)
+    }
+
+    private func legend(_ c: Color, _ t: String) -> some View {
+        HStack(spacing: 3) { Dot(color: c, size: 7); Text(t).font(.system(size: 11)).foregroundStyle(AD.ink3) }
     }
 
     private func loadRow(_ l: BoardModel.HospitalLoad, maxN: Int) -> some View {
         let n = l.load
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
+        let level = l.level.flatMap { $0.hasPrefix("권역") ? "권역" : $0.hasPrefix("지역응급의료센터") ? "지역" : nil }
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
                 Text(l.name).font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
-                if let lv = l.level, lv.hasSuffix("센터") { Pill(text: lv.replacingOccurrences(of: "응급의료센터", with: "센터"), bg: AD.blueSoft, fg: AD.blue) }
-                Spacer(minLength: 0)
-                Text(l.bedUnknown ? "응급실 미상" : "응급실 \(l.available ?? 0)석").font(.system(size: 11, weight: .medium))
+                if let level { Pill(text: level, bg: AD.blueSoft, fg: AD.blue) }
+                Spacer(minLength: 4)
+                Text(l.bedUnknown ? "미상" : "\(l.available ?? 0)석").font(.system(size: 12, weight: .bold))
                     .foregroundStyle(l.bedUnknown ? AD.muted : (l.available ?? 0) <= 0 ? AD.red : AD.lime)
             }
-            GeometryReader { g in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(AD.line)
-                    Capsule().fill(n >= 3 ? AD.orange : AD.green).frame(width: max(n > 0 ? 6 : 0, g.size.width * CGFloat(n) / CGFloat(maxN)))
-                }
-            }.frame(height: 6)
             HStack(spacing: 6) {
-                Text("이송 확정 \(l.confirmed.count)명").font(.system(size: 11.5, weight: .bold)).foregroundStyle(l.confirmed.isEmpty ? AD.muted : AD.green)
-                if l.approved > 0 { Text("· 승인 \(l.approved)").font(.system(size: 11)).foregroundStyle(AD.blue) }
-                if l.pending > 0 { Text("· 대기 \(l.pending)").font(.system(size: 11)).foregroundStyle(AD.orange) }
-                Spacer(minLength: 0)
-                Text(l.confirmed.prefix(4).map { "#\($0.num.map(String.init) ?? "?")" }.joined(separator: " ")).font(.system(size: 11, design: .monospaced)).foregroundStyle(AD.ink3)
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(AD.line)
+                        Capsule().fill(n >= 3 ? AD.orange : AD.green).frame(width: max(n > 0 ? 5 : 0, g.size.width * CGFloat(n) / CGFloat(maxN)))
+                    }
+                }
+                .frame(height: 5)
+                count(l.confirmed.count, AD.green, always: true)
+                count(l.approved, AD.blue)
+                count(l.pending, AD.orange)
+                if !l.confirmed.isEmpty {
+                    Text("#" + l.confirmed.prefix(3).map { $0.num.map(String.init) ?? "?" }.joined(separator: "·"))
+                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(AD.ink3).lineLimit(1).fixedSize()
+                }
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(AD.bg).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 9).padding(.vertical, 6)
+        .background(AD.bg).clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder private func count(_ v: Int, _ c: Color, always: Bool = false) -> some View {
+        if v > 0 || always {
+            HStack(spacing: 2) { Dot(color: v > 0 ? c : AD.muted, size: 7); Text("\(v)").font(.system(size: 12, weight: .bold)).foregroundStyle(v > 0 ? c : AD.muted) }
+                .fixedSize()
+        }
     }
 }

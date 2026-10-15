@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// 구급차 대시보드(웹 /ambulance 시안)와 같은 배치 — 상단바 · 범례 → 위: 왼쪽 열(현장 상태 · 통화 요약) + 오른쪽 거미줄 3D 지도
-/// → 아래: 병원 후보 리스트(가로 스크롤 카드). 병원 리스트는 사고가 발생했을 때만 아래에서 올라온다.
+/// 구급차 대시보드(웹 /ambulance 시안)와 같은 배치 — 상단바 · 범례 → 왼쪽 열(현장 상태 · 통화 요약) + 오른쪽 거미줄 3D 지도.
+/// 상단바의 [구급차 | 병원 리스트 | 상황판]으로 화면을 바꾼다(2026-10-16) — 병원 리스트는 지도 없이 현장 상태·통화 요약 + 병원 후보
+/// (HospitalListScreen), 상황판은 이 구급차가 아니라 전체 사건(대량사고). 예전엔 병원 리스트가 구급차 화면 아래 띠였다.
+/// 자동 전환: 음성 요약이 처음 도착하면 병원 리스트로, 이송이 확정되면(hub 응답) 구급차 지도로(AppModel.requestScreen).
 /// 상단바의 [정보 생존 모델]은 같은 화면 위에 전체 화면으로 덮는다.
-/// 상단바의 [구급차 | 상황판]으로 화면을 바꾼다 — 상황판은 이 구급차가 아니라 전체 사건(대량사고)을 본다(SituationBoardView).
-enum Screen: String { case ambulance, board }
+enum Screen: String { case ambulance, hospitals, board }
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
@@ -22,40 +23,25 @@ struct RootView: View {
                 Legend()
                 if screen == .board {
                     SituationBoardView()
+                } else if screen == .hospitals {
+                    callBanner
+                    HospitalListScreen()
                 } else {
-                if let call = model.callStatus, call.state == "calling" {
-                    Text("휴대폰으로 \(call.hospitalName ?? "병원")과 통화 중 — 통화가 끝나면 환자 정보가 후보 병원에 동시에 전달됩니다")
-                        .font(.system(size: 13, weight: .bold)).foregroundStyle(AD.green)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16).padding(.vertical, 8)
-                        .background(AD.greenSoft).clipShape(RoundedRectangle(cornerRadius: 12))
-                }
+                callBanner
+                // 병원 후보는 [병원 리스트] 화면으로 옮겼다(2026-10-16) — 지도가 아래까지
                 GeometryReader { g in
-                    let wide = g.size.width >= 1000
-                    VStack(spacing: 10) {
-                        HStack(alignment: .top, spacing: 14) {
-                            ScrollView {
-                                VStack(spacing: 8) {
-                                    SceneStatusCard()
-                                    if model.hasIncident { CallSummaryCard() }
-                                }
+                    HStack(alignment: .top, spacing: 14) {
+                        ScrollView {
+                            VStack(spacing: 8) {
+                                SceneStatusCard()
+                                if model.hasIncident { CallSummaryCard() }
                             }
-                            .scrollIndicators(.hidden)
-                            .frame(width: wide ? 360 : 320)
-                            .clipped()   // 넘치는 통화 요약이 아래 병원 리스트 제목 위로 비치지 않게
-                            MapCard()
                         }
-                        .frame(maxHeight: .infinity)
-                        // 사고가 없으면 병원 리스트 자리 없이 지도가 아래까지 — 사고가 생기면 아래에서 올라온다
-                        if model.hasIncident {
-                            // 카드(병상·AI 유효·전문의 세 칸 + 칩 한 줄 + 정보 유효성 + 이송 승인)가 약 225pt — 지도를 가리지 않게 낮게(2026-10-14)
-                            HospitalSection()
-                                .frame(height: min(max(g.size.height * 0.36, 252), 268))
-                                .clipped()
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
+                        .scrollIndicators(.hidden)
+                        .frame(width: g.size.width >= 1000 ? 360 : 320)
+                        .clipped()
+                        MapCard()
                     }
-                    .animation(.spring(response: 0.45, dampingFraction: 0.86), value: model.hasIncident)
                 }
                 }
             }
@@ -74,6 +60,21 @@ struct RootView: View {
         .fullScreenCover(isPresented: $showSurvival) { SurvivalModelScreen(isPresented: $showSurvival).environmentObject(model) }
         .onAppear { model.start(); if screen == .board { board.start() } }
         .onChange(of: screenRaw) { _, v in if v == Screen.board.rawValue { board.start() } }
+        // 자동 전환(2026-10-16): 음성 요약 첫 도착 → 병원 리스트, 이송 확정 → 구급차 지도. 상황판을 보고 있으면 건드리지 않는다
+        .onReceive(NotificationCenter.default.publisher(for: .switchScreen)) { n in
+            guard let raw = n.userInfo?["screen"] as? String, screen != .board else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { screenRaw = raw }
+        }
+    }
+
+    @ViewBuilder private var callBanner: some View {
+        if let call = model.callStatus, call.state == "calling" {
+            Text("휴대폰으로 \(call.hospitalName ?? "병원")과 통화 중 — 통화가 끝나면 환자 정보가 후보 병원에 동시에 전달됩니다")
+                .font(.system(size: 13, weight: .bold)).foregroundStyle(AD.green)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .background(AD.greenSoft).clipShape(RoundedRectangle(cornerRadius: 12))
+        }
     }
 }
 
@@ -95,13 +96,8 @@ struct TopBar: View {
                 if isBoard { Pill(text: "상황판 · 전체 사건", bg: AD.navy, fg: .white, bold: true) }
                 else { Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true) }
             }
-            // 구급차 화면 ↔ 상황판(전체 사건, 대량사고용)
-            Picker("", selection: $screenRaw) {
-                Text("구급차").tag(Screen.ambulance.rawValue)
-                Text("상황판").tag(Screen.board.rawValue)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 170)
+            // 구급차(지도) · 병원 리스트 · 상황판(전체 사건, 대량사고용)
+            screenSwitch
             Spacer(minLength: 8)
             if isBoard {
                 let n = board.rows.count
@@ -132,6 +128,39 @@ struct TopBar: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
     }
 
+    /// 세 칸 전환 — 병원 리스트 칸엔 병원 응답 배지(승인 수, 없으면 후보 수)를 붙여 구급차 화면에서도 응답이 온 걸 안다
+    private var screenSwitch: some View {
+        HStack(spacing: 2) {
+            seg("구급차", .ambulance, badge: nil)
+            seg("병원 리스트", .hospitals, badge: listBadge)
+            seg("상황판", .board, badge: nil)
+        }
+        .padding(3).background(AD.chip).clipShape(Capsule())
+    }
+    private var listBadge: (String, Color)? {
+        guard let r = model.result else { return model.scene.map { ("\($0.hospitals.count)", AD.gray) } }
+        if model.confirmed != nil { return ("확정", AD.green) }
+        let ok = r.hospitals.filter { HospitalRules.canTransportNow($0) }.count
+        return ok > 0 ? ("승인 \(ok)", AD.green) : ("\(r.hospitals.count)", AD.orange)
+    }
+    private func seg(_ title: String, _ s: Screen, badge: (String, Color)?) -> some View {
+        let on = screenRaw == s.rawValue
+        return Button { withAnimation(.easeInOut(duration: 0.2)) { screenRaw = s.rawValue } } label: {
+            HStack(spacing: 5) {
+                Text(title).font(.system(size: 13, weight: on ? .bold : .medium)).foregroundStyle(on ? AD.navy : AD.ink3)
+                    .lineLimit(1).fixedSize()
+                if let b = badge {
+                    Text(b.0).font(.system(size: 10.5, weight: .bold)).foregroundStyle(.white).lineLimit(1).fixedSize()
+                        .padding(.horizontal, 6).frame(minHeight: 17).background(b.1).clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 14).frame(minHeight: 32)
+            .background(on ? AD.card : .clear).clipShape(Capsule())
+            .shadow(color: on ? .black.opacity(0.08) : .clear, radius: 2, y: 1)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var ambulanceLabel: String {
         if let n = model.ambulanceName { return n }
         if let a = model.apid { return "구급 \(a)" }
@@ -144,7 +173,9 @@ struct TopBar: View {
             if model.hasIncident { return ("병원 선택 대기", AD.orange) }
             return ("출동 대기", AD.gray)
         }()
-        return HStack(spacing: 6) { Dot(color: color); Text(label).font(.system(size: 12, weight: .bold)).foregroundStyle(color).lineLimit(1) }
+        // 상태 문구는 길어지면 말줄임 — 화면 전환 칸이 줄바꿈되지 않게(2026-10-16)
+        return HStack(spacing: 6) { Dot(color: color); Text(label).font(.system(size: 12, weight: .bold)).foregroundStyle(color).lineLimit(1).truncationMode(.tail) }
+            .frame(maxWidth: 260, alignment: .leading)
     }
 
     private var connectionView: some View {
@@ -183,6 +214,7 @@ struct MapCard: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("hubBase") private var hubBase = Settings.defaultHub
     @AppStorage("spiderBase") private var spiderBase = ""
+    @State private var changeTo: BetterHospital?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -204,10 +236,76 @@ struct MapCard: View {
             SpiderWebView(url: Settings.spiderURL(apid: model.apid, screen: "ambulance"))
                 .id(hubBase + "|" + spiderBase + "|" + (model.apid ?? ""))   // 주소·구급차가 바뀌면 WebView를 새로 만든다
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(alignment: .topLeading) { betterPill.padding(10) }
                 .padding([.horizontal, .bottom], 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
+        // 지도 안(spider)에도 같은 병원을 작게 표시 — 바뀔 때만 보낸다(확률은 % 정수로 묶어 1초마다 보내지 않게)
+        .onChange(of: betterSignature, initial: true) { _, _ in
+            let items = model.betterHospitals.map { b in
+                "{hpid:'\(b.id)',label:'\(jsSafe("▲ " + b.match.name + " · 유효 " + BedReliability.pct(b.rArrive) + " · " + b.bedText))'}"
+            }
+            NotificationCenter.default.post(name: .spiderEval, object: nil,
+                                            userInfo: ["js": "window.setBetterHospitals&&setBetterHospitals([\(items.joined(separator: ","))])", "key": "better"])
+        }
+        .confirmationDialog(changeTo.map { "목적지를 \($0.match.name)(으)로 바꿀까요?" } ?? "", isPresented: Binding(get: { changeTo != nil }, set: { if !$0 { changeTo = nil } }),
+                            titleVisibility: .visible, presenting: changeTo) { b in
+            Button("\(b.match.name)(으)로 변경") { model.approve(b.match.hospitalId); changeTo = nil }
+            Button("취소", role: .cancel) { changeTo = nil }
+        } message: { b in
+            Text(changeMessage(b))
+        }
     }
+
+    private var betterSignature: String {
+        model.betterHospitals.map { "\($0.id):\(Int(($0.rArrive * 100).rounded())):\($0.bedText)" }.joined(separator: "|")
+    }
+
+    /// 이송 중 "더 나은 병원" 알약 — 지금 목적지와 비교(병원 이름 · 도착 시 유효 % · 병상) + [변경]. 이송 중에만, 최대 2곳
+    @ViewBuilder private var betterPill: some View {
+        let better = model.betterHospitals
+        if let c = model.confirmed, !better.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text("더 나은 병원").font(.system(size: 12, weight: .heavy)).foregroundStyle(AD.navy)
+                    Pill(text: "AI · 도착 시 유효", bg: AD.blueSoft, fg: AD.blue)
+                }
+                Text("지금 \(c.name) · 유효 \(model.destinationRArrive.map(BedReliability.pct) ?? "—") · \(c.bedCountUnknown == true ? "병상 미상" : "병상 \(c.availableBedCount ?? 0)석")")
+                    .font(.system(size: 11.5)).foregroundStyle(AD.ink3).lineLimit(1)
+                ForEach(better) { b in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(b.match.name).font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
+                            HStack(spacing: 6) {
+                                Text("유효 \(BedReliability.pct(b.rArrive))").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.validity(b.rArrive).fg)
+                                Text(b.bedText).font(.system(size: 12, weight: .semibold)).foregroundStyle(AD.lime)
+                            }
+                        }
+                        Spacer(minLength: 6)
+                        Button { changeTo = b } label: {
+                            Text("변경").font(.system(size: 12.5, weight: .bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 14).frame(minHeight: 32).background(AD.approve).clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(width: 300, alignment: .leading)
+            .background(AD.card.opacity(0.96))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AD.approve.opacity(0.6), lineWidth: 1.5))
+            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+            .transition(.opacity)
+        }
+    }
+
+    private func changeMessage(_ b: BetterHospital) -> String {
+        let eta = b.match.etaMin.map { "도착 약 \($0)분" } ?? b.match.travelMin.map { "도착 약 \(Int($0.rounded()))분(추정)" } ?? ""
+        return "도착 시 병상 정보 유효 \(BedReliability.pct(b.rArrive)) · \(b.bedText)\(eta.isEmpty ? "" : " · \(eta)")\n병원이 수용 승인한 곳입니다. 지금 위치에서 새 병원으로 이동합니다."
+    }
+
+    private func jsSafe(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "").replacingOccurrences(of: "'", with: "’") }
 }
