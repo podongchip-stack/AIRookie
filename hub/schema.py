@@ -45,6 +45,9 @@ class VoiceSummary(BaseModel):
     consciousness: Optional[str] = None
     onset: Optional[str] = None
     chief_complaint: Optional[str] = None
+    # 주 사고가 외상 기전인지(교통사고·낙상 등 — 질병이 아님). spider 매칭 규칙의 중증외상 벽에 쓴다(2026-10-15).
+    # 예전 6필드 voice·상태 복구 데이터엔 없어 None
+    trauma: Optional[bool] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -535,6 +538,13 @@ class HospitalMatch(BaseModel):
     bedDataStale: bool = False
     # 이 사건에서 제외된 병원(2026-10-05) — 도착 후 수용 불가·이송 중 수용 철회. 같은 사건엔 다시 승인할 수 없다
     excluded: bool = False
+    # spider 매칭 규칙(2026-10-15, spider_rule.py) — 설명용. 순위는 finalScore(줄 길이에서 만든 값)가 정한다.
+    # spiderLen: 줄 길이(분, 짧을수록 앞) · spiderGap: 유효 역량 − 필요 역량 · spiderBlocked: 줄이 없는 이유(벽·역량 모자람)
+    # spiderWindow: 같은 τ 창에 먼저 와 있는(우선하는) 다른 사건 — 한도를 채우면 이 병원을 건너뛴다(양보)
+    spiderLen: Optional[float] = None
+    spiderGap: Optional[float] = None
+    spiderBlocked: Optional[str] = None
+    spiderWindow: Optional[list[str]] = None
     # 전문성·등급 가산(2026-10-01, scoring.expertise_bonus_min). 이동시간에서 뺀 분과 그 이유.
     emergencyLevel: Optional[str] = None
     travelBonusMin: float = 0.0
