@@ -367,6 +367,7 @@ BACKUP_EQUIPMENT: tuple[tuple[str, str, str | None, str | None], ...] = (
     ("MRI", "MRI", "MRI", None),
     ("HYPOTHERMIA", "저체온 치료기", None, None),
     ("INCUBATOR", "인큐베이터", "인큐베이터", None),
+    ("FETAL_MONITOR", "분만감시기", "분만감시기", "E-Gen에는 운영 항목이 없다"),
     ("VENTILATOR_PRETERM", "조산아 인공호흡기", None, None),
     ("HYPERBARIC", "고압산소", None, None),
 )
