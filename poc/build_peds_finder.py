@@ -54,6 +54,52 @@ sys.path.insert(0, INFO)
 from hospital_score import vocabulary as V  # noqa: E402
 
 PED_DEPT = "소아청소년과"
+MSG_CACHE = os.path.join(HERE, "data", "acceptance_messages.json")
+
+#: 보호자에게 보일 공지를 고르는 기준. 성형외과·안과 공지는 소음이라 버린다.
+#: 자유 텍스트를 우리가 해석하지 않는다 — 고르기만 하고 문장은 그대로 보여준다.
+PED_WORDS = re.compile(r"소아|신생아|NICU|영유아|유아|아동|소청과|미숙아|분만|산모")
+#: 중증질환 메시지 중 영유아 항목 코드 (egen/messages.py의 대응표와 같은 체계)
+PED_SEVERE_CODES = {"Y0070", "Y0082", "Y0092", "Y0100", "Y0172"}
+#: 공지가 "제한"인지 "안내"인지. 실제로 "소아청소년과 : 24시간 진료 가능" 같은 안내가
+#: 섞여 오는데(E-Gen은 전부 '차단' 유형으로 내보낸다) 이걸 제한으로 보면 멀쩡한 병원이
+#: 뒤로 밀린다. 순위를 건드리는 건 제한으로 읽히는 문구가 있을 때만이다.
+BLOCK_WORDS = re.compile(r"불가|제한|중단|부재|미운영|축소|휴진|어렵|없어|없음")
+
+
+def load_messages() -> dict[str, list[list]]:
+    """hpid -> [[유형, 진료과, 문장, 시작, 종료], …]. 캐시가 없으면 조용히 빈 값.
+
+    시간으로 거르지 않고 그대로 싣는다 — 화면이 **열람 시각 기준으로** 다시
+    거른다(정적 파일이라 만든 시점으로 굳으면 안 된다).
+    """
+    try:
+        with open(MSG_CACHE, encoding="utf-8") as fp:
+            cache = json.load(fp)
+    except FileNotFoundError:
+        return {}
+    out: dict[str, list[list]] = {}
+    for r in cache.get("items", []):
+        text = (r.get("symBlkMsg") or "").strip()
+        dept = (r.get("trtPrtCodMag") or r.get("symTypCodMag") or "").strip()
+        code = (r.get("symTypCod") or "").strip()
+        blob = f"{text} {dept}"
+        if not (dept == PED_DEPT or PED_WORDS.search(blob) or code in PED_SEVERE_CODES):
+            continue
+        hpid = r.get("hpid")
+        if not hpid or not text:
+            continue
+        out.setdefault(hpid, []).append(
+            [
+                "중증" if r.get("symBlkMsgTyp") == "중증" else "응급",
+                dept,
+                text[:160],
+                (r.get("symBlkSttDtm") or "")[:14],
+                (r.get("symBlkEndDtm") or "")[:14],
+                1 if BLOCK_WORDS.search(text) else 0,
+            ]
+        )
+    return out
 
 
 def iv(x) -> int | None:
@@ -97,6 +143,7 @@ def load() -> tuple[list[dict], str]:
     except FileNotFoundError:
         spec = {}
 
+    msgs = load_messages()
     infant_items = [i.no for i in V.ITEMS if i.age == V.AGE_INFANT]
     rows = []
     for h in listing:
@@ -130,6 +177,7 @@ def load() -> tuple[list[dict], str]:
                     1 for n in infant_items if V.normalize_accept(sev.get(f"MKioskTy{n}")) == V.ACCEPT_YES
                 ),
                 "oc": occ,
+                "ms": msgs.get(hpid, []),
             }
         )
     return rows, stamp
@@ -181,6 +229,12 @@ h2{font-size:15px;margin:20px 0 9px;color:var(--ink2);font-weight:600}
 .dist{font-size:14px;color:var(--accent);font-weight:650;white-space:nowrap}
 .sub{font-size:12.5px;color:var(--muted);margin:3px 0 0}
 .reason{font-size:13px;color:var(--ink2);margin:9px 0 0;padding-left:9px;border-left:2px solid var(--accentbg)}
+.notice{background:var(--urgentbg);border-left:3px solid var(--urgent);border-radius:0 8px 8px 0;
+        padding:9px 11px;margin:10px 0 0;font-size:13px;line-height:1.5;color:var(--ink)}
+.notice b{color:var(--urgent);display:block;font-size:12px;margin-bottom:3px}
+.notice.info{background:var(--accentbg);border-left-color:var(--accent)}
+.notice.info b{color:var(--accent)}
+.notice p{margin:0 0 5px}.notice p:last-child{margin:0}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:9px 0 0}
 .chip{font-size:12px;padding:4px 9px;border-radius:999px;background:var(--accentbg);color:var(--accent);white-space:nowrap}
 .chip.ok{background:var(--okbg);color:var(--ok)}
@@ -238,6 +292,20 @@ function judge(){
   if(!r.why.length) up(3,'고르신 내용만으로는 급한 신호가 보이지 않습니다');
   return r;
 }
+/* 병원 공지는 시작·종료 시각이 있다. 정적 파일이라 만든 시점으로 굳으면 안 되므로
+   **열람 시각 기준으로** 다시 거른다. 시각은 E-Gen이 주는 KST 문자열과 같은 자리수로 맞춘다 */
+function nowStamp(){
+  var d=new Date(), p=function(n){return (n<10?'0':'')+n;};
+  return ''+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+}
+function activeMsgs(h){
+  var now=nowStamp();
+  return (h.ms||[]).filter(function(m){
+    if(m[3] && m[3]>now) return false;   // 아직 시작 전
+    if(m[4] && m[4]<now) return false;   // 이미 끝남
+    return true;
+  });
+}
 function km(a,b,c,d){var R=6371,p=Math.PI/180,u=(c-a)*p,v=(d-b)*p;
   var h=Math.sin(u/2)*Math.sin(u/2)+Math.cos(a*p)*Math.cos(c*p)*Math.sin(v/2)*Math.sin(v/2);
   return 2*R*Math.asin(Math.sqrt(h));}
@@ -252,6 +320,13 @@ function rank(h){
   if(age===0 && h.ni){ min-=2; why.push('신생아 중환자실이 있는 곳'); }
   if(h.oc!=null && h.oc>=80){ min+=5; why.push('마지막 집계에서 응급실이 거의 찼던 곳'); }
   else if(h.oc!=null && h.oc>=50){ min+=2; why.push('마지막 집계에서 응급실이 붐볐던 곳'); }
+  /* 병원이 직접 올린 공지는 **순위를 건드리지 않는다.** 한때 뒤로 밀어 봤는데,
+     "소아신경분과 진료불가" 같은 분과 단위 제한 때문에 2km 병원이 5km 병원보다
+     뒤로 갔다 — 열이 난 아기와는 상관없는 제한이다. 우리는 그 공지가 이 아이에게
+     해당되는지 판별할 능력이 없고, 판별하는 척하면 더 위험하다.
+     그래서 문장을 눈에 띄게 보여 주기만 하고 판단은 보호자가 한다 */
+  h._ms=activeMsgs(h);
+  h._blk=h._ms.filter(function(m){return m[5];});
   h._m=min; h._why=why;
   return min;
 }
@@ -282,6 +357,13 @@ function places(){
       +'<span class="dist">'+h._d.toFixed(1)+'km</span></div>'
       +'<p class="sub">'+h.g+' · '+h.a+'</p>'
       +'<div class="chips">'+chips(h)+'</div>'
+      +(h._ms.length
+         ? '<div class="notice'+(h._blk.length?'':' info')+'"><b>'
+           + (h._blk.length?'이 병원이 올린 진료 제한 공지':'이 병원이 올린 안내')+'</b>'
+           + h._ms.slice(0,2).map(function(m){return '<p>'+m[2]+'</p>';}).join('')
+           + (h._ms.length>2?'<p style="color:var(--muted)">외 '+(h._ms.length-2)+'건</p>':'')
+           + '</div>'
+         : '')
       +(h._why.length?'<p class="reason">'+h._why.join(' · ')+'</p>':'')
       +'<div class="acts">'+(h.t?'<a class="tel" href="tel:'+h.t+'">전화 '+h.t+'</a>':'')
       +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
@@ -413,7 +495,12 @@ def main() -> None:
         fp.write(build(rows, stamp))
     print(f"생성: {OUT}  ({os.path.getsize(OUT)/1024:.0f} KB)")
     print(f"  전국 {len(rows)}곳 · 혼잡도 집계 {stamp}")
-    print("  ⚠ 병원 공지(acceptanceMessages)는 E-Gen 키가 필요해 이 장비에선 비어 있다")
+    withmsg = [r for r in rows if r["ms"]]
+    blk = sum(1 for r in withmsg if any(m[5] for m in r["ms"]))
+    if withmsg:
+        print(f"  병원 공지: {len(withmsg)}곳 (제한 {blk}곳 · 안내 {len(withmsg)-blk}곳)")
+    else:
+        print("  ⚠ 병원 공지 캐시가 없다 — `python fetch_messages.py` 먼저 (E-Gen 키 필요)")
 
 
 if __name__ == "__main__":
