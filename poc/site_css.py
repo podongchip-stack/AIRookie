@@ -33,7 +33,8 @@ CSS = """
   --ease:cubic-bezier(.16,1,.3,1);
   --col:1200px;
 }
-@media (prefers-color-scheme:dark){:root{
+/* 다크는 OS가 아니라 사용자가 고른다 (네비 토글). 앱토와 같다 */
+:root[data-theme="dark"]{
   color-scheme:dark;
   --bg:#0c0d10; --soft:#15171c; --card:#111317; --hl:#182338;
   --ink:#f4f4f5; --ink2:#b4b9c4; --muted:#80858f;
@@ -44,7 +45,7 @@ CSS = """
   --warn:#efc271; --warnbg:#2d2111; --warnline:#4a3819;
   --ok:#6fd392; --okbg:#0f2617;
   --mapbg:#111317; --mapring:#242831; --mapdim:#3d4452; --maptext:#868c98;
-}}
+}
 
 html{caret-color:var(--accent);scrollbar-color:var(--line) transparent}
 html,body{margin:0;background:var(--bg)}
@@ -66,13 +67,18 @@ b,strong{font-weight:650}
 .bar .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);display:flex;
            align-items:center;justify-content:center;flex:none}
 .bar nav{display:flex;gap:22px;margin-left:auto}
+.bar .theme{width:34px;height:34px;border-radius:999px;border:1px solid var(--line);
+            background:var(--card);color:var(--ink2);cursor:pointer;display:flex;
+            align-items:center;justify-content:center;flex:none;
+            transition:border-color .16s var(--ease),color .16s var(--ease)}
+.bar .theme:hover{border-color:var(--mapdim);color:var(--ink)}
 .bar nav a{font-size:14px;color:var(--ink2);text-decoration:none;white-space:nowrap}
 .bar nav a:hover{color:var(--ink)}
-.bar .cta{margin-left:auto;font-size:14px;font-weight:650;color:#fff;background:var(--urgent-fill);
+.bar .cta{font-size:14px;font-weight:650;color:#fff;background:var(--urgent-fill);
           text-decoration:none;border-radius:999px;padding:10px 19px;white-space:nowrap;
           transition:background .18s var(--ease)}
 .bar .cta:hover{background:var(--urgent-fill-h)}
-@media (max-width:860px){.bar nav{display:none}.bar .cta{margin-left:auto}}
+@media (max-width:860px){.bar nav{display:none}.bar .theme{margin-left:auto}}
 
 /* 히어로 — 가운데, 아주 크게 */
 .hero{max-width:var(--col);margin:0 auto;padding:74px 24px 0;text-align:center}

@@ -448,6 +448,17 @@ document.getElementById('loc').onclick=function(){
 };
 addEventListener('resize',function(){ if(here) show(); });
 
+/* 화면 밝기 토글. OS 설정을 따라가지 않고 사용자가 고른다.
+   고른 값은 **저장하지 않는다** — 쿠키·기록을 남기지 않는다는 약속을 지키려고,
+   새로 열면 다시 밝은 화면에서 시작한다 */
+document.getElementById('theme').onclick=function(){
+  var dark=document.documentElement.getAttribute('data-theme')==='dark';
+  document.documentElement.setAttribute('data-theme', dark?'light':'dark');
+  this.setAttribute('aria-pressed', String(!dark));
+  this.setAttribute('aria-label', dark?'어두운 화면으로 바꾸기':'밝은 화면으로 바꾸기');
+  if(here) show();                      /* 그림은 CSS 변수를 읽으므로 다시 그린다 */
+};
+
 /* 배포본은 data.json을 따로 올려 주기적으로 갱신한다. 그게 있으면 그걸 쓰고,
    없으면(로컬 파일로 열었을 때 등) HTML에 박아 둔 값으로 그대로 돈다 — 그래서
    서버 없이도 열리고, 올려 두면 최신으로 뜬다 */
@@ -474,6 +485,10 @@ ICON_INFO = ('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke
              'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
              '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>')
 
+ICON_MOON = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+             'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+             '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>')
+
 TITLE = "아이가 아픈데 어디로 가야 할까요"
 DESC = ("아이 나이와 증상을 두 번만 고르면 지금 119인지 응급실인지 알려 드립니다. "
         "소아 진료가 되는 응급실을 공개 데이터로 찾아 드립니다.")
@@ -490,14 +505,15 @@ def build(rows: list[dict], meta: dict) -> str:
     A(f'<meta name="description" content="{esc(DESC)}">')
     A(f'<meta property="og:title" content="{esc(TITLE)}"><meta property="og:description" content="{esc(DESC)}">')
     A('<meta property="og:type" content="website">')
-    A('<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)">')
-    A('<meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme:dark)">')
+    A('<meta name="theme-color" content="#ffffff">')
     A('<meta name="robots" content="index,follow">')
     A(f"<style>{CSS}</style></head><body>")
 
     A('<nav class="bar"><div class="in"><span class="logo"><span class="mark">' + LOGO + "</span>우리 아이 응급 길잡이</span>")
     A('<nav><a href="#tool">지금 어떻게 하죠</a><a href="#why">왜 만들었나</a>'
       '<a href="#how">어떻게 고르나</a><a href="#faq">자주 묻는 것</a></nav>')
+    A('<button class="theme" id="theme" aria-label="어두운 화면으로 바꾸기" '
+      'aria-pressed="false">' + ICON_MOON + '</button>')
     A('<a class="cta" href="tel:119">119 전화하기</a></div></nav>')
 
     A('<header class="hero">')

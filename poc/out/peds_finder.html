@@ -5,8 +5,7 @@
 <meta name="description" content="아이 나이와 증상을 두 번만 고르면 지금 119인지 응급실인지 알려 드립니다. 소아 진료가 되는 응급실을 공개 데이터로 찾아 드립니다.">
 <meta property="og:title" content="아이가 아픈데 어디로 가야 할까요"><meta property="og:description" content="아이 나이와 증상을 두 번만 고르면 지금 119인지 응급실인지 알려 드립니다. 소아 진료가 되는 응급실을 공개 데이터로 찾아 드립니다.">
 <meta property="og:type" content="website">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)">
-<meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme:dark)">
+<meta name="theme-color" content="#ffffff">
 <meta name="robots" content="index,follow">
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -25,7 +24,8 @@
   --ease:cubic-bezier(.16,1,.3,1);
   --col:1200px;
 }
-@media (prefers-color-scheme:dark){:root{
+/* 다크는 OS가 아니라 사용자가 고른다 (네비 토글). 앱토와 같다 */
+:root[data-theme="dark"]{
   color-scheme:dark;
   --bg:#0c0d10; --soft:#15171c; --card:#111317; --hl:#182338;
   --ink:#f4f4f5; --ink2:#b4b9c4; --muted:#80858f;
@@ -36,7 +36,7 @@
   --warn:#efc271; --warnbg:#2d2111; --warnline:#4a3819;
   --ok:#6fd392; --okbg:#0f2617;
   --mapbg:#111317; --mapring:#242831; --mapdim:#3d4452; --maptext:#868c98;
-}}
+}
 
 html{caret-color:var(--accent);scrollbar-color:var(--line) transparent}
 html,body{margin:0;background:var(--bg)}
@@ -58,13 +58,18 @@ b,strong{font-weight:650}
 .bar .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);display:flex;
            align-items:center;justify-content:center;flex:none}
 .bar nav{display:flex;gap:22px;margin-left:auto}
+.bar .theme{width:34px;height:34px;border-radius:999px;border:1px solid var(--line);
+            background:var(--card);color:var(--ink2);cursor:pointer;display:flex;
+            align-items:center;justify-content:center;flex:none;
+            transition:border-color .16s var(--ease),color .16s var(--ease)}
+.bar .theme:hover{border-color:var(--mapdim);color:var(--ink)}
 .bar nav a{font-size:14px;color:var(--ink2);text-decoration:none;white-space:nowrap}
 .bar nav a:hover{color:var(--ink)}
-.bar .cta{margin-left:auto;font-size:14px;font-weight:650;color:#fff;background:var(--urgent-fill);
+.bar .cta{font-size:14px;font-weight:650;color:#fff;background:var(--urgent-fill);
           text-decoration:none;border-radius:999px;padding:10px 19px;white-space:nowrap;
           transition:background .18s var(--ease)}
 .bar .cta:hover{background:var(--urgent-fill-h)}
-@media (max-width:860px){.bar nav{display:none}.bar .cta{margin-left:auto}}
+@media (max-width:860px){.bar nav{display:none}.bar .theme{margin-left:auto}}
 
 /* 히어로 — 가운데, 아주 크게 */
 .hero{max-width:var(--col);margin:0 auto;padding:74px 24px 0;text-align:center}
@@ -224,6 +229,7 @@ footer b{color:var(--ink2)}
 </style></head><body>
 <nav class="bar"><div class="in"><span class="logo"><span class="mark"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-4.6-7-10a4.6 4.6 0 0 1 7-3.9A4.6 4.6 0 0 1 19 11c0 5.4-7 10-7 10Z"/><path d="M12 10v4M10 12h4"/></svg></span>우리 아이 응급 길잡이</span>
 <nav><a href="#tool">지금 어떻게 하죠</a><a href="#why">왜 만들었나</a><a href="#how">어떻게 고르나</a><a href="#faq">자주 묻는 것</a></nav>
+<button class="theme" id="theme" aria-label="어두운 화면으로 바꾸기" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
 <a class="cta" href="tel:119">119 전화하기</a></div></nav>
 <header class="hero">
 <h1>아이가 아픈데,<br><em>어디로</em> 가야 할까요?</h1>
@@ -524,6 +530,17 @@ document.getElementById('loc').onclick=function(){
   {timeout:8000,maximumAge:60000});
 };
 addEventListener('resize',function(){ if(here) show(); });
+
+/* 화면 밝기 토글. OS 설정을 따라가지 않고 사용자가 고른다.
+   고른 값은 **저장하지 않는다** — 쿠키·기록을 남기지 않는다는 약속을 지키려고,
+   새로 열면 다시 밝은 화면에서 시작한다 */
+document.getElementById('theme').onclick=function(){
+  var dark=document.documentElement.getAttribute('data-theme')==='dark';
+  document.documentElement.setAttribute('data-theme', dark?'light':'dark');
+  this.setAttribute('aria-pressed', String(!dark));
+  this.setAttribute('aria-label', dark?'어두운 화면으로 바꾸기':'밝은 화면으로 바꾸기');
+  if(here) show();                      /* 그림은 CSS 변수를 읽으므로 다시 그린다 */
+};
 
 /* 배포본은 data.json을 따로 올려 주기적으로 갱신한다. 그게 있으면 그걸 쓰고,
    없으면(로컬 파일로 열었을 때 등) HTML에 박아 둔 값으로 그대로 돈다 — 그래서
