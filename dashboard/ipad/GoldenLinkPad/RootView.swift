@@ -32,16 +32,16 @@ struct RootView: View {
                 GeometryReader { g in
                     HStack(alignment: .top, spacing: 14) {
                         // 왼쪽 열은 지도와 같은 높이(2026-10-16) — 이송 확정 전엔 통화 요약이 남는 높이를 다 채우고,
-                        // 확정 뒤엔 통화 요약 37 : 목적지 63으로 나눈다(각자 넘치면 카드 안에서 스크롤)
+                        // 확정 뒤엔 통화 요약은 내용 높이, 목적지가 나머지(각자 넘치면 카드 안에서 스크롤)
                         VStack(spacing: 8) {
                             SceneStatusCard()
                             // 목적지 카드(2026-10-16) — 이송 확정 뒤 ~ 도착, 구급차 화면에서만(병원 리스트 화면엔 없음)
                             if model.hasIncident, let c = model.confirmed {
+                                // 통화 요약은 내용 높이 그대로(스크롤 없이, 단 왼쪽 열의 55%까지), 목적지가 나머지를 채운다
                                 GeometryReader { g2 in
-                                    let h = max(0, g2.size.height - 8)
                                     VStack(spacing: 8) {
-                                        CallSummaryCard(fill: true).frame(height: h * 0.37)
-                                        DestinationCard(h: c, fill: true).frame(height: h * 0.63)
+                                        CallSummaryCard(fit: true).frame(maxHeight: g2.size.height * 0.55).layoutPriority(1)
+                                        DestinationCard(h: c, fill: true)
                                     }
                                 }
                             } else if model.hasIncident {
