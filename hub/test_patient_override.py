@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 _TMP = tempfile.TemporaryDirectory()
+os.environ.setdefault("HUB_SPIDER_HOUR", "14")  # spider 야간 감점이 검사 시각에 따라 바뀌지 않게(map.html 기본 14시)
 os.environ.setdefault("HUB_DECISION_LOG_PATH", str(Path(_TMP.name) / "decision_log.jsonl"))
 os.environ.setdefault("HUB_STATE_PATH", str(Path(_TMP.name) / "hub_state.json"))
 
@@ -72,7 +73,7 @@ def _order(result) -> list[str]:
 
 def _engine() -> HubEngine:
     engine = HubEngine(specialty_matcher=_FakeMatcher())
-    # 가까운 지역기관(C100) vs 약 6km 먼 권역센터(C200). test 브랜치는 spider 매칭 규칙이라(spider_rule.py) — KTAS 3(필요 역량 2)은
+    # 가까운 지역기관(C100) vs 약 6km 먼 권역센터(C200). hub 순위가 spider 매칭 규칙이라(spider_rule.py, 2026-10-15) — KTAS 3(필요 역량 2)은
     # 지역기관(역량 2)이 딱 맞아 가까운 쪽, 권역(역량 4)은 μ 5분/레벨 이득(6.25분)으로도 거리 차를 못 넘는다. KTAS 2(필요 3)는
     # 지역기관 역량이 1 모자라(0.75 초과) 줄이 안 걸려 권역센터가 앞으로 — 같은 뒤집힘을 spider 식으로 확인한다.
     engine.update_hospital_info(_hospital("C100", 37.5675, "지역응급의료기관"))

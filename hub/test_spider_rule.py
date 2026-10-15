@@ -1,4 +1,4 @@
-"""spider 매칭 규칙(test 브랜치, spider_rule.py)이 hub 순위에 들어갔는지 — 임베딩 모델·카카오 없이.
+"""spider 매칭 규칙(2026-10-15, spider_rule.py)이 hub 순위에 들어갔는지 — 임베딩 모델·카카오 없이.
 
 확인하는 것:
   1) 줄 길이 식 — KTAS 2는 상급 병원으로 더 멀리(μ), 경증은 센터를 피함(−λ), 역량이 0.75 넘게 모자라면 줄 없음(뒤로)
@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 _TMP = tempfile.TemporaryDirectory()
+os.environ.setdefault("HUB_SPIDER_HOUR", "14")  # spider 야간 감점이 검사 시각에 따라 바뀌지 않게(map.html 기본 14시)
 os.environ.setdefault("HUB_DECISION_LOG_PATH", str(Path(_TMP.name) / "decision_log.jsonl"))
 os.environ.setdefault("HUB_STATE_PATH", str(Path(_TMP.name) / "hub_state.json"))
 

@@ -1,4 +1,4 @@
-"""거미줄 분배 모델(spider)의 매칭 규칙을 hub로 옮긴 것(test 브랜치, 2026-10-15). 숫자만 계산하는 순수 규칙 기반 모듈
+"""거미줄 분배 모델(spider)의 매칭 규칙을 hub로 옮긴 것(2026-10-15). 숫자만 계산하는 순수 규칙 기반 모듈
 (source: "rule"). 원본은 spider/map.html의 JS 엔진(KTAS_Z·COND·zEff·candidates·solve의 충돌 규칙)과
 spider/voice_to_patient.py(질환군 규칙)이고, 값은 map.html 화면의 기본값이다 — 한쪽을 고치면 다른 쪽도 맞출 것.
 
@@ -19,6 +19,7 @@ spider/voice_to_patient.py(질환군 규칙)이고, 값은 map.html 화면의 �
 from __future__ import annotations
 
 import math
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -52,6 +53,11 @@ def patient_of(ktas_level: int | None, severity_tag: str | None, expected_text: 
 
 
 def local_hour(now: datetime) -> float:
+    """야간 감점(22~06시)에 쓰는 지금 시각(한국 시간). HUB_SPIDER_HOUR를 주면 그 시각으로 고정한다 — 검사가 돌리는 시각에 따라
+    결과가 바뀌지 않게(검사는 map.html 기본값 14시로 고정), 또는 시연에서 낮·밤 순위를 일부러 보여 줄 때."""
+    fixed = os.environ.get("HUB_SPIDER_HOUR")
+    if fixed:
+        return float(fixed) % 24
     t = now.astimezone(KST)
     return t.hour + t.minute / 60.0
 
