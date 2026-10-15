@@ -203,13 +203,64 @@ window.liveZoneSet = () => {
   const m = new Map();
   for (const c of myCases()) {
     if (c.pre || caseConfirmed(c)) continue;
+    // hub 사건 요약엔 아직 안 넓힌 바깥 존 병원도 들어 있다 — 지금 요청 중인 존(zoneActive) 안의 병원만 칠한다
+    const act = new Set(c.zoneActive || []);
     for (const ch of c.hospitals || []) {
+      if (act.size && ch.zone != null && !act.has(ch.zone)) continue;
       const ok = ch.status === 'pending' ? !(ch.unavailableReason || ch.excluded) : transportable(ch);
       if (ok) m.set(ch.hospitalId, 'ok');
       else if (!m.has(ch.hospitalId)) m.set(ch.hospitalId, 'no');
     }
   }
   return m;
+};
+// ── 요청 존 영역(2026-10-15) ── hub가 병원을 요청한 존(zoneActive, 존 하나 = zoneBandKm 폭의 고리, 중심 = 매칭 때 구급차 위치)을
+// 지도 바닥에 띠로 깐다. 색은 다른 표시(KTAS 빨강~노랑·등급 파랑·승인 초록·불가 빨강·제안 민트)와 겹치지 않는 보라 한 가지로,
+// 안쪽 존일수록 채도·불투명도가 높고 바깥으로 갈수록 밝고 옅어진다 — 존이 넓어지면 고리가 하나씩 늘어 경계가 보인다.
+// 이송이 확정되면 요청은 끝났으므로 지운다. 대량사고처럼 같은 현장에 사건이 여럿이면 한 번만(가장 넓은 존까지) 그린다.
+const ZONE_HUE = 265;
+function hslRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+function zoneStyle(i) {   // i = 1, 2, 3 … — 안쪽: 진하고 선명 / 바깥: 밝고 옅음
+  const t = Math.min(i - 1, 5);
+  return { fill: [...hslRgb(ZONE_HUE, 90 - 14 * t, 58 + 6 * t), Math.max(16, 70 - 11 * t)],
+           line: [...hslRgb(ZONE_HUE, 92 - 10 * t, 70 + 4 * t), Math.max(110, 230 - 22 * t)] };
+}
+function circlePts(lat, lng, km, n = 96) {
+  const dLat = km / 110.574, dLng = km / (111.32 * Math.cos(lat * Math.PI / 180));
+  const pts = [];
+  for (let j = 0; j <= n; j++) { const a = 2 * Math.PI * j / n; pts.push([lng + dLng * Math.sin(a), lat + dLat * Math.cos(a)]); }
+  return pts;
+}
+window.liveZoneLayers = () => {
+  const sites = new Map();
+  for (const c of myCases()) {
+    if (c.pre || caseConfirmed(c) || !(c.zoneActive || []).length) continue;
+    const ctr = c.ambulanceGps || casePos(c); if (!ctr) continue;
+    const key = ctr.lat.toFixed(3) + ',' + ctr.lng.toFixed(3), maxZ = Math.max(...c.zoneActive), band = c.zoneBandKm || 5;
+    const e = sites.get(key);
+    if (!e || e.maxZ < maxZ) sites.set(key, { lat: ctr.lat, lng: ctr.lng, maxZ, band });
+  }
+  const rings = [], edges = [], labels = [];
+  for (const s of sites.values()) {
+    for (let i = 1; i <= s.maxZ; i++) {
+      const outer = circlePts(s.lat, s.lng, i * s.band), inner = i > 1 ? circlePts(s.lat, s.lng, (i - 1) * s.band).reverse() : null;
+      const st = zoneStyle(i);
+      rings.push({ polygon: inner ? [outer, inner] : [outer], fill: st.fill });
+      edges.push({ path: outer, line: st.line, w: i === s.maxZ ? 2.2 : 1.4 });
+      labels.push({ pos: [s.lng, s.lat + (i * s.band - s.band * 0.18) / 110.574, 0], text: `존 ${i} · ${(i - 1) * s.band}–${i * s.band}km`, col: st.line });
+    }
+  }
+  const key = [...sites.values()].map(s => s.lat.toFixed(4) + s.lng.toFixed(4) + s.maxZ).join('|');
+  return [
+    new PolygonLayer({ id: 'lv-zone-fill', data: rings, getPolygon: d => d.polygon, getFillColor: d => d.fill, stroked: false, filled: true, parameters: { depthTest: false }, updateTriggers: { getPolygon: [key], getFillColor: [key] } }),
+    new PathLayer({ id: 'lv-zone-edge', data: edges, getPath: d => d.path, getColor: d => d.line, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false }, updateTriggers: { getPath: [key] } }),
+    new TextLayer({ id: 'lv-zone-txt', data: labels, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: d => [...d.col.slice(0, 3), 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 150], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [key] } }),
+  ];
 };
 function transportable(ch) {
   if (ch.status !== 'approved') return false;
