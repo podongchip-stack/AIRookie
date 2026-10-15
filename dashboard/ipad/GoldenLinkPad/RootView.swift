@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 구급차 대시보드(웹 /ambulance 시안)와 같은 배치 — 상단바 · 범례 → 왼쪽 열(현장 상태 · 통화 요약) + 오른쪽 거미줄 3D 지도.
-/// 상단바의 [구급차 | 병원 리스트 | 상황판]으로 화면을 바꾼다(2026-10-16) — 병원 리스트는 지도 없이 현장 상태·통화 요약 + 병원 후보
+/// 상단바의 [상황판 | 병원 리스트 | 구급차]로 화면을 바꾼다(2026-10-16, 앱은 상황판에서 시작) — 병원 리스트는 지도 없이 현장 상태·통화 요약 + 병원 후보
 /// (HospitalListScreen), 상황판은 이 구급차가 아니라 전체 사건(대량사고). 예전엔 병원 리스트가 구급차 화면 아래 띠였다.
 /// 자동 전환: 음성 요약이 처음 도착하면 병원 리스트로, 이송이 확정되면(hub 응답) 구급차 지도로(AppModel.requestScreen).
 /// 상단바의 [정보 생존 모델]은 같은 화면 위에 전체 화면으로 덮는다.
@@ -10,7 +10,7 @@ enum Screen: String { case ambulance, hospitals, board }
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var board: BoardModel
-    @AppStorage("screen") private var screenRaw = Screen.ambulance.rawValue
+    @AppStorage("screen") private var screenRaw = Screen.board.rawValue
     @State private var showSettings = false
     @State private var showSurvival = false
     private var screen: Screen { Screen(rawValue: screenRaw) ?? .ambulance }
@@ -58,11 +58,12 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.2), value: model.notice)
         .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model).environmentObject(board) }
         .fullScreenCover(isPresented: $showSurvival) { SurvivalModelScreen(isPresented: $showSurvival).environmentObject(model) }
-        .onAppear { model.start(); if screen == .board { board.start() } }
+        // 앱을 켜면 상황판부터(2026-10-16) — 현장 도착·음성 요약이 오면 병원 리스트, 이송이 확정되면 구급차 지도로 자동으로 넘어간다
+        .onAppear { screenRaw = Screen.board.rawValue; model.start(); board.start() }
         .onChange(of: screenRaw) { _, v in if v == Screen.board.rawValue { board.start() } }
-        // 자동 전환(2026-10-16): 음성 요약 첫 도착 → 병원 리스트, 이송 확정 → 구급차 지도. 상황판을 보고 있으면 건드리지 않는다
+        // 자동 전환(2026-10-16): 상황판(기본) → 음성 요약 첫 도착 → 병원 리스트 → 이송 확정 → 구급차 지도. 언제든 상단바로 직접 바꿀 수 있다
         .onReceive(NotificationCenter.default.publisher(for: .switchScreen)) { n in
-            guard let raw = n.userInfo?["screen"] as? String, screen != .board else { return }
+            guard let raw = n.userInfo?["screen"] as? String else { return }
             withAnimation(.easeInOut(duration: 0.25)) { screenRaw = raw }
         }
     }
@@ -96,7 +97,7 @@ struct TopBar: View {
                 if isBoard { Pill(text: "상황판 · 전체 사건", bg: AD.navy, fg: .white, bold: true) }
                 else { Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true) }
             }
-            // 구급차(지도) · 병원 리스트 · 상황판(전체 사건, 대량사고용)
+            // 상황판(전체 사건, 기본) · 병원 리스트 · 구급차(지도) — 진행 순서대로
             screenSwitch
             Spacer(minLength: 8)
             if isBoard {
@@ -131,9 +132,9 @@ struct TopBar: View {
     /// 세 칸 전환 — 병원 리스트 칸엔 병원 응답 배지(승인 수, 없으면 후보 수)를 붙여 구급차 화면에서도 응답이 온 걸 안다
     private var screenSwitch: some View {
         HStack(spacing: 2) {
-            seg("구급차", .ambulance, badge: nil)
-            seg("병원 리스트", .hospitals, badge: listBadge)
             seg("상황판", .board, badge: nil)
+            seg("병원 리스트", .hospitals, badge: listBadge)
+            seg("구급차", .ambulance, badge: nil)
         }
         .padding(3).background(AD.chip).clipShape(Capsule())
     }
