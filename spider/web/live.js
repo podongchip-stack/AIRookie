@@ -420,8 +420,15 @@ async function refreshSuggest() {
   if (!cases.length) { HUB.suggest = {}; renderLivePanel(); return; }
   const seq = ++suggestSeq;
   const patients = [];
-  for (const [i, c] of cases.entries()) { const p = casePos(c), k = caseK(c); patients.push({ id: i + 1, site: `#${c.num ?? '?'}`, k, t0: 0, lat: p.lat, lng: p.lng, z: KTAS_Z[k], cond: await condFor(c) }); }
-  let j; try { j = await api('api/solve', { patients, params: readParams() }); } catch (e) { return; }
+  // 수용할 수 없는 병원은 제안하지 않는다(2026-10-15): ① 병상은 서버 스냅샷이 아니라 hub가 지금 아는 값(이송 확정 차감 반영)으로
+  // ② 이 사건에서 hub가 수용 불가로 본 병원(병원 불가·E-Gen 병상 0·제외·차단·승인 뒤 병상 0 확인)은 그 환자 후보에서 뺀다
+  const liveBeds = {};
+  for (const mh of (HUB.overview && HUB.overview.hospitals) || []) liveBeds[mh.hospitalId] = mh.bedCountUnknown ? null : mh.availableBedCount;
+  const exclude = c => (c.hospitals || []).filter(ch => ch.status !== 'confirmed' && (ch.status === 'rejected' || ch.unavailableReason || ch.excluded
+    || (ch.demoteReasons || []).some(r => r === 'beds_full' || r === 'severe_blocked')
+    || (ch.status === 'approved' && !transportable(ch)))).map(ch => ch.hospitalId);
+  for (const [i, c] of cases.entries()) { const p = casePos(c), k = caseK(c); patients.push({ id: i + 1, site: `#${c.num ?? '?'}`, k, t0: 0, lat: p.lat, lng: p.lng, z: KTAS_Z[k], cond: await condFor(c), exclude: exclude(c) }); }
+  let j; try { j = await api('api/solve', { patients, params: readParams(), liveBeds }); } catch (e) { return; }
   if (seq !== suggestSeq) return;
   const out = {};
   cases.forEach((c, i) => { const idx = j.cur[String(i + 1)]; const seg = idx != null ? j.hist[String(i + 1)][idx] : null; if (seg) out[c.caseId] = { hpid: seg.hpid, len: seg.len, road: seg.road }; });

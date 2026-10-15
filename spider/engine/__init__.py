@@ -51,11 +51,16 @@ class SpiderEngine:
         return {"hospitals": len(self.hospitals), "withBeds": len(self.live), "roadNodes": getattr(self.roads, "n", 0),
                 "roadLoadSec": round(getattr(self.roads, "load_sec", 0.0), 1), "speedKmh": [80, 55, 45, 35, 25]}
 
-    def solve(self, patients: list[dict], params: dict | Params | None = None) -> dict:
+    def solve(self, patients: list[dict], params: dict | Params | None = None, live_beds: dict | None = None) -> dict:
+        """live_beds: {hpid: 응급실 가용 수 또는 None(미상)} — hub가 지금 아는 값(이송 확정 차감 반영)으로 스냅샷 값을 덮는다.
+        실시간 모드의 '거미줄 제안'이 스냅샷(수집 시점)엔 자리가 있었지만 지금은 만실인 병원을 고르던 문제(2026-10-15)."""
         prm = params if isinstance(params, Params) else Params.from_dict(params)
+        live = self.live
+        if live_beds:
+            live = [{**h, "hvec": live_beds[h["hpid"]]} if h["hpid"] in live_beds else h for h in self.live]
         t0 = time.perf_counter()
         with self._lock:
-            res = solve(patients, prm, self.roads, self.live)
+            res = solve(patients, prm, self.roads, live)
         out = to_json(res)
         out["ms"] = round((time.perf_counter() - t0) * 1000, 1)
         return out
