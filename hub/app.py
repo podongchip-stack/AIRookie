@@ -640,6 +640,13 @@ def get_hospital_backup():
     return response, status
 
 
+@app.get("/hospital-features")
+def get_hospital_features():
+    """spider 거미줄 제안용 병원 정보(2026-10-15, HubEngine.spider_features) — hub가 순위에 쓰는 E-Gen·심평원 재료와 병상
+    정보 신뢰도 곡선을 병원마다. spider 서버가 같은 맥에서 30초마다 가져간다(공개 터널엔 열지 않는다). 읽기 전용."""
+    return jsonify({"hospitals": engine.spider_features(), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}), 200
+
+
 #: 매칭 결과를 한 번이라도 받은 병원들(caseId -> hpid 집합). 후보에서 빠진 병원도
 #: 다음 결과를 받아야 자기 화면의 카드를 지울 수 있어서, 역할별 전송의 수신 대상에 남긴다.
 _case_audience: dict[str, set[str]] = {}
@@ -737,6 +744,7 @@ def _monitor_case(payload: dict) -> dict:
         ktasLevel=patient.get("ktasLevel"), expectedDiagnosis=patient.get("expectedDiagnosis"),
         chiefComplaint=patient.get("chiefComplaint"), requiredDepartment=patient.get("requiredDepartment"),
         patient=patient.get("patient"), confirmedBy=patient.get("confirmedBy"),
+        diseaseGroup=engine.case_group(payload["caseId"]),
         zoneActive=payload.get("zoneActive") or [],
         zoneBandKm=ZONE_BAND_KM,
         hospitals=[
