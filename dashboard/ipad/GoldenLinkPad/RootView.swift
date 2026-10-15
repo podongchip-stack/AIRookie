@@ -35,6 +35,8 @@ struct RootView: View {
                             VStack(spacing: 8) {
                                 SceneStatusCard()
                                 if model.hasIncident { CallSummaryCard() }
+                                // 목적지 카드(2026-10-16) — 이송 확정 뒤 ~ 도착, 구급차 화면에서만(병원 리스트 화면엔 없음)
+                                if let c = model.confirmed { DestinationCard(h: c) }
                             }
                         }
                         .scrollIndicators(.hidden)
