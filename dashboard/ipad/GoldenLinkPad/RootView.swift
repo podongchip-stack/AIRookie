@@ -33,20 +33,20 @@ struct RootView: View {
                     HStack(alignment: .top, spacing: 14) {
                         // 왼쪽 열은 지도와 같은 높이(2026-10-16) — 이송 확정 전엔 통화 요약이 남는 높이를 다 채우고,
                         // 확정 뒤엔 통화 요약은 내용 높이, 목적지가 나머지(각자 넘치면 카드 안에서 스크롤)
-                        // 카드 사이 간격은 4, 대신 카드마다 위아래 여백을 3씩 더 준다(2026-10-16)
-                        VStack(spacing: 4) {
-                            SceneStatusCard(extraV: 3)
+                        // 카드 사이 간격은 2, 대신 카드마다 위아래 여백을 4씩 더 준다(2026-10-16)
+                        VStack(spacing: 2) {
+                            SceneStatusCard(extraV: 4)
                             // 목적지 카드(2026-10-16) — 이송 확정 뒤 ~ 도착, 구급차 화면에서만(병원 리스트 화면엔 없음)
                             if model.hasIncident, let c = model.confirmed {
                                 // 통화 요약은 내용 높이 그대로(스크롤 없이, 단 왼쪽 열의 55%까지), 목적지가 나머지를 채운다
                                 GeometryReader { g2 in
-                                    VStack(spacing: 4) {
-                                        CallSummaryCard(fit: true, extraV: 3).frame(maxHeight: g2.size.height * 0.55).layoutPriority(1)
+                                    VStack(spacing: 2) {
+                                        CallSummaryCard(fit: true, extraV: 4).frame(maxHeight: g2.size.height * 0.55).layoutPriority(1)
                                         DestinationCard(h: c, fill: true)
                                     }
                                 }
                             } else if model.hasIncident {
-                                CallSummaryCard(fill: true, extraV: 3)
+                                CallSummaryCard(fill: true, extraV: 4)
                             } else {
                                 Spacer(minLength: 0)
                             }
