@@ -139,7 +139,19 @@ b,strong{font-weight:650}
   .tiles>div:nth-child(3){border-left:0}
   .tiles>div:nth-child(n+3){border-top:1px solid var(--line)}}
 
-.plot{margin:16px 0 0}
+.plot{margin:16px 0 0;border-top:1px solid var(--line);padding-top:4px}
+.plot>summary{font-size:13.5px;color:var(--ink2);padding:10px 2px;cursor:pointer;list-style:none;
+              display:flex;align-items:center;gap:8px;font-weight:600}
+.plot>summary::-webkit-details-marker{display:none}
+.plot>summary::after{content:'';width:8px;height:8px;border-right:1.6px solid var(--muted);
+  border-bottom:1.6px solid var(--muted);transform:rotate(45deg) translate(-2px,-2px);
+  transition:transform .2s var(--ease)}
+.plot[open]>summary::after{transform:rotate(-135deg) translate(-3px,-3px)}
+.gh{font-size:15.5px;font-weight:700;letter-spacing:-.025em;margin:26px 0 4px;display:flex;
+    align-items:baseline;gap:8px}
+.gh:first-child{margin-top:4px}
+.gh span{font-size:12.5px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.gd{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55}
 .plot canvas{display:block;width:100%;height:auto}
 .maplabel{font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6}
 .legend{display:flex;flex-wrap:wrap;gap:7px 16px;margin:10px 2px 0;font-size:11.5px;color:var(--muted)}

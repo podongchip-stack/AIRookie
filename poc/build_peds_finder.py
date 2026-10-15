@@ -69,9 +69,15 @@ KST = timezone(timedelta(hours=9))
 PED_DEPT = "소아청소년과"
 PED_WORDS = re.compile(r"소아|신생아|NICU|영유아|유아|아동|소청과|미숙아|분만|산모")
 PED_SEVERE_CODES = {"Y0070", "Y0082", "Y0092", "Y0100", "Y0172"}
-#: 공지가 "제한"인지 "안내"인지. E-Gen은 전부 '차단' 유형으로 내보내서
-#: "소아청소년과 : 24시간 진료 가능" 같은 안내가 섞인다.
-BLOCK_WORDS = re.compile(r"불가|제한|중단|부재|미운영|축소|휴진|어렵|없어|없음")
+#: 공지를 세 갈래로 읽는다. E-Gen은 전부 '차단' 유형으로 내보내지만 내용은 섞여 있다 —
+#: 실제로 "소아청소년과 : 24시간 진료 가능"도 '차단'으로 온다.
+#:   2 제한  "진료불가", "수용 어려움"          → 그 아이는 못 받을 수 있다
+#:   1 조건  "사전 문의", "요일별 상이"          → 전화로 먼저 물어보라는 뜻
+#:   0 안내  나머지                              → 받는다는 쪽
+#: ⚠ '어렵'만 보면 "수용 어려움"이 안 잡힌다. 어간으로 끊을 것.
+BLOCK_WORDS = re.compile(r"불가|제한|중단|부재|미운영|축소|휴진|어려|없어|없음|못\s*받")
+COND_WORDS = re.compile(r"사전\s*문의|문의\s*후|사전\s*확인|사전\s*연락|문의\s*바랍|"
+                        r"확인\s*바랍|상이|요일\s*별|요일별|문의 후")
 
 
 def iv(x) -> int | None:
@@ -101,7 +107,7 @@ def load_messages() -> dict[str, list[list]]:
             "중증" if r.get("symBlkMsgTyp") == "중증" else "응급",
             dept, text[:160],
             (r.get("symBlkSttDtm") or "")[:14], (r.get("symBlkEndDtm") or "")[:14],
-            1 if BLOCK_WORDS.search(text) else 0,
+            2 if BLOCK_WORDS.search(text) else (1 if COND_WORDS.search(text) else 0),
         ])
     return out
 
@@ -273,7 +279,7 @@ function thread(h){
   else if(h.oc!=null && h.oc>=50){ min+=2; why.push('집계 때 응급실이 붐볐던 곳'); }
   /* 병원 공지는 순위를 건드리지 않는다 — 분과 단위 제한을 전면 차단으로 오인하면
      2km 병원이 5km 병원보다 뒤로 간다. 문장만 보여 주고 판단은 보호자가 한다 */
-  h._ms=activeMsgs(h); h._blk=h._ms.filter(function(m){return m[5];});
+  h._ms=activeMsgs(h); h._blk=h._ms.filter(function(m){return m[5]===2;});
   h._travel=travel; h._len=Math.max(1,min); h._why=why;
   h._r=rArrive(h,travel);
   return h._len;
@@ -369,7 +375,8 @@ function card(h,i){
     +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
        +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
     +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'">'
-       +'<span class="lab">'+(h._blk.length?ICON_ALERT+'이 병원이 올린 진료 제한 공지':ICON_INFO+'이 병원이 올린 안내')+'</span>'
+       +'<span class="lab">'+(h._blk.length?ICON_ALERT+'이 병원이 올린 진료 제한 공지'
+            :(group(h)===1?ICON_INFO+'전화로 먼저 확인해 달라는 공지':ICON_INFO+'이 병원이 올린 안내'))+'</span>'
        +h._ms.slice(0,2).map(function(m){return '<p>'+m[2]+'</p>';}).join('')
        +(h._ms.length>2?'<p style="color:var(--muted)">외 '+(h._ms.length-2)+'건</p>':'')+'</div>':'')
     +(h._why.length?'<p class="reason">'+h._why.join(' · ')+'</p>':'')
@@ -396,7 +403,8 @@ function renderMap(){
     + tile('집계 때 붐빔', busy, '순위에서 뒤로', '#d9892b')
     + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
     + '</div>'
-    +'<div class="plot"><canvas id="web"></canvas>'
+    +'<details class="plot"'+(usingDefault?' open':'')+'><summary>어디쯤에 있는지 보기</summary>'
+    +'<canvas id="web"></canvas>'
     +'<p class="maplabel">'+(usingDefault
         ? '<b>서울 중심을 기준으로 한 예시입니다.</b> 위 <b>[내 주변 응급실 보기]</b>를 누르면 '
           +'내 위치로 다시 그립니다. '
@@ -408,15 +416,31 @@ function renderMap(){
     +'<span><i style="background:#d9892b"></i>집계 때 붐빔</span>'
     +'<span><i style="background:#e05c54"></i>진료 제한 공지</span>'
     +'<span><i style="background:var(--mapdim)"></i>그 밖 · 점 크기는 소아 진료 여건</span>'
-    +'</div></div>';
+    +'</div></details>';
   drawWeb(rows);
 }
+function group(h){                    /* 병원이 스스로 말한 것으로 묶는다 */
+  if(!h._ms.length) return 0;         /* 공지 없음 */
+  return Math.max.apply(null, h._ms.map(function(m){return m[5];}));
+}
 function places(){
-  if(usingDefault) return '<div class="ask">가까운 곳 세 곳을 찾아 드리려면 위치가 필요합니다. '
+  if(usingDefault) return '<div class="ask">갈 수 있는 곳을 찾아 드리려면 위치가 필요합니다. '
     +'위 <b>[내 주변 응급실 보기]</b>를 눌러 주세요 — 위치는 이 화면 안에서만 쓰이고 저장되지 않습니다.</div>';
   var rows=candidates();
-  if(!rows.length) return '<p class="sub" style="margin-left:0">가까운 곳을 찾지 못했습니다. 119에 물어보세요.</p>';
-  return rows.slice(0,3).map(card).join('');
+  if(!rows.length) return '<div class="ask">가까운 곳을 찾지 못했습니다. 119에 물어보세요.</div>';
+  var g=[[],[],[]];
+  rows.forEach(function(h){ g[group(h)].push(h); });
+  var out='', n=0;
+  function block(list,title,desc,limit){
+    if(!list.length) return '';
+    var h2='<h3 class="gh">'+title+'<span>'+list.length+'곳</span></h3>'
+      +(desc?'<p class="gd">'+desc+'</p>':'');
+    return h2+list.slice(0,limit).map(function(h){ return card(h,n++); }).join('');
+  }
+  out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 그래도 출발 전 전화로 확인하세요.',3);
+  out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',2);
+  out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다 — 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',2);
+  return out;
 }
 function show(){
   renderMap();
