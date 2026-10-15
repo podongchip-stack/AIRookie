@@ -12,15 +12,17 @@ struct HospitalListScreen: View {
             // 나눠 갖고 각자 안에서 스크롤되게. 현장 상태·선택 비교는 내용 높이 그대로
             VStack(spacing: 8) {
                 SceneStatusCard().fixedSize(horizontal: false, vertical: true)
-                // 병원 응답 현황(기본) + 수용 승인 2곳 이상이면 선택 비교(2026-10-16) — 이송 확정 전까지
-                if let r = model.result, model.confirmed == nil {
-                    ResponseStatusCard(r: r).frame(minHeight: 130)
+                // 순서(2026-10-16): 현장 상태 → 통화 요약 → 선택 비교(수용 승인 2곳 이상) → 병원 응답 현황(남는 높이, 기록은 카드 안 스크롤)
+                // 응답 현황·선택 비교는 이송 확정 전까지. 응답 현황이 있을 땐 통화 요약을 230pt로 묶는다(넘치면 카드 안 스크롤)
+                let r = model.confirmed == nil ? model.result : nil
+                if model.hasIncident { CallSummaryCard(fill: true).frame(minHeight: 90, maxHeight: r != nil ? 230 : .infinity) }
+                if let r {
                     let approved = r.hospitals.filter { $0.status == "approved" && $0.excluded != true }
                     if approved.count >= 2 {
                         CompareCard(hospitals: approved, recommendedId: r.hospitals.first { HospitalRules.canTransportNow($0) }?.hospitalId)
                     }
+                    ResponseStatusCard(r: r).frame(minHeight: 130)
                 }
-                if model.hasIncident { CallSummaryCard(fill: true).frame(minHeight: 90) }
                 if !model.hasIncident { Spacer(minLength: 0) }
             }
             .frame(width: 360)
