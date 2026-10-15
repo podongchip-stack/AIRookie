@@ -873,6 +873,8 @@ class MonitorCase(BaseModel):
     ktasLevel: Optional[int] = None
     expectedDiagnosis: Optional[str] = None
     chiefComplaint: Optional[str] = None
+    # 사건의 15개 중증질환군(2026-10-15) — spider 거미줄 제안이 그 질환군을 "불가능" 신고·차단한 병원에 줄을 걸지 않게. 없으면 None
+    diseaseGroup: Optional[str] = None
     requiredDepartment: Optional[str] = None
     patient: Optional[str] = None
     confirmedBy: Optional[str] = None

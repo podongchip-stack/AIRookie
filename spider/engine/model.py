@@ -6,6 +6,7 @@ JS와 다시 대조한다.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -63,6 +64,21 @@ def cond_label(cond: str | None) -> str:
     return COND.get(cond or "general", COND["general"])["label"]
 
 
+def r_arrive(h: dict, horizon_sec: float) -> float | None:
+    """정보 생존 모델(infosurv) — 지금 병상 숫자가 도착(horizon_sec 뒤)까지 유효할 확률. hub bed_reliability.evaluate와
+    같은 식: S(t) = 1 − Φ((ln t − ln m)/σ), r = S(나이 + 도착까지)이고, 병원이 대시보드에서 "현재 정보 확인"을 눌렀으면 그때
+    나이 u로 나눈다(조건부 생존). 실시간 모드에서 hub가 곡선을 준 병원만 값이 있다(h["_rel"]) — 가상 시나리오는 None."""
+    rel = h.get("_rel")
+    if not rel:
+        return None
+    m, sigma = max(rel["m"], 1e-12), rel["sigma"] or 1.0
+    s = lambda t: 0.5 * math.erfc((math.log(max(t, 1e-12)) - math.log(m)) / (sigma * math.sqrt(2.0)))
+    r = s(rel["age"] + max(horizon_sec, 0.0))
+    if rel.get("u") is not None:
+        r = min(r / max(s(rel["u"]), 1e-12), 1.0)
+    return r
+
+
 def is_full(h: dict) -> bool:
     """확인된 만실 — 병상 데이터가 있고 응급실 가용이 0 이하. 미상(None)은 만실로 보지 않는다."""
     return bool(h.get("hasBeds")) and h.get("hvec") is not None and h["hvec"] <= 0
@@ -93,7 +109,8 @@ def z_eff(h: dict, t_now: float, ctx: Ctx, prm: Params) -> dict:
     night = hour >= 22 or hour < 6
     nt = (-0.6 if (h["g"] <= 2 and em <= 2) else -0.25 if em <= 3 else -0.1) if night else 0.0
     occ = max(0.0, min(1.0, 1 - h["hvec"] / h["er_cap"])) if (h.get("er_cap") and h.get("hvec") is not None) else 0.5
-    infl = ctx.inflight(h["hpid"]) if prm.wload else 0
+    # hub가 아는 실제 이송 중 건수(실시간 모드, h["_inflight"])도 더한다 — hub 부하 페널티와 같은 재료
+    infl = (ctx.inflight(h["hpid"]) + h.get("_inflight", 0)) if prm.wload else 0
     free = max(0, h["hvec"] if h.get("hvec") is not None else ctx.cap)
     lp = 10.0 * infl / max(1, infl + free)
     op = 5.0 * occ if prm.wload else 0.0
@@ -119,9 +136,12 @@ def candidates(row: dict, frm: dict, p: dict, t_now: float, ctx: Ctx, prm: Param
     # 환자별 제외 병원(p["exclude"]) — 실시간 모드에서 hub가 이 사건에 수용 불가(병상 0·불가·제외)로 본 병원(2026-10-15).
     # 초과로 붙일 때도 이 후보 목록을 쓰므로 거기서도 빠진다. 가상 시나리오엔 없다(map.html과 같은 규칙)
     exclude = set(p.get("exclude") or ())
+    # 질환군 벽(실시간 모드, 2026-10-15): 환자의 15개 중증질환군(hub가 예상 병명으로 고른 것)을 그 병원이 E-Gen에 "불가능"으로
+    # 신고했거나 지금 유효한 차단 공지로 막았으면(h["_noGroups"], hub /hospital-features) 줄을 안 건다
+    group = p.get("group")
     out = []
     for h in live:
-        if is_full(h) or not wall(h) or h["hpid"] in exclude:
+        if is_full(h) or not wall(h) or h["hpid"] in exclude or (group and group in h.get("_noGroups", ())):
             continue
         road = row.get(h["hpid"])
         if road is None:
@@ -135,6 +155,9 @@ def candidates(row: dict, frm: dict, p: dict, t_now: float, ctx: Ctx, prm: Param
         else:
             length = road + nu * (-gap)
         length += ze["load"]
-        out.append({"h": h, "road": road, "gap": gap, "mu": mu, "len": length, "parts": ze["parts"] + ze["load_parts"]})
+        # 도착 시 병상 유효 확률(정보 생존 모델) — 병상 용량을 기대값(가용 × r)으로 깎는 데 쓴다(solve.check). 줄 길이엔 안 넣는다
+        r = r_arrive(h, (t_now + road) * 60.0)
+        parts = ze["parts"] + ze["load_parts"] + (f" 도착유효{round(r * 100)}%" if r is not None else "")
+        out.append({"h": h, "road": road, "gap": gap, "mu": mu, "len": length, "parts": parts, "r": r})
     out.sort(key=lambda c: c["len"])  # 안정 정렬 — 동률이면 병원 목록 순서(z 내림차순) 그대로, JS와 같다
     return out

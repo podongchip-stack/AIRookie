@@ -13,9 +13,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
+import urllib.request
 
 from flask import Flask, abort, jsonify, redirect, request, send_from_directory
 
@@ -27,6 +29,25 @@ import voice_to_patient as vtp  # noqa: E402
 PREFIX = os.environ.get("SPIDER_PREFIX", "/spider").rstrip("/")
 WEB = os.path.join(HERE, "web")
 MAX_PATIENTS = 300
+
+# hub 병원 정보(2026-10-15): 실시간 모드의 거미줄 제안을 hub와 같은 재료(E-Gen 실시간·심평원·병상 정보 신뢰도)로 계산하려고
+# hub GET /hospital-features를 30초마다 가져온다. 같은 맥에서 돌므로 로컬 주소(start-all이 SPIDER_HUB_HTTP_URL로 넘김).
+# hub가 안 떠 있으면 마지막으로 받은 값(없으면 스냅샷)으로 계산한다 — 10초 뒤 다시 시도.
+HUB_HTTP = os.environ.get("SPIDER_HUB_HTTP_URL", "http://127.0.0.1:5001").rstrip("/")
+HUB_FEATURES_TTL = 30.0
+_hub_feats: dict = {"at": 0.0, "data": None, "err": None}
+
+
+def hub_features() -> list[dict] | None:
+    if time.time() - _hub_feats["at"] < HUB_FEATURES_TTL:
+        return _hub_feats["data"]
+    try:
+        with urllib.request.urlopen(HUB_HTTP + "/hospital-features", timeout=3) as r:
+            _hub_feats.update(data=json.loads(r.read().decode("utf-8")).get("hospitals") or [], at=time.time(), err=None)
+    except Exception as e:  # noqa: BLE001 — hub가 없어도 제안은 스냅샷으로 계속
+        _hub_feats.update(at=time.time() - HUB_FEATURES_TTL + 10, err=str(e))
+    return _hub_feats["data"]
+
 
 app = Flask(__name__, static_folder=None)
 app.json.ensure_ascii = False
@@ -102,12 +123,17 @@ def solve():
         clean = [{"id": int(p["id"]), "site": str(p.get("site", "")), "k": int(p["k"]), "t0": float(p["t0"]),
                   "lat": float(p["lat"]), "lng": float(p["lng"]), "z": float(p.get("z", {1: 4, 2: 3, 3: 2, 4: 1, 5: 1}[int(p["k"])])),
                   "cond": p.get("cond") or None, "text": p.get("text") or None,
-                  "exclude": [str(x) for x in (p.get("exclude") or [])]} for p in patients]
+                  "exclude": [str(x) for x in (p.get("exclude") or [])],
+                  "group": str(p["group"]) if p.get("group") else None} for p in patients]
         # 실시간 모드: hub가 지금 아는 응급실 가용(이송 확정 차감 반영) — {hpid: 수 또는 null(미상)}
         live_beds = {str(k): (None if v is None else int(v)) for k, v in (body.get("liveBeds") or {}).items()}
     except (KeyError, TypeError, ValueError) as e:
         return jsonify({"error": f"환자 형식이 잘못됐습니다: {e}"}), 400
-    return jsonify(engine().solve(clean, body.get("params"), live_beds or None))
+    feats = hub_features() if body.get("hub") else None
+    out = engine().solve(clean, body.get("params"), live_beds or None, feats)
+    if body.get("hub"):
+        out["hub"] = {"hospitals": len(feats or []), "error": _hub_feats["err"]}
+    return jsonify(out)
 
 
 @app.post(f"{PREFIX}/api/random")
