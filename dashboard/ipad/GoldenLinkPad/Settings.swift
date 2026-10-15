@@ -59,6 +59,12 @@ enum Settings {
 
     /// 정보 생존 모델 라이브 채점 보드 — hub가 info 수신구(5003)의 결과를 그대로 중계한다
     static var liveBoardURL: URL? { httpBase.map { $0.appendingPathComponent("verification/live") } }
+    /// [배후역량] — hub GET /hospital-backup?id=<hpid>(웹 대시보드 [배후역량] 버튼과 같은 데이터)
+    static func backupURL(_ hospitalId: String) -> URL? {
+        guard let base = httpBase, var c = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        c.path = "/hospital-backup"; c.queryItems = [URLQueryItem(name: "id", value: hospitalId)]
+        return c.url
+    }
     static func identityURL(role: String, id: String) -> URL? {
         guard let base = httpBase, var c = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
         c.path = "/identity"; c.queryItems = [URLQueryItem(name: "role", value: role), URLQueryItem(name: "id", value: id)]
