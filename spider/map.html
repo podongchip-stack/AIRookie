@@ -324,7 +324,9 @@ function candidates(row,from,p,tNow,ctx){
   const mu0=p.k<=2?+$('mu2').value:p.k===3?+$('mu3').value:-lam;
   const mu=p.k<=3?mu0*Math.max(0,1-ctx.inflightSevere/10):mu0;
   const wall=COND[p.cond||'general'].wall;
-  return LIVE.filter(h=>!full(h)&&wall(h)).map(h=>{
+  // 환자별 제외 병원(p.exclude — 실시간 모드에서 hub가 이 사건에 수용 불가·제외로 본 병원, 2026-10-15). 가상 시나리오엔 없다
+  const ex=new Set(p.exclude||[]);
+  return LIVE.filter(h=>!full(h)&&wall(h)&&!ex.has(h.hpid)).map(h=>{
     const road=row[h.hpid]??straightMin(from.lat,from.lng,h.lat,h.lng), ze=zEff(h,tNow,ctx);
     const gap=ze.z-need; if(gap<-0.75) return null;   // 유효 역량이 필요 역량보다 0.75 넘게 모자라면 줄이 안 걸린다 (얇은 지역기관의 야간 등)
     // 위로 가는 이득은 μ(한 단계까지 전액, 그 위 1/4), 모자람의 비용은 ν(위급할수록 큼)
