@@ -1,13 +1,33 @@
 import Foundation
 import SwiftUI
 
+extension Notification.Name {
+    /// 화면 자동 전환 요청 — userInfo ["screen": Screen.rawValue]. RootView가 받아 바꾼다(2026-10-16)
+    static let switchScreen = Notification.Name("switchScreen")
+}
+
+/// "더 나은 병원"(이송 중 목적지 변경 제안, 2026-10-16) — 지금 목적지보다 도착 시 병상 정보가 맞을 확률이 높은 승인 병원
+struct BetterHospital: Identifiable {
+    let match: HospitalMatch
+    let rArrive: Double
+    var id: String { match.hospitalId }
+    var bedText: String {
+        if match.bedCountUnknown == true { return "병상 미상" }
+        return "병상 \(match.availableBedCount ?? 0)석"
+    }
+}
+
 /// 앱 상태 — 이 아이패드가 실린 구급차 한 대의 화면(웹 /ambulance?id=와 같은 역할).
 /// 구급차 소켓(role=ambulance)으로 자기 사건(매칭 결과·현장 후보·통화·이동)을 받고, apid가 "auto"면 감시 소켓(role=monitor)으로
 /// 출동하는 구급차를 찾아 그 구급차로 넘어간다(웹 AmbulanceAutoFollow · 아이폰 앱과 같은 규칙).
 @MainActor
 final class AppModel: ObservableObject {
     // 연결
-    @Published var connection: HubSocket.State = .connecting
+    @Published var connection: HubSocket.State = .connecting {
+        didSet { if connection == .live, oldValue != .live { liveSince = Date() } }
+    }
+    /// 소켓이 막 연결된 직후엔 따라잡기(지난 결과 재전송)가 쏟아진다 — 그건 "음성 도착"이 아니라 자동 전환하지 않는다
+    private var liveSince: Date?
     @Published private(set) var apid: String?        // 지금 따라가는 구급차(auto면 출동 전엔 nil)
     @Published var ambulanceName: String?
     @Published var simDispatch = false
@@ -128,7 +148,13 @@ final class AppModel: ObservableObject {
                 if let apid, let a = m.apid, a != apid { return }
                 // 출동 시뮬레이션이 다른 사건을 들고 있으면 지난 사건의 따라잡기는 무시
                 if let c = sim?.caseId, c != m.caseId { return }
+                // 자동 전환(2026-10-16): 이 사건의 매칭 결과가 처음 오면(=음성 요약 도착, 추가 통화 회차 제외) 병원 리스트로,
+                // 이송 확정이 처음 보이면(hub 응답) 구급차 지도로
+                let firstForCase = result?.caseId != m.caseId
+                let wasConfirmed = confirmed != nil
                 result = m
+                if firstForCase, (m.patientInfo?.callRound ?? 1) <= 1 { requestScreen(.hospitals) }
+                if !wasConfirmed, confirmed != nil { requestScreen(.ambulance) }
                 receivedAt = Date()
                 if m.ambulanceName != nil { ambulanceName = m.ambulanceName }
                 if let p = pendingConfirmId, m.hospitals.contains(where: { $0.hospitalId == p && $0.status == "confirmed" }) { pendingConfirmId = nil }
@@ -187,6 +213,31 @@ final class AppModel: ObservableObject {
             pendingConfirmId = nil
             show("hub에 연결되지 않아 보내지 못했습니다.")
         }
+    }
+
+    private func requestScreen(_ s: Screen) {
+        guard let t = liveSince, Date().timeIntervalSince(t) > 3 else { return }
+        NotificationCenter.default.post(name: .switchScreen, object: nil, userInfo: ["screen": s.rawValue])
+    }
+
+    // ── 더 나은 병원(2026-10-16) — 이송 중에만. 데이터 정확성 기준: 지금 목적지보다 "도착 때 그 병상 숫자가 아직 맞을 확률"(정보 생존
+    // 모델, AI)이 15%p 이상 높은, 지금 보낼 수 있는 승인 병원. 최대 2곳, 확률 높은 순. hub 순위는 건드리지 않는 제안이고 바꿀지는
+    // 구급대원이 [변경] → 확인으로 정한다(이송 승인과 같은 요청). 목적지에 확률이 없으면(모델 값 없음·병상 미상) 비교할 수 없어 안 띄운다.
+    static let betterMarginP = 0.15
+    var destinationRArrive: Double? {
+        confirmed?.bedReliability.map { BedReliability.live($0, now: now).rArrive }
+    }
+    var betterHospitals: [BetterHospital] {
+        guard sim?.phase == "transporting", let r = result, let c = confirmed, let base = destinationRArrive else { return [] }
+        return r.hospitals
+            .filter { $0.hospitalId != c.hospitalId && HospitalRules.canTransportNow($0) }
+            .compactMap { h -> BetterHospital? in
+                guard let br = h.bedReliability else { return nil }
+                let p = BedReliability.live(br, now: now).rArrive
+                return p >= base + Self.betterMarginP ? BetterHospital(match: h, rArrive: p) : nil
+            }
+            .sorted { $0.rArrive > $1.rArrive }
+            .prefix(2).map { $0 }
     }
 
     func show(_ text: String) {
