@@ -101,10 +101,13 @@ def solve():
     try:
         clean = [{"id": int(p["id"]), "site": str(p.get("site", "")), "k": int(p["k"]), "t0": float(p["t0"]),
                   "lat": float(p["lat"]), "lng": float(p["lng"]), "z": float(p.get("z", {1: 4, 2: 3, 3: 2, 4: 1, 5: 1}[int(p["k"])])),
-                  "cond": p.get("cond") or None, "text": p.get("text") or None} for p in patients]
+                  "cond": p.get("cond") or None, "text": p.get("text") or None,
+                  "exclude": [str(x) for x in (p.get("exclude") or [])]} for p in patients]
+        # 실시간 모드: hub가 지금 아는 응급실 가용(이송 확정 차감 반영) — {hpid: 수 또는 null(미상)}
+        live_beds = {str(k): (None if v is None else int(v)) for k, v in (body.get("liveBeds") or {}).items()}
     except (KeyError, TypeError, ValueError) as e:
         return jsonify({"error": f"환자 형식이 잘못됐습니다: {e}"}), 400
-    return jsonify(engine().solve(clean, body.get("params")))
+    return jsonify(engine().solve(clean, body.get("params"), live_beds or None))
 
 
 @app.post(f"{PREFIX}/api/random")
