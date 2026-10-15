@@ -154,6 +154,9 @@ struct HubMatchResult: Codable {
     var apid: String?
     var ambulanceGps: GpsPoint?
     var paused: Bool?
+    /// 다음 자동 존 확장 시각(ISO) — 승인·확정 병원이 있거나 더 넓힐 수 없으면 nil. 정지 중이면 zonePausedLeftSec(2026-10-16)
+    var zoneExpandAt: String?
+    var zonePausedLeftSec: Int?
 }
 
 struct SceneSpecialty: Codable {
