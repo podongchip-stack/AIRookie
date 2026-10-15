@@ -16,12 +16,14 @@ struct DestinationCard: View {
     var fill = false
 
     var body: some View {
-        // fill이면 남는 높이를 '도착 시 유효' 상자가 채운다 — 공지가 길어 안 들어가면 그때만 카드 안 스크롤(2026-10-16)
+        // fill이면 남는 높이를 '도착 시 유효' 상자가 채운다 — 높이가 모자라면 압축 배치(숫자 한 줄·[배후역량]은 이름 옆),
+        // 그래도 안 들어가면 그때만 카드 안 스크롤(2026-10-16)
         Group {
             if fill {
                 ViewThatFits(in: .vertical) {
                     inner(expand: true)
-                    ScrollView { inner(expand: false) }.scrollIndicators(.hidden)
+                    inner(expand: false, compact: true)
+                    ScrollView { inner(expand: false, compact: true) }.scrollIndicators(.hidden)
                 }
             } else { inner(expand: false) }
         }
@@ -31,7 +33,7 @@ struct DestinationCard: View {
             .sheet(isPresented: $showBackup) { BackupSheet(name: h.name, backup: backup, hospitalId: h.hospitalId) }
     }
 
-    private func inner(expand: Bool) -> some View {
+    private func inner(expand: Bool, compact: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("목적지").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
@@ -41,14 +43,22 @@ struct DestinationCard: View {
             HStack(spacing: 6) {
                 Text(h.name).font(.system(size: 15, weight: .heavy)).foregroundStyle(AD.navy).lineLimit(1)
                 if let lv = h.emergencyLevel, lv.hasSuffix("센터") { Pill(text: lv.hasPrefix("권역") ? "권역센터" : "지역센터", bg: AD.blueSoft, fg: AD.blue) }
+                if compact {
+                    Spacer(minLength: 4)
+                    Button { showBackup = true } label: {
+                        Label("배후역량", systemImage: "cross.case").font(.system(size: 12, weight: .bold)).foregroundStyle(AD.blue)
+                            .padding(.horizontal, 10).padding(.vertical, 5).background(AD.blueSoft).clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            arrivalHero(expand: expand)
+            if compact { arrivalHeroCompact } else { arrivalHero(expand: expand) }
             HStack(spacing: 8) {
                 bedBox
                 StatBox(label: "응급의학 전문의", value: emDoctors.map { "\($0)명" } ?? "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
             }
             notices
-            Button { showBackup = true } label: {
+            if !compact { Button { showBackup = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "cross.case").font(.system(size: 13, weight: .semibold))
                     Text("배후역량 — 수술실·중환자실·장비").font(.system(size: 13, weight: .bold))
@@ -57,8 +67,31 @@ struct DestinationCard: View {
                 .frame(maxWidth: .infinity, minHeight: 36)
                 .background(AD.blueSoft).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plain) }
         }
+    }
+
+    /// 높이가 모자랄 때의 '도착 시 유효' — 숫자 왼쪽, 설명·막대 오른쪽 한 줄
+    private var arrivalHeroCompact: some View {
+        let t = live.map { Theme.validity($0.rArrive) } ?? (bg: AD.chip, fg: AD.ink3)
+        return HStack(spacing: 12) {
+            Text(live.map { BedReliability.pct($0.rArrive) } ?? "—").font(.system(size: 32, weight: .black, design: .rounded)).foregroundStyle(t.fg)
+                .lineLimit(1).fixedSize()
+            VStack(alignment: .leading, spacing: 3) {
+                Text("AI · 도착 시 병상 정보 유효").font(.system(size: 11.5, weight: .bold)).foregroundStyle(t.fg)
+                if let lv = live {
+                    ProbBar(value: lv.rArrive, height: 6)
+                    Text("지금 \(BedReliability.pct(lv.authority)) → 도착 시 \(BedReliability.pct(lv.rArrive))\(lv.ageSec.map { " · 정보 \(Labels.age($0))" } ?? "")")
+                        .font(.system(size: 11)).foregroundStyle(AD.sub).lineLimit(1).minimumScaleFactor(0.8)
+                } else {
+                    Text("병상 신뢰도 정보 없음").font(.system(size: 11)).foregroundStyle(AD.sub)
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(t.bg)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     /// AI 도착 시 유효(병상 숫자가 도착 때까지 맞을 확률) — 목적지 카드의 주인공. expand면 남는 높이를 채우고 숫자는 가운데
