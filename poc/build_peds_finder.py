@@ -306,6 +306,29 @@ h2{font-size:14px;margin:30px 0 10px;color:var(--muted);font-weight:650;letter-s
 .ask b{color:var(--ink)}
 .stale{font-size:12.5px;background:var(--warnbg);color:var(--warn);border-radius:10px;
        padding:10px 12px;margin:0 0 14px;line-height:1.5}
+/* 랜딩 섹션 — 도구 아래. abto의 "문제 → 가치 → 과정 → FAQ" 순서 */
+.sec{margin-top:52px}
+.sec h3{font-size:21px;letter-spacing:-.025em;margin:0 0 8px;font-weight:700}
+.sec .desc{font-size:14.5px;color:var(--ink2);margin:0 0 18px;line-height:1.6}
+.facts{display:grid;gap:11px}
+.fact{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:16px 17px}
+.fact .big{font-size:27px;font-weight:720;letter-spacing:-.03em;color:var(--accent);line-height:1.1}
+.fact .cap{font-size:13.5px;color:var(--ink2);margin-top:7px;line-height:1.55}
+.steps{display:grid;gap:10px;counter-reset:s}
+.step{display:flex;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.step .k{flex:none;width:23px;height:23px;border-radius:8px;background:var(--accentbg);color:var(--accent);
+         font-size:12.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.step b{display:block;font-size:14.5px;font-weight:650;margin-bottom:3px}
+.step p{margin:0;font-size:13.5px;color:var(--ink2);line-height:1.55}
+.faq{border-top:1px solid var(--line)}
+.faq details{border-bottom:1px solid var(--line);padding:3px 0}
+.faq summary{font-size:15px;font-weight:600;color:var(--ink);padding:14px 2px;list-style:none}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:'+';float:right;color:var(--muted);font-weight:400}
+.faq details[open] summary::after{content:'−'}
+.faq p{margin:0 2px 15px;font-size:14px;color:var(--ink2);line-height:1.65}
+footer{margin-top:56px;border-top:1px solid var(--line);padding:22px 0 0;font-size:12.5px;color:var(--muted);line-height:1.7}
+footer b{color:var(--ink2)}
 .note{font-size:12.5px;color:var(--muted);line-height:1.65;margin-top:28px;border-top:1px solid var(--line);padding-top:16px}
 .note strong{color:var(--ink2)} .note ul{padding-left:18px;margin:8px 0 0} .note li{margin:6px 0}
 details summary{cursor:pointer;color:var(--ink2);font-size:13px;padding:5px 0}
@@ -536,16 +559,40 @@ document.getElementById('loc').onclick=function(){
   {timeout:8000,maximumAge:60000});
 };
 addEventListener('resize',function(){ if(here) show(); });
+
+/* 배포본은 data.json을 따로 올려 주기적으로 갱신한다. 그게 있으면 그걸 쓰고,
+   없으면(로컬 파일로 열었을 때 등) HTML에 박아 둔 값으로 그대로 돈다 — 그래서
+   서버 없이도 열리고, 올려 두면 최신으로 뜬다 */
+fetch('data.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; })
+ .then(function(j){
+   if(!j||!j.rows||!j.rows.length) return;
+   DATA=j.rows; ASOF=j.asOf||ASOF;
+   document.querySelectorAll('[data-asof]').forEach(function(e){ e.textContent=ASOF; });
+   if(here) show();
+ }).catch(function(){});
 """
+
+
+TITLE = "아이가 아픈데 어디로 가야 할까요"
+DESC = ("아이 나이와 증상을 두 번만 고르면 지금 119인지 응급실인지 알려 드립니다. "
+        "소아 진료가 되는 응급실을 공개 데이터로 찾아 드립니다.")
 
 
 def build(rows: list[dict], meta: dict) -> str:
     tier2 = sum(1 for r in rows if r["pc"] > 0 and r["pd"] >= 2)
     o = []
     A = o.append
-    A("<title>우리 아이, 지금 어떻게 하죠</title>")
+    A("<!doctype html>")
+    A('<html lang="ko"><head><meta charset="utf-8">')
+    A(f"<title>{esc(TITLE)}</title>")
     A('<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">')
-    A(f"<style>{CSS}</style>")
+    A(f'<meta name="description" content="{esc(DESC)}">')
+    A(f'<meta property="og:title" content="{esc(TITLE)}"><meta property="og:description" content="{esc(DESC)}">')
+    A('<meta property="og:type" content="website">')
+    A('<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)">')
+    A('<meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme:dark)">')
+    A('<meta name="robots" content="index,follow">')
+    A(f"<style>{CSS}</style></head><body>")
 
     A('<nav class="bar"><div class="in"><div class="mark">우리 아이 <span>응급 길잡이</span></div>')
     A('<a href="tel:119">119</a></div></nav>')
@@ -580,6 +627,66 @@ def build(rows: list[dict], meta: dict) -> str:
     A("</div>")
 
     A('<div id="result"></div>')
+
+    # ── 랜딩: 왜 필요한가 (전부 우리가 직접 잰 공개 데이터 수치) ──
+    A('<section class="sec"><h3>왜 이런 걸 만들었나</h3>')
+    A(
+        '<p class="desc">아이가 아플 때 보호자가 가장 먼저 부딪히는 건 "어디로 가야 하나"입니다. '
+        "그런데 공개된 정보만으로는 답하기 어렵게 돼 있습니다. 직접 세어 봤습니다.</p>"
+    )
+    A('<div class="facts">')
+    for big, cap in [
+        (f"{tier2}곳",
+         "전국 응급의료기관 가운데 <b>소아 응급 병상과 소아청소년과 전문의 2명</b>을 함께 갖춘 곳. "
+         "서울 22 · 경기 16인 반면 울산 1 · 충북 1 · 세종 0입니다."),
+        ("23%",
+         "소아 병상 수가 실제로 올라오는 응급실 비율(416곳 중 95곳). 그마저 거의 갱신되지 않아 "
+         "<b>“지금 몇 자리”는 누구도 알 수 없습니다.</b>"),
+        ("75곳",
+         "“지금 이런 환자는 못 받는다”를 직접 공지해 둔 병원. "
+         "<b>3개월 이하 발열 진료불가</b> 같은 내용이 공개돼 있는데도 보호자에게는 보이지 않습니다."),
+    ]:
+        A(f'<div class="fact"><div class="big">{big}</div><p class="cap">{cap}</p></div>')
+    A("</div></section>")
+
+    # ── 랜딩: 어떻게 고르나 ──
+    A('<section class="sec"><h3>어떻게 고르나요</h3>')
+    A('<p class="desc">점수가 아니라 <b>분(分)</b>으로 계산합니다. 그래야 왜 이 순서인지 설명할 수 있습니다.</p>')
+    A('<div class="steps">')
+    for i, (t, d) in enumerate([
+        ("지금 119인지 먼저 가립니다",
+         "숨쉬기·경련·축 처짐이면 병원 목록을 보여 주지 않고 119만 안내합니다. "
+         "규칙으로만 판단하며 AI가 진단하지 않습니다."),
+        ("가는 데 드는 분을 계산합니다",
+         "이동 시간에서 소아 진료 여건만큼 빼고, 응급실이 붐빈 만큼 더합니다. "
+         "그래서 가까워도 여건이 얕으면 뒤로 갑니다."),
+        ("병원이 올린 공지를 그대로 보여 드립니다",
+         "순서에는 반영하지 않습니다. 일부 분과만의 제한일 수 있어, "
+         "그 공지가 우리 아이에게 해당되는지는 저희가 판단하지 않습니다."),
+    ]):
+        A(f'<div class="step"><div class="k">{i+1}</div><div><b>{t}</b><p>{d}</p></div></div>')
+    A("</div></section>")
+
+    # ── FAQ ──
+    A('<section class="sec"><h3>자주 묻는 것</h3><div class="faq">')
+    for q, a in [
+        ("지금 자리가 있는지 알 수 있나요?",
+         "응급실 전체 혼잡도는 보여 드리지만 <b>소아 병상은 알 수 없습니다.</b> "
+         "전국 응급실의 23%만 소아 병상 수를 올리고 그마저 거의 갱신되지 않습니다. "
+         "모르는 것을 아는 척하지 않으려고 숫자를 지어내지 않았습니다."),
+        ("전화를 꼭 해야 하나요?",
+         "네. <b>오늘 밤 소아과 당직이 누구인지는 공개된 데이터 어디에도 없습니다.</b> "
+         "이 화면은 갈 필요가 없는 곳을 줄여서 전화 횟수를 줄이는 것까지만 합니다."),
+        ("제 위치나 증상이 저장되나요?",
+         "아니요. 로그인·쿠키·접속 기록이 없고 외부로 아무것도 보내지 않습니다. "
+         "지도도 외부에서 타일을 받지 않아 <b>위치가 서버로 나가지 않습니다.</b>"),
+        ("병원을 추천해 주는 건가요?",
+         "아닙니다. 거리와 소아 진료 여건으로 정한 <b>순서</b>일 뿐이고 어디가 더 낫다는 추천이 아닙니다. "
+         "판단 기준도 의사가 검토하기 전의 초안입니다. 헷갈리시면 119에 전화해 물어보셔도 됩니다 — "
+         "119는 상담도 합니다."),
+    ]:
+        A(f"<details><summary>{q}</summary><p>{a}</p></details>")
+    A("</div></section>")
 
     A('<div class="note"><p><strong>이 화면이 할 수 있는 일과 못 하는 일</strong></p><ul>')
     A(
@@ -623,10 +730,18 @@ def build(rows: list[dict], meta: dict) -> str:
         "<li>아무것도 저장하지 않습니다 — 로그인·쿠키·접속 기록이 없고, 지도도 외부에서 "
         "타일을 받지 않아 <strong>위치가 서버로 나가지 않습니다.</strong></li>"
     )
-    A("</ul></div></div>")
+    A("</ul></div>")
+    A(
+        "<footer><b>우리 아이 응급 길잡이</b> — 중앙응급의료센터 E-Gen·건강보험심사평가원 "
+        f"공개 API로 만든 비영리 시연 서비스입니다. 데이터 기준 {esc(meta['asOf'])}.<br>"
+        "응급 상황에서는 <b>먼저 119</b>에 전화하세요. 이 화면은 의료 조언이 아닙니다."
+        "</footer>"
+    )
+    A("</div>")
 
     data = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
     A("<script>" + JS_TMPL.replace("__DATA__", data).replace("__ASOF__", meta["asOf"]) + "</script>")
+    A("</body></html>")
     return "\n".join(o)
 
 
@@ -635,7 +750,13 @@ def main() -> None:
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as fp:
         fp.write(build(rows, meta))
+    # 배포용으로 데이터를 따로도 떨군다. 이 파일만 주기적으로 다시 올리면
+    # HTML은 그대로 두고 내용이 갱신된다(화면이 있으면 data.json을 우선 쓴다).
+    data_path = os.path.join(os.path.dirname(OUT), "data.json")
+    with open(data_path, "w", encoding="utf-8") as fp:
+        json.dump({"asOf": meta["asOf"], "rows": rows}, fp, ensure_ascii=False, separators=(",", ":"))
     print(f"생성: {OUT}  ({os.path.getsize(OUT)/1024:.0f} KB)")
+    print(f"      {data_path}  ({os.path.getsize(data_path)/1024:.0f} KB)")
     print(f"  전국 {len(rows)}곳 · 기준 {meta['asOf']}")
     print(f"  병원 공지 {meta['msgCount']}곳 · 신뢰도 {meta['relCount']}곳 ({meta['modelTag'] or '없음'})")
 
