@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// 상황판 — 전체 사건을 한 화면에(대량사고용). 구급차 화면과 같은 디자인이지만 병원 후보 리스트·현장 상태·통화 요약은 없다.
-/// 왼쪽: 상황 요약 + 사건 목록(누르면 지도가 그 현장으로) / 가운데: 거미줄 3D(모든 사건) / 오른쪽: 병원별 분산 현황.
+/// 왼쪽: 상황 요약 + 사건 목록(누르면 지도가 그 현장으로) / 오른쪽 전체: 거미줄 3D(모든 사건). 병원별 분산은 자료가 생기면
+/// 지도 오른쪽 위에 떠 있는 카드로 올라온다(2026-10-15) — 그동안 지도는 그 카드 폭만큼 비켜서 맞춘다(spider setViewPadding).
 struct SituationBoardView: View {
     @EnvironmentObject private var board: BoardModel
     @AppStorage("hubBase") private var hubBase = Settings.defaultHub
@@ -16,9 +17,16 @@ struct SituationBoardView: View {
             }
             .frame(width: 330)
             mapCard
-            hospitalLoad.frame(width: 330)
         }
-        .onAppear { board.start() }
+        .onAppear { board.start(); sendPadding(!board.hospitalLoads.isEmpty) }
+        .onChange(of: board.hospitalLoads.isEmpty) { _, empty in sendPadding(!empty) }
+    }
+
+    /// 떠 있는 병원별 분산 카드 폭(카드 + 여백) — 지도가 [전체 보기]·자동 맞춤 때 이만큼 오른쪽을 비운다
+    private static let floatWidth: CGFloat = 300
+    private func sendPadding(_ shown: Bool) {
+        NotificationCenter.default.post(name: .spiderEval, object: nil,
+                                        userInfo: ["js": "setViewPadding(\(shown ? Int(Self.floatWidth + 28) : 0))", "key": "pad"])
     }
 
     // ── 상황 요약 ──
@@ -163,6 +171,18 @@ struct SituationBoardView: View {
             SpiderWebView(url: Settings.spiderURL(apid: nil, screen: "board"))
                 .id("board|" + hubBase + "|" + spiderBase)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(alignment: .topTrailing) {
+                    // 병원별 분산 — 수용 승인·이송 확정된 병원이 생기면 지도 위에 떠 있는 카드로
+                    GeometryReader { g in
+                        let loads = board.hospitalLoads
+                        if !loads.isEmpty {
+                            HStack { Spacer(minLength: 0); floatingLoad(loads, maxHeight: g.size.height - 24) }
+                                .padding(12)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
+                    }
+                }
+                .animation(.spring(response: 0.4, dampingFraction: 0.86), value: board.hospitalLoads.isEmpty)
                 .padding([.horizontal, .bottom], 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -170,33 +190,33 @@ struct SituationBoardView: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
     }
 
-    // ── 병원별 분산 현황 ──
-    private var hospitalLoad: some View {
-        let loads = board.hospitalLoads
+    // ── 병원별 분산 현황(지도 위에 떠 있는 카드) ──
+    private func floatingLoad(_ loads: [BoardModel.HospitalLoad], maxHeight: CGFloat) -> some View {
         let maxN = max(1, loads.map(\.load).max() ?? 1)
-        return VStack(alignment: .leading, spacing: 8) {
+        // 목록 높이는 내용만큼(줄당 약 70pt), 지도 높이를 넘으면 스크롤
+        let listHeight = min(CGFloat(loads.count) * 70, max(80, maxHeight - 76))
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text("병원별 분산").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-                Text("확정·승인 병원").font(.system(size: 11)).foregroundStyle(AD.muted)
+                Text("병원별 분산").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
+                Text("확정·승인 \(loads.count)곳").font(.system(size: 11)).foregroundStyle(AD.muted)
                 Spacer()
             }
-            Text("한 병원으로 몰리는지 보는 칸 — 이송 중 부하가 쌓이면 hub가 다음 환자를 다른 병원으로 돌린다(규칙)")
-                .font(.system(size: 11)).foregroundStyle(AD.sub)
-            if loads.isEmpty {
-                Spacer()
-                Text("아직 수용 승인·이송 확정된 병원이 없습니다").font(.system(size: 13)).foregroundStyle(AD.muted).frame(maxWidth: .infinity)
-                Spacer()
-            } else {
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(loads) { l in loadRow(l, maxN: maxN) }
-                    }
+            Text("한 병원으로 몰리면 hub가 다음 환자를 다른 병원으로 돌린다(규칙)")
+                .font(.system(size: 10.5)).foregroundStyle(AD.sub).lineLimit(2)
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(loads) { l in loadRow(l, maxN: maxN) }
                 }
-                .scrollIndicators(.hidden)
             }
+            .scrollIndicators(.hidden)
+            .frame(height: listHeight)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .card()
+        .padding(12)
+        .frame(width: Self.floatWidth)
+        .background(AD.card.opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AD.line, lineWidth: 1))
+        .shadow(color: .black.opacity(0.28), radius: 14, y: 6)
     }
 
     private func loadRow(_ l: BoardModel.HospitalLoad, maxN: Int) -> some View {
