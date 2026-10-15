@@ -16,15 +16,23 @@ struct DestinationCard: View {
     var fill = false
 
     var body: some View {
-        Group { if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner } }
+        // fill이면 남는 높이를 '도착 시 유효' 상자가 채운다 — 공지가 길어 안 들어가면 그때만 카드 안 스크롤(2026-10-16)
+        Group {
+            if fill {
+                ViewThatFits(in: .vertical) {
+                    inner(expand: true)
+                    ScrollView { inner(expand: false) }.scrollIndicators(.hidden)
+                }
+            } else { inner(expand: false) }
+        }
             .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
             .card()
             .task(id: h.hospitalId) { backup = await HospitalBackup.fetch(h.hospitalId) }
             .sheet(isPresented: $showBackup) { BackupSheet(name: h.name, backup: backup, hospitalId: h.hospitalId) }
     }
 
-    private var inner: some View {
-        VStack(alignment: .leading, spacing: 9) {
+    private func inner(expand: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("목적지").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
                 Spacer()
@@ -34,22 +42,10 @@ struct DestinationCard: View {
                 Text(h.name).font(.system(size: 15, weight: .heavy)).foregroundStyle(AD.navy).lineLimit(1)
                 if let lv = h.emergencyLevel, lv.hasSuffix("센터") { Pill(text: lv.hasPrefix("권역") ? "권역센터" : "지역센터", bg: AD.blueSoft, fg: AD.blue) }
             }
+            arrivalHero(expand: expand)
             HStack(spacing: 8) {
                 bedBox
-                if let lv = live {
-                    let t = Theme.validity(lv.rArrive)
-                    StatBox(label: "AI 도착 시 유효", value: BedReliability.pct(lv.rArrive), bg: t.bg, fg: t.fg)
-                } else {
-                    StatBox(label: "AI 도착 시 유효", value: "—", bg: AD.chip, fg: AD.ink3)
-                }
                 StatBox(label: "응급의학 전문의", value: emDoctors.map { "\($0)명" } ?? "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
-            }
-            if let lv = live {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("AI · 병상 정보 지금 유효 \(BedReliability.pct(lv.authority)) → 도착 시 \(BedReliability.pct(lv.rArrive))\(lv.ageSec.map { " · 정보 \(Labels.age($0))" } ?? "")")
-                        .font(.system(size: 11.5)).foregroundStyle(AD.sub).lineLimit(1)
-                    ProbBar(value: lv.rArrive, height: 5)
-                }
             }
             notices
             Button { showBackup = true } label: {
@@ -63,6 +59,28 @@ struct DestinationCard: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    /// AI 도착 시 유효(병상 숫자가 도착 때까지 맞을 확률) — 목적지 카드의 주인공. expand면 남는 높이를 채우고 숫자는 가운데
+    @ViewBuilder private func arrivalHero(expand: Bool) -> some View {
+        let t = live.map { Theme.validity($0.rArrive) } ?? (bg: AD.chip, fg: AD.ink3)
+        VStack(alignment: .leading, spacing: 4) {
+            Text("AI · 도착 시 병상 정보 유효").font(.system(size: 13, weight: .bold)).foregroundStyle(t.fg)
+            if let lv = live {
+                Text(BedReliability.pct(lv.rArrive)).font(.system(size: 46, weight: .black, design: .rounded)).foregroundStyle(t.fg)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                ProbBar(value: lv.rArrive, height: 8)
+                Text("지금 유효 \(BedReliability.pct(lv.authority)) → 도착 시 \(BedReliability.pct(lv.rArrive))\(lv.ageSec.map { " · 정보 \(Labels.age($0))" } ?? "")")
+                    .font(.system(size: 12)).foregroundStyle(AD.sub).lineLimit(1).minimumScaleFactor(0.8)
+            } else {
+                Text("—").font(.system(size: 46, weight: .black, design: .rounded)).foregroundStyle(t.fg)
+                Text("이 병원은 병상 신뢰도 정보가 없습니다").font(.system(size: 12)).foregroundStyle(AD.sub)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, maxHeight: expand ? .infinity : nil, alignment: .leading)
+        .background(t.bg)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var arrivalText: String {
