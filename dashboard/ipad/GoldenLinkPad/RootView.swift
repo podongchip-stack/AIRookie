@@ -31,14 +31,24 @@ struct RootView: View {
                 // 병원 후보는 [병원 리스트] 화면으로 옮겼다(2026-10-16) — 지도가 아래까지
                 GeometryReader { g in
                     HStack(alignment: .top, spacing: 14) {
-                        // 왼쪽 열은 지도와 같은 높이(2026-10-16) — 목적지 카드는 내용 높이 그대로, 통화 요약이 남는 높이를 채운다
-                        // (내용 길이가 바뀌는 쪽은 통화 요약 — 자막·추가 통화. 넘치면 카드 안에서 스크롤)
+                        // 왼쪽 열은 지도와 같은 높이(2026-10-16) — 이송 확정 전엔 통화 요약이 남는 높이를 다 채우고,
+                        // 확정 뒤엔 통화 요약 4 : 목적지 6으로 나눈다(각자 넘치면 카드 안에서 스크롤)
                         VStack(spacing: 8) {
                             SceneStatusCard()
-                            if model.hasIncident { CallSummaryCard(fill: true) }
                             // 목적지 카드(2026-10-16) — 이송 확정 뒤 ~ 도착, 구급차 화면에서만(병원 리스트 화면엔 없음)
-                            if let c = model.confirmed { DestinationCard(h: c).fixedSize(horizontal: false, vertical: true) }
-                            if !model.hasIncident { Spacer(minLength: 0) }
+                            if model.hasIncident, let c = model.confirmed {
+                                GeometryReader { g2 in
+                                    let h = max(0, g2.size.height - 8)
+                                    VStack(spacing: 8) {
+                                        CallSummaryCard(fill: true).frame(height: h * 0.4)
+                                        DestinationCard(h: c, fill: true).frame(height: h * 0.6)
+                                    }
+                                }
+                            } else if model.hasIncident {
+                                CallSummaryCard(fill: true)
+                            } else {
+                                Spacer(minLength: 0)
+                            }
                         }
                         .frame(width: g.size.width >= 1000 ? 360 : 320, height: g.size.height)
                         MapCard()
