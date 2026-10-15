@@ -118,6 +118,7 @@ def normalize(summary: dict) -> dict:
         ],
         "consciousness": AVPU_LABEL.get(avpu, avpu) if avpu else None,
         "onset": onset.get("text"),
+        "trauma": bool((_primary_incident(summary) or {}).get("type")) and (_primary_incident(summary) or {}).get("type") != "질병",
         "chief_complaint": " / ".join(
             p for p in ((summary.get("chief_complaint") or {}).get(k) for k in ("major", "minor")) if p
         ) or None,

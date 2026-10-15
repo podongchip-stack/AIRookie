@@ -360,6 +360,8 @@ def _run_match_job(voice: VoiceCallSummaryMessage) -> None:
         _send_to_dashboard(result.model_dump())
         _feed_followup_vitals(voice, result)
         _release_call_hold(voice.caseId, "summary_applied")
+        # spider 매칭 규칙(2026-10-15): 새 사건이 줄을 잡으면 같은 τ 창의 덜 우선하는 사건이 양보해야 한다 — 나머지를 다시 계산
+        _match_executor.submit(_refresh_active_cases)
     except Exception as e:  # noqa: BLE001
         print(f"  [매칭] caseId={voice.caseId} 매칭 실패: {e!r}")
 
@@ -1501,6 +1503,9 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
     # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
     arrival_refusal = _build_rejection_payload(action) if action.action in ("arrival_refused", "transport_withdraw") else None
     applied = engine.apply_approval_action(action)
+    # spider 매칭 규칙(2026-10-15): 승인·확정·도착 결과로 줄·창이 바뀌면 다른 사건의 양보도 다시 맞춘다
+    if applied:
+        _match_executor.submit(_refresh_active_cases)
 
     # maybe_expand_zone()은 거절 액션에만 부른다 — reject_ratio가 누적 계산이라
     # 승인/최종승인 뒤에도 부르면 새 거절이 없는데도 계속 확장돼버린다
@@ -2444,8 +2449,10 @@ def _mark_voice_addresses_dirty() -> None:
 
 
 def _refresh_active_cases() -> None:
-    """진행 중인 사건을 다시 계산하고, 달라진 사건만 대시보드에 다시 보낸다(작업 스레드에서 돈다)."""
-    for case_id in engine.get_active_case_ids():
+    """진행 중인 사건을 다시 계산하고, 달라진 사건만 대시보드에 다시 보낸다(작업 스레드에서 돈다).
+    spider 매칭 규칙(2026-10-15): 우선하는 사건(KTAS 낮은 숫자, 같으면 먼저 닿는)부터 — 앞 사건의 줄이 정해진 뒤 계산해야
+    양보가 한 번에 맞는다."""
+    for case_id in engine.spider_priority_order(engine.get_active_case_ids()):
         try:
             ambulance_gps, _ = _resolve_ambulance_gps(case_id)
             updated = engine.refresh_case(case_id, ambulance_gps)
