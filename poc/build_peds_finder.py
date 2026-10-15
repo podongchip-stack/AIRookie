@@ -216,7 +216,11 @@ RULES_SYM = [
 JS_TMPL = r"""
 var DATA=__DATA__, ASOF="__ASOF__";
 var ICON_ALERT=__ICON_ALERT__, ICON_INFO=__ICON_INFO__;
-var age=null, sym={}, here=null;
+var age=null, sym={};
+/* 위치를 허용하지 않아도 화면이 비어 있지 않게 서울 중심을 기본으로 둔다.
+   다만 **예시라고 분명히 적는다** — 부산에 있는 사람에게 서울 병원을
+   "내 주변"이라고 보여주면 안 된다. 허용하면 진짜 내 위치로 바뀐다 */
+var DEFAULT_HERE=[37.5665,126.9780], here=DEFAULT_HERE, usingDefault=true;
 
 /* ── 판단: 규칙만. 여러 개면 가장 높은 단계를 따른다 ───────────────── */
 function judge(){
@@ -297,7 +301,9 @@ function drawWeb(rows){
   /* 반경은 제곱근으로 편다 — 선형이면 가까운 상위 후보들이 가운데 뭉쳐 겹친다 */
   function pos(h){
     var ang=Math.atan2(h.x-here[1], h.y-here[0]);          /* 실제 방위 유지 */
-    var rad=Math.sqrt(Math.min(1,h._len/maxMin))*R;
+    /* 최소 반경을 둔다 — 도심에서는 상위 후보가 1분 안쪽이라 가운데 점에 붙어
+       서로도, '내 위치' 라벨과도 겹친다 */
+    var rad=R*(0.14+0.86*Math.sqrt(Math.min(1,h._len/maxMin)));
     return [cx+Math.sin(ang)*rad, cy-Math.cos(ang)*rad];
   }
   var C=function(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();};
@@ -308,7 +314,8 @@ function drawWeb(rows){
   [1/3,2/3,1].forEach(function(f){                 /* 반경이 √이므로 눈금값은 f² */
     g.beginPath(); g.arc(cx,cy,R*f,0,Math.PI*2); g.stroke();
     g.fillStyle=tx; g.font='10px system-ui';
-    g.fillText(Math.round(maxMin*f*f)+'분', cx+5, cy-R*f+13);
+    var v=maxMin*Math.pow(Math.max(0,(f-0.14)/0.86),2);
+    g.fillText((v<1?v.toFixed(1):Math.round(v))+'분', cx+5, cy-R*f+13);
   });
   var top=rows.slice(0,3);
   top.forEach(function(h,i){                                  /* 줄 */
@@ -338,7 +345,8 @@ function drawWeb(rows){
   g.fillStyle=ink; g.beginPath(); g.arc(cx,cy,5,0,Math.PI*2); g.fill();
   g.strokeStyle=dim; g.lineWidth=1.5;
   g.beginPath(); g.arc(cx,cy,10.5,0,Math.PI*2); g.stroke();
-  g.fillStyle=tx; g.font='10px system-ui'; g.fillText('내 위치', cx+15, cy+4);
+  g.fillStyle=tx; g.font='10px system-ui'; g.textAlign='center';
+  g.fillText(usingDefault?'서울 중심(예시)':'내 위치', cx, cy+25); g.textAlign='left';
 }
 
 function chips(h){
@@ -371,9 +379,7 @@ function card(h,i){
 /* 지도는 선택과 무관하게 위치만 있으면 바로 그린다 — 히어로 바로 아래가 주인공 자리다 */
 function renderMap(){
   var box=document.getElementById('mapPanel'); if(!box) return;
-  if(!here){ box.style.display='none'; return; }
   var rows=candidates();
-  box.style.display='';
   /* 타일은 거른 목록이 아니라 60km 안 전체에서 센다 — candidates()는 소아 정보가
      있는 곳으로 좁혀 놔서, 그대로 세면 "응급실 123 / 소아 정보 123"처럼 같은 수가 나온다 */
   var near=DATA.filter(function(h){return km(here[0],here[1],h.y,h.x)<60;});
@@ -391,7 +397,11 @@ function renderMap(){
     + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
     + '</div>'
     +'<div class="plot"><canvas id="web"></canvas>'
-    +'<p class="maplabel">가운데가 내 위치입니다. 방향은 실제 방위이고, <b>거리는 km가 아니라 '
+    +'<p class="maplabel">'+(usingDefault
+        ? '<b>서울 중심을 기준으로 한 예시입니다.</b> 위 <b>[내 주변 응급실 보기]</b>를 누르면 '
+          +'내 위치로 다시 그립니다. '
+        : '')
+    +'가운데가 '+(usingDefault?'기준점':'내 위치')+'입니다. 방향은 실제 방위이고, <b>거리는 km가 아니라 '
     +'“가는 데 드는 분”</b>입니다 — 가까워도 소아 진료 여건이 얕거나 붐비면 더 멀리 그려집니다.</p>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
@@ -402,8 +412,9 @@ function renderMap(){
   drawWeb(rows);
 }
 function places(){
+  if(usingDefault) return '<div class="ask">가까운 곳 세 곳을 찾아 드리려면 위치가 필요합니다. '
+    +'위 <b>[내 주변 응급실 보기]</b>를 눌러 주세요 — 위치는 이 화면 안에서만 쓰이고 저장되지 않습니다.</div>';
   var rows=candidates();
-  if(!here) return '<p class="sub" style="margin-left:0">위 버튼으로 위치를 허용하시면 가까운 곳을 찾아 드립니다.</p>';
   if(!rows.length) return '<p class="sub" style="margin-left:0">가까운 곳을 찾지 못했습니다. 119에 물어보세요.</p>';
   return rows.slice(0,3).map(card).join('');
 }
@@ -441,12 +452,13 @@ document.getElementById('loc').onclick=function(){
   if(!navigator.geolocation){ st.textContent='이 브라우저에서는 위치를 쓸 수 없습니다.'; return; }
   st.textContent='위치 확인 중…';
   navigator.geolocation.getCurrentPosition(function(p){
-    here=[p.coords.latitude,p.coords.longitude];
+    here=[p.coords.latitude,p.coords.longitude]; usingDefault=false;
     st.textContent='가까운 곳을 찾았습니다.'; show();
   },function(){ st.textContent='위치를 가져오지 못했습니다. 119에 물어보시는 편이 빠릅니다.'; },
   {timeout:8000,maximumAge:60000});
 };
-addEventListener('resize',function(){ if(here) show(); });
+addEventListener('resize',function(){ show(); });
+show();   /* 위치를 묻기 전에도 지도가 먼저 떠 있게 한다 */
 
 /* 화면 밝기 토글. OS 설정을 따라가지 않고 사용자가 고른다.
    고른 값은 **저장하지 않는다** — 쿠키·기록을 남기지 않는다는 약속을 지키려고,
@@ -456,7 +468,7 @@ document.getElementById('theme').onclick=function(){
   document.documentElement.setAttribute('data-theme', dark?'light':'dark');
   this.setAttribute('aria-pressed', String(!dark));
   this.setAttribute('aria-label', dark?'어두운 화면으로 바꾸기':'밝은 화면으로 바꾸기');
-  if(here) show();                      /* 그림은 CSS 변수를 읽으므로 다시 그린다 */
+  show();                               /* 그림은 CSS 변수를 읽으므로 다시 그린다 */
 };
 
 /* 배포본은 data.json을 따로 올려 주기적으로 갱신한다. 그게 있으면 그걸 쓰고,
@@ -467,7 +479,7 @@ fetch('data.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():nul
    if(!j||!j.rows||!j.rows.length) return;
    DATA=j.rows; ASOF=j.asOf||ASOF;
    document.querySelectorAll('[data-asof]').forEach(function(e){ e.textContent=ASOF; });
-   if(here) show();
+   show();
  }).catch(function(){});
 """
 
