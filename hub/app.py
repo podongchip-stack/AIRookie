@@ -677,10 +677,12 @@ def _send_to_dashboard(payload: dict) -> None:
     is_match = payload.get("type") == "match_result" and bool(payload.get("caseId"))
     if is_match:
         payload = {**payload, "paused": _case_paused(payload["caseId"])}
-    message = json.dumps(payload, ensure_ascii=False)
-    if is_match:
         case_tracker.observe(payload)  # 관제 지도 사건 기록(2026-10-04) — 직전 결과와 비교해 이벤트를 남긴다
         _touch_zone_timer(payload)
+        # 다음 자동 존 확장 시각(2026-10-16) — 관제 지도만 받던 값을 구급차·병원 탭도(아이패드 병원 리스트의 "Zone 2로 확장까지 N초")
+        payload["zoneExpandAt"] = _zone_expand_at(payload)
+        payload["zonePausedLeftSec"] = _zone_paused_left(payload)
+    message = json.dumps(payload, ensure_ascii=False)
     with _sockets_lock:
         if is_match:
             apid, hospital_ids = _match_recipients(payload)
@@ -1205,7 +1207,9 @@ def _send_catchup(ws, identify: DashboardIdentify) -> list[str]:
     )
     print(f"  [통신] {identify.role} {identify.id} 연결 — 진행 중인 사건 {len(cases)}건 따라잡기 전송")
     for result in cases:
-        _send_to_socket(ws, {**result.model_dump(), "paused": _case_paused(result.caseId)}, "따라잡기")
+        dumped = result.model_dump()
+        _send_to_socket(ws, {**dumped, "paused": _case_paused(result.caseId), "zoneExpandAt": _zone_expand_at(dumped),
+                             "zonePausedLeftSec": _zone_paused_left(dumped)}, "따라잡기")
         # 따라잡기로 받아 본 것도 "도달"이다 — 뒤늦게 연결한 병원이 요청을
         # 봤는데 무응답이면 미도달이 아니라 무시로 분류돼야 한다.
         if identify.role == "hospital" and any(
