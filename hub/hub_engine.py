@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import bed_reliability
 import decision_log
+import spider_rule
 from disease_group import match_group
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
@@ -578,6 +579,8 @@ class HubEngine:
         # 사건별로 고른 중증질환군(15개 중 하나). 승인 액션 뒤 재정렬할 때 declared_no
         # 판정을 다시 해야 해서 기억해 둔다.
         self._case_group: dict[str, str | None] = {}
+        # spider 매칭 규칙(2026-10-15): 이송 확정 전 사건마다 지금 잡은 줄(병원·도착 예정·KTAS) — 다른 사건의 τ 창 충돌 판정용
+        self._spider_pick: dict[str, dict] = {}
         # 사건별로 구급차 좌표가 기본 좌표로 대체됐는지. 재계산 결과에도 같은 표시를 싣는다.
         self._case_gps_fallback: dict[str, bool] = {}
         # (caseId, hospitalId) -> 그 확정이 얹은 병상 차감. 이송 병원을 다시 고르면 이전 병원의
@@ -940,6 +943,7 @@ class HubEngine:
         self._case_max_zone.pop(case_id, None)
         self._case_voice.pop(case_id, None)
         self._case_group.pop(case_id, None)
+        self._spider_pick.pop(case_id, None)
         self._case_gps_fallback.pop(case_id, None)
         self._case_confirmed_at.pop(case_id, None)
         self._case_arrival.pop(case_id, None)
@@ -1415,6 +1419,12 @@ class HubEngine:
             now = _utcnow()
             matches = []
             required = voice.summary.required_department
+            # spider 매칭 규칙(2026-10-15, spider_rule.py): 환자 = (KTAS, 질환군), 시각(야간 감점), 이송 중 중증 수(μ 감쇠)
+            sp_k, sp_cond = spider_rule.patient_of(
+                voice.summary.ktas_level, voice.summary.severity_tag, expected_diagnosis, voice.summary.trauma
+            )
+            sp_hour = spider_rule.local_hour(now)
+            sp_severe = self._spider_inflight_severe(voice.caseId)
             for (info, distance), (best_dept, similarity) in zip(candidates, specialty_results):
                 eta = etas.get(info.hospitalId)
                 travel_min = eta[0] / 60.0 if eta is not None else distance * min_per_km
@@ -1427,9 +1437,6 @@ class HubEngine:
                     basis = "embedding" if best_dept is not None else "none"
                 matched = by_dept.get(best_dept) if best_dept else None
                 doctor_count = matched.doctorCount if matched is not None and matched.doctorCount > 0 else None
-                bonus_min, bonus_reasons = expertise_bonus_min(
-                    doctor_count, info.emergencyLevel, voice.summary.severity_tag
-                )
                 status = self._approval_status.get((voice.caseId, info.hospitalId), "pending")
                 beds = self.effective_bed_count(info)
                 unknown = _is_bed_count_unknown(info)
@@ -1446,6 +1453,18 @@ class HubEngine:
                 # evaluate()가 bornAt과 대조해 판단한다.
                 confirmed = self._info_confirmations.get(info.hospitalId)
                 er_capacity, er_occupancy = _er_capacity(info, beds, unknown, stale)
+                # spider 줄 길이 = 도로 분 − μ×이득(또는 + ν×모자람) + 부하. 진료과 임베딩 점수는 이 모델에 없어 순위에 안 쓴다
+                sp = spider_rule.line(sp_k, sp_cond, info, travel_min, load_min + occupancy_min, sp_severe, sp_hour)
+                sp_window = (
+                    self._spider_window(voice.caseId, info.hospitalId, now + timedelta(minutes=travel_min), sp_k)
+                    if sp["len"] is not None and status == "pending" else []
+                )
+                sp_full = len(sp_window) >= spider_rule.WINDOW_CAP
+                bonus_min = round(sp["gain_min"], 1)
+                bonus_reasons = [f"거미줄 {spider_rule.COND_LABEL[sp_cond]} K{sp_k} · {sp['parts']}"] + spider_rule.gain_reasons(sp, sp_k) + (
+                    [f"줄 없음({sp['blocked']}) — 뒤로"] if sp["blocked"] else
+                    [f"줄 길이 {sp['len']:.1f}분 (도로 {travel_min:.1f} − 이득 {sp['gain_min']:.1f} + 부하 {load_min + occupancy_min:.1f})"]
+                ) + ([f"τ 창 충돌 — 먼저 닿는 사건 {len(sp_window)}건(한도 {spider_rule.WINDOW_CAP}), 양보"] if sp_full else [])
                 matches.append(
                     HospitalMatch(
                         hospitalId=info.hospitalId,
@@ -1486,7 +1505,11 @@ class HubEngine:
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
                         roadDistanceKm=round(eta[1] / 1000.0, 2) if eta is not None else None,
-                        finalScore=round(final_score(similarity, travel_min, bonus_min, load_min, occupancy_min), 6),
+                        finalScore=spider_rule.score(sp["len"], travel_min, sp_full, load_min + occupancy_min),
+                        spiderLen=round(sp["len"], 1) if sp["len"] is not None else None,
+                        spiderGap=round(sp["gap"], 2),
+                        spiderBlocked=sp["blocked"],
+                        spiderWindow=sp_window or None,
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),
                         bonusReasons=bonus_reasons,
@@ -1523,7 +1546,79 @@ class HubEngine:
             ambulanceGpsFallback=gps_fallback,
             arrival=self._case_arrival.get(voice.caseId),
         )
+        self._spider_record_pick(voice.caseId, result, sp_k, now)
         return result, best_group
+
+    # ── spider 매칭 규칙: τ 창 충돌·양보(2026-10-15) ───────────────────────────────────────
+    # spider의 해소 루프(map.html solve)를 hub의 사건 단위로 옮겼다. 사건마다 지금 잡은 줄(가장 앞 병원)을 기억해 두고,
+    # 다른 사건을 계산할 때 그 병원의 같은 τ 창에 (a) 이미 이송 확정된 사건과 (b) 우선하는(KTAS 낮은 숫자, 같으면 먼저
+    # 닿는) 사건의 줄이 한도만큼 차 있으면 그 병원을 건너뛴다(점수 띠를 한 단계 내림). 우선하는 사건이 새로 들어오면
+    # app.py가 나머지 사건을 우선순위대로 다시 계산해 — 밀린 사건이 다음 병원으로 줄을 옮긴다(spider의 "양보").
+    def _spider_ktas(self, case_id: str) -> int:
+        voice = self._case_voice.get(case_id)
+        if voice is None:
+            return 3
+        k, _ = spider_rule.patient_of(voice.summary.ktas_level, voice.summary.severity_tag, voice.summary.mechanism, None)
+        return k
+
+    def _spider_confirmed(self, case_id: str) -> tuple[str, datetime] | None:
+        """이송 확정 사건의 (병원, 도착 예정 시각)."""
+        at = self._case_confirmed_at.get(case_id)
+        result = self._case_results.get(case_id)
+        if at is None or result is None:
+            return None
+        match = next((h for h in result.hospitals if h.status == "confirmed"), None)
+        if match is None:
+            return None
+        return match.hospitalId, at + timedelta(minutes=match.travelMin or 0.0)
+
+    def _spider_inflight_severe(self, case_id: str) -> int:
+        """이송 중(확정됨) 중증(KTAS 1·2) 사건 수 — μ 감쇠(중증이 몰리면 센터를 아낀다)."""
+        return sum(1 for other in list(self._case_results) if other != case_id
+                   and self._spider_confirmed(other) is not None and self._spider_ktas(other) <= 2)
+
+    def _spider_window(self, case_id: str, hospital_id: str, arrival: datetime, k: int) -> list[str]:
+        """이 병원의 같은 τ 창(도착 시각 ±τ)에 먼저 자리를 가진 다른 사건들 — 확정 사건 전부 + 우선하는 사건의 줄."""
+        me = (k, arrival, case_id)
+        members = []
+        for other in list(self._case_results):
+            if other == case_id:
+                continue
+            fixed = self._spider_confirmed(other)
+            if fixed is not None:
+                hid, arr = fixed
+            else:
+                pick = self._spider_pick.get(other)
+                if pick is None or not spider_rule.outranks((pick["k"], pick["arrival"], other), me):
+                    continue
+                hid, arr = pick["hospitalId"], pick["arrival"]
+            if hid == hospital_id and abs((arr - arrival).total_seconds()) <= spider_rule.TAU_MIN * 60:
+                members.append(other)
+        return members
+
+    def _spider_record_pick(self, case_id: str, result: HubMatchResult, k: int, now: datetime) -> None:
+        """이 사건이 지금 잡은 줄 = 정렬 맨 앞의 받을 수 있는 병원(판단 대기·승인, 내림·벽·창 충돌·제외 없음)."""
+        with self._lock:
+            if any(h.status == "confirmed" for h in result.hospitals):
+                self._spider_pick.pop(case_id, None)
+                return
+            for h in result.hospitals:
+                if (h.status in ("pending", "approved") and not h.demoteReasons and h.spiderBlocked is None
+                        and len(h.spiderWindow or []) < spider_rule.WINDOW_CAP and not h.excluded):
+                    self._spider_pick[case_id] = {"hospitalId": h.hospitalId, "k": k,
+                                                  "arrival": now + timedelta(minutes=h.travelMin or 0.0)}
+                    return
+            self._spider_pick.pop(case_id, None)
+
+    def spider_priority_order(self, case_ids: list[str]) -> list[str]:
+        """재계산 순서 — 우선하는 사건(KTAS 낮은 숫자, 같으면 먼저 닿는)부터. 앞 사건의 줄이 정해진 뒤 뒷 사건이 계산돼야
+        양보가 한 번에 맞는다."""
+        far = datetime.max.replace(tzinfo=timezone.utc)
+        with self._lock:
+            def key(cid: str) -> tuple:
+                pick = self._spider_pick.get(cid)
+                return (self._spider_ktas(cid), pick["arrival"] if pick else far, cid)
+            return sorted(case_ids, key=key)
 
     def _patient_info(self, voice: VoiceCallSummaryMessage) -> PatientInfo:
         """통화 요약 → 대시보드의 환자 정보. 앞선 통화가 있으면(2026-10-05 덧붙이기) 회차와 앞선 요약을 함께 싣는다."""
@@ -1691,7 +1786,9 @@ class HubEngine:
         빼고) 중 finalScore 최고 — 진료과 적합도 0.6 + 이동시간 0.4, 중증 센터 가산·경증 센터 역가산(travelBonusMin).
         앞 사상자를 배정할 때마다 그 병원의 이송 중 건수를 하나 늘리고 병상을 하나 줄여 부하 페널티를 다시 매긴다 —
         한 병원에 몰리지 않고 다음 병원으로 퍼진다. 병상 신뢰도는 쓰지 않는다(순위 원칙)."""
-        order = {"high": 0, "medium": 1, "low": 2}
+        # spider 매칭 규칙(2026-10-15) — KTAS 낮은 숫자부터(같으면 먼저 닿는 쪽), 사상자마다 승인 병원 중
+        # 줄 길이(spiderLen — 도로 분 − μ×이득 + 부하)가 가장 짧은 곳. 앞 배정마다 이송 중 +1·병상 −1로 부하를 다시 매기고,
+        # 같은 τ 창(도착 ±10분)에 이미 한도(2)만큼 배정된 병원은 건너뛴다(spider의 충돌·양보). 줄 없는 병원은 마지막 수단.
         now = _utcnow()
         with self._lock:
             items = []
@@ -1699,8 +1796,9 @@ class HubEngine:
                 result = self._case_results.get(case_id)
                 if result is None:
                     continue
-                items.append((order.get(result.patientInfo.severityTag, 3), index, case_id, result))
+                items.append((self._spider_ktas(case_id), index, case_id, result))
             extra: dict[str, int] = {}
+            arrivals: dict[str, list[float]] = {}
             plan = []
             for _, _, case_id, result in sorted(items, key=lambda x: (x[0], x[1])):
                 best = None
@@ -1716,16 +1814,20 @@ class HubEngine:
                     else:
                         load_min = 0.0
                     travel = h.travelMin if h.travelMin is not None else h.distanceKm * 3.0
-                    score = final_score(
-                        h.specialtyMatch.score, travel, h.travelBonusMin or 0.0, load_min, h.occupancyPenaltyMin
-                    )
-                    if best is None or score > best[0] + 1e-9:
-                        best = (score, rank, h, load_min)
+                    window = sum(1 for t in arrivals.get(h.hospitalId, []) if abs(t - travel) <= spider_rule.TAU_MIN)
+                    if h.spiderLen is not None:
+                        length = h.spiderLen - (h.loadPenaltyMin or 0.0) + load_min
+                        key = (0 if window < spider_rule.WINDOW_CAP else 1, length, rank)
+                    else:
+                        key = (2, travel + load_min, rank)
+                    if best is None or key < best[0]:
+                        best = (key, rank, h, load_min)
                 if best is None:
                     plan.append({"caseId": case_id, "hospitalId": None, "severityTag": result.patientInfo.severityTag})
                     continue
                 _, _, h, load_min = best
                 extra[h.hospitalId] = extra.get(h.hospitalId, 0) + 1
+                arrivals.setdefault(h.hospitalId, []).append(h.travelMin if h.travelMin is not None else h.distanceKm * 3.0)
                 plan.append({"caseId": case_id, "hospitalId": h.hospitalId, "hospitalName": h.name,
                              "severityTag": result.patientInfo.severityTag, "loadPenaltyMin": round(load_min, 1)})
             return plan
