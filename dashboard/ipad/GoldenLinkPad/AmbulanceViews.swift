@@ -4,6 +4,8 @@ import SwiftUI
 /// 출동·현장 종료는 웹 구급차 대시보드·시연 콘솔에서 한다.
 struct SceneStatusCard: View {
     @EnvironmentObject private var model: AppModel
+    /// 카드 위아래 여백을 이만큼 더 준다(구급차 화면 왼쪽 열 — 카드 사이 간격을 줄인 만큼 카드를 키움, 2026-10-16)
+    var extraV: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -36,6 +38,7 @@ struct SceneStatusCard: View {
                     .font(.system(size: 12)).foregroundStyle(AD.muted)
             }
         }
+        .padding(.vertical, extraV)
         .card()
     }
 
@@ -83,6 +86,8 @@ struct CallSummaryCard: View {
     var fill = false
     /// true면 내용 높이 그대로 — 주어진 높이에 안 들어갈 때만 카드 안에서 스크롤(이송 확정 뒤 구급차 화면, 2026-10-16)
     var fit = false
+    /// 카드 위아래 여백 추가분(SceneStatusCard.extraV와 같은 뜻)
+    var extraV: CGFloat = 0
 
     var body: some View {
         Group {
@@ -90,6 +95,7 @@ struct CallSummaryCard: View {
                 ViewThatFits(in: .vertical) { inner; ScrollView { inner }.scrollIndicators(.hidden) }
             } else if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner }
         }
+            .padding(.vertical, extraV)
             .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
             .card()
     }
