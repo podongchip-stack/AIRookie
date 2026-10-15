@@ -52,6 +52,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from report_base import esc
+from site_css import CSS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -204,136 +205,6 @@ def load() -> tuple[list[dict], dict]:
     return rows, meta
 
 
-CSS = """
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-:root{
-  color-scheme:light;
-  --bg:#fff; --soft:#f7f8fa; --card:#fff; --ink:#0d1117; --ink2:#4a5260; --muted:#8a919e;
-  --line:#e6e8ec; --accent:#1f5fd0; --accentbg:#eef3fd;
-  --urgent:#c0392b; --urgentbg:#fdeeec;
-  --warn:#8a5a00; --warnbg:#fdf4e3;
-  --ok:#0b7a3b; --okbg:#eaf6ee;
-  --mapbg:#fbfcfe; --mapring:#e3e7ee; --mapdim:#c3cedf; --maptext:#5b6779;
-}
-@media (prefers-color-scheme:dark){:root{
-  color-scheme:dark;
-  --bg:#0d0f13; --soft:#14171d; --card:#14171d; --ink:#f2f4f8; --ink2:#b9c0cc; --muted:#848b98;
-  --line:#242830; --accent:#7fb2f0; --accentbg:#15253c;
-  --urgent:#ff8a80; --urgentbg:#361b19;
-  --warn:#f0c070; --warnbg:#312310;
-  --ok:#6fd392; --okbg:#102719;
-  --mapbg:#0f131a; --mapring:#232935; --mapdim:#3a4454; --maptext:#8d97a8;
-}}
-html,body{margin:0;background:var(--bg)}
-body{font:400 16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);
-     -webkit-font-smoothing:antialiased}
-.wrap{max-width:600px;margin:0 auto;padding:0 18px 72px}
-
-/* 상단바 */
-.bar{border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0;z-index:5}
-.bar .in{max-width:600px;margin:0 auto;padding:12px 18px;display:flex;align-items:center;gap:10px}
-.bar .mark{font-size:14.5px;font-weight:700;letter-spacing:-.02em;flex:1}
-.bar .mark span{color:var(--accent)}
-.bar a{font-size:13px;font-weight:650;color:var(--urgent);text-decoration:none;
-       border:1px solid var(--urgent);border-radius:8px;padding:6px 11px}
-
-/* 히어로 — 밝고 여백 넉넉하게 */
-.hero{max-width:600px;margin:0 auto;padding:40px 18px 26px}
-.hero h1{font-size:30px;line-height:1.28;margin:0 0 12px;letter-spacing:-.033em;font-weight:720}
-.hero .lead{font-size:15.5px;color:var(--ink2);margin:0 0 22px;line-height:1.6;max-width:30em}
-.ctas{display:flex;gap:9px;flex-wrap:wrap}
-.call119{flex:1;min-width:190px;background:var(--urgent);color:#fff;text-align:center;font-size:17px;
-  font-weight:700;padding:15px;border-radius:12px;text-decoration:none}
-button.ghost{flex:1;min-width:190px;font:inherit;font-size:16px;font-weight:650;padding:15px;
-  border-radius:12px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
-.sub119{font-size:12.5px;color:var(--muted);margin:12px 0 0;line-height:1.55}
-
-h2{font-size:14px;margin:30px 0 10px;color:var(--muted);font-weight:650;letter-spacing:.01em}
-.opts{display:flex;flex-wrap:wrap;gap:8px}
-.opt{font:inherit;font-size:15px;padding:12px 15px;border-radius:11px;border:1.5px solid var(--line);
-     background:var(--card);color:var(--ink);cursor:pointer;line-height:1.2}
-.opt[aria-pressed=true]{background:var(--accentbg);border-color:var(--accent);color:var(--accent);font-weight:650}
-#status{font-size:13px;color:var(--muted);margin:10px 2px 0;min-height:18px}
-
-.verdict{border-radius:14px;padding:17px;margin:20px 0 14px;border:1.5px solid}
-.v1{background:var(--urgentbg);border-color:var(--urgent)}
-.v2{background:var(--warnbg);border-color:var(--warn)}
-.v3{background:var(--okbg);border-color:var(--ok)}
-.verdict .big{font-size:19px;font-weight:700;margin:0 0 7px;line-height:1.35}
-.v1 .big{color:var(--urgent)} .v2 .big{color:var(--warn)} .v3 .big{color:var(--ok)}
-.verdict p{margin:0;font-size:14.5px;color:var(--ink2);line-height:1.55}
-.verdict .why{margin-top:9px;font-size:13px;color:var(--muted)}
-
-/* 거미줄 지도 — abto의 대시보드 자리. 히어로 바로 아래가 주인공이다 */
-.panel{background:var(--mapbg);border:1px solid var(--line);border-radius:18px;
-       padding:16px 16px 13px;margin:22px 0 0}
-.panel .head{display:flex;align-items:baseline;gap:9px;margin:0 0 12px}
-.panel .head b{font-size:15px;font-weight:680;letter-spacing:-.015em}
-.panel .head span{font-size:12px;color:var(--muted);margin-left:auto}
-.panel canvas{display:block;width:100%;height:auto}
-.maplabel{font-size:12px;color:var(--muted);margin:11px 2px 0;line-height:1.55}
-.legend{display:flex;flex-wrap:wrap;gap:13px;margin:11px 2px 0;font-size:11.5px;color:var(--muted)}
-.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}
-
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px;margin-bottom:10px}
-.row1{display:flex;align-items:baseline;gap:9px}
-.num{flex:none;width:21px;height:21px;border-radius:7px;background:var(--accent);color:#fff;
-     font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
-.name{font-size:17px;font-weight:650;letter-spacing:-.01em;line-height:1.35;flex:1}
-.dist{font-size:13.5px;color:var(--accent);font-weight:650;white-space:nowrap}
-.sub{font-size:12.5px;color:var(--muted);margin:4px 0 0 30px}
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
-.chip{font-size:12px;padding:4px 9px;border-radius:999px;background:var(--accentbg);color:var(--accent);white-space:nowrap}
-.chip.ok{background:var(--okbg);color:var(--ok)}
-.chip.warn{background:var(--warnbg);color:var(--warn)}
-.chip.none{background:transparent;color:var(--muted);border:1px dashed var(--line)}
-.bar{margin:11px 0 0;font-size:12.5px;color:var(--ink2)}
-.bar .track{height:7px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:5px}
-.bar .fill{height:100%;background:var(--accent);border-radius:4px}
-.reason{font-size:13px;color:var(--ink2);margin:10px 0 0;padding-left:9px;border-left:2px solid var(--accentbg)}
-.notice{background:var(--urgentbg);border-left:3px solid var(--urgent);border-radius:0 8px 8px 0;
-        padding:9px 11px;margin:10px 0 0;font-size:13px;line-height:1.5;color:var(--ink)}
-.notice b{color:var(--urgent);display:block;font-size:12px;margin-bottom:3px}
-.notice p{margin:0 0 5px}.notice p:last-child{margin:0}
-.notice.info{background:var(--accentbg);border-left-color:var(--accent)}
-.notice.info b{color:var(--accent)}
-.acts{display:flex;gap:8px;margin-top:12px}
-.acts a{flex:1;text-align:center;text-decoration:none;font-size:15px;font-weight:600;
-        padding:12px;border-radius:10px;border:1px solid var(--line);color:var(--ink)}
-.acts a.tel{background:var(--accent);border-color:var(--accent);color:#fff}
-.ask{font-size:13px;color:var(--ink2);background:var(--card);border:1px dashed var(--line);
-     border-radius:12px;padding:13px 14px;margin:0 0 14px;line-height:1.6}
-.ask b{color:var(--ink)}
-.stale{font-size:12.5px;background:var(--warnbg);color:var(--warn);border-radius:10px;
-       padding:10px 12px;margin:0 0 14px;line-height:1.5}
-/* 랜딩 섹션 — 도구 아래. abto의 "문제 → 가치 → 과정 → FAQ" 순서 */
-.sec{margin-top:52px}
-.sec h3{font-size:21px;letter-spacing:-.025em;margin:0 0 8px;font-weight:700}
-.sec .desc{font-size:14.5px;color:var(--ink2);margin:0 0 18px;line-height:1.6}
-.facts{display:grid;gap:11px}
-.fact{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:16px 17px}
-.fact .big{font-size:27px;font-weight:720;letter-spacing:-.03em;color:var(--accent);line-height:1.1}
-.fact .cap{font-size:13.5px;color:var(--ink2);margin-top:7px;line-height:1.55}
-.steps{display:grid;gap:10px;counter-reset:s}
-.step{display:flex;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
-.step .k{flex:none;width:23px;height:23px;border-radius:8px;background:var(--accentbg);color:var(--accent);
-         font-size:12.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
-.step b{display:block;font-size:14.5px;font-weight:650;margin-bottom:3px}
-.step p{margin:0;font-size:13.5px;color:var(--ink2);line-height:1.55}
-.faq{border-top:1px solid var(--line)}
-.faq details{border-bottom:1px solid var(--line);padding:3px 0}
-.faq summary{font-size:15px;font-weight:600;color:var(--ink);padding:14px 2px;list-style:none}
-.faq summary::-webkit-details-marker{display:none}
-.faq summary::after{content:'+';float:right;color:var(--muted);font-weight:400}
-.faq details[open] summary::after{content:'−'}
-.faq p{margin:0 2px 15px;font-size:14px;color:var(--ink2);line-height:1.65}
-footer{margin-top:56px;border-top:1px solid var(--line);padding:22px 0 0;font-size:12.5px;color:var(--muted);line-height:1.7}
-footer b{color:var(--ink2)}
-.note{font-size:12.5px;color:var(--muted);line-height:1.65;margin-top:28px;border-top:1px solid var(--line);padding-top:16px}
-.note strong{color:var(--ink2)} .note ul{padding-left:18px;margin:8px 0 0} .note li{margin:6px 0}
-details summary{cursor:pointer;color:var(--ink2);font-size:13px;padding:5px 0}
-"""
-
 RULES_AGE = ["3개월 미만", "3~12개월", "1~3세", "3세 이상"]
 RULES_SYM = [
     ("breath", "숨쉬기가 힘들어요"), ("seizure", "경련을 해요"),
@@ -344,6 +215,7 @@ RULES_SYM = [
 
 JS_TMPL = r"""
 var DATA=__DATA__, ASOF="__ASOF__";
+var ICON_ALERT=__ICON_ALERT__, ICON_INFO=__ICON_INFO__;
 var age=null, sym={}, here=null;
 
 /* ── 판단: 규칙만. 여러 개면 가장 높은 단계를 따른다 ───────────────── */
@@ -485,10 +357,10 @@ function card(h,i){
     +'<span class="name">'+h.n+'</span><span class="dist">'+h._d.toFixed(1)+'km</span></div>'
     +'<p class="sub">'+h.g+' · '+h.a+' · 차로 약 '+Math.round(h._travel)+'분(추정)</p>'
     +'<div class="chips">'+chips(h)+'</div>'
-    +(pct!=null?'<div class="bar">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
+    +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
        +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
-    +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'"><b>'
-       +(h._blk.length?'이 병원이 올린 진료 제한 공지':'이 병원이 올린 안내')+'</b>'
+    +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'">'
+       +'<span class="lab">'+(h._blk.length?ICON_ALERT+'이 병원이 올린 진료 제한 공지':ICON_INFO+'이 병원이 올린 안내')+'</span>'
        +h._ms.slice(0,2).map(function(m){return '<p>'+m[2]+'</p>';}).join('')
        +(h._ms.length>2?'<p style="color:var(--muted)">외 '+(h._ms.length-2)+'건</p>':'')+'</div>':'')
     +(h._why.length?'<p class="reason">'+h._why.join(' · ')+'</p>':'')
@@ -501,15 +373,27 @@ function renderMap(){
   if(!here){ box.style.display='none'; return; }
   var rows=candidates();
   box.style.display='';
-  box.innerHTML='<div class="head"><b>내 주변 응급실</b><span>'+rows.length+'곳 · '+ASOF+' 기준</span></div>'
-    +'<canvas id="web"></canvas>'
+  /* 타일은 거른 목록이 아니라 60km 안 전체에서 센다 — candidates()는 소아 정보가
+     있는 곳으로 좁혀 놔서, 그대로 세면 "응급실 123 / 소아 정보 123"처럼 같은 수가 나온다 */
+  var near=DATA.filter(function(h){return km(here[0],here[1],h.y,h.x)<60;});
+  var ped=near.filter(function(h){return h.pd>0||h.pc>0;}).length;
+  var busy=near.filter(function(h){return h.oc!=null&&h.oc>=50;}).length;
+  var blk=near.filter(function(h){return activeMsgs(h).filter(function(m){return m[5];}).length;}).length;
+  box.innerHTML='<div class="head"><b>내 주변 응급실</b><span>'+ASOF+' 기준</span></div>'
+    +'<div class="inner"><canvas id="web"></canvas>'
     +'<p class="maplabel">가운데가 내 위치입니다. 방향은 실제 방위이고, <b>거리는 km가 아니라 '
     +'“가는 데 드는 분”</b>입니다 — 가까워도 소아 진료 여건이 얕거나 붐비면 더 멀리 그려집니다.</p>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
     +'<span><i style="background:#d9892b"></i>집계 때 붐빔</span>'
     +'<span><i style="background:#e05c54"></i>진료 제한 공지</span>'
-    +'<span><i style="background:var(--mapdim)"></i>그 밖의 응급실 · 점 크기는 소아 진료 여건</span>'
+    +'<span><i style="background:var(--mapdim)"></i>그 밖 · 점 크기는 소아 진료 여건</span>'
+    +'</div></div>'
+    +'<div class="tiles">'
+    +'<div><div class="v">'+near.length+'</div><div class="k">60km 안 응급실</div></div>'
+    +'<div class="good"><div class="v">'+ped+'</div><div class="k">소아 진료 정보 있음</div></div>'
+    +'<div class="warn"><div class="v">'+busy+'</div><div class="k">집계 때 붐빔</div></div>'
+    +'<div class="bad"><div class="v">'+blk+'</div><div class="k">진료 제한 공지</div></div>'
     +'</div>';
   drawWeb(rows);
 }
@@ -573,6 +457,19 @@ fetch('data.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():nul
 """
 
 
+#: 아이콘은 그린다 — 이모지를 아이콘 자리에 쓰지 않는다. 획 두께 1.6으로 통일.
+LOGO = ('<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" '
+        'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M12 21s-7-4.6-7-10a4.6 4.6 0 0 1 7-3.9A4.6 4.6 0 0 1 19 11c0 5.4-7 10-7 10Z"/>'
+        '<path d="M12 10v4M10 12h4"/></svg>')
+ICON_ALERT = ('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+              'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+              '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>'
+              '<path d="M12 9v4M12 17h.01"/></svg>')
+ICON_INFO = ('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+             'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+             '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>')
+
 TITLE = "아이가 아픈데 어디로 가야 할까요"
 DESC = ("아이 나이와 증상을 두 번만 고르면 지금 119인지 응급실인지 알려 드립니다. "
         "소아 진료가 되는 응급실을 공개 데이터로 찾아 드립니다.")
@@ -594,26 +491,26 @@ def build(rows: list[dict], meta: dict) -> str:
     A('<meta name="robots" content="index,follow">')
     A(f"<style>{CSS}</style></head><body>")
 
-    A('<nav class="bar"><div class="in"><div class="mark">우리 아이 <span>응급 길잡이</span></div>')
-    A('<a href="tel:119">119</a></div></nav>')
+    A('<nav class="bar"><div class="in"><span class="logo">' + LOGO + "우리 아이 응급 길잡이</span>")
+    A('<span class="sp"></span><a class="tel" href="tel:119">119 전화</a></div></nav>')
 
     A('<header class="hero">')
-    A("<h1>아이가 아픈데,<br>어디로 가야 할까요</h1>")
+    A("<h1>아이가 아픈데,<br><em>어디로</em> 가야 할까요</h1>")
     A(
         '<p class="lead">두 가지만 고르면 지금 무엇을 해야 할지 알려 드립니다. '
         "고른 내용과 위치는 이 화면 밖으로 나가지 않습니다.</p>"
     )
-    A('<div class="ctas"><a class="call119" href="tel:119">119 전화하기</a>')
-    A('<button class="ghost" id="loc">내 주변 응급실 보기</button></div>')
-    A('<p class="sub119">숨을 못 쉬거나 · 반응이 없거나 · 경련이 멈추지 않으면 고르지 말고 지금 119입니다</p>')
+    A('<div class="ctas"><a class="btn btn-call" href="tel:119">119 전화하기</a>')
+    A('<button class="btn btn-ghost" id="loc">내 주변 응급실 보기</button></div>')
+    A('<p class="fine">숨을 못 쉬거나 · 반응이 없거나 · 경련이 멈추지 않으면 고르지 말고 지금 119입니다</p>')
     A('<p id="status"></p>')
     A("</header>")
 
     A('<div class="wrap">')
-    A('<div class="panel" id="mapPanel" style="display:none"></div>')
+    A('<div class="frame" id="mapPanel" style="display:none"></div>')
     A(
-        f'<p class="stale" style="margin-top:22px">이 화면은 <b>{esc(meta["asOf"])}</b>에 받은 공개 '
-        "데이터로 만든 시연본입니다. 실제 서비스는 5분마다 다시 받습니다 — 지금과 다를 수 있습니다.</p>"
+        f'<p class="stale">{esc(meta["asOf"])}에 받은 공개 데이터로 만든 시연본입니다. '
+        "실제 서비스는 5분마다 다시 받습니다.</p>"
     )
 
     A('<h2>아이 나이</h2><div class="opts">')
@@ -626,7 +523,7 @@ def build(rows: list[dict], meta: dict) -> str:
         A(f'<button class="opt" data-sym="{key}" aria-pressed="false">{esc(label)}</button>')
     A("</div>")
 
-    A('<div id="result"></div>')
+    A('<div id="result" class="reveal"></div>')
 
     # ── 랜딩: 왜 필요한가 (전부 우리가 직접 잰 공개 데이터 수치) ──
     A('<section class="sec"><h3>왜 이런 걸 만들었나</h3>')
@@ -634,20 +531,23 @@ def build(rows: list[dict], meta: dict) -> str:
         '<p class="desc">아이가 아플 때 보호자가 가장 먼저 부딪히는 건 "어디로 가야 하나"입니다. '
         "그런데 공개된 정보만으로는 답하기 어렵게 돼 있습니다. 직접 세어 봤습니다.</p>"
     )
-    A('<div class="facts">')
-    for big, cap in [
-        (f"{tier2}곳",
-         "전국 응급의료기관 가운데 <b>소아 응급 병상과 소아청소년과 전문의 2명</b>을 함께 갖춘 곳. "
-         "서울 22 · 경기 16인 반면 울산 1 · 충북 1 · 세종 0입니다."),
-        ("23%",
-         "소아 병상 수가 실제로 올라오는 응급실 비율(416곳 중 95곳). 그마저 거의 갱신되지 않아 "
-         "<b>“지금 몇 자리”는 누구도 알 수 없습니다.</b>"),
-        ("75곳",
-         "“지금 이런 환자는 못 받는다”를 직접 공지해 둔 병원. "
-         "<b>3개월 이하 발열 진료불가</b> 같은 내용이 공개돼 있는데도 보호자에게는 보이지 않습니다."),
-    ]:
-        A(f'<div class="fact"><div class="big">{big}</div><p class="cap">{cap}</p></div>')
-    A("</div></section>")
+    A(
+        f'<p class="lede">전국 응급의료기관 가운데 소아 응급 병상과 소아청소년과 전문의 2명을 '
+        f'함께 갖춘 곳은 <span class="n">{tier2}</span>곳뿐입니다. 서울 22곳 · 경기 16곳인 반면 '
+        "<b>울산 1곳 · 충북 1곳 · 세종은 한 곳도 없습니다.</b></p>"
+    )
+    A(
+        '<p class="lede">소아 병상 수가 실제로 올라오는 응급실은 <span class="n">23</span>%'
+        "(416곳 중 95곳)입니다. 그마저 거의 갱신되지 않아 <b>“지금 몇 자리”는 누구도 알 수 "
+        "없습니다.</b> 그래서 저희도 그 숫자를 만들어 내지 않았습니다.</p>"
+    )
+    A(
+        f'<p class="lede">반대로 <span class="n">{meta.get("msgCount", 75)}</span>곳은 '
+        "“지금 이런 환자는 못 받는다”를 이미 공개해 두었습니다. "
+        "<b>3개월 이하 발열 진료불가</b> 같은 문장이 공개돼 있는데도 "
+        "정작 그 아기를 안고 있는 보호자에게는 보이지 않습니다.</p>"
+    )
+    A("</section>")
 
     # ── 랜딩: 어떻게 고르나 ──
     A('<section class="sec"><h3>어떻게 고르나요</h3>')
@@ -740,7 +640,10 @@ def build(rows: list[dict], meta: dict) -> str:
     A("</div>")
 
     data = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
-    A("<script>" + JS_TMPL.replace("__DATA__", data).replace("__ASOF__", meta["asOf"]) + "</script>")
+    js = (JS_TMPL.replace("__DATA__", data).replace("__ASOF__", meta["asOf"])
+          .replace("__ICON_ALERT__", json.dumps(ICON_ALERT))
+          .replace("__ICON_INFO__", json.dumps(ICON_INFO)))
+    A("<script>" + js + "</script>")
     A("</body></html>")
     return "\n".join(o)
 
