@@ -84,15 +84,23 @@ struct CallSummaryCard: View {
 
     /// true면 왼쪽 열의 남는 높이를 채운다(구급차 화면, 2026-10-16) — 내용은 위부터, 넘치면 카드 안에서 스크롤
     var fill = false
-    /// true면 내용 높이 그대로 — 주어진 높이에 안 들어갈 때만 카드 안에서 스크롤(이송 확정 뒤 구급차 화면, 2026-10-16)
-    var fit = false
+    /// 주면 내용 높이 그대로, 단 이 높이까지만 — 넘칠 때만 카드 안에서 스크롤(이송 확정 뒤 구급차 화면, 2026-10-16).
+    /// 칸 높이 = 실제 내용 높이라 위아래 빈칸이 생기지 않는다(frame(maxHeight:)로 묶으면 칸이 최대치까지 커지고 카드가 가운데 떠서
+    /// 큰 화면 패드에서 카드 사이가 벌어졌다)
+    var fitMax: CGFloat? = nil
     /// 카드 위아래 여백 추가분(SceneStatusCard.extraV와 같은 뜻)
     var extraV: CGFloat = 0
+    @State private var contentH: CGFloat = 0
 
     var body: some View {
         Group {
-            if fit {
-                ViewThatFits(in: .vertical) { inner; ScrollView { inner }.scrollIndicators(.hidden) }
+            if let m = fitMax {
+                ScrollView {
+                    inner.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentH = $0 }
+                }
+                .scrollIndicators(.hidden)
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(height: max(0, min(contentH, m - 28 - extraV * 2)))
             } else if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner }
         }
             .padding(.vertical, extraV)
