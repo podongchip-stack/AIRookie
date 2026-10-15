@@ -6,6 +6,15 @@ extension Notification.Name {
     static let switchScreen = Notification.Name("switchScreen")
 }
 
+/// 병원 응답 기록 한 줄(2026-10-16) — 매칭 결과가 올 때마다 병원별 상태를 직전과 비교해 바뀐 것만 남긴다(시각 = 이 패드가 받은 때)
+struct ResponseEvent: Identifiable {
+    let id = UUID()
+    let at: Date
+    let hospital: String
+    let text: String
+    let kind: String   // approved | rejected | unavailable | confirmed | zone
+}
+
 /// "더 나은 병원"(이송 중 목적지 변경 제안, 2026-10-16) — 지금 목적지보다 도착 시 병상 정보가 맞을 확률이 높은 승인 병원
 struct BetterHospital: Identifiable {
     let match: HospitalMatch
@@ -41,6 +50,7 @@ final class AppModel: ObservableObject {
     @Published var pendingConfirmId: String?
     @Published var notice: String?
     @Published var receivedAt: Date?
+    @Published var responseLog: [ResponseEvent] = []
 
     // 공통
     @Published var now = Date()
@@ -118,7 +128,7 @@ final class AppModel: ObservableObject {
     }
 
     private func clearCase() {
-        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; receivedAt = nil
+        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil
     }
 
     // ── 자동 따라가기(monitor 소켓) ──
@@ -152,6 +162,7 @@ final class AppModel: ObservableObject {
                 // 이송 확정이 처음 보이면(hub 응답) 구급차 지도로
                 let firstForCase = result?.caseId != m.caseId
                 let wasConfirmed = confirmed != nil
+                logResponses(old: firstForCase ? nil : result, new: m)
                 result = m
                 if firstForCase, (m.patientInfo?.callRound ?? 1) <= 1 { requestScreen(.hospitals) }
                 if !wasConfirmed, confirmed != nil { requestScreen(.ambulance) }
@@ -175,7 +186,7 @@ final class AppModel: ObservableObject {
                     transcript = []
                 }
                 // 사건이 끝나 기지로(복귀·대기) — 결과를 접는다
-                if m.caseId == nil, ["idle", "returning"].contains(m.phase) { result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil }
+                if m.caseId == nil, ["idle", "returning"].contains(m.phase) { result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = [] }
             }
         case "call_status":
             if let m = try? dec.decode(CallStatus.self, from: data), m.apid == nil || m.apid == apid { callStatus = m }
@@ -186,7 +197,7 @@ final class AppModel: ObservableObject {
             }
         case "case_closed":
             if let m = try? dec.decode(CaseClosed.self, from: data), m.caseId == result?.caseId || m.caseId == scene?.caseId {
-                result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil
+                result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []
             }
         case "case_sync":
             if let m = try? dec.decode(CaseSync.self, from: data) {
@@ -213,6 +224,33 @@ final class AppModel: ObservableObject {
             pendingConfirmId = nil
             show("hub에 연결되지 않아 보내지 못했습니다.")
         }
+    }
+
+    /// 병원별 상태를 직전 결과와 비교해 바뀐 것만 응답 기록에 남긴다. 사건이 바뀌면 비운다(연결 직후 따라잡기엔 시각이 없어 남기지 않음)
+    private func logResponses(old: HubMatchResult?, new m: HubMatchResult) {
+        guard let old else { responseLog = []; return }
+        func key(_ h: HospitalMatch) -> String { h.status == "pending" && h.unavailableReason != nil ? "unavailable" : h.status }
+        let prev = Dictionary(old.hospitals.map { ($0.hospitalId, key($0)) }, uniquingKeysWith: { a, _ in a })
+        let now = Date()
+        var added: [ResponseEvent] = []
+        for h in m.hospitals {
+            let k = key(h)
+            guard k != "pending", k != prev[h.hospitalId] else { continue }
+            let text: String
+            switch k {
+            case "approved": text = "수용 승인"
+            case "confirmed": text = "이송 확정"
+            case "unavailable": text = "병상 없음(E-Gen)"
+            default: text = "수용 불가" + (h.rejectReason.map { " · \(Labels.reject($0))" } ?? "")
+            }
+            added.append(ResponseEvent(at: now, hospital: h.name, text: text, kind: k))
+        }
+        let oldZone = old.zoneActive?.max() ?? 1, newZone = m.zoneActive?.max() ?? 1
+        if newZone > oldZone {
+            let fresh = m.hospitals.filter { prev[$0.hospitalId] == nil }.count
+            added.append(ResponseEvent(at: now, hospital: "Zone \(newZone)", text: "요청 범위 확장 · 새 후보 \(fresh)곳", kind: "zone"))
+        }
+        if !added.isEmpty { responseLog = Array((added + responseLog).prefix(20)) }
     }
 
     private func requestScreen(_ s: Screen) {
