@@ -22,12 +22,27 @@ const OK_COL = [94, 227, 127], SUG_COL = [127, 255, 212], GRAY = [124, 123, 116]
 // 출동하면 현장으로, 이송이 확정되면 현장~병원이 다 보이게. 앱 쪽 화면 배치가 바뀌어(병원 리스트가 아래에서 올라옴) 지도 크기가
 // 바뀌면 이동이 중간에 끊겼다 — 크기가 바뀐 뒤 마지막 목표로 다시 맞춘다. 사람이 지도를 만지면 그때부터는 따라가지 않는다.
 let EMBED_FOCUS = null, embedResizeT = null;
+// 지도 오른쪽을 가리는 앱 패널 폭(px) — 아이패드 상황판의 '병원별 분산' 떠 있는 카드(2026-10-15). 맞출 때 가운데를 그만큼
+// 왼쪽(보이는 쪽)으로 옮긴다. 줌 계산은 지도 폭과 무관해서, 카드가 가린 나머지 폭에서 예전(지도가 가운데 칸이던 때)과 같게 보인다
+let PAD_RIGHT = 0;
+window.setViewPadding = px => {
+  const v = Math.max(0, Math.round(+px || 0)); if (v === PAD_RIGHT) return;
+  PAD_RIGHT = v;
+  if (!EMBED_USER) scheduleFitAll();   // 사람이 맞춰 둔 보기는 건드리지 않는다 — [전체 보기]부터 적용
+};
 function embedFocus(points) {
   if (!document.body.classList.contains('embed') || !points.length) return;
   const lngs = points.map(p => p.lng), lats = points.map(p => p.lat);
   const span = Math.max((Math.max(...lngs) - Math.min(...lngs)) * 0.79, Math.max(...lats) - Math.min(...lats));
   const zoom = points.length > 1 ? Math.min(13.2, Math.max(10.5, Math.log2(0.6 / Math.max(span, 0.01)) + 9.0)) : 12.6;
-  EMBED_FOCUS = { longitude: (Math.min(...lngs) + Math.max(...lngs)) / 2, latitude: (Math.min(...lats) + Math.max(...lats)) / 2, zoom, pitch: 55, bearing: -18 };
+  let lng = (Math.min(...lngs) + Math.max(...lngs)) / 2, lat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const w = window.innerWidth, h = window.innerHeight;
+  if (PAD_RIGHT > 0 && w > PAD_RIGHT + 200) {
+    // 화면 가운데에서 오른쪽으로 패널 폭의 절반 떨어진 점을 새 가운데로 → 목표가 가려지지 않은 부분의 가운데에 온다(기울기·방향 반영)
+    try { [lng, lat] = new deck.WebMercatorViewport({ width: w, height: h, longitude: lng, latitude: lat, zoom, pitch: 55, bearing: -18 }).unproject([w / 2 + PAD_RIGHT / 2, h / 2]); }
+    catch (e) { /* 계산 실패면 가운데 그대로 */ }
+  }
+  EMBED_FOCUS = { longitude: lng, latitude: lat, zoom, pitch: 55, bearing: -18 };
   goCam(EMBED_FOCUS);
 }
 window.addEventListener('resize', () => {
