@@ -81,9 +81,15 @@ struct CallSummaryCard: View {
 
     /// true면 왼쪽 열의 남는 높이를 채운다(구급차 화면, 2026-10-16) — 내용은 위부터, 넘치면 카드 안에서 스크롤
     var fill = false
+    /// true면 내용 높이 그대로 — 주어진 높이에 안 들어갈 때만 카드 안에서 스크롤(이송 확정 뒤 구급차 화면, 2026-10-16)
+    var fit = false
 
     var body: some View {
-        Group { if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner } }
+        Group {
+            if fit {
+                ViewThatFits(in: .vertical) { inner; ScrollView { inner }.scrollIndicators(.hidden) }
+            } else if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner }
+        }
             .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
             .card()
     }
