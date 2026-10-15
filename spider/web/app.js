@@ -132,7 +132,10 @@ function layers(t){
   const LK=zoomK();   // 연결선 굵기 배율(widthScale)
   const hs=HS(), rise=Math.min(1,(performance.now()-riseT0)/1800), ease=1-Math.pow(1-rise,3);
   const pulse=0.5+0.5*Math.sin(performance.now()/350);
-  const L=[], live=LIVE;
+  // 실시간 모드에서 병원 응답을 기다리는 사건이 있으면 그 요청 존 안 병원만 그린다(live.js liveVisibleSet, 2026-10-15) —
+  // 존이 넓어지면 새 존 병원이 나타난다. 그 밖 병원·병상 데이터 없는 병원은 숨긴다
+  const vis=(MODE==='live'&&window.liveVisibleSet)?liveVisibleSet():null;
+  const L=[], live=vis?LIVE.filter(h=>vis.has(h.hpid)):LIVE, dead=vis?[]:DEAD;
   // 실시간 모드: 요청 존 영역(바닥 띠)을 병원·줄보다 먼저(아래에) 깐다 — live.js liveZoneLayers
   if(MODE==='live'&&window.liveZoneLayers) L.push(...liveZoneLayers());
   // 병원 노드: 높이에 뜬 점 + 바닥까지 가는 가는 선 + 바닥 그림자
@@ -146,7 +149,7 @@ function layers(t){
     // 순수 3D 모델: 병원 = 역량 높이에 뜬 구 (등급이 높을수록 크다). 기둥·줄기·빛 없음
     L.push(new SimpleMeshLayer({id:'h-sphere',data:live,mesh:SPHERE,material:{ambient:0.35,diffuse:0.7,shininess:40,specularColor:[255,255,255]},getPosition:top,getColor:h=>[...hcol(h),255],getScale:h=>{const r=h.g>=4?170:h.g===3?130:h.g===2?95:70;return [r,r,r];},pickable:true,updateTriggers:{getPosition:[ease],getColor:[hlKey]}}));
     L.push(new ScatterplotLayer({id:'h-shadow',data:live,radiusUnits:'meters',getRadius:50,radiusMinPixels:1.5,getPosition:h=>[h.lng,h.lat,0],getFillColor:h=>[...hcol(h),70],parameters:{depthTest:false},updateTriggers:{getFillColor:[hlKey]}}));
-    L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
+    L.push(new ScatterplotLayer({id:'h-dead',data:dead,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
     L.push(new TextLayer({id:'h-name',data:live.filter(h=>h.g>=4||(VIEW.zoom>=9.5&&h.g>=3)),getPosition:top,getText:h=>shortName(h.name),getSize:11,characterSet:'auto',getColor:[242,241,236,230],getPixelOffset:[0,-18],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,150],backgroundPadding:[3,1],parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
   } else {
   L.push(new LineLayer({id:'h-stem',widthScale:LK,data:live,getSourcePosition:h=>[h.lng,h.lat,0],getTargetPosition:top,getColor:h=>[...hcol(h),zst(h)?220:110],getWidth:h=>zst(h)?2.6:1,widthUnits:'pixels',parameters:ADD,updateTriggers:{getTargetPosition:[ease],getColor:[hlKey],getWidth:[hlKey]}}));
@@ -156,7 +159,7 @@ function layers(t){
   const nk=zoomK(), zkey=Math.round(VIEW.zoom*10);
   L.push(new ScatterplotLayer({id:'h-glow',data:live,radiusUnits:'pixels',getRadius:h=>(h.g>=4?13:h.g===3?10:8)*nk*(1+0.12*pulse),getPosition:top,getFillColor:h=>[...hcol(h),60],parameters:ADD,updateTriggers:{getRadius:[animTick,zkey],getPosition:[ease],getFillColor:[hlKey]}}));
   L.push(new ScatterplotLayer({id:'h-node',data:live,radiusUnits:'pixels',getRadius:h=>(h.g>=4?6.5:h.g===3?5:3.8)*nk,getPosition:top,getFillColor:h=>[...hcol(h),255],stroked:true,getLineColor:[255,255,255,200],lineWidthUnits:'pixels',getLineWidth:1.2,pickable:true,parameters:{depthTest:false},updateTriggers:{getRadius:[zkey],getPosition:[ease],getFillColor:[hlKey]}}));
-  L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
+  L.push(new ScatterplotLayer({id:'h-dead',data:dead,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
   L.push(new TextLayer({id:'h-name',data:live.filter(h=>h.g>=4||(VIEW.zoom>=9.5&&h.g>=3)),getPosition:top,getText:h=>shortName(h.name),getSize:11,characterSet:'auto',getColor:[242,241,236,230],getPixelOffset:[0,-16],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,150],backgroundPadding:[3,1],parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
   }
   if(HMODE==='beams'){

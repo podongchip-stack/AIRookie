@@ -262,6 +262,18 @@ window.liveZoneLayers = () => {
     new TextLayer({ id: 'lv-zone-txt', data: labels, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: d => [...d.col.slice(0, 3), 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 150], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [key] } }),
   ];
 };
+// 병원 응답 단계에서 지도에 남길 병원(app.js layers) — 요청 존(zoneActive) 안 병원 + 다른 사건의 이송 확정 병원 + 거미줄 제안
+// 병원(민트 줄 끝이 허공이 되지 않게). 응답을 기다리는 사건이 없으면 null(전부 그림)
+window.liveVisibleSet = () => {
+  const zone = window.liveZoneSet();
+  if (!zone.size) return null;
+  const s = new Set(zone.keys());
+  for (const c of myCases()) {
+    const cf = caseConfirmed(c); if (cf) s.add(cf.hospitalId);
+    const sg = HUB.suggest[c.caseId]; if (sg && $('suggest').checked && !cf) s.add(sg.hpid);
+  }
+  return s;
+};
 function transportable(ch) {
   if (ch.status !== 'approved') return false;
   if (ch.unavailableReason || ch.excluded) return false;
