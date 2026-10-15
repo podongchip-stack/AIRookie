@@ -190,7 +190,7 @@ struct MapCard: View {
                 Text("거미줄 분배 · 실시간").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
                 Text("내 구급차 기준 · 이송 경로").font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 Spacer()
-                Pill(text: "초록 = 승인 병원 중 최적", bg: AD.greenSoft, fg: AD.green)
+                Pill(text: "초록 노드 = 요청 병원 · 초록 줄 = 승인 중 최적", bg: AD.greenSoft, fg: AD.green)
                 Pill(text: "민트 = 거미줄 제안", bg: Color(hex: 0xE6FBF4), fg: Color(hex: 0x0F7B5F))
                 // 지도를 손으로 옮기면 내 구급차 따라가기가 멈춘다 — 다시 켜는 버튼. auto에서 아직 따라갈 구급대가 없으면(출동 전·사건 종료 뒤)
                 // 지도엔 '내 구급차'가 없으니 같은 자리에서 전체 보기로 동작한다(spider followMine이 알아서 바꾼다)

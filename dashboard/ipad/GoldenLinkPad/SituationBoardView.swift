@@ -153,7 +153,7 @@ struct SituationBoardView: View {
                 Text("거미줄 분배 · 전체 상황").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
                 Text("환자 → 최적 병원 · 이송 경로").font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 Spacer()
-                Pill(text: "초록 = 승인 병원 중 최적", bg: AD.greenSoft, fg: AD.green)
+                Pill(text: "초록 = 요청 병원·최적", bg: AD.greenSoft, fg: AD.green)
                 Button { NotificationCenter.default.post(name: .spiderEval, object: nil, userInfo: ["js": "fitAllNow()"]) } label: {
                     Label("전체 보기", systemImage: "arrow.up.left.and.arrow.down.right").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
                         .padding(.horizontal, 12).frame(minHeight: 30).background(AD.blue).clipShape(Capsule())
