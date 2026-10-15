@@ -425,10 +425,11 @@ async function refreshSuggest() {
   const liveBeds = {};
   for (const mh of (HUB.overview && HUB.overview.hospitals) || []) liveBeds[mh.hospitalId] = mh.bedCountUnknown ? null : mh.availableBedCount;
   const exclude = c => (c.hospitals || []).filter(ch => ch.status !== 'confirmed' && (ch.status === 'rejected' || ch.unavailableReason || ch.excluded
-    || (ch.demoteReasons || []).some(r => r === 'beds_full' || r === 'severe_blocked')
+    || (ch.demoteReasons || []).some(r => r === 'beds_full' || r === 'severe_blocked' || r === 'declared_no')
     || (ch.status === 'approved' && !transportable(ch)))).map(ch => ch.hospitalId);
-  for (const [i, c] of cases.entries()) { const p = casePos(c), k = caseK(c); patients.push({ id: i + 1, site: `#${c.num ?? '?'}`, k, t0: 0, lat: p.lat, lng: p.lng, z: KTAS_Z[k], cond: await condFor(c), exclude: exclude(c) }); }
-  let j; try { j = await api('api/solve', { patients, params: readParams(), liveBeds }); } catch (e) { return; }
+  for (const [i, c] of cases.entries()) { const p = casePos(c), k = caseK(c); patients.push({ id: i + 1, site: `#${c.num ?? '?'}`, k, t0: 0, lat: p.lat, lng: p.lng, z: KTAS_Z[k], cond: await condFor(c), exclude: exclude(c), group: c.diseaseGroup || null }); }
+  // hub: true — 서버가 hub /hospital-features(E-Gen 실시간·심평원·질환군 신고·병상 정보 신뢰도)로 병원 값을 덮어 계산한다
+  let j; try { j = await api('api/solve', { patients, params: readParams(), liveBeds, hub: true }); } catch (e) { return; }
   if (seq !== suggestSeq) return;
   const out = {};
   cases.forEach((c, i) => { const idx = j.cur[String(i + 1)]; const seg = idx != null ? j.hist[String(i + 1)][idx] : null; if (seg) out[c.caseId] = { hpid: seg.hpid, len: seg.len, road: seg.road }; });

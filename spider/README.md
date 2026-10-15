@@ -33,7 +33,14 @@ cd spider && python serve.py      # → http://127.0.0.1:2700/spider/   (LAN·�
 값은 "보기" 아래 그대로 쓴다). **제안도 수용할 수 없는 병원은 고르지 않는다(2026-10-15)**: 엔진의 병상은 `hospitals_xyz.json`
 수집 시점 값이라, hub가 이미 만실로 아는 병원(예: 서울대병원 응급실 0)을 그대로 제안했다 — `api/solve`에 `liveBeds`(hub가 지금 아는
 응급실 가용, 이송 확정 차감 반영)로 덮어쓰고, 환자마다 `exclude`(이 사건에서 hub가 수용 불가로 본 병원 — 병원 불가·E-Gen 병상 0·
-제외·차단·승인 뒤 병상 0)를 넘긴다. 초과로 붙일 때도 이 후보 목록을 쓰므로 빠진다. hub 주소는 `api/meta.hubWsUrl`(start-all이 `SPIDER_HUB_WS_URL`로 넘김; 없으면 같은 호스트의
+제외·차단·승인 뒤 병상 0)를 넘긴다. 초과로 붙일 때도 이 후보 목록을 쓰므로 빠진다. **hub와 같은 재료로 계산(2026-10-15)**:
+서버가 hub `GET /hospital-features`(30초 캐시, start-all이 `SPIDER_HUB_HTTP_URL`로 로컬 주소를 넘김)를 받아 스냅샷 병원 값을
+덮는다(`engine.overlay_hub`) — 응급실 가용·정원·이송 중 건수(E-Gen 실시간, hub 차감 반영)·등급·응급의학과 전문의 수(심평원)·CT·
+혈관조영 운영(E-Gen). 환자의 15개 중증질환군(`MonitorCase.diseaseGroup`, hub가 예상 병명으로 고른 것)을 그 병원이 "불가능" 신고했거나
+지금 유효한 차단 공지로 막았으면 **줄을 안 건다**(질환군 벽). **정보 생존 모델**(병상 정보 신뢰도 곡선)은 hub 순위엔 안 쓰지만 여기선
+**병상 용량**에 넣는다 — 도착 때 그 숫자가 아직 맞을 확률 r만큼만 병상으로 센다(기대 병상 = 가용 × r, `model.r_arrive`, 식은 hub
+`bed_reliability.evaluate`와 같음). 확률이 낮은 병원엔 여럿이 몰리지 않는다(줄 길이엔 안 넣음, 기록에 "도착유효 N%"). 가상 시나리오엔
+이 값들이 없어 결과가 그대로다(parity 불변). hub가 안 떠 있으면 마지막 값(없으면 스냅샷)으로 계산한다. hub 주소는 `api/meta.hubWsUrl`(start-all이 `SPIDER_HUB_WS_URL`로 넘김; 없으면 같은 호스트의
 `/ws/dashboard`). 아이패드가 LAN으로 열면 127.0.0.1을 접속 호스트로 바꿔 쓴다. hub `MonitorCase`에 환자 요약 6필드를 Optional로
 더했다(hub/schema.py) — 통화 전문·활력징후는 여전히 관제·spider로 가지 않는다.
 

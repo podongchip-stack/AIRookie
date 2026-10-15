@@ -717,6 +717,47 @@ class HubEngine:
                 hiraCollectedAt=hira.collectedAt if hira else None,
             )
 
+    def case_group(self, case_id: str) -> str | None:
+        """사건의 15개 중증질환군(예상 병명 → 키워드 규칙, disease_group.py). 매칭 전이거나 해당 없으면 None."""
+        with self._lock:
+            return self._case_group.get(case_id)
+
+    def spider_features(self) -> list[dict]:
+        """spider 거미줄 제안(GET /hospital-features, 2026-10-15)이 hub와 같은 병원 정보로 계산하도록 병원마다 넘기는 값.
+
+        spider 엔진은 수집 시점 스냅샷(hospitals_xyz.json)으로 돌아 hub가 이미 만실로 아는 병원을 제안하곤 했다. 여기서
+        hub가 순위에 쓰는 재료를 그대로 준다 — 응급실 가용(이송 확정 차감 반영)·미상·1일 넘은 값·정원·이송 중 건수(E-Gen),
+        등급, 응급의학과 전문의 수(심평원), CT·혈관조영 운영(E-Gen), 질환군 "불가능" 신고(assessment declared_no)와 지금 유효한
+        중증질환 차단 공지, 병상 정보 신뢰도 곡선(정보 생존 모델 — spider가 도착 시점 유효 확률로 병상 용량을 깎는 데 쓴다.
+        hub 순위엔 여전히 안 쓴다). 순위·상태는 바꾸지 않는 읽기 전용이다."""
+        with self._lock:
+            now = _utcnow()
+            out = []
+            for info in self._hospitals.values():
+                beds = self.effective_bed_count(info)
+                unknown = _is_bed_count_unknown(info)
+                stale = _is_bed_data_stale(info, now)
+                em = next((s.doctorCount for s in info.specialties if s.department == "응급의학과"), None)
+                equip = info.equipmentOperating or {}
+                no_groups = sorted(
+                    {g for g, sc in (info.assessment.groups.items() if info.assessment else []) if sc.tier == "declared_no"}
+                    | {m.diseaseGroup for m in _active_messages(info, now) if m.kind == "severe" and m.diseaseGroup}
+                )
+                rel = None
+                if info.bedReliability is not None:
+                    confirmed = self._info_confirmations.get(info.hospitalId)
+                    rel = {"predictedSurvivalSec": info.bedReliability.predictedSurvivalSec,
+                           "bornAt": info.bedReliability.bornAt, "sigma": info.bedReliability.sigma,
+                           "confirmedAt": confirmed.isoformat() if confirmed else None}
+                out.append({
+                    "hospitalId": info.hospitalId, "emergencyLevel": info.emergencyLevel,
+                    "beds": None if (unknown or stale) else beds, "bedCountUnknown": unknown, "bedDataStale": stale,
+                    "erCapacity": (info.bedCapacityByType or {}).get(_ER_ADULT), "inFlight": self.in_flight_count(info.hospitalId),
+                    "emSpecialists": em, "ct": equip.get("CT"), "angio": equip.get("ANGIO"),
+                    "noGroups": no_groups, "bedReliability": rel,
+                })
+            return out
+
     def list_hospitals(self) -> list[HospitalInfo]:
         """관제 지도(2026-10-03)에 병원 마커를 찍기 위한 전체 목록."""
         with self._lock:

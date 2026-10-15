@@ -306,8 +306,9 @@ if [ "$RUN_SPIDER" = 1 ]; then
   need "$SPIDER_PY" spider SPIDER_PY
   echo "spider 시작 (포트 $SPIDER_PORT, 도로 그래프 로드에 몇 초)..."
   # SPIDER_HUB_WS_URL: 실시간 모드(/spider/?mode=live)가 붙을 hub 소켓 — 공개 모드는 터널 주소, 로컬은 127.0.0.1:5001
+  # SPIDER_HUB_HTTP_URL: 거미줄 제안이 hub와 같은 병원 재료로 계산하도록 spider 서버가 가져가는 hub /hospital-features(같은 맥이라 로컬)
   # (아이패드가 LAN으로 열면 화면이 127.0.0.1을 자기 접속 호스트로 바꿔 쓴다)
-  (cd spider && SPIDER_PREFIX=/spider SPIDER_HUB_WS_URL="$WS_URL" exec "$SPIDER_PY" -u serve.py --host 0.0.0.0 --port "$SPIDER_PORT") \
+  (cd spider && SPIDER_PREFIX=/spider SPIDER_HUB_WS_URL="$WS_URL" SPIDER_HUB_HTTP_URL="http://127.0.0.1:$HUB_PORT" exec "$SPIDER_PY" -u serve.py --host 0.0.0.0 --port "$SPIDER_PORT") \
       > "$LOG_DIR/spider.log" 2>&1 &
   SPIDER_PID=$!; PIDS+=("$SPIDER_PID")
   wait_http spider "http://127.0.0.1:$SPIDER_PORT/spider/api/health" "$SPIDER_PID" "$LOG_DIR/spider.log" 120
