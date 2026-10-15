@@ -136,8 +136,10 @@ function layers(t){
   // 병원 노드: 높이에 뜬 점 + 바닥까지 가는 가는 선 + 바닥 그림자
   const top=h=>[h.lng,h.lat,ZH(h.z)*hs*ease];
   // 실시간 모드: 병원 응답을 기다리는 사건의 요청 존 병원은 공중 노드를 초록으로(live.js liveZoneSet, 2026-10-15)
-  const zhl=(MODE==='live'&&window.liveZoneSet)?liveZoneSet():null, hlKey=zhl?[...zhl].join(','):'';
-  const hcol=h=>zhl&&zhl.has(h.hpid)?[94,227,127]:full(h)?[255,80,80]:gCol(h.g).slice(0,3);
+  // 수용 불가인 요청 병원은 빨간 노드·빛기둥(2026-10-15). 표시된 병원(초록·빨강)은 빛기둥을 굵고 밝게
+  const zhl=(MODE==='live'&&window.liveZoneSet)?liveZoneSet():null, hlKey=zhl?[...zhl].map(e=>e.join(':')).join(','):'';
+  const zst=h=>zhl?zhl.get(h.hpid):undefined;
+  const hcol=h=>zst(h)==='ok'?[94,227,127]:zst(h)==='no'?[255,72,72]:full(h)?[255,80,80]:gCol(h.g).slice(0,3);
   if(HMODE==='sphere'){
     // 순수 3D 모델: 병원 = 역량 높이에 뜬 구 (등급이 높을수록 크다). 기둥·줄기·빛 없음
     L.push(new SimpleMeshLayer({id:'h-sphere',data:live,mesh:SPHERE,material:{ambient:0.35,diffuse:0.7,shininess:40,specularColor:[255,255,255]},getPosition:top,getColor:h=>[...hcol(h),255],getScale:h=>{const r=h.g>=4?170:h.g===3?130:h.g===2?95:70;return [r,r,r];},pickable:true,updateTriggers:{getPosition:[ease],getColor:[hlKey]}}));
@@ -145,7 +147,7 @@ function layers(t){
     L.push(new ScatterplotLayer({id:'h-dead',data:DEAD,radiusUnits:'meters',getRadius:70,radiusMinPixels:3,getPosition:h=>[h.lng,h.lat,0],getFillColor:[0,0,0,0],stroked:true,getLineColor:[150,150,150,170],lineWidthMinPixels:1,pickable:true}));
     L.push(new TextLayer({id:'h-name',data:live.filter(h=>h.g>=4||(VIEW.zoom>=9.5&&h.g>=3)),getPosition:top,getText:h=>shortName(h.name),getSize:11,characterSet:'auto',getColor:[242,241,236,230],getPixelOffset:[0,-18],fontFamily:css('--font'),background:true,getBackgroundColor:[10,16,36,150],backgroundPadding:[3,1],parameters:{depthTest:false},updateTriggers:{getPosition:[ease]}}));
   } else {
-  L.push(new LineLayer({id:'h-stem',widthScale:LK,data:live,getSourcePosition:h=>[h.lng,h.lat,0],getTargetPosition:top,getColor:h=>[...hcol(h),110],getWidth:1,widthUnits:'pixels',parameters:ADD,updateTriggers:{getTargetPosition:[ease],getColor:[hlKey]}}));
+  L.push(new LineLayer({id:'h-stem',widthScale:LK,data:live,getSourcePosition:h=>[h.lng,h.lat,0],getTargetPosition:top,getColor:h=>[...hcol(h),zst(h)?220:110],getWidth:h=>zst(h)?2.6:1,widthUnits:'pixels',parameters:ADD,updateTriggers:{getTargetPosition:[ease],getColor:[hlKey],getWidth:[hlKey]}}));
   L.push(new ScatterplotLayer({id:'h-shadow',data:live,radiusUnits:'meters',getRadius:60,radiusMinPixels:2,getPosition:h=>[h.lng,h.lat,0],getFillColor:h=>[...hcol(h),120],parameters:{depthTest:false},updateTriggers:{getFillColor:[hlKey]}}));
   // 공중 노드는 화면 픽셀 크기(2026-10-15) — 예전엔 미터 단위라 확대할수록 커져 가독성이 떨어졌다. 확대하면 작아지고
   // 축소하면 커진다(줌 11.5 기준 1배, 확대 쪽 0.55배·축소 쪽 1.5배까지)
@@ -158,7 +160,7 @@ function layers(t){
   if(HMODE==='beams'){
     const beam=(id,r,a,res)=>new ColumnLayer({id,data:live,diskResolution:res,radius:r,extruded:true,elevationScale:hs*ease,getPosition:h=>[h.lng,h.lat],getElevation:h=>ZH(h.z),getFillColor:h=>[...hcol(h),a],getLineColor:[0,0,0,0],material:false,pickable:id==='beam-core',parameters:ADD,updateTriggers:{getFillColor:[hlKey]}});
     L.push(beam('beam-halo',150,10,12)); L.push(beam('beam-mid',60,38,12)); L.push(beam('beam-core',18,230,10));
-    L.push(new ScatterplotLayer({id:'top-halo',data:live,radiusUnits:'meters',getRadius:420+pulse*90,getPosition:top,getFillColor:h=>[...hcol(h),full(h)&&!(zhl&&zhl.has(h.hpid))?45:55],parameters:ADD,updateTriggers:{getRadius:[animTick],getPosition:[ease],getFillColor:[hlKey]}}));
+    L.push(new ScatterplotLayer({id:'top-halo',data:live,radiusUnits:'meters',getRadius:420+pulse*90,getPosition:top,getFillColor:h=>[...hcol(h),full(h)&&!zst(h)?45:55],parameters:ADD,updateTriggers:{getRadius:[animTick],getPosition:[ease],getFillColor:[hlKey]}}));
   }
   if(MODE==='live') return L.concat(liveLayers(t));
   if(!RES) return L;
