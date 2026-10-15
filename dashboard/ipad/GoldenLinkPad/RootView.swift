@@ -251,12 +251,12 @@ struct MapCard: View {
             NotificationCenter.default.post(name: .spiderEval, object: nil,
                                             userInfo: ["js": "window.setBetterHospitals&&setBetterHospitals([\(items.joined(separator: ","))])", "key": "better"])
         }
-        .confirmationDialog(changeTo.map { "목적지를 \($0.match.name)(으)로 바꿀까요?" } ?? "", isPresented: Binding(get: { changeTo != nil }, set: { if !$0 { changeTo = nil } }),
-                            titleVisibility: .visible, presenting: changeTo) { b in
-            Button("\(b.match.name)(으)로 변경") { model.approve(b.match.hospitalId); changeTo = nil }
-            Button("취소", role: .cancel) { changeTo = nil }
-        } message: { b in
-            Text(changeMessage(b))
+        // 목적지 변경 확인은 시스템 확인창 대신 알약 안에서(2026-10-16) — 확인창이 화면 엉뚱한 곳에 떠 흐름이 끊겼다.
+        // 8초 동안 안 누르면 저절로 접는다(이동 중 펼쳐진 채로 남지 않게)
+        .task(id: changeTo?.id) {
+            guard changeTo != nil else { return }
+            try? await Task.sleep(for: .seconds(8))
+            if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { changeTo = nil } }
         }
     }
 
@@ -276,20 +276,44 @@ struct MapCard: View {
                 Text("지금 \(c.name) · 유효 \(model.destinationRArrive.map(BedReliability.pct) ?? "—") · \(c.bedCountUnknown == true ? "병상 미상" : "병상 \(c.availableBedCount ?? 0)석")")
                     .font(.system(size: 11.5)).foregroundStyle(AD.ink3).lineLimit(1)
                 ForEach(better) { b in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(b.match.name).font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
-                            HStack(spacing: 6) {
-                                Text("유효 \(BedReliability.pct(b.rArrive))").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.validity(b.rArrive).fg)
-                                Text(b.bedText).font(.system(size: 12, weight: .semibold)).foregroundStyle(AD.lime)
+                    if changeTo?.id == b.id {
+                        // [변경]을 누르면 그 자리에서 짧게 확인 — [취소] / [목적지 변경]
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("\(b.match.name)(으)로 바꿀까요?").font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
+                            Text(changeMessage(b)).font(.system(size: 11.5)).foregroundStyle(AD.ink3).lineLimit(1)
+                            HStack(spacing: 8) {
+                                Spacer(minLength: 0)
+                                Button { withAnimation(.easeOut(duration: 0.2)) { changeTo = nil } } label: {
+                                    Text("취소").font(.system(size: 12.5, weight: .bold)).foregroundStyle(AD.ink3)
+                                        .padding(.horizontal, 14).frame(minHeight: 32).background(AD.chip).clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                Button { model.approve(b.match.hospitalId); changeTo = nil } label: {
+                                    Text("목적지 변경").font(.system(size: 12.5, weight: .bold)).foregroundStyle(.white)
+                                        .padding(.horizontal, 14).frame(minHeight: 32).background(AD.approve).clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                        Spacer(minLength: 6)
-                        Button { changeTo = b } label: {
-                            Text("변경").font(.system(size: 12.5, weight: .bold)).foregroundStyle(.white)
-                                .padding(.horizontal, 14).frame(minHeight: 32).background(AD.approve).clipShape(Capsule())
+                        .padding(8)
+                        .background(AD.orangeSoft).clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .transition(.opacity)
+                    } else {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(b.match.name).font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
+                                HStack(spacing: 6) {
+                                    Text("유효 \(BedReliability.pct(b.rArrive))").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.validity(b.rArrive).fg)
+                                    Text(b.bedText).font(.system(size: 12, weight: .semibold)).foregroundStyle(AD.lime)
+                                }
+                            }
+                            Spacer(minLength: 6)
+                            Button { withAnimation(.easeOut(duration: 0.2)) { changeTo = b } } label: {
+                                Text("변경").font(.system(size: 12.5, weight: .bold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 14).frame(minHeight: 32).background(AD.approve).clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -305,7 +329,7 @@ struct MapCard: View {
 
     private func changeMessage(_ b: BetterHospital) -> String {
         let eta = b.match.etaMin.map { "도착 약 \($0)분" } ?? b.match.travelMin.map { "도착 약 \(Int($0.rounded()))분(추정)" } ?? ""
-        return "도착 시 병상 정보 유효 \(BedReliability.pct(b.rArrive)) · \(b.bedText)\(eta.isEmpty ? "" : " · \(eta)")\n병원이 수용 승인한 곳입니다. 지금 위치에서 새 병원으로 이동합니다."
+        return "유효 \(BedReliability.pct(b.rArrive)) · \(b.bedText)\(eta.isEmpty ? "" : " · \(eta)") · 수용 승인 병원"
     }
 
     private func jsSafe(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "").replacingOccurrences(of: "'", with: "’") }
