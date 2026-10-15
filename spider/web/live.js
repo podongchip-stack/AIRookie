@@ -196,15 +196,20 @@ const caseConfirmed = c => (c.hospitals || []).find(h => h.status === 'confirmed
 // 지금 이 환자를 실제로 보낼 수 있는 승인 병원인가(2026-10-15) — 수용 승인을 눌렀어도 그 뒤 응급실 병상 0이 확인됐거나(E-Gen,
 // 이송 확정 차감 반영 — 미상·1일 넘은 값은 막지 않음), 이 사건에서 제외됐거나(이송 중 철회·도착 후 수용 불가), 병원 공지로 이 질환군을
 // 막았으면 초록 '최적' 줄을 긋지 않는다. 예전엔 hub 순위의 첫 승인 병원을 그대로 써서 병상 없는 병원이 '최적'으로 보였다.
-// 병원 응답을 기다리는 사건(이송 확정 전)의 요청 존 병원 — 공중 노드를 초록으로 칠한다(app.js layers, 2026-10-15). 아직 받을 수 있는
-// 병원만(판단 대기·승인). 수용 불가·병상 0(E-Gen)·제외 병원은 원래 색(만실이면 빨강) 그대로 — 초록이면 받을 수 있는 것처럼 보인다
+// 병원 응답을 기다리는 사건(이송 확정 전)의 요청 존 병원 색(app.js layers, 2026-10-15) — hpid → 'ok' | 'no'.
+// ok(초록): 아직 받을 수 있는 병원(판단 대기·보낼 수 있는 승인). no(빨강 노드·빛기둥): 수용 불가 — 병원 불가·E-Gen 병상 0·제외·차단,
+// 승인했지만 그 뒤 병상 0. 대량사고에서 한 병원이 어떤 사건엔 받을 수 있고 다른 사건엔 불가면 초록(받을 수 있는 쪽)으로 둔다
 window.liveZoneSet = () => {
-  const s = new Set();
+  const m = new Map();
   for (const c of myCases()) {
     if (c.pre || caseConfirmed(c)) continue;
-    for (const ch of c.hospitals || []) if ((ch.status === 'pending' || ch.status === 'approved') && !ch.unavailableReason && !ch.excluded) s.add(ch.hospitalId);
+    for (const ch of c.hospitals || []) {
+      const ok = ch.status === 'pending' ? !(ch.unavailableReason || ch.excluded) : transportable(ch);
+      if (ok) m.set(ch.hospitalId, 'ok');
+      else if (!m.has(ch.hospitalId)) m.set(ch.hospitalId, 'no');
+    }
   }
-  return s;
+  return m;
 };
 function transportable(ch) {
   if (ch.status !== 'approved') return false;
@@ -268,22 +273,20 @@ function liveLayers(t) {
       lights.push({ pos: [pos.lng, pos.lat, 0], k, label: caseLabel(c) });
       if (air) { airLights.push({ pos: [pos.lng, pos.lat, ZH(pz) * hs], k }); stems.push({ a: [pos.lng, pos.lat, 0], b: [pos.lng, pos.lat, ZH(pz) * hs], k }); }
     }
-    // 줄은 "이 환자가 어디로 가나"만 보이게(2026-10-15): 확정되면 확정 병원 하나, 확정 전엔 수용 승인한 병원 중 hub 순위
-    // 1위(=구급차 화면의 '추천', 이송 중 부하·포화·중증도 가산이 반영된 최적) 하나. 예전엔 요청한 병원 전부에 줄이 그려져 어느 줄이
-    // 최적인지 알 수 없었다.
-    // 승인 병원이 있어도 지금 보낼 수 없는 곳(병상 0 확인·제외·차단)은 건너뛴다 — 보낼 수 있는 승인 병원이 하나도 없으면 줄이 없다
-    // (요청 존 병원은 공중 노드가 초록으로 보인다 — liveZoneSet). 아이패드 상황판(embed, apid 없음)은 '최적' 이름표를 달지 않는다(사건이 몰리면 이름표가 겹친다 — 자리 재검토 중).
+    // 줄(2026-10-15): 확정되면 확정 병원 하나(이송 경로). 확정 전엔 **수용 승인한 병원 전부**와 잇는다 — 그중 hub 순위 1위(=구급차
+    // 화면의 '추천')는 굵게 + "최적" 이름표, 나머지 승인 병원은 조금 가늘게. 승인했어도 지금 보낼 수 없는 곳(병상 0 확인·제외·차단)은
+    // 줄 없이 빨간 노드(liveZoneSet). 응답을 기다리는 동안엔 줄 없이 존 병원 노드만 초록. 아이패드 상황판(embed, apid 없음)은 '최적'
+    // 이름표를 달지 않는다(사건이 몰리면 이름표가 겹친다 — 자리 재검토 중).
     const best = confirmed || (c.hospitals || []).find(transportable) || null;
     if (best && !confirmed && !arrived && (ONLY_APID || !document.body.classList.contains('embed'))) { const bh = hp(best.hospitalId); if (bh) bestTexts.push({ pos: top(bh), text: `${caseLabel(c)} 최적 · ${shortName(bh.name)}` }); }
     for (const ch of c.hospitals || []) {
       const h = hp(ch.hospitalId); if (!h) continue;
       const st = ch.status;
-      // 줄은 보낼 수 있는 승인 병원 중 최적(또는 확정 병원) 하나만 — 응답을 기다리는 동안엔 줄 없이 존 병원 노드만 초록(2026-10-15)
-      if (!best || ch.hospitalId !== best.hospitalId) continue;
+      if (confirmed ? ch.hospitalId !== confirmed.hospitalId : !transportable(ch)) continue;
+      const isBest = best && ch.hospitalId === best.hospitalId;
       let col, w, a;
       if (st === 'confirmed') { col = kc; w = 3; a = 240; }
-      else if (st === 'approved') { col = OK_COL; w = 3; a = 235; }
-      else { col = kc; w = 1; a = 45; }
+      else { col = OK_COL; w = isBest ? 3 : 1.8; a = isBest ? 235 : 170; }
       if (st === 'confirmed' && sim && sim.path && (sim.phase === 'transporting' || sim.phase === 'at_hospital')) {
         // 확정 병원으로는 hub(카카오 내비)가 준 실제 이송 경로를 그린다 — 지나온 구간 회색, 남은 구간 KTAS 색
         const sp = splitPath(sim.path, sim.gps || pos);
@@ -345,7 +348,7 @@ function liveLayers(t) {
   L.push(new PathLayer({ id: 'lv-paths', widthScale: LK, data: paths, getPath: d => d.path, getColor: d => [...d.col, d.thin ? 110 : 220], getWidth: d => d.thin ? 1.5 : 3, widthUnits: 'pixels', parameters: { depthTest: false }, updateTriggers: { getPath: [hubCaseTick, performance.now() | 0] } }));
   L.push(new LineLayer({ id: 'lv-sug', widthScale: LK, data: sugLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: [...SUG_COL, 200], getWidth: 2, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-sug-txt', data: sugTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [...SUG_COL, 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
-  L.push(new TextLayer({ id: 'lv-best-txt', data: bestTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [94, 227, 127, 255], getPixelOffset: [0, -22], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 180], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  L.push(new TextLayer({ id: 'lv-best-txt', data: bestTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [94, 227, 127, 255], getPixelOffset: [0, -36], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 180], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
   L.push(new LineLayer({ id: 'lv-air-glow', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [d.col[0], d.col[1], d.col[2], 60], getWidth: 8, widthUnits: 'pixels', parameters: ADD }));
   L.push(new LineLayer({ id: 'lv-air', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new LineLayer({ id: 'lv-stems', widthScale: LK, data: stems, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [...kCol(d.k).slice(0, 3), 130], getWidth: 1.5, widthUnits: 'pixels', parameters: ADD }));
