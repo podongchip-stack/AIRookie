@@ -38,11 +38,50 @@ const CACHE_TTL_MS = 300_000;
 //: 출발지를 약 10m로 반올림해 GPS 흔들림으로 캐시가 매번 빗나가지 않게 한다.
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+// 이 함수는 인증 없이 열려 있다(정적 페이지라 브라우저가 들 자격증명이 없다).
+// 남이 우리 카카오 쿼터를 쓰는 걸 줄이려고 두 겹을 뒀는데, **효과가 서로 다르다.**
+//
+//   · Origin 허용 목록 — 실제로 막는 쪽. 헤더는 위조할 수 있지만 브라우저에서 긁어
+//     쓰는 것은 막힌다. 배포 도메인이 정해지면 반드시 설정할 것.
+//   · IP 속도 제한 — **거의 못 막는다.** 요청마다 다른 isolate에서 돌아 이 메모리
+//     카운터가 공유되지 않는다(실측: 연속 46회 전부 통과, 429 0회). 같은 isolate로
+//     몰린 연타만 걸린다. 제대로 하려면 DB·KV 같은 공용 저장소가 필요하다.
+//
+// 요청 한 건이 쓰는 카카오 호출은 다중 2 + 단일 26 이하로 묶어 뒀다(상한이 곧 방어).
+//: 쉼표로 구분한 허용 출처. 안 주면 전부 허용하되 속도 제한은 그대로 건다.
+//:   npx supabase secrets set ALLOWED_ORIGINS=https://example.com,http://localhost:4500
+const ALLOWED = (Deno.env.get("ALLOWED_ORIGINS") || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+//: IP당 창(10분) 안에 허용할 요청 수. 한 사람이 자리를 옮겨 가며 써도 넉넉하다.
+const RATE_WINDOW_MS = 600_000;
+const RATE_MAX = 40;
+const hits = new Map<string, number[]>();
+
+function originAllowed(origin: string | null): boolean {
+  if (!ALLOWED.length) return true;                  // 허용 목록 미설정 = 열어 둔다
+  if (!origin) return false;                         // 브라우저가 아닌 호출
+  return ALLOWED.includes(origin);
+}
+
+function rateOk(ip: string): boolean {
+  const now = Date.now();
+  const seen = (hits.get(ip) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  seen.push(now);
+  hits.set(ip, seen);
+  if (hits.size > 5000) hits.clear();                // 메모리가 끝없이 늘지 않게
+  return seen.length <= RATE_MAX;
+}
+
+function corsFor(origin: string | null) {
+  return {
+    // 허용 목록이 있으면 그 출처만 돌려준다(*로 열어 두지 않는다)
+    "Access-Control-Allow-Origin": ALLOWED.length ? (origin || ALLOWED[0]) : "*",
+    "Access-Control-Allow-Headers": "content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
+const CORS = corsFor(null);
 
 type Eta = { sec: number; m: number };
 const cache = new Map<string, { at: number; eta: Eta }>();
@@ -51,31 +90,36 @@ function cacheKey(o: { lat: number; lng: number }, d: { lat: number; lng: number
   return `${round4(o.lat)},${round4(o.lng)}>${round4(d.lat)},${round4(d.lng)}`;
 }
 
-function json(body: unknown, status = 200) {
+function json(body: unknown, status = 200, origin: string | null = null) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS, "content-type": "application/json; charset=utf-8" },
+    headers: { ...corsFor(origin), "content-type": "application/json; charset=utf-8" },
   });
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  if (req.method !== "POST") return json({ error: "POST only" }, 405);
+  const reqOrigin = req.headers.get("origin");   // 요청 출처(헤더). 아래 좌표 origin과 다른 것
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsFor(reqOrigin) });
+  if (req.method !== "POST") return json({ error: "POST only" }, 405, reqOrigin);
+  if (!originAllowed(reqOrigin)) return json({ error: "origin not allowed" }, 403, reqOrigin);
+
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "unknown";
+  if (!rateOk(ip)) return json({ error: "too many requests" }, 429, reqOrigin);
 
   const key = Deno.env.get("KAKAO_REST_API_KEY");
-  if (!key) return json({ error: "no key" }, 500);
+  if (!key) return json({ error: "no key" }, 500, reqOrigin);
 
   let origin: { lat: number; lng: number };
   let destinations: { key: string; lat: number; lng: number }[];
   try {
     const body = await req.json();
     origin = body.origin;
-    destinations = (body.destinations || []).slice(0, 120);   // 상한 — 한 번에 4묶음까지
+    destinations = (body.destinations || []).slice(0, 40);    // 클라이언트는 30곳만 보낸다
     if (!origin || typeof origin.lat !== "number" || typeof origin.lng !== "number") {
-      return json({ error: "origin required" }, 400);
+      return json({ error: "origin required" }, 400, reqOrigin);
     }
   } catch {
-    return json({ error: "bad json" }, 400);
+    return json({ error: "bad json" }, 400, reqOrigin);
   }
 
   const etas: Record<string, Eta> = {};
@@ -153,5 +197,5 @@ Deno.serve(async (req: Request) => {
     }));
   }
 
-  return json({ etas, source: "kakao", radiusM: MAX_RADIUS_M });
+  return json({ etas, source: "kakao", radiusM: MAX_RADIUS_M }, 200, reqOrigin);
 });
