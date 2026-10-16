@@ -113,10 +113,20 @@ b,strong{font-weight:650}
             border-radius:999px;padding:5px 11px;font-variant-numeric:tabular-nums}
 
 /* 선택 — 앱토의 옵션 카드 줄 자리 */
-.picks{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-@media (max-width:720px){.picks{grid-template-columns:1fr}}
-.pick{border:1px solid var(--line);border-radius:11px;padding:13px 14px}
-.pick .lb{font-size:12px;color:var(--muted);margin:0 0 9px}
+.pickrow{border:1px solid var(--line);border-radius:11px;padding:13px 14px}
+.lb{font-size:12.5px;color:var(--ink2);margin:0 0 9px;font-weight:600}
+.lb span{font-weight:400;color:var(--muted)}
+.safety{border:1px solid var(--line);border-radius:11px;margin:10px 0 0}
+.safety>summary{font-size:14px;font-weight:620;color:var(--ink);padding:13px 14px;cursor:pointer;
+                list-style:none;display:flex;align-items:center;gap:9px}
+.safety>summary::-webkit-details-marker{display:none}
+.safety>summary::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--urgent);flex:none}
+.safety>summary::after{content:'';margin-left:auto;width:8px;height:8px;flex:none;
+  border-right:1.6px solid var(--muted);border-bottom:1.6px solid var(--muted);
+  transform:rotate(45deg) translate(-2px,-2px);transition:transform .2s var(--ease)}
+.safety[open]>summary::after{transform:rotate(-135deg) translate(-3px,-3px)}
+.safety .lb{padding:0 14px}
+.safety .opts{padding:0 14px 14px}
 .opts{display:flex;flex-wrap:wrap;gap:7px}
 .opt{font:inherit;font-size:14px;padding:9px 13px;border-radius:999px;border:1px solid var(--line);
      background:var(--card);color:var(--ink);cursor:pointer;line-height:1.2;

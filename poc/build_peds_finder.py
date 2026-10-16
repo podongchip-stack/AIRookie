@@ -444,26 +444,34 @@ function places(){
 }
 function show(){
   renderMap();
-  var el=document.getElementById('result');
-  if(age===null || !Object.keys(sym).some(function(k){return sym[k];})){ el.innerHTML=''; return; }
-  var j=judge(), h='';
-  if(j.lv===1){
-    h='<div class="verdict v1"><p class="big">지금 119에 전화하세요</p>'
-     +'<p>병원을 고르는 것보다 빠릅니다. 구급대원이 상태를 보고 받아 줄 병원을 찾아 줍니다.</p>'
-     +'<p class="why">'+j.why[0]+'</p></div>';
-  }else if(j.lv===2){
-    h='<div class="verdict v2"><p class="big">응급실로 가시는 편이 좋겠습니다</p>'
-     +'<p>아래는 가까운 곳입니다. <b>출발 전에 전화로 지금 소아 진료가 되는지 확인하세요</b> — '
-     +'당직 의사가 누구인지는 공개된 정보에 없습니다.</p><p class="why">'+j.why[0]+'</p></div>'
-     +'<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
-     +'<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></div>'+places();
-  }else{
-    h='<div class="verdict v3"><p class="big">내일 외래로도 괜찮아 보입니다</p>'
-     +'<p>다만 아래 중 하나라도 생기면 바로 119입니다 — 숨쉬기 힘들어함, 축 처짐, 경련, 입술이 파래짐.</p>'
-     +'<p class="why">'+j.why[0]+'</p></div>'
-     +'<details><summary>그래도 지금 갈 수 있는 곳을 보고 싶어요</summary>'+places()+'</details>';
+  var el=document.getElementById('result'); if(!el) return;
+  var picked=Object.keys(sym).some(function(k){return sym[k];});
+  var j=picked?judge():null;
+
+  /* ①(119)일 때만 목록을 감춘다 — 그 상황에선 병원을 고르는 것 자체가 늦다.
+     나머지는 선택을 하든 안 하든 **갈 수 있는 곳을 먼저 보여준다.**
+     증상 선택은 순위를 바꾸지 않는다(판정에만 쓰인다). 그래서 문으로 두지 않는다 */
+  if(j && j.lv===1){
+    el.innerHTML='<div class="verdict v1"><p class="big">지금 119에 전화하세요</p>'
+      +'<p>병원을 고르는 것보다 빠릅니다. 구급대원이 상태를 보고 받아 줄 병원을 찾아 줍니다.</p>'
+      +'<p class="why">'+j.why[0]+'</p>'
+      +'<a class="btn btn-call" href="tel:119" style="margin-top:15px;width:100%">119 전화하기</a></div>';
+    return;
   }
-  el.innerHTML=h;
+  var head='';
+  if(j && j.lv===2){
+    head='<div class="verdict v2"><p class="big">응급실로 가시는 편이 좋겠습니다</p>'
+      +'<p>출발 전에 전화로 지금 소아 진료가 되는지 확인하세요 — 당직 의사가 누구인지는 '
+      +'공개된 정보에 없습니다.</p><p class="why">'+j.why[0]+'</p></div>';
+  }else if(j && j.lv===3){
+    head='<div class="verdict v3"><p class="big">내일 외래로도 괜찮아 보입니다</p>'
+      +'<p>다만 아래 중 하나라도 생기면 바로 119입니다 — 숨쉬기 힘들어함, 축 처짐, 경련, '
+      +'입술이 파래짐.</p><p class="why">'+j.why[0]+'</p></div>';
+  }
+  el.innerHTML = head
+    + '<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
+    + '<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></div>'
+    + places();
 }
 document.querySelectorAll('[data-age]').forEach(function(b){ b.onclick=function(){
   age=+b.dataset.age;
@@ -571,16 +579,17 @@ def build(rows: list[dict], meta: dict) -> str:
     A('<div class="body">')
     A('<div class="topline"><span class="crumb">우리 아이 <b>상태</b></span>'
       f'<span class="stamp">{esc(meta["asOf"])} 기준</span></div>')
-    A('<div class="picks">')
-    A('<div class="pick"><p class="lb">아이 나이</p><div class="opts">')
+    A('<div class="pickrow">')
+    A('<p class="lb">아이 나이 <span>— 3개월 미만이면 신생아 중환자실이 있는 곳을 앞에 둡니다</span></p>')
+    A('<div class="opts">')
     for i, label in enumerate(RULES_AGE):
         A(f'<button class="opt" data-age="{i}" aria-pressed="false">{esc(label)}</button>')
     A("</div></div>")
-    A('<div class="pick"><p class="lb">무슨 일인가요 · 여러 개 고르셔도 됩니다</p><div class="opts">')
+    A('<details class="safety"><summary>지금 119를 불러야 하는 상황인지 확인하기</summary>'
+      '<p class="lb">해당하는 것을 고르세요 · 여러 개 고르셔도 됩니다</p><div class="opts">')
     for key, label in RULES_SYM:
         A(f'<button class="opt" data-sym="{key}" aria-pressed="false">{esc(label)}</button>')
-    A("</div></div>")
-    A("</div>")
+    A("</div></details>")
     A('<div id="mapPanel"></div>')
     A("</div></div></section>")
 

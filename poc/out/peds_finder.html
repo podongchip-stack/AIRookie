@@ -104,10 +104,20 @@ b,strong{font-weight:650}
             border-radius:999px;padding:5px 11px;font-variant-numeric:tabular-nums}
 
 /* 선택 — 앱토의 옵션 카드 줄 자리 */
-.picks{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-@media (max-width:720px){.picks{grid-template-columns:1fr}}
-.pick{border:1px solid var(--line);border-radius:11px;padding:13px 14px}
-.pick .lb{font-size:12px;color:var(--muted);margin:0 0 9px}
+.pickrow{border:1px solid var(--line);border-radius:11px;padding:13px 14px}
+.lb{font-size:12.5px;color:var(--ink2);margin:0 0 9px;font-weight:600}
+.lb span{font-weight:400;color:var(--muted)}
+.safety{border:1px solid var(--line);border-radius:11px;margin:10px 0 0}
+.safety>summary{font-size:14px;font-weight:620;color:var(--ink);padding:13px 14px;cursor:pointer;
+                list-style:none;display:flex;align-items:center;gap:9px}
+.safety>summary::-webkit-details-marker{display:none}
+.safety>summary::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--urgent);flex:none}
+.safety>summary::after{content:'';margin-left:auto;width:8px;height:8px;flex:none;
+  border-right:1.6px solid var(--muted);border-bottom:1.6px solid var(--muted);
+  transform:rotate(45deg) translate(-2px,-2px);transition:transform .2s var(--ease)}
+.safety[open]>summary::after{transform:rotate(-135deg) translate(-3px,-3px)}
+.safety .lb{padding:0 14px}
+.safety .opts{padding:0 14px 14px}
 .opts{display:flex;flex-wrap:wrap;gap:7px}
 .opt{font:inherit;font-size:14px;padding:9px 13px;border-radius:999px;border:1px solid var(--line);
      background:var(--card);color:var(--ink);cursor:pointer;line-height:1.2;
@@ -255,14 +265,15 @@ footer b{color:var(--ink2)}
 <div class="chrome"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="path">우리아이응급길잡이 / 내 주변</span></div>
 <div class="body">
 <div class="topline"><span class="crumb">우리 아이 <b>상태</b></span><span class="stamp">2026-10-12 01:25 기준</span></div>
-<div class="picks">
-<div class="pick"><p class="lb">아이 나이</p><div class="opts">
+<div class="pickrow">
+<p class="lb">아이 나이 <span>— 3개월 미만이면 신생아 중환자실이 있는 곳을 앞에 둡니다</span></p>
+<div class="opts">
 <button class="opt" data-age="0" aria-pressed="false">3개월 미만</button>
 <button class="opt" data-age="1" aria-pressed="false">3~12개월</button>
 <button class="opt" data-age="2" aria-pressed="false">1~3세</button>
 <button class="opt" data-age="3" aria-pressed="false">3세 이상</button>
 </div></div>
-<div class="pick"><p class="lb">무슨 일인가요 · 여러 개 고르셔도 됩니다</p><div class="opts">
+<details class="safety"><summary>지금 119를 불러야 하는 상황인지 확인하기</summary><p class="lb">해당하는 것을 고르세요 · 여러 개 고르셔도 됩니다</p><div class="opts">
 <button class="opt" data-sym="breath" aria-pressed="false">숨쉬기가 힘들어요</button>
 <button class="opt" data-sym="seizure" aria-pressed="false">경련을 해요</button>
 <button class="opt" data-sym="limp" aria-pressed="false">축 처지거나 반응이 없어요</button>
@@ -271,8 +282,7 @@ footer b{color:var(--ink2)}
 <button class="opt" data-sym="hurt" aria-pressed="false">다쳤어요</button>
 <button class="opt" data-sym="vomit" aria-pressed="false">토하거나 설사해요</button>
 <button class="opt" data-sym="other" aria-pressed="false">그 밖에 걱정돼요</button>
-</div></div>
-</div>
+</div></details>
 <div id="mapPanel"></div>
 </div></div></section>
 <div class="results"><div class="in reveal" id="result"></div></div>
@@ -533,26 +543,34 @@ function places(){
 }
 function show(){
   renderMap();
-  var el=document.getElementById('result');
-  if(age===null || !Object.keys(sym).some(function(k){return sym[k];})){ el.innerHTML=''; return; }
-  var j=judge(), h='';
-  if(j.lv===1){
-    h='<div class="verdict v1"><p class="big">지금 119에 전화하세요</p>'
-     +'<p>병원을 고르는 것보다 빠릅니다. 구급대원이 상태를 보고 받아 줄 병원을 찾아 줍니다.</p>'
-     +'<p class="why">'+j.why[0]+'</p></div>';
-  }else if(j.lv===2){
-    h='<div class="verdict v2"><p class="big">응급실로 가시는 편이 좋겠습니다</p>'
-     +'<p>아래는 가까운 곳입니다. <b>출발 전에 전화로 지금 소아 진료가 되는지 확인하세요</b> — '
-     +'당직 의사가 누구인지는 공개된 정보에 없습니다.</p><p class="why">'+j.why[0]+'</p></div>'
-     +'<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
-     +'<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></div>'+places();
-  }else{
-    h='<div class="verdict v3"><p class="big">내일 외래로도 괜찮아 보입니다</p>'
-     +'<p>다만 아래 중 하나라도 생기면 바로 119입니다 — 숨쉬기 힘들어함, 축 처짐, 경련, 입술이 파래짐.</p>'
-     +'<p class="why">'+j.why[0]+'</p></div>'
-     +'<details><summary>그래도 지금 갈 수 있는 곳을 보고 싶어요</summary>'+places()+'</details>';
+  var el=document.getElementById('result'); if(!el) return;
+  var picked=Object.keys(sym).some(function(k){return sym[k];});
+  var j=picked?judge():null;
+
+  /* ①(119)일 때만 목록을 감춘다 — 그 상황에선 병원을 고르는 것 자체가 늦다.
+     나머지는 선택을 하든 안 하든 **갈 수 있는 곳을 먼저 보여준다.**
+     증상 선택은 순위를 바꾸지 않는다(판정에만 쓰인다). 그래서 문으로 두지 않는다 */
+  if(j && j.lv===1){
+    el.innerHTML='<div class="verdict v1"><p class="big">지금 119에 전화하세요</p>'
+      +'<p>병원을 고르는 것보다 빠릅니다. 구급대원이 상태를 보고 받아 줄 병원을 찾아 줍니다.</p>'
+      +'<p class="why">'+j.why[0]+'</p>'
+      +'<a class="btn btn-call" href="tel:119" style="margin-top:15px;width:100%">119 전화하기</a></div>';
+    return;
   }
-  el.innerHTML=h;
+  var head='';
+  if(j && j.lv===2){
+    head='<div class="verdict v2"><p class="big">응급실로 가시는 편이 좋겠습니다</p>'
+      +'<p>출발 전에 전화로 지금 소아 진료가 되는지 확인하세요 — 당직 의사가 누구인지는 '
+      +'공개된 정보에 없습니다.</p><p class="why">'+j.why[0]+'</p></div>';
+  }else if(j && j.lv===3){
+    head='<div class="verdict v3"><p class="big">내일 외래로도 괜찮아 보입니다</p>'
+      +'<p>다만 아래 중 하나라도 생기면 바로 119입니다 — 숨쉬기 힘들어함, 축 처짐, 경련, '
+      +'입술이 파래짐.</p><p class="why">'+j.why[0]+'</p></div>';
+  }
+  el.innerHTML = head
+    + '<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
+    + '<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></div>'
+    + places();
 }
 document.querySelectorAll('[data-age]').forEach(function(b){ b.onclick=function(){
   age=+b.dataset.age;
