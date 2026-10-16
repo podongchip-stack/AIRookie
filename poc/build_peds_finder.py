@@ -668,9 +668,9 @@ function places(){
       +(desc?'<p class="gd">'+desc+'</p>':'')
       +'<div class="cards">'+list.slice(0,limit).map(function(h){ return card(h,n++); }).join('')+'</div>';
   }
-  out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 가까운 순으로 12곳까지 — 출발 전 전화로 확인하세요.',12);
+  out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 가까운 순으로 12곳까지 보여 드립니다. 출발 전 전화로 확인하세요.',12);
   out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',6);
-  out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다 — 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',6);
+  out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다. 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',6);
   out+=moonlight();
   return out;
 }
@@ -932,7 +932,7 @@ def build(rows: list[dict], meta: dict) -> str:
     A(
         "<li><strong>초록색은 “받아준다”는 뜻이 아닙니다.</strong> 제한 공지가 없고, "
         "소아 진료 여건이 있고, 마지막 집계에서 자리가 있었고, 도착 시점까지 유지될 "
-        "가능성이 괜찮은 곳 — <strong>네 조건이 모두 맞은 곳</strong>입니다. "
+        "가능성이 괜찮은 곳. <strong>네 조건이 모두 맞아야 붙습니다.</strong> "
         "실제 수용 여부는 공개 데이터로 알 수 없고 전화로만 확인됩니다.</li>"
     )
     A(
@@ -942,7 +942,7 @@ def build(rows: list[dict], meta: dict) -> str:
     )
     A(
         f"<li><strong>“도착할 때도 자리가 있을 가능성”</strong>은 응급실 전체 병상을 대상으로 한 "
-        f"생존 모델(infosurv)의 출력입니다 — 지금 값이 도착 시점까지 유지될 확률이고, "
+        f"생존 모델(infosurv)의 출력입니다. 지금 값이 도착 시점까지 유지될 확률이고 "
         f"<strong>{esc(meta['asOf'])} 기준</strong>입니다. 소아 전용 수치가 아닙니다."
         + (f" 모델 {esc(meta['modelTag'])}, 적용 {meta['relCount']}곳." if meta.get("modelTag") else "")
         + "</li>"

@@ -101,8 +101,7 @@ b,strong{font-weight:650}
 .find input::placeholder{color:var(--muted)}
 .find input:focus{border-color:var(--accent);outline:none}
 .sug{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:15;background:var(--card);
-  border:1px solid var(--line);border-radius:12px;overflow:hidden;text-align:left;
-  box-shadow:0 8px 24px -12px rgba(20,23,28,.3)}
+  border:1px solid var(--line);border-radius:12px;overflow:hidden;text-align:left}
 .sug button{display:block;width:100%;text-align:left;font:inherit;font-size:14.5px;
   padding:11px 15px;border:0;background:transparent;color:var(--ink);cursor:pointer}
 .sug button+button{border-top:1px solid var(--line2)}
