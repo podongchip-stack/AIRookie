@@ -154,43 +154,28 @@ def load_moonlight() -> list[dict]:
         return []
 
 
-def load() -> tuple[list[dict], dict]:
-    files = sorted(glob.glob(os.path.join(SNAP_DIR, "*.jsonl")))
-    if not files:
-        raise SystemExit(f"스냅샷이 없다: {SNAP_DIR}")
-    latest = files[-1]
-
-    listing = None
-    for p in reversed(files):
-        for line in open(p, encoding="utf-8"):
-            rec = json.loads(line)
-            if rec.get("operation") == "getEgytListInfoInqire" and rec.get("items"):
-                listing = rec["items"]
-                break
-        if listing:
-            break
-
-    beds, severe, as_of = {}, {}, None
-    for line in open(latest, encoding="utf-8"):
-        rec = json.loads(line)
-        if not rec.get("items"):
-            continue
-        if rec["operation"] == "getEmrrmRltmUsefulSckbdInfoInqire":
-            as_of = datetime.fromisoformat(rec["ts"])
-            for it in rec["items"]:
-                beds[it["hpid"]] = it
-        elif rec["operation"] == "getSrsillDissAceptncPosblInfoInqire":
-            for it in rec["items"]:
-                severe[it["hpid"]] = it
-    as_of = as_of or datetime.now(KST)
-
+def load_specialists() -> dict:
+    """심평원 전문과목 전문의 수 캐시. 몇 달 단위로만 바뀌어 정적으로 둔다."""
     try:
-        spec = json.load(open(os.path.join(HIRA_DIR, "specialists.json"), encoding="utf-8"))
+        with open(os.path.join(HIRA_DIR, "specialists.json"), encoding="utf-8") as fp:
+            return json.load(fp)
     except FileNotFoundError:
-        spec = {}
+        return {}
 
-    msgs = load_messages()
-    rel, model_tag = load_reliability(as_of.astimezone(timezone.utc))
+
+def assemble(listing: list[dict], beds, severe, msgs: dict, rel: dict,
+             spec: dict | None = None) -> list[dict]:
+    """화면이 쓰는 병원 행을 만든다 — 스냅샷에서 오든 실시간 API에서 오든 같은 규칙.
+
+    정적 빌드(build_peds_finder)와 상시 갱신(serve_data)이 **같은 함수**를 쓴다.
+    조립 규칙이 두 벌이 되면 화면과 갱신본이 조용히 달라진다.
+    """
+    if spec is None:
+        spec = load_specialists()
+    if isinstance(beds, list):
+        beds = {it["hpid"]: it for it in beds if it.get("hpid")}
+    if isinstance(severe, list):
+        severe = {it["hpid"]: it for it in severe if it.get("hpid")}
     infant = [i.no for i in V.ITEMS if i.age == V.AGE_INFANT]
 
     rows = []
@@ -221,6 +206,43 @@ def load() -> tuple[list[dict], dict]:
             "ms": msgs.get(hpid, []),
             "rl": rel.get(hpid),
         })
+    return rows
+
+
+def load() -> tuple[list[dict], dict]:
+    files = sorted(glob.glob(os.path.join(SNAP_DIR, "*.jsonl")))
+    if not files:
+        raise SystemExit(f"스냅샷이 없다: {SNAP_DIR}")
+    latest = files[-1]
+
+    listing = None
+    for p in reversed(files):
+        for line in open(p, encoding="utf-8"):
+            rec = json.loads(line)
+            if rec.get("operation") == "getEgytListInfoInqire" and rec.get("items"):
+                listing = rec["items"]
+                break
+        if listing:
+            break
+
+    beds, severe, as_of = {}, {}, None
+    for line in open(latest, encoding="utf-8"):
+        rec = json.loads(line)
+        if not rec.get("items"):
+            continue
+        if rec["operation"] == "getEmrrmRltmUsefulSckbdInfoInqire":
+            as_of = datetime.fromisoformat(rec["ts"])
+            for it in rec["items"]:
+                beds[it["hpid"]] = it
+        elif rec["operation"] == "getSrsillDissAceptncPosblInfoInqire":
+            for it in rec["items"]:
+                severe[it["hpid"]] = it
+    as_of = as_of or datetime.now(KST)
+
+    spec = load_specialists()
+
+    rel, model_tag = load_reliability(as_of.astimezone(timezone.utc))
+    rows = assemble(listing, beds, severe, load_messages(), rel, spec)
     moon = load_moonlight()
     meta = {
         "moon": moon,
