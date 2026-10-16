@@ -101,8 +101,12 @@ b,strong{font-weight:650}
 .find input::placeholder{color:var(--muted)}
 .find input:focus{border-color:var(--accent);outline:none}
 .find-map{max-width:none;margin:0 0 12px}
-.find-map input{text-align:left;border:1.5px solid var(--accent);padding:12px 18px;
+.find-map input{text-align:left;border:1.5px solid var(--accent);padding:12px 18px 12px 44px;
   transition:box-shadow .18s var(--ease)}
+/* 돋보기는 글자 자리를 비켜 앉는다 — 누르는 대상이 아니라 입력칸이 뭘 하는지 알리는 표시 */
+.find-map .ic{position:absolute;left:17px;top:50%;transform:translateY(-50%);
+  color:var(--muted);pointer-events:none}
+.find-map:focus-within .ic{color:var(--accent)}
 .find-map input:focus{box-shadow:0 0 0 3px var(--accentbg)}
 /* 주소를 바깥(OSM)에 물어보는 동안 — 테두리만 옅게 */
 .find-map.busy input{border-color:var(--mapdim)}
@@ -203,9 +207,12 @@ b,strong{font-weight:650}
 .legend{display:flex;flex-wrap:wrap;gap:7px 16px;margin:10px 2px 0;font-size:11.5px;color:var(--muted)}
 .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:-1px}
 
-/* 결과 */
-.results{max-width:var(--col);margin:0 auto;padding:0 24px}
-.results .in{max-width:760px;margin:0 auto}
+/* 결과 — 창(지도)과는 끊고, 카드 열은 창 너비에 맞춘다.
+   예전엔 창 바로 아래에 간격 없이 붙고 760px로 좁아져, 창이 잘린 것처럼 보였다.
+   글은 읽기 너비(62ch)로 따로 묶는다 — 카드 격자와 글의 너비 기준은 다르다 */
+.results{max-width:var(--col);margin:0 auto;padding:30px 24px 0}
+.results .in{margin:0 auto}
+.results .in>p,.results .in>.ask,.results .in>.prompt{max-width:62ch}
 .verdict{border-radius:14px;padding:19px 20px;margin:26px 0 14px;border:1px solid}
 .v1{background:var(--urgentbg);border-color:var(--urgentline)}
 .v2{background:var(--warnbg);border-color:var(--warnline)}
@@ -261,9 +268,18 @@ b,strong{font-weight:650}
 .acts a:hover{border-color:var(--mapdim)}
 .acts a.tel{background:var(--accent);border-color:var(--accent);color:#fff}
 .acts a.tel:hover{background:var(--accent-d);border-color:var(--accent-d)}
-.ask{font-size:13.5px;color:var(--ink2);background:var(--soft);border-radius:12px;padding:14px 16px;
-     margin:0 0 14px;line-height:1.65}
-.ask b{color:var(--ink);font-weight:650}
+/* 전화로 뭘 물을지 — 카드의 [전화] 옆에서 거드는 말이라 상자로 세우지 않는다.
+   아래 .prompt(지금 눌러야 할 것)와 무게가 같으면 둘 다 안 읽힌다 */
+/* 가로줄은 긋지 않는다 — 글은 읽기 너비라 선이 카드 격자 밑에서 끊겨 보인다.
+   떨어뜨려 놓는 것만으로 충분히 구분된다 */
+.ask{font-size:13.5px;color:var(--muted);line-height:1.65;margin:26px 0 4px}
+.ask b{color:var(--ink2);font-weight:650}
+/* 위치가 없을 때 지금 해야 할 것 — 이 구역의 주인공이라 유일하게 색을 쓴다 */
+.prompt{background:var(--accentbg);border:1px solid var(--accent);border-radius:12px;
+        padding:17px 19px;margin:0;font-size:14.5px;line-height:1.62;color:var(--ink2)}
+.prompt b{color:var(--ink);font-weight:650}
+.prompt .t{display:block;font-size:16px;font-weight:700;color:var(--ink);
+           letter-spacing:-.02em;margin:0 0 5px}
 
 /* 랜딩 */
 .sec{max-width:var(--col);margin:0 auto;padding:72px 24px 0}

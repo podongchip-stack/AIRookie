@@ -753,10 +753,15 @@ function group(h){                    /* 병원이 스스로 말한 것으로 �
   return Math.max.apply(null, h._ms.map(function(m){return m[5];}));
 }
 function places(){
-  if(usingDefault) return '<div class="ask">갈 수 있는 곳을 찾아 드리려면 위치가 필요합니다. '
-    +'위 <b>[내 주변 응급실 보기]</b>를 눌러 주세요 — 위치는 이 화면 안에서만 쓰이고 저장되지 않습니다.</div>';
+  /* 위치가 없을 때가 이 화면의 첫 상태다 — 지금 누를 것 하나를 또렷하게 말한다.
+     가리키는 대상은 바로 위 검색창이다(예전 문구는 히어로 버튼을 가리켰는데,
+     검색이 지도 위로 올라오면서 더 가까운 곳에 할 일이 생겼다) */
+  if(usingDefault) return '<div class="prompt"><span class="t">아직 내 위치를 모릅니다</span>'
+    +'위 <b>검색창</b>에 주소나 동네 이름을 넣거나, 맨 위 <b>[내 주변 응급실 보기]</b>를 눌러 주세요. '
+    +'위치는 이 화면 안에서만 쓰이고 저장되지 않습니다.</div>';
   var rows=candidates();
-  if(!rows.length) return '<div class="ask">가까운 곳을 찾지 못했습니다. 119에 물어보세요.</div>';
+  if(!rows.length) return '<div class="prompt"><span class="t">가까운 곳을 찾지 못했습니다</span>'
+    +'119에 물어보시는 편이 빠릅니다.</div>';
   var g=[[],[],[]];
   rows.forEach(function(h){ g[group(h)].push(h); });
   var out='', n=0;
@@ -771,6 +776,10 @@ function places(){
     +'붐빈 만큼 더한 값이고, 카드마다 그 계산을 적어 뒀습니다. '
     +'<b>초록색은 순위가 아니라 표시입니다</b> — 여건이 두루 좋아도 더 멀면 아래로 갑니다. '
     +'출발 전 전화로 확인하세요.',12);
+  /* 전화에서 뭘 물을지는 [전화] 버튼을 처음 본 다음에 필요한 말이다.
+     목록 맨 위에 두면 아직 걸 곳도 없는데 통화법부터 읽게 된다 */
+  out+='<p class="ask">전화로는 이렇게만 물어보시면 됩니다 — '
+    +'<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></p>';
   out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',6);
   out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다. 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',6);
   out+=moonlight();
@@ -803,9 +812,7 @@ function show(){
   prepare();
   renderMap();
   var el=document.getElementById('result'); if(!el) return;
-  el.innerHTML = '<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
-    + '<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></div>'
-    + places();
+  el.innerHTML = places();
 }
 var q=document.getElementById('q'), sug=document.getElementById('sug');
 function pickPlace(p){
@@ -906,11 +913,34 @@ document.getElementById('loc').onclick=function(){
   },function(){ st.textContent='위치를 가져오지 못했습니다. 119에 물어보시는 편이 빠릅니다.'; },
   {timeout:8000,maximumAge:60000});
 };
+/* 내 위치와 고른 병원이 한 화면에 같이 들어오게 맞춘다.
+   예전엔 카드를 눌러도 지도는 그대로여서, 멀리 있는 병원을 고르면 화면 밖에 있어
+   아무 일도 안 일어난 것처럼 보였다(지도 아래 병원 정보 칸도 비었다 — 그 칸은
+   화면에 그려진 점에서만 찾기 때문). 확대 단계를 한 칸씩 낮추며 둘 다 들어오는
+   첫 단계를 고른다 — 로그로 바로 구하면 라벨이 가장자리에 물린다 */
+function fitPair(a,b){
+  var cv=document.getElementById('web'); if(!cv) return;
+  var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.78),620);
+  var padX=Math.min(96,W*0.18), padY=Math.min(86,H*0.18);   /* 라벨·버튼이 가리는 만큼 */
+  var z=ZMAX;
+  for(; z>ZMIN; z--){
+    if(Math.abs(projX(a[1],z)-projX(b[1],z))<=W-2*padX &&
+       Math.abs(projY(a[0],z)-projY(b[0],z))<=H-2*padY) break;
+  }
+  view={z:z, lat:latAt((projY(a[0],z)+projY(b[0],z))/2,z), lon:(a[1]+b[1])/2};
+  viewLocked=true;     /* 자동 맞춤이 다시 끼어들지 않게. [⌖]로 되돌린다 */
+}
 /* 카드 ↔ 지도 양방향 — 카드를 누르면 지도에서 그 점이 선택된다 */
 document.addEventListener('click',function(e){
   var c=e.target.closest('.card[data-k]'); if(!c) return;
   if(e.target.closest('a')) return;                 /* 전화·길찾기는 그대로 */
-  selKey = (c.dataset.k===selKey) ? null : c.dataset.k;
+  var off=(c.dataset.k===selKey);
+  selKey = off ? null : c.dataset.k;
+  if(!off && here){
+    /* key(h)가 "이름@위도,경도"라 좌표를 되읽을 수 있다 */
+    var ll=c.dataset.k.split('@')[1].split(',');
+    if(ll.length===2) fitPair(here,[+ll[0],+ll[1]]);
+  }
   if(lastRows) drawWeb(lastRows);
   renderPick(); show();
 });
@@ -965,6 +995,10 @@ LOGO = (
     '<path d="M39.5 28.5 L44.3 31.25 L44.3 36.75 L39.5 39.5 L34.7 36.75 L34.7 31.25 Z"/>'
     "</g></g></svg>"
 )
+ICON_SEARCH = ('<svg class="ic" width="17" height="17" viewBox="0 0 24 24" fill="none" '
+               'stroke="currentColor" stroke-width="1.9" stroke-linecap="round" '
+               'stroke-linejoin="round" aria-hidden="true">'
+               '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.9-3.9"/></svg>')
 ICON_ALERT = ('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
               'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
               '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>'
@@ -1025,8 +1059,9 @@ def build(rows: list[dict], meta: dict) -> str:
       f'<span class="stamp">{esc(meta["asOf"])} 기준</span></div>')
     # 검색은 지도를 쓰는 자리 바로 위에 둔다 — 히어로에 있을 때는 지도를 보다가
     # 위치를 바꾸려면 화면을 거슬러 올라가야 했다. 초록 테두리로 "여기서 시작"을 알린다.
-    A('<div class="find find-map"><input id="q" type="search" autocomplete="off" '
-      'placeholder="주소·지역·동·병원 이름으로 찾기 (예: 진주시 진주대로 501, 성동구, 고려대병원)" '
+    A('<div class="find find-map">' + ICON_SEARCH + '<input id="q" type="search" autocomplete="off" '
+      # 좁은 화면에서는 예시가 중간에 잘린다 — 한 줄에 들어오는 길이로 줄였다
+      'placeholder="주소·지역·병원으로 찾기 (예: 진주대로 501)" '
       'aria-label="주소나 지역으로 찾기"><div id="sug" class="sug" hidden></div></div>')
     A('<div id="mapPanel"></div>')
     A("</div></div></section>")
