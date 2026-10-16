@@ -162,7 +162,16 @@ b,strong{font-weight:650}
 .gh:first-child{margin-top:4px}
 .gh span{font-size:12.5px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
 .gd{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55}
-.plot canvas{display:block;width:100%;height:auto}
+.mapwrap{position:relative;border-radius:10px;overflow:hidden}
+.plot canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
+.plot canvas:active{cursor:grabbing}
+.zoom{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px}
+.zoom button{width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.22);
+  background:rgba(14,18,24,.82);color:#e8eefc;font:600 17px/1 system-ui;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);
+  transition:background .15s var(--ease)}
+.zoom button:hover{background:rgba(32,40,52,.92)}
+.zoom button:last-child{font-size:15px}
 .maplabel{font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6}
 .legend{display:flex;flex-wrap:wrap;gap:7px 16px;margin:10px 2px 0;font-size:11.5px;color:var(--muted)}
 .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:-1px}

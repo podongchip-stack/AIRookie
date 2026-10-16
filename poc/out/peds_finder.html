@@ -153,7 +153,16 @@ b,strong{font-weight:650}
 .gh:first-child{margin-top:4px}
 .gh span{font-size:12.5px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
 .gd{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55}
-.plot canvas{display:block;width:100%;height:auto}
+.mapwrap{position:relative;border-radius:10px;overflow:hidden}
+.plot canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
+.plot canvas:active{cursor:grabbing}
+.zoom{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px}
+.zoom button{width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.22);
+  background:rgba(14,18,24,.82);color:#e8eefc;font:600 17px/1 system-ui;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);
+  transition:background .15s var(--ease)}
+.zoom button:hover{background:rgba(32,40,52,.92)}
+.zoom button:last-child{font-size:15px}
 .maplabel{font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6}
 .legend{display:flex;flex-wrap:wrap;gap:7px 16px;margin:10px 2px 0;font-size:11.5px;color:var(--muted)}
 .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:-1px}
@@ -379,6 +388,14 @@ function candidates(){
 var TILE_BASE='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/';
 var TILE_REF='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/';
 var tiles={}, lastRows=null;
+/* 보기 상태 — 사용자가 끌거나 확대하면 viewLocked이 켜지고, 그때부터 자동
+   맞춤(상위 3곳이 들어오게)을 하지 않는다. [⌖]를 누르면 다시 맞춘다 */
+var view=null, viewLocked=false, drag=null;
+function lonAt(px,z){ return px/(256*Math.pow(2,z))*360-180; }
+function latAt(py,z){
+  var n=Math.PI-2*Math.PI*py/(256*Math.pow(2,z));
+  return 180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n)));
+}
 function tile(url,z,x,y,onload){
   var k=url+z+'/'+x+'/'+y, im=tiles[k];
   if(im) return im;
@@ -396,7 +413,7 @@ function projY(lat,z){
 function drawWeb(rows){
   var cv=document.getElementById('web'); if(!cv) return;
   lastRows=rows;
-  var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.68),430), r=window.devicePixelRatio||1;
+  var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.78),620), r=window.devicePixelRatio||1;
   cv.width=W*r; cv.height=H*r; cv.style.height=H+'px';
   var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
   hit=[];
@@ -404,14 +421,15 @@ function drawWeb(rows){
   var BLK='#ff6b60', BUSY='#f0a94a', DIM='#7f8b9e';
 
   var top=rows.slice(0,3);
-  /* 상위 3곳이 화면 안에 들어오는 가장 가까운 확대 단계를 고른다 */
-  var far=0.8;
-  top.forEach(function(h){ far=Math.max(far,h._d); });
-  var need=Math.min(W,H)/2-34, mpp=156543.03*Math.cos(here[0]*Math.PI/180);
-  var z=Math.round(Math.log2(need*mpp/(far*1000)));
-  z=Math.max(9,Math.min(15,z));
-
-  var cx=W/2, cy=H/2, ox=projX(here[1],z)-cx, oy=projY(here[0],z)-cy;
+  if(!view || !viewLocked){            /* 상위 3곳이 들어오는 확대 단계로 맞춘다 */
+    var far=0.8;
+    top.forEach(function(h){ far=Math.max(far,h._d); });
+    var need=Math.min(W,H)/2-40, mpp=156543.03*Math.cos(here[0]*Math.PI/180);
+    view={z:Math.max(9,Math.min(16,Math.round(Math.log2(need*mpp/(far*1000))))),
+          lat:here[0], lon:here[1]};
+  }
+  var z=view.z;
+  var cx=W/2, cy=H/2, ox=projX(view.lon,z)-cx, oy=projY(view.lat,z)-cy;
   function px(lat,lon){ return [projX(lon,z)-ox, projY(lat,z)-oy]; }
 
   g.fillStyle='#0b0f14'; g.fillRect(0,0,W,H);            /* 타일이 늦거나 막혀도 바탕은 어둡게 */
@@ -477,12 +495,65 @@ function drawWeb(rows){
     hit.forEach(function(t){ var d=Math.hypot(t.x-mx,t.y-my); if(d<t.r+8&&d<bd){bd=d;best=t;} });
     return best;
   }
-  cv.onclick=function(ev){
+  function recenter(nox,noy){        /* 픽셀 원점 → 중심 좌표 */
+    view.lon=lonAt(nox+cx,z); view.lat=latAt(noy+cy,z); viewLocked=true;
+  }
+  function zoomAt(mx,my,dir){
+    var nz=Math.max(9,Math.min(17,z+dir)); if(nz===z) return;
+    var lon0=lonAt(ox+mx,z), lat0=latAt(oy+my,z);
+    view.z=nz; viewLocked=true;
+    var nox=projX(lon0,nz)-mx, noy=projY(lat0,nz)-my;
+    view.lon=lonAt(nox+cx,nz); view.lat=latAt(noy+cy,nz);
+    drawWeb(rows);
+  }
+
+  cv.onpointerdown=function(ev){
+    cv.setPointerCapture(ev.pointerId);
+    drag={x:ev.clientX, y:ev.clientY, ox:ox, oy:oy, moved:0};
+  };
+  cv.onpointermove=function(ev){
+    if(!drag){ cv.style.cursor=at(ev)?'pointer':'grab'; return; }
+    var dx=ev.clientX-drag.x, dy=ev.clientY-drag.y;
+    drag.moved=Math.max(drag.moved, Math.hypot(dx,dy));
+    recenter(drag.ox-dx, drag.oy-dy);
+    drawWeb(rows);
+  };
+  cv.onpointerup=function(ev){
+    var moved=drag?drag.moved:0; drag=null;
+    if(moved>6) return;                       /* 끌었으면 선택으로 치지 않는다 */
     var t=at(ev);
     selKey = t ? (key(t.h)===selKey ? null : key(t.h)) : null;
     renderPick(); drawWeb(rows);
   };
-  cv.onmousemove=function(ev){ cv.style.cursor=at(ev)?'pointer':'default'; };
+  cv.onpointercancel=function(){ drag=null; };
+  cv.onwheel=function(ev){
+    ev.preventDefault();
+    var b=cv.getBoundingClientRect();
+    zoomAt(ev.clientX-b.left, ev.clientY-b.top, ev.deltaY<0?1:-1);
+  };
+  /* 두 손가락 확대 — 포인터 이벤트만으로는 번거로워 터치 이벤트로 따로 받는다 */
+  var pinch=null;
+  cv.ontouchstart=function(ev){
+    if(ev.touches.length===2){
+      drag=null;
+      pinch={d:Math.hypot(ev.touches[0].clientX-ev.touches[1].clientX,
+                          ev.touches[0].clientY-ev.touches[1].clientY)};
+    }
+  };
+  cv.ontouchmove=function(ev){
+    if(!pinch || ev.touches.length!==2) return;
+    ev.preventDefault();
+    var d=Math.hypot(ev.touches[0].clientX-ev.touches[1].clientX,
+                     ev.touches[0].clientY-ev.touches[1].clientY);
+    if(d/pinch.d>1.35){ pinch.d=d; zoomAt(cx,cy,1); }
+    else if(d/pinch.d<0.74){ pinch.d=d; zoomAt(cx,cy,-1); }
+  };
+  cv.ontouchend=function(){ pinch=null; };
+
+  var zi=document.getElementById('zin'), zo=document.getElementById('zout'), zc=document.getElementById('zfit');
+  if(zi) zi.onclick=function(){ zoomAt(cx,cy,1); };
+  if(zo) zo.onclick=function(){ zoomAt(cx,cy,-1); };
+  if(zc) zc.onclick=function(){ viewLocked=false; view=null; drawWeb(rows); };
 }
 
 function key(h){ return h.n+'@'+h.y+','+h.x; }
@@ -559,7 +630,12 @@ function renderMap(){
     + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
     + '</div>'
     +'<details class="plot" open><summary>어디쯤에 있는지 보기</summary>'
-    +'<canvas id="web"></canvas>'
+    +'<div class="mapwrap"><canvas id="web"></canvas>'
+    +'<div class="zoom">'
+      +'<button id="zin" type="button" aria-label="확대">+</button>'
+      +'<button id="zout" type="button" aria-label="축소">−</button>'
+      +'<button id="zfit" type="button" aria-label="내 위치로 맞추기">⌖</button>'
+    +'</div></div>'
     +'<p class="maplabel">'+(usingDefault
         ? '<b>서울 중심을 기준으로 한 예시입니다.</b> 위 <b>[내 주변 응급실 보기]</b>를 누르면 '
           +'내 위치로 다시 그립니다. ' : '')
