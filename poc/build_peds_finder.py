@@ -60,6 +60,7 @@ INFO = os.path.join(ROOT, "info", "Hospital_inform", "info")
 SNAP_DIR = os.path.join(INFO, "data", "snapshots_nationwide")
 HIRA_DIR = os.path.join(INFO, "data", "hira")
 MSG_CACHE = os.path.join(HERE, "data", "acceptance_messages.json")
+MOON_CACHE = os.path.join(HERE, "data", "moonlight.json")
 OUT = os.path.join(HERE, "out", "peds_finder.html")
 
 sys.path.insert(0, INFO)
@@ -135,6 +136,20 @@ def load_reliability(as_of: datetime) -> tuple[dict[str, list], str]:
     return out, tag
 
 
+def load_moonlight() -> list[dict]:
+    """달빛어린이병원 — 응급실이 아니라 **야간·휴일 소아 외래**다.
+
+    경증 아이를 응급실로 보내지 않으려고 만든 제도라, 우리가 "응급실로 가세요"만
+    말하면 그 제도를 거스르게 된다(hub의 "경증은 센터를 아껴라"와 같은 원칙).
+    그래서 응급실 목록과 **섞지 않고 따로** 보여준다.
+    """
+    try:
+        with open(MOON_CACHE, encoding="utf-8") as fp:
+            return json.load(fp).get("items", [])
+    except FileNotFoundError:
+        return []
+
+
 def load() -> tuple[list[dict], dict]:
     files = sorted(glob.glob(os.path.join(SNAP_DIR, "*.jsonl")))
     if not files:
@@ -202,7 +217,10 @@ def load() -> tuple[list[dict], dict]:
             "ms": msgs.get(hpid, []),
             "rl": rel.get(hpid),
         })
+    moon = load_moonlight()
     meta = {
+        "moon": moon,
+        "moonCount": len(moon),
         "asOf": as_of.astimezone(KST).strftime("%Y-%m-%d %H:%M"),
         "modelTag": model_tag,
         "relCount": len(rel),
@@ -220,9 +238,9 @@ RULES_SYM = [
 ]
 
 JS_TMPL = r"""
-var DATA=__DATA__, ASOF="__ASOF__";
+var DATA=__DATA__, MOON=__MOON__, ASOF="__ASOF__";
 var ICON_ALERT=__ICON_ALERT__, ICON_INFO=__ICON_INFO__;
-var age=null, sym={};
+var age=null, sym={}, curLv=null;
 /* 위치를 허용하지 않아도 화면이 비어 있지 않게 서울 중심을 기본으로 둔다.
    다만 **예시라고 분명히 적는다** — 부산에 있는 사람에게 서울 병원을
    "내 주변"이라고 보여주면 안 된다. 허용하면 진짜 내 위치로 바뀐다 */
@@ -431,6 +449,8 @@ function places(){
   var g=[[],[],[]];
   rows.forEach(function(h){ g[group(h)].push(h); });
   var out='', n=0;
+  var moonFirst=(curLv===3);        /* 외래로 충분한 상황이면 달빛이 먼저다 */
+  if(moonFirst) out+=moonlight();
   function block(list,title,desc,limit){
     if(!list.length) return '';
     var h2='<h3 class="gh">'+title+'<span>'+list.length+'곳</span></h3>'
@@ -440,13 +460,37 @@ function places(){
   out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 그래도 출발 전 전화로 확인하세요.',3);
   out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',2);
   out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다 — 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',2);
+  if(!moonFirst) out+=moonlight();
   return out;
+}
+
+/* 달빛어린이병원 — 응급실이 아니라 야간·휴일 소아 외래.
+   응급실 목록과 **섞지 않는다.** 경증이 응급실을 채우지 않게 하려고 만든 제도인데
+   우리가 한 줄에 늘어놓으면 그 구분이 사라진다 */
+function moonlight(){
+  if(!MOON.length || !here) return '';
+  var rows=MOON.map(function(m){
+    return {m:m, d:km(here[0],here[1],m.y,m.x)};
+  }).filter(function(r){return r.d<30;}).sort(function(a,b){return a.d-b.d;}).slice(0,3);
+  if(!rows.length) return '';
+  return '<h3 class="gh">응급실 말고 — 야간·휴일 소아 외래<span>달빛어린이병원</span></h3>'
+    +'<p class="gd">열이나 감기처럼 급하지 않은 증상이면 응급실보다 이쪽이 맞습니다. '
+    +'<b>평일 밤 11~12시, 주말·공휴일 오후 6시까지</b>가 제도 기준이지만 병원마다 다르고 '
+    +'임시 휴진도 있어 <b>가시기 전에 꼭 전화로 확인하세요.</b></p>'
+    + rows.map(function(r){
+        var m=r.m, map='https://map.kakao.com/link/to/'+encodeURIComponent(m.n)+','+m.y+','+m.x;
+        return '<div class="card moon"><div class="row1"><span class="name">'+m.n+'</span>'
+          +'<span class="dist">'+r.d.toFixed(1)+'km</span></div>'
+          +'<p class="sub" style="margin-left:0">'+(m.kind||'')+' · '+m.a+'</p>'
+          +'<div class="acts">'+(m.t?'<a class="tel" href="tel:'+m.t+'">전화 '+m.t+'</a>':'')
+          +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
+      }).join('');
 }
 function show(){
   renderMap();
   var el=document.getElementById('result'); if(!el) return;
   var picked=Object.keys(sym).some(function(k){return sym[k];});
-  var j=picked?judge():null;
+  var j=picked?judge():null; curLv=j?j.lv:null;
 
   /* ①(119)일 때만 목록을 감춘다 — 그 상황에선 병원을 고르는 것 자체가 늦다.
      나머지는 선택을 하든 안 하든 **갈 수 있는 곳을 먼저 보여준다.**
@@ -509,7 +553,7 @@ document.getElementById('theme').onclick=function(){
 fetch('data.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; })
  .then(function(j){
    if(!j||!j.rows||!j.rows.length) return;
-   DATA=j.rows; ASOF=j.asOf||ASOF;
+   DATA=j.rows; ASOF=j.asOf||ASOF; if(j.moon) MOON=j.moon;
    document.querySelectorAll('[data-asof]').forEach(function(e){ e.textContent=ASOF; });
    show();
  }).catch(function(){});
@@ -695,7 +739,14 @@ def build(rows: list[dict], meta: dict) -> str:
         "<li>판단 기준은 <strong>의사가 검토하기 전의 초안</strong>이고 규칙으로만 동작합니다. "
         "AI가 진단하지 않습니다. 헷갈리시면 119에 전화해 물어보셔도 됩니다 — 119는 상담도 합니다.</li>"
     )
-    A("<li>출처: 중앙응급의료센터 E-Gen 공개 API, 건강보험심사평가원 공개 API.</li>")
+    A(
+        f"<li><strong>달빛어린이병원은 응급실이 아닙니다.</strong> 야간·휴일에 경증 소아를 보는 "
+        f"외래로, 전국 <strong>{meta.get('moonCount', 0)}곳</strong>입니다(국립중앙의료원 집계). "
+        "제도 기준은 평일 밤 11~12시·주말 공휴일 오후 6시까지이지만 <strong>병원마다 다르고 "
+        "임시 휴진도 있어</strong> 운영시간은 공개되지 않습니다 — 반드시 전화로 확인하세요.</li>"
+    )
+    A("<li>출처: 중앙응급의료센터 E-Gen 공개 API, 건강보험심사평가원 공개 API, "
+      "국립중앙의료원 달빛어린이병원 목록.</li>")
     A(
         "<li>아무것도 저장하지 않습니다 — 로그인·쿠키·접속 기록이 없고, 지도도 외부에서 "
         "타일을 받지 않아 <strong>위치가 서버로 나가지 않습니다.</strong></li>"
@@ -710,7 +761,8 @@ def build(rows: list[dict], meta: dict) -> str:
     A("</div></section>")
 
     data = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
-    js = (JS_TMPL.replace("__DATA__", data).replace("__ASOF__", meta["asOf"])
+    moon = json.dumps(meta.get("moon", []), ensure_ascii=False, separators=(",", ":"))
+    js = (JS_TMPL.replace("__DATA__", data).replace("__MOON__", moon).replace("__ASOF__", meta["asOf"])
           .replace("__ICON_ALERT__", json.dumps(ICON_ALERT))
           .replace("__ICON_INFO__", json.dumps(ICON_INFO)))
     A("<script>" + js + "</script>")
@@ -727,10 +779,11 @@ def main() -> None:
     # HTML은 그대로 두고 내용이 갱신된다(화면이 있으면 data.json을 우선 쓴다).
     data_path = os.path.join(os.path.dirname(OUT), "data.json")
     with open(data_path, "w", encoding="utf-8") as fp:
-        json.dump({"asOf": meta["asOf"], "rows": rows}, fp, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"asOf": meta["asOf"], "rows": rows, "moon": meta.get("moon", [])}, fp, ensure_ascii=False, separators=(",", ":"))
     print(f"생성: {OUT}  ({os.path.getsize(OUT)/1024:.0f} KB)")
     print(f"      {data_path}  ({os.path.getsize(data_path)/1024:.0f} KB)")
     print(f"  전국 {len(rows)}곳 · 기준 {meta['asOf']}")
+    print(f"  달빛어린이병원 {meta['moonCount']}곳")
     print(f"  병원 공지 {meta['msgCount']}곳 · 신뢰도 {meta['relCount']}곳 ({meta['modelTag'] or '없음'})")
 
 

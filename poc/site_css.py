@@ -181,6 +181,9 @@ b,strong{font-weight:650}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 17px;margin-bottom:10px;
       transition:border-color .18s var(--ease)}
 .card:hover{border-color:var(--mapdim)}
+/* 달빛은 응급실이 아니라는 걸 색으로도 구분한다 */
+.card.moon{background:var(--soft)}
+.card.moon .acts a.tel{background:var(--ink);border-color:var(--ink)}
 .row1{display:flex;align-items:baseline;gap:10px}
 .num{flex:none;width:22px;height:22px;border-radius:7px;background:var(--accent);color:#fff;font-size:12px;
      font-weight:700;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
