@@ -288,15 +288,21 @@ const BETTER_COL = [255, 196, 64];
 
 // 병원 응답 단계에서 지도에 남길 병원(app.js layers) — 요청 존(zoneActive) 안 병원 + 다른 사건의 이송 확정 병원 + 거미줄 제안
 // 병원(민트 줄 끝이 허공이 되지 않게). 응답을 기다리는 사건이 없으면 null(전부 그림)
+// 이송이 확정된 사건(이송 중·병원 도착)은 이송 병원 + 그 사건의 수용 승인 병원만 남긴다(2026-10-16) — 재선택 후보("더 나은 병원")는
+// 승인 병원 안에 있다. 응답 대기·이송 사건이 하나도 없으면 null(전부 그림)
 window.liveVisibleSet = () => {
   const zone = window.liveZoneSet();
-  if (!zone.size) return null;
   const s = new Set(zone.keys());
+  let any = zone.size > 0;
   for (const c of myCases()) {
-    const cf = caseConfirmed(c); if (cf) s.add(cf.hospitalId);
+    const cf = caseConfirmed(c);
+    if (cf) {
+      any = true; s.add(cf.hospitalId);
+      for (const ch of c.hospitals || []) if (ch.status === 'approved' && !ch.excluded) s.add(ch.hospitalId);
+    }
     const sg = HUB.suggest[c.caseId]; if (sg && $('suggest').checked && !cf) s.add(sg.hpid);
   }
-  return s;
+  return any ? s : null;
 };
 function transportable(ch) {
   if (ch.status !== 'approved') return false;
@@ -390,7 +396,10 @@ function liveLayers(t) {
     }
     // 거미줄 모델의 제안(비교용) — hub의 선택과 다른 병원이면 민트색 줄
     const sug = HUB.suggest[c.caseId];
-    if (sug && $('suggest').checked && !arrived) {
+    // 이송 중엔 이송 병원·승인 병원만 지도에 남으므로(liveVisibleSet) 제안 병원이 그 밖이면 줄도 긋지 않는다(끝이 허공이 된다, 2026-10-16)
+    const sugShown = sug && (!confirmed || sug.hpid === confirmed.hospitalId
+      || (c.hospitals || []).some(ch => ch.hospitalId === sug.hpid && ch.status === 'approved' && !ch.excluded));
+    if (sugShown && $('suggest').checked && !arrived) {
       const h = hp(sug.hpid);
       if (h) {
         sugLines.push({ a: [pos.lng, pos.lat, 0], b: [h.lng, h.lat, 0] });
