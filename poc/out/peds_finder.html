@@ -269,25 +269,7 @@ footer b{color:var(--ink2)}
 <section class="frame" id="tool"><div class="win">
 <div class="chrome"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="path">우리아이응급길잡이 / 내 주변</span></div>
 <div class="body">
-<div class="topline"><span class="crumb">우리 아이 <b>상태</b></span><span class="stamp">2026-10-16 12:05 기준</span></div>
-<div class="pickrow">
-<p class="lb">아이 나이 <span>— 3개월 미만이면 신생아 중환자실이 있는 곳을 앞에 둡니다</span></p>
-<div class="opts">
-<button class="opt" data-age="0" aria-pressed="false">3개월 미만</button>
-<button class="opt" data-age="1" aria-pressed="false">3~12개월</button>
-<button class="opt" data-age="2" aria-pressed="false">1~3세</button>
-<button class="opt" data-age="3" aria-pressed="false">3세 이상</button>
-</div></div>
-<details class="safety"><summary>지금 119를 불러야 하는 상황인지 확인하기</summary><p class="lb">해당하는 것을 고르세요 · 여러 개 고르셔도 됩니다</p><div class="opts">
-<button class="opt" data-sym="breath" aria-pressed="false">숨쉬기가 힘들어요</button>
-<button class="opt" data-sym="seizure" aria-pressed="false">경련을 해요</button>
-<button class="opt" data-sym="limp" aria-pressed="false">축 처지거나 반응이 없어요</button>
-<button class="opt" data-sym="fever" aria-pressed="false">열이 나요</button>
-<button class="opt" data-sym="head" aria-pressed="false">머리를 부딪혔어요</button>
-<button class="opt" data-sym="hurt" aria-pressed="false">다쳤어요</button>
-<button class="opt" data-sym="vomit" aria-pressed="false">토하거나 설사해요</button>
-<button class="opt" data-sym="other" aria-pressed="false">그 밖에 걱정돼요</button>
-</div></details>
+<div class="topline"><span class="crumb">내 주변 <b>갈 수 있는 곳</b></span><span class="stamp">2026-10-16 12:05 기준</span></div>
 <div id="mapPanel"></div>
 </div></div></section>
 <div class="results"><div class="in reveal" id="result"></div></div>
@@ -307,7 +289,7 @@ footer b{color:var(--ink2)}
 <section class="sec" id="faq"><div class="in"><h2 class="st">자주 묻는 것</h2><div class="faq">
 <details><summary>지금 자리가 있는지 알 수 있나요?</summary><p>응급실 전체 혼잡도는 보여 드리지만 <b>소아 병상은 알 수 없습니다.</b> 전국 응급실의 23%만 소아 병상 수를 올리고 그마저 거의 갱신되지 않습니다. 모르는 것을 아는 척하지 않으려고 숫자를 지어내지 않았습니다.</p></details>
 <details><summary>전화를 꼭 해야 하나요?</summary><p>네. <b>오늘 밤 소아과 당직이 누구인지는 공개된 데이터 어디에도 없습니다.</b> 이 화면은 갈 필요가 없는 곳을 줄여서 전화 횟수를 줄이는 것까지만 합니다.</p></details>
-<details><summary>제 위치나 증상이 저장되나요?</summary><p>아니요. 로그인·쿠키·접속 기록이 없고 외부로 아무것도 보내지 않습니다. 지도도 외부에서 타일을 받지 않아 <b>위치가 서버로 나가지 않습니다.</b></p></details>
+<details><summary>제 위치가 저장되나요?</summary><p>저장은 하지 않습니다 — 로그인·쿠키·접속 기록이 없습니다. 다만 <b>지도 배경을 외부에서 받아오기 때문에 보고 있는 지역은 지도 제공자에게 전달됩니다.</b> 정확한 좌표는 브라우저 안에서만 쓰이고 저희 쪽으로는 오지 않습니다.</p></details>
 <details><summary>병원을 추천해 주는 건가요?</summary><p>아닙니다. 거리와 소아 진료 여건으로 정한 <b>순서</b>일 뿐이고 어디가 더 낫다는 추천이 아닙니다. 판단 기준도 의사가 검토하기 전의 초안입니다. 헷갈리시면 119에 전화해 물어보셔도 됩니다 — 119는 상담도 합니다.</p></details>
 </div></div></section>
 <section class="sec"><div class="in"><div class="note"><p><strong>이 화면이 할 수 있는 일과 못 하는 일</strong></p><ul>
@@ -321,7 +303,7 @@ footer b{color:var(--ink2)}
 <li>판단 기준은 <strong>의사가 검토하기 전의 초안</strong>이고 규칙으로만 동작합니다. AI가 진단하지 않습니다. 헷갈리시면 119에 전화해 물어보셔도 됩니다 — 119는 상담도 합니다.</li>
 <li><strong>달빛어린이병원은 응급실이 아닙니다.</strong> 야간·휴일에 경증 소아를 보는 외래로, 전국 <strong>144곳</strong>입니다(국립중앙의료원 집계). 제도 기준은 평일 밤 11~12시·주말 공휴일 오후 6시까지이지만 <strong>병원마다 다르고 임시 휴진도 있어</strong> 운영시간은 공개되지 않습니다 — 반드시 전화로 확인하세요.</li>
 <li>출처: 중앙응급의료센터 E-Gen 공개 API, 건강보험심사평가원 공개 API, 국립중앙의료원 달빛어린이병원 목록.</li>
-<li>아무것도 저장하지 않습니다 — 로그인·쿠키·접속 기록이 없고, 지도도 외부에서 타일을 받지 않아 <strong>위치가 서버로 나가지 않습니다.</strong></li>
+<li><strong>아무것도 저장하지 않습니다</strong> — 로그인·쿠키·접속 기록이 없습니다. 다만 지도 배경은 외부(Esri·OpenStreetMap)에서 받아오므로 <strong>보고 있는 지역이 지도 제공자에게 전달됩니다.</strong> 정확한 좌표나 고른 내용은 보내지 않습니다.</li>
 </ul></div>
 <footer><b>우리 아이 응급 길잡이</b> — 중앙응급의료센터 E-Gen·건강보험심사평가원 공개 API로 만든 비영리 시연 서비스입니다. 데이터 기준 2026-10-16 12:05.<br>응급 상황에서는 <b>먼저 119</b>에 전화하세요. 이 화면은 의료 조언이 아닙니다.</footer>
 </div></section>
@@ -330,29 +312,11 @@ var DATA=[{"n":"(의)내경의료재단울산제일병원","t":"052-220-3300","y
 /* "집계 때"는 우리 말이다. 보호자에겐 몇 시 기준인지를 직접 보여준다 */
 var STAMP=ASOF.slice(5);                 /* 2026-10-12 01:25 → 10-12 01:25 */
 var ICON_ALERT="<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z\"/><path d=\"M12 9v4M12 17h.01\"/></svg>", ICON_INFO="<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 16v-4M12 8h.01\"/></svg>";
-var age=null, sym={}, curLv=null;
 var hit=[], selKey=null;   /* 지도에서 누를 수 있는 점들과 고른 점 */
 /* 위치를 허용하지 않아도 화면이 비어 있지 않게 서울 중심을 기본으로 둔다.
    다만 **예시라고 분명히 적는다** — 부산에 있는 사람에게 서울 병원을
    "내 주변"이라고 보여주면 안 된다. 허용하면 진짜 내 위치로 바뀐다 */
 var DEFAULT_HERE=[37.5665,126.9780], here=DEFAULT_HERE, usingDefault=true;
-
-/* ── 판단: 규칙만. 여러 개면 가장 높은 단계를 따른다 ───────────────── */
-function judge(){
-  var r={lv:3,why:[]};
-  function up(lv,why){ if(lv<r.lv) r.lv=lv; r.why.push(why); }
-  if(sym.breath)  up(1,'숨쉬기가 힘든 것은 기다리면 안 되는 신호입니다');
-  if(sym.seizure) up(1,'경련은 지금 119입니다');
-  if(sym.limp)    up(1,'축 처지거나 반응이 없는 것은 지금 119입니다');
-  if(sym.fever && age===0) up(2,'생후 3개월 미만의 열은 지체 없이 진료가 필요합니다');
-  if(sym.fever && age===1) up(2,'돌 전 아기의 열은 응급실에서 보는 편이 안전합니다');
-  if(sym.head)    up(2,'머리를 부딪힌 뒤에는 진료로 확인하는 편이 안전합니다');
-  if(sym.vomit && age<=1) up(2,'돌 전후에는 토·설사로 수분이 빠르게 빠집니다');
-  if(sym.hurt)    up(2,'다친 정도는 눈으로 판단하기 어렵습니다');
-  if(sym.fever && age>=2) up(3,'열만 있고 잘 먹고 논다면 서두르지 않아도 됩니다');
-  if(!r.why.length) up(3,'고르신 내용만으로는 급한 신호가 보이지 않습니다');
-  return r;
-}
 
 /* ── infosurv 생존함수 (hub/bed_reliability.py와 같은 식) ──────────
    S(t) = 1 − Φ((ln t − ln m)/σ) = ½·erfc((ln t − ln m)/(σ√2)) */
@@ -383,7 +347,6 @@ function thread(h){
   if(h.pc>0 && h.pd>=2){ min-=5; why.push('소아 응급 병상과 소아과 전문의를 갖춘 곳'); }
   else if(h.pd>=2){ min-=3; why.push('소아과 전문의가 여러 명 있는 곳'); }
   else if(h.pd>=1){ min-=1; why.push('소아과 전문의가 있는 곳'); }
-  if(age===0 && h.ni){ min-=2; why.push('신생아 중환자실이 있는 곳'); }
   if(h.oc!=null && h.oc>=80){ min+=5; why.push(STAMP+' 기준 응급실이 거의 찼던 곳'); }
   else if(h.oc!=null && h.oc>=50){ min+=2; why.push(STAMP+' 기준 응급실이 붐볐던 곳'); }
   /* 병원 공지는 순위를 건드리지 않는다 — 분과 단위 제한을 전면 차단으로 오인하면
@@ -404,102 +367,114 @@ function candidates(){
   return rows;
 }
 
-/* ── 지도: 진짜 지리 배치(북쪽 위), 타일 없음 ─────────────────────
-   예전엔 반경을 "가는 데 드는 분"으로 그렸다. 개념은 맞았지만 읽히지 않았다 —
-   실제 위치가 아니니 "저기가 어디지"가 안 됐다. 지금은 좌표 그대로 찍고,
-   거리 감각은 동심원과 축척 막대로 준다.
-   **타일을 받지 않는다** — 받는 순간 내 위치가 지도 서버로 나간다 */
+/* ── 지도: 어두운 실제 지도 위에 점 ───────────────────────────────
+   거미줄 화면과 같은 어두운 바탕을 쓴다. 라이브러리 없이 캔버스에 타일을 직접
+   깐다(웹 메르카토르) — deck.gl·MapLibre를 끌어오면 수 MB가 붙는다.
+   ⚠ 타일을 받는 순간 **대략적 위치가 타일 서버로 나간다.** 그 전까지 지키던
+   "아무것도 외부로 안 보낸다"가 여기서 깨지므로 화면 설명도 같이 고쳤다.
+   타일이 안 와도(망 차단·실패) 어두운 바탕에 점은 그대로 그린다 */
+/* Esri 다크 그레이 — 키가 필요 없다. CARTO는 2026년부터 키를 요구해 타일에
+   "API KEY REQUIRED" 워터마크가 찍힌다(실제로 겪음). 주소 차례가 {z}/{y}/{x}다.
+   바탕(도로·강)과 지명을 따로 받아 겹친다 */
+var TILE_BASE='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/';
+var TILE_REF='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/';
+var tiles={}, lastRows=null;
+function tile(url,z,x,y,onload){
+  var k=url+z+'/'+x+'/'+y, im=tiles[k];
+  if(im) return im;
+  im=new Image(); im.crossOrigin='anonymous';
+  im.onload=onload; im.onerror=function(){ im.bad=true; };
+  im.src=url+z+'/'+y+'/'+x;
+  tiles[k]=im; return im;
+}
+function projX(lon,z){ return (lon+180)/360*256*Math.pow(2,z); }
+function projY(lat,z){
+  var r=lat*Math.PI/180;
+  return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*256*Math.pow(2,z);
+}
+
 function drawWeb(rows){
   var cv=document.getElementById('web'); if(!cv) return;
+  lastRows=rows;
   var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.68),430), r=window.devicePixelRatio||1;
   cv.width=W*r; cv.height=H*r; cv.style.height=H+'px';
-  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,W,H);
-  hit=[];                      /* 다시 그릴 때마다 비운다 */
-  var C=function(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();};
-  var ring=C('--mapring'), dim=C('--mapdim'), tx=C('--maptext'), acc=C('--accent'), ink=C('--ink');
-  var BLK='#e05c54', BUSY='#d9892b';
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  hit=[];
+  var acc=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  var BLK='#ff6b60', BUSY='#f0a94a', DIM='#7f8b9e';
 
   var top=rows.slice(0,3);
-  var kx=111.32*Math.cos(here[0]*Math.PI/180), ky=110.57;   /* 위경도 → km */
-  function xy(lat,lng){ return [(lng-here[1])*kx, (lat-here[0])*ky]; }
+  /* 상위 3곳이 화면 안에 들어오는 가장 가까운 확대 단계를 고른다 */
+  var far=0.8;
+  top.forEach(function(h){ far=Math.max(far,h._d); });
+  var need=Math.min(W,H)/2-34, mpp=156543.03*Math.cos(here[0]*Math.PI/180);
+  var z=Math.round(Math.log2(need*mpp/(far*1000)));
+  z=Math.max(9,Math.min(15,z));
 
-  /* 상위 3곳이 다 들어오게 범위를 잡고, 너무 좁지 않게 최소 2km */
-  var span=2;
-  top.forEach(function(h){ var p=xy(h.y,h.x); span=Math.max(span, Math.abs(p[0])*1.35, Math.abs(p[1])*1.5); });
-  var pad=34, sc=Math.min((W-pad*2)/(span*2), (H-pad*2)/(span*2));
-  var cx=W/2, cy=H/2;
-  function px(lat,lng){ var p=xy(lat,lng); return [cx+p[0]*sc, cy-p[1]*sc]; }
+  var cx=W/2, cy=H/2, ox=projX(here[1],z)-cx, oy=projY(here[0],z)-cy;
+  function px(lat,lon){ return [projX(lon,z)-ox, projY(lat,z)-oy]; }
 
-  /* 거리 동심원 — 타일이 없어도 축척 감각을 준다 */
-  g.strokeStyle=ring; g.lineWidth=1; g.setLineDash([3,3]);
-  [1,3,5,10].forEach(function(km){
-    if(km*sc>Math.max(W,H)) return;
-    g.beginPath(); g.arc(cx,cy,km*sc,0,Math.PI*2); g.stroke();
-    /* 라벨은 위쪽 중앙이 아니라 왼쪽 가로축에 — 위쪽은 핀·이름표가 몰린다 */
-    g.fillStyle=tx; g.font='10px system-ui'; g.textAlign='left';
-    g.fillText(km+'km', cx-km*sc+5, cy-5);
-  });
-  g.setLineDash([]); g.textAlign='left';
-
-  /* 주변 응급실(옅게) → 상위 3곳 순으로 */
-  rows.slice(0,60).forEach(function(h){
-    if(top.indexOf(h)>=0) return;
-    var p=px(h.y,h.x);
-    if(p[0]<4||p[0]>W-4||p[1]<4||p[1]>H-4) return;
-    g.fillStyle = h._blk.length?BLK : (h.oc!=null&&h.oc>=50?BUSY:dim);
-    var rr=3+Math.min(3.5,h.pd/4);
-    g.globalAlpha=.55;
-    g.beginPath(); g.arc(p[0],p[1],rr,0,Math.PI*2); g.fill();
-    g.globalAlpha=1;
-    hit.push({h:h,x:p[0],y:p[1],r:Math.max(rr,9)});
-  });
-  top.forEach(function(h,i){
-    var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:null);
-    g.strokeStyle=acc; g.lineWidth=1.5; g.setLineDash([4,3]);
-    g.beginPath(); g.moveTo(cx,cy); g.lineTo(p[0],p[1]); g.stroke(); g.setLineDash([]);
-    g.fillStyle=acc; g.beginPath(); g.arc(p[0],p[1],11,0,Math.PI*2); g.fill();
-    g.strokeStyle=C('--mapbg'); g.lineWidth=2.5; g.stroke();
-    if(st){ g.strokeStyle=st; g.lineWidth=2.5; g.beginPath(); g.arc(p[0],p[1],14,0,Math.PI*2); g.stroke(); }
-    g.fillStyle='#fff'; g.font='700 12px system-ui'; g.textAlign='center'; g.textBaseline='middle';
-    g.fillText(String(i+1), p[0], p[1]+0.5);
-    g.fillStyle=tx; g.font='11px system-ui'; g.textBaseline='alphabetic';
-    var gu=(h.a||'').split(' ').slice(-1)[0];
-    g.fillText(gu+' '+h._d.toFixed(1)+'km', p[0], p[1]+27);
-    g.textAlign='left';
-    hit.push({h:h,x:p[0],y:p[1],r:14});
-  });
-
-  /* 내 위치 */
-  g.fillStyle=ink; g.beginPath(); g.arc(cx,cy,5,0,Math.PI*2); g.fill();
-  g.strokeStyle=dim; g.lineWidth=1.5; g.beginPath(); g.arc(cx,cy,10.5,0,Math.PI*2); g.stroke();
-  g.fillStyle=tx; g.font='10px system-ui'; g.textAlign='center';
-  g.fillText(usingDefault?'서울 중심(예시)':'내 위치', cx, cy+29); g.textAlign='left';
-
-  /* 북쪽 표시와 축척 막대 */
-  g.fillStyle=tx; g.font='600 11px system-ui'; g.fillText('↑ 북', W-34, 18);
-  var unit=span>6?5:(span>2.5?2:1), bw=unit*sc;
-  g.strokeStyle=tx; g.lineWidth=1.5;
-  g.beginPath(); g.moveTo(14,H-16); g.lineTo(14+bw,H-16);
-  g.moveTo(14,H-20); g.lineTo(14,H-12); g.moveTo(14+bw,H-20); g.lineTo(14+bw,H-12); g.stroke();
-  g.font='10px system-ui'; g.fillText(unit+'km', 14+bw+6, H-13);
-
-  /* 고른 점 강조 */
-  if(selKey){
-    var sel=hit.filter(function(t){return key(t.h)===selKey;})[0];
-    if(sel){
-      g.strokeStyle=ink; g.lineWidth=2;
-      g.beginPath(); g.arc(sel.x,sel.y,sel.r+6,0,Math.PI*2); g.stroke();
+  g.fillStyle='#0b0f14'; g.fillRect(0,0,W,H);            /* 타일이 늦거나 막혀도 바탕은 어둡게 */
+  var redraw=function(){ if(lastRows) drawWeb(lastRows); };
+  var n=Math.pow(2,z);
+  for(var tx=Math.floor(ox/256); tx<=Math.floor((ox+W)/256); tx++){
+    for(var ty=Math.floor(oy/256); ty<=Math.floor((oy+H)/256); ty++){
+      if(ty<0||ty>=n) continue;
+      var xx=((tx%n)+n)%n;
+      var base=tile(TILE_BASE,z,xx,ty,redraw), ref=tile(TILE_REF,z,xx,ty,redraw);
+      if(base.complete && !base.bad) g.drawImage(base, tx*256-ox, ty*256-oy, 256, 256);
+      if(ref.complete && !ref.bad)  g.drawImage(ref,  tx*256-ox, ty*256-oy, 256, 256);
     }
   }
 
-  /* 눌러서 병원 정보 보기 — 전화까지 이어지게 */
+  /* 주변 응급실 → 상위 3곳 */
+  rows.slice(0,80).forEach(function(h){
+    if(top.indexOf(h)>=0) return;
+    var p=px(h.y,h.x);
+    if(p[0]<4||p[0]>W-4||p[1]<4||p[1]>H-4) return;
+    var rr=3+Math.min(3.5,h.pd/4);
+    g.fillStyle=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:DIM);
+    g.globalAlpha=.9; g.beginPath(); g.arc(p[0],p[1],rr,0,Math.PI*2); g.fill();
+    g.strokeStyle='rgba(0,0,0,.55)'; g.lineWidth=1.5; g.stroke(); g.globalAlpha=1;
+    hit.push({h:h,x:p[0],y:p[1],r:Math.max(rr,10)});
+  });
+  top.forEach(function(h,i){
+    var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:null);
+    g.strokeStyle='rgba(138,180,248,.85)'; g.lineWidth=1.5; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(cx,cy); g.lineTo(p[0],p[1]); g.stroke(); g.setLineDash([]);
+    g.fillStyle='#2a4bd0'; g.beginPath(); g.arc(p[0],p[1],12,0,Math.PI*2); g.fill();
+    g.strokeStyle='rgba(255,255,255,.9)'; g.lineWidth=2; g.stroke();
+    if(st){ g.strokeStyle=st; g.lineWidth=2.5; g.beginPath(); g.arc(p[0],p[1],16,0,Math.PI*2); g.stroke(); }
+    g.fillStyle='#fff'; g.font='700 12px system-ui'; g.textAlign='center'; g.textBaseline='middle';
+    g.fillText(String(i+1), p[0], p[1]+0.5);
+    g.font='600 11.5px system-ui'; g.textBaseline='alphabetic';
+    var lb=(h.a||'').split(' ').slice(-1)[0]+' '+h._d.toFixed(1)+'km';
+    g.strokeStyle='rgba(0,0,0,.75)'; g.lineWidth=3; g.strokeText(lb,p[0],p[1]+29);
+    g.fillStyle='#e8eefc'; g.fillText(lb,p[0],p[1]+29); g.textAlign='left';
+    hit.push({h:h,x:p[0],y:p[1],r:15});
+  });
+
+  /* 내 위치 */
+  g.fillStyle='#fff'; g.beginPath(); g.arc(cx,cy,5,0,Math.PI*2); g.fill();
+  g.strokeStyle='rgba(255,255,255,.45)'; g.lineWidth=2;
+  g.beginPath(); g.arc(cx,cy,11,0,Math.PI*2); g.stroke();
+  g.fillStyle='#cfd8e8'; g.font='10px system-ui'; g.textAlign='center';
+  g.strokeStyle='rgba(0,0,0,.7)'; g.lineWidth=3;
+  var me=usingDefault?'서울 중심(예시)':'내 위치';
+  g.strokeText(me,cx,cy+26); g.fillText(me,cx,cy+26); g.textAlign='left';
+
+  /* 출처 표기 — 타일 제공자 약관상 필요하다 */
+  g.fillStyle='rgba(255,255,255,.45)'; g.font='9.5px system-ui';
+  g.fillText('© Esri · OpenStreetMap contributors', 8, H-7);
+
+  if(selKey){
+    var sel=hit.filter(function(t){return key(t.h)===selKey;})[0];
+    if(sel){ g.strokeStyle='#fff'; g.lineWidth=2;
+      g.beginPath(); g.arc(sel.x,sel.y,sel.r+7,0,Math.PI*2); g.stroke(); }
+  }
   function at(ev){
-    var b=cv.getBoundingClientRect();
-    var mx=ev.clientX-b.left, my=ev.clientY-b.top, best=null, bd=1e9;
-    hit.forEach(function(t){
-      var d=Math.hypot(t.x-mx,t.y-my);
-      if(d<t.r+8 && d<bd){ bd=d; best=t; }
-    });
+    var b=cv.getBoundingClientRect(), mx=ev.clientX-b.left, my=ev.clientY-b.top, best=null, bd=1e9;
+    hit.forEach(function(t){ var d=Math.hypot(t.x-mx,t.y-my); if(d<t.r+8&&d<bd){bd=d;best=t;} });
     return best;
   }
   cv.onclick=function(ev){
@@ -507,7 +482,7 @@ function drawWeb(rows){
     selKey = t ? (key(t.h)===selKey ? null : key(t.h)) : null;
     renderPick(); drawWeb(rows);
   };
-  cv.onmousemove=function(ev){ cv.style.cursor = at(ev) ? 'pointer' : 'default'; };
+  cv.onmousemove=function(ev){ cv.style.cursor=at(ev)?'pointer':'default'; };
 }
 
 function key(h){ return h.n+'@'+h.y+','+h.x; }
@@ -589,7 +564,9 @@ function renderMap(){
         ? '<b>서울 중심을 기준으로 한 예시입니다.</b> 위 <b>[내 주변 응급실 보기]</b>를 누르면 '
           +'내 위치로 다시 그립니다. ' : '')
     +'북쪽이 위입니다. <b>점을 누르면 그 병원 정보와 전화번호가 나옵니다.</b> '
-    +'<b>길 안내는 [길찾기]</b>를 누르세요. 지도 타일을 받지 않아 위치가 외부로 나가지 않습니다.</p>'
+    +'<b>점을 누르면 그 병원 정보와 전화번호</b>가 나오고, 길 안내는 [길찾기]를 누르세요. '
+    +'지도 배경은 외부에서 받아오므로 <b>보고 있는 지역이 지도 제공자에게 전달됩니다</b> — '
+    +'정확한 좌표나 고른 내용은 보내지 않습니다.</p>'
     +'<div id="mapsel"></div>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
@@ -613,8 +590,6 @@ function places(){
   var g=[[],[],[]];
   rows.forEach(function(h){ g[group(h)].push(h); });
   var out='', n=0;
-  var moonFirst=(curLv===3);        /* 외래로 충분한 상황이면 달빛이 먼저다 */
-  if(moonFirst) out+=moonlight();
   function block(list,title,desc,limit){
     if(!list.length) return '';
     var h2='<h3 class="gh">'+title+'<span>'+list.length+'곳</span></h3>'
@@ -624,7 +599,7 @@ function places(){
   out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 그래도 출발 전 전화로 확인하세요.',3);
   out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',2);
   out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다 — 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',2);
-  if(!moonFirst) out+=moonlight();
+  out+=moonlight();
   return out;
 }
 
@@ -653,40 +628,10 @@ function moonlight(){
 function show(){
   renderMap();
   var el=document.getElementById('result'); if(!el) return;
-  var picked=Object.keys(sym).some(function(k){return sym[k];});
-  var j=picked?judge():null; curLv=j?j.lv:null;
-
-  /* ①(119)일 때만 목록을 감춘다 — 그 상황에선 병원을 고르는 것 자체가 늦다.
-     나머지는 선택을 하든 안 하든 **갈 수 있는 곳을 먼저 보여준다.**
-     증상 선택은 순위를 바꾸지 않는다(판정에만 쓰인다). 그래서 문으로 두지 않는다 */
-  if(j && j.lv===1){
-    el.innerHTML='<div class="verdict v1"><p class="big">지금 119에 전화하세요</p>'
-      +'<p>병원을 고르는 것보다 빠릅니다. 구급대원이 상태를 보고 받아 줄 병원을 찾아 줍니다.</p>'
-      +'<p class="why">'+j.why[0]+'</p>'
-      +'<a class="btn btn-call" href="tel:119" style="margin-top:15px;width:100%">119 전화하기</a></div>';
-    return;
-  }
-  var head='';
-  if(j && j.lv===2){
-    head='<div class="verdict v2"><p class="big">응급실로 가시는 편이 좋겠습니다</p>'
-      +'<p>출발 전에 전화로 지금 소아 진료가 되는지 확인하세요 — 당직 의사가 누구인지는 '
-      +'공개된 정보에 없습니다.</p><p class="why">'+j.why[0]+'</p></div>';
-  }else if(j && j.lv===3){
-    head='<div class="verdict v3"><p class="big">내일 외래로도 괜찮아 보입니다</p>'
-      +'<p>다만 아래 중 하나라도 생기면 바로 119입니다 — 숨쉬기 힘들어함, 축 처짐, 경련, '
-      +'입술이 파래짐.</p><p class="why">'+j.why[0]+'</p></div>';
-  }
-  el.innerHTML = head
-    + '<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
+  el.innerHTML = '<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
     + '<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></div>'
     + places();
 }
-document.querySelectorAll('[data-age]').forEach(function(b){ b.onclick=function(){
-  age=+b.dataset.age;
-  document.querySelectorAll('[data-age]').forEach(function(x){x.setAttribute('aria-pressed',x===b);});
-  show(); };});
-document.querySelectorAll('[data-sym]').forEach(function(b){ b.onclick=function(){
-  sym[b.dataset.sym]=!sym[b.dataset.sym]; b.setAttribute('aria-pressed',!!sym[b.dataset.sym]); show(); };});
 document.getElementById('loc').onclick=function(){
   var st=document.getElementById('status');
   if(!navigator.geolocation){ st.textContent='이 브라우저에서는 위치를 쓸 수 없습니다.'; return; }
