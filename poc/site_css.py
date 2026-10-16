@@ -183,6 +183,8 @@ b,strong{font-weight:650}
 .card:hover{border-color:var(--mapdim)}
 /* 달빛은 응급실이 아니라는 걸 색으로도 구분한다 */
 .card.moon{background:var(--soft)}
+/* 지도에서 고른 병원 */
+.card.picked{margin:14px 0 0;border-color:var(--accent)}
 .card.moon .acts a.tel{background:var(--ink);border-color:var(--ink)}
 .row1{display:flex;align-items:baseline;gap:10px}
 .num{flex:none;width:22px;height:22px;border-radius:7px;background:var(--accent);color:#fff;font-size:12px;

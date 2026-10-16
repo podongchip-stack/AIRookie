@@ -241,6 +241,7 @@ JS_TMPL = r"""
 var DATA=__DATA__, MOON=__MOON__, ASOF="__ASOF__";
 var ICON_ALERT=__ICON_ALERT__, ICON_INFO=__ICON_INFO__;
 var age=null, sym={}, curLv=null;
+var hit=[], selKey=null;   /* 지도에서 누를 수 있는 점들과 고른 점 */
 /* 위치를 허용하지 않아도 화면이 비어 있지 않게 서울 중심을 기본으로 둔다.
    다만 **예시라고 분명히 적는다** — 부산에 있는 사람에게 서울 병원을
    "내 주변"이라고 보여주면 안 된다. 허용하면 진짜 내 위치로 바뀐다 */
@@ -323,6 +324,7 @@ function drawWeb(rows){
   var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.68),430), r=window.devicePixelRatio||1;
   cv.width=W*r; cv.height=H*r; cv.style.height=H+'px';
   var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,W,H);
+  hit=[];                      /* 다시 그릴 때마다 비운다 */
   var C=function(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();};
   var ring=C('--mapring'), dim=C('--mapdim'), tx=C('--maptext'), acc=C('--accent'), ink=C('--ink');
   var BLK='#e05c54', BUSY='#d9892b';
@@ -355,9 +357,11 @@ function drawWeb(rows){
     var p=px(h.y,h.x);
     if(p[0]<4||p[0]>W-4||p[1]<4||p[1]>H-4) return;
     g.fillStyle = h._blk.length?BLK : (h.oc!=null&&h.oc>=50?BUSY:dim);
+    var rr=3+Math.min(3.5,h.pd/4);
     g.globalAlpha=.55;
-    g.beginPath(); g.arc(p[0],p[1],3+Math.min(3.5,h.pd/4),0,Math.PI*2); g.fill();
+    g.beginPath(); g.arc(p[0],p[1],rr,0,Math.PI*2); g.fill();
     g.globalAlpha=1;
+    hit.push({h:h,x:p[0],y:p[1],r:Math.max(rr,9)});
   });
   top.forEach(function(h,i){
     var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:null);
@@ -372,6 +376,7 @@ function drawWeb(rows){
     var gu=(h.a||'').split(' ').slice(-1)[0];
     g.fillText(gu+' '+h._d.toFixed(1)+'km', p[0], p[1]+27);
     g.textAlign='left';
+    hit.push({h:h,x:p[0],y:p[1],r:14});
   });
 
   /* 내 위치 */
@@ -387,6 +392,56 @@ function drawWeb(rows){
   g.beginPath(); g.moveTo(14,H-16); g.lineTo(14+bw,H-16);
   g.moveTo(14,H-20); g.lineTo(14,H-12); g.moveTo(14+bw,H-20); g.lineTo(14+bw,H-12); g.stroke();
   g.font='10px system-ui'; g.fillText(unit+'km', 14+bw+6, H-13);
+
+  /* 고른 점 강조 */
+  if(selKey){
+    var sel=hit.filter(function(t){return key(t.h)===selKey;})[0];
+    if(sel){
+      g.strokeStyle=ink; g.lineWidth=2;
+      g.beginPath(); g.arc(sel.x,sel.y,sel.r+6,0,Math.PI*2); g.stroke();
+    }
+  }
+
+  /* 눌러서 병원 정보 보기 — 전화까지 이어지게 */
+  function at(ev){
+    var b=cv.getBoundingClientRect();
+    var mx=ev.clientX-b.left, my=ev.clientY-b.top, best=null, bd=1e9;
+    hit.forEach(function(t){
+      var d=Math.hypot(t.x-mx,t.y-my);
+      if(d<t.r+8 && d<bd){ bd=d; best=t; }
+    });
+    return best;
+  }
+  cv.onclick=function(ev){
+    var t=at(ev);
+    selKey = t ? (key(t.h)===selKey ? null : key(t.h)) : null;
+    renderPick(); drawWeb(rows);
+  };
+  cv.onmousemove=function(ev){ cv.style.cursor = at(ev) ? 'pointer' : 'default'; };
+}
+
+function key(h){ return h.n+'@'+h.y+','+h.x; }
+
+/* 지도에서 고른 병원의 정보 — 지도 바로 아래 */
+function renderPick(){
+  var box=document.getElementById('mapsel'); if(!box) return;
+  if(!selKey){ box.innerHTML=''; return; }
+  var t=hit.filter(function(x){return key(x.h)===selKey;})[0];
+  if(!t){ box.innerHTML=''; return; }
+  var h=t.h, map='https://map.kakao.com/link/to/'+encodeURIComponent(h.n)+','+h.y+','+h.x;
+  var pct = h._r==null?null:Math.round(h._r*100);
+  box.innerHTML='<div class="card picked"><div class="row1"><span class="name">'+h.n+'</span>'
+    +'<span class="dist">'+h._d.toFixed(1)+'km</span></div>'
+    +'<p class="sub" style="margin-left:0">'+h.g+' · '+h.a+' · 차로 약 '+Math.round(h._travel)+'분(추정)</p>'
+    +'<div class="chips">'+chips(h)+'</div>'
+    +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
+       +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
+    +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'">'
+       +'<span class="lab">'+(h._blk.length?ICON_ALERT+'이 병원이 올린 진료 제한 공지'
+            :(group(h)===1?ICON_INFO+'전화로 먼저 확인해 달라는 공지':ICON_INFO+'이 병원이 올린 안내'))+'</span>'
+       +h._ms.slice(0,2).map(function(m){return '<p>'+m[2]+'</p>';}).join('')+'</div>':'')
+    +'<div class="acts">'+(h.t?'<a class="tel" href="tel:'+h.t+'">전화 '+h.t+'</a>':'')
+    +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
 }
 
 function chips(h){
@@ -442,8 +497,9 @@ function renderMap(){
     +'<p class="maplabel">'+(usingDefault
         ? '<b>서울 중심을 기준으로 한 예시입니다.</b> 위 <b>[내 주변 응급실 보기]</b>를 누르면 '
           +'내 위치로 다시 그립니다. ' : '')
-    +'북쪽이 위입니다. 실제 좌표 그대로 찍었고 거리는 동심원과 축척 막대로 봅니다 — '
+    +'북쪽이 위입니다. <b>점을 누르면 그 병원 정보와 전화번호가 나옵니다.</b> '
     +'<b>길 안내는 [길찾기]</b>를 누르세요. 지도 타일을 받지 않아 위치가 외부로 나가지 않습니다.</p>'
+    +'<div id="mapsel"></div>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
     +'<span><i style="background:#d9892b"></i>집계 때 붐빔</span>'
@@ -451,6 +507,8 @@ function renderMap(){
     +'<span><i style="background:var(--mapdim)"></i>그 밖의 응급실 · 점 크기는 소아 진료 여건</span>'
     +'</div></details>';
   drawWeb(rows);
+  renderPick();   /* 다시 그릴 때마다 칸이 비므로 고른 병원을 복원한다
+                     (창 크기·화면 회전·나이 변경 때마다 renderMap이 돈다) */
 }
 function group(h){                    /* 병원이 스스로 말한 것으로 묶는다 */
   if(!h._ms.length) return 0;         /* 공지 없음 */
