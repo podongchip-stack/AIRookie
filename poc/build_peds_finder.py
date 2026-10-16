@@ -255,6 +255,8 @@ def load() -> tuple[list[dict], dict]:
         "modelTag": model_tag,
         "relCount": len(rel),
         "msgCount": sum(1 for r in rows if r["ms"]),
+        #: 병상 숫자가 아예 안 올라오는 기관 수 — 화면에 "미제공"으로 밝힌다
+        "noBedCount": sum(1 for r in rows if r.get("av") is None and r.get("oc") is None),
     }
     return rows, meta
 
@@ -689,7 +691,19 @@ function chips(h){
   }
   /* 하루 넘게 안 바뀐 값은 따로 경고한다 — 숫자만 보면 믿어 버리기 때문 */
   if(a && a.w===2) c.push('<span class="chip warn">자동 갱신이 끊겼을 수 있음</span>');
-  if(!h.pd && !h.pc && !h.ni) c.push('<span class="chip none">소아 정보 없음</span>');
+  /* 병상 숫자가 아예 안 올라오는 곳이 115곳(21.7%)이다. 예전엔 칸을 **그냥 비워**
+     둬서 "병상이 없다"인지 "안 알려 준다"인지 구분이 안 됐다. 모르는 건 모른다고
+     쓴다 — 자리가 없다는 뜻이 아니므로 순위에서도 안 밀어낸다 */
+  var noBed=(h.av==null && h.oc==null), noPed=(!h.pd && !h.pc && !h.ni);
+  if(noBed && noPed)
+    c.push('<span class="chip none" title="이 병원은 응급실 병상 수와 소아 진료 정보를 '
+      +'공개 데이터에 올리지 않습니다. 자리가 없다는 뜻이 아닙니다 — 전화로 확인하세요.">'
+      +'병상 · 소아 정보 미제공</span>');
+  else if(noBed)
+    c.push('<span class="chip none" title="이 병원은 응급실 병상 수를 공개 데이터에 '
+      +'올리지 않습니다. 자리가 없다는 뜻이 아닙니다 — 전화로 확인하세요.">'
+      +'병상 정보 미제공</span>');
+  else if(noPed) c.push('<span class="chip none">소아 정보 없음</span>');
   return c.join('');
 }
 function card(h,i){
@@ -1186,6 +1200,18 @@ def build(rows: list[dict], meta: dict) -> str:
         f"<strong>{esc(meta['asOf'])} 기준</strong>입니다. 소아 전용 수치가 아닙니다."
         + (f" 모델 {esc(meta['modelTag'])}, 적용 {meta['relCount']}곳." if meta.get("modelTag") else "")
         + "</li>"
+    )
+    A(
+        f"<li><strong>병상 수 옆의 시각은 병원마다 다릅니다.</strong> 우리가 받아온 시각이 아니라 "
+        f"<strong>그 병원 숫자가 마지막으로 바뀐 때</strong>입니다 — 환자가 오갈 때마다 바뀌는 "
+        f"병원이 있고 하루 넘게 그대로인 병원이 있습니다. 오래 안 바뀐 값은 안정적이라는 뜻이 "
+        f"아니라 <strong>자동 갱신이 끊겼을 수 있다</strong>는 뜻이라 따로 표시합니다.</li>"
+    )
+    A(
+        f"<li><strong>응급실 병상 수를 아예 올리지 않는 기관이 "
+        f"{meta.get('noBedCount', 0)}곳</strong>입니다(대부분 응급실운영신고기관). "
+        f"<strong>자리가 없다는 뜻이 아닙니다</strong> — 모르는 것이라 “병상 정보 미제공”으로 "
+        f"적고, 그걸 이유로 순위에서 밀어내지도 않습니다. 전화로 확인하세요.</li>"
     )
     A(
         "<li><strong>지도의 거리는 km가 아닙니다.</strong> 방향은 실제 방위이고 거리는 "
