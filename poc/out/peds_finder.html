@@ -154,7 +154,8 @@ b,strong{font-weight:650}
 .gh span{font-size:12.5px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
 .gd{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55}
 .mapwrap{position:relative;border-radius:10px;overflow:hidden}
-.plot canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
+/* 한 손가락 세로 스크롤은 페이지로 넘긴다 — 지도 이동·확대는 두 손가락 */
+.plot canvas{display:block;width:100%;height:auto;touch-action:pan-y;cursor:grab}
 .plot canvas:active{cursor:grabbing}
 .zoom{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px}
 .zoom button{width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.22);
@@ -365,15 +366,19 @@ function thread(h){
   h._r=rArrive(h,travel);
   return h._len;
 }
+/* 전국 전체를 한 번만 계산해 둔다. 지도를 끌 때마다 530곳을 다시 재면 버벅인다 */
+var ALL=null;
+function prepare(){
+  if(!here) { ALL=[]; return; }
+  ALL=DATA.slice();
+  ALL.forEach(function(h){ h._d=km(here[0],here[1],h.y,h.x); thread(h); });
+  ALL.sort(function(a,b){ return a._len-b._len; });
+}
 function candidates(){
-  if(!here) return [];
-  var rows=DATA.slice();
-  rows.forEach(function(h){ h._d=km(here[0],here[1],h.y,h.x); });
-  rows=rows.filter(function(h){return h._d<60;});
+  if(!ALL) prepare();
+  var rows=ALL.filter(function(h){return h._d<60;});
   var ped=rows.filter(function(h){return h.pd>0||h.pc>0;});
-  if(ped.length>=3) rows=ped;
-  rows.forEach(thread); rows.sort(function(a,b){return a._len-b._len;});
-  return rows;
+  return ped.length>=3 ? ped : rows;
 }
 
 /* ── 지도: 어두운 실제 지도 위에 점 ───────────────────────────────
@@ -425,7 +430,7 @@ function drawWeb(rows){
     var far=0.8;
     top.forEach(function(h){ far=Math.max(far,h._d); });
     var need=Math.min(W,H)/2-40, mpp=156543.03*Math.cos(here[0]*Math.PI/180);
-    view={z:Math.max(9,Math.min(16,Math.round(Math.log2(need*mpp/(far*1000))))),
+    view={z:Math.max(6,Math.min(16,Math.round(Math.log2(need*mpp/(far*1000))))),
           lat:here[0], lon:here[1]};
   }
   var z=view.z;
@@ -445,8 +450,8 @@ function drawWeb(rows){
     }
   }
 
-  /* 주변 응급실 → 상위 3곳 */
-  rows.slice(0,80).forEach(function(h){
+  /* 화면 안에 들어오는 응급실 전부 — 전국까지 축소해도 점이 보이게 */
+  (ALL||rows).forEach(function(h){
     if(top.indexOf(h)>=0) return;
     var p=px(h.y,h.x);
     if(p[0]<4||p[0]>W-4||p[1]<4||p[1]>H-4) return;
@@ -499,7 +504,7 @@ function drawWeb(rows){
     view.lon=lonAt(nox+cx,z); view.lat=latAt(noy+cy,z); viewLocked=true;
   }
   function zoomAt(mx,my,dir){
-    var nz=Math.max(9,Math.min(17,z+dir)); if(nz===z) return;
+    var nz=Math.max(5,Math.min(17,z+dir)); if(nz===z) return;   /* 5면 전국이 들어온다 */
     var lon0=lonAt(ox+mx,z), lat0=latAt(oy+my,z);
     view.z=nz; viewLocked=true;
     var nox=projX(lon0,nz)-mx, noy=projY(lat0,nz)-my;
@@ -508,7 +513,11 @@ function drawWeb(rows){
   }
 
   cv.onpointerdown=function(ev){
-    cv.setPointerCapture(ev.pointerId);
+    /* 손가락 하나로는 지도를 끌지 않는다 — 그 제스처는 페이지 스크롤로 넘긴다.
+       터치에서 지도 이동·확대는 두 손가락일 때만(아래 touch 처리) */
+    if(ev.pointerType==='touch') return;
+    /* 포인터 캡처가 실패해도 끌기는 되어야 한다 — 예외가 나면 아래가 통째로 안 돈다 */
+    try{ cv.setPointerCapture(ev.pointerId); }catch(e){}
     drag={x:ev.clientX, y:ev.clientY, ox:ox, oy:oy, moved:0};
   };
   cv.onpointermove=function(ev){
@@ -532,23 +541,26 @@ function drawWeb(rows){
     zoomAt(ev.clientX-b.left, ev.clientY-b.top, ev.deltaY<0?1:-1);
   };
   /* 두 손가락 확대 — 포인터 이벤트만으로는 번거로워 터치 이벤트로 따로 받는다 */
-  var pinch=null;
+  /* 두 손가락 = 지도 이동 + 확대. 한 손가락은 페이지 스크롤(탭은 선택) */
+  var two=null;
+  function mid(t){ return [(t[0].clientX+t[1].clientX)/2, (t[0].clientY+t[1].clientY)/2]; }
+  function dist(t){ return Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY); }
   cv.ontouchstart=function(ev){
     if(ev.touches.length===2){
       drag=null;
-      pinch={d:Math.hypot(ev.touches[0].clientX-ev.touches[1].clientX,
-                          ev.touches[0].clientY-ev.touches[1].clientY)};
+      two={d:dist(ev.touches), m:mid(ev.touches), ox:ox, oy:oy};
     }
   };
   cv.ontouchmove=function(ev){
-    if(!pinch || ev.touches.length!==2) return;
-    ev.preventDefault();
-    var d=Math.hypot(ev.touches[0].clientX-ev.touches[1].clientX,
-                     ev.touches[0].clientY-ev.touches[1].clientY);
-    if(d/pinch.d>1.35){ pinch.d=d; zoomAt(cx,cy,1); }
-    else if(d/pinch.d<0.74){ pinch.d=d; zoomAt(cx,cy,-1); }
+    if(!two || ev.touches.length!==2) return;
+    ev.preventDefault();                       /* 두 손가락일 때만 스크롤을 막는다 */
+    var m=mid(ev.touches), d=dist(ev.touches);
+    recenter(two.ox-(m[0]-two.m[0]), two.oy-(m[1]-two.m[1]));
+    drawWeb(rows);
+    if(d/two.d>1.4){ two.d=d; two.ox=ox; two.m=m; zoomAt(cx,cy,1); }
+    else if(d/two.d<0.72){ two.d=d; two.ox=ox; two.m=m; zoomAt(cx,cy,-1); }
   };
-  cv.ontouchend=function(){ pinch=null; };
+  cv.ontouchend=function(){ two=null; };
 
   var zi=document.getElementById('zin'), zo=document.getElementById('zout'), zc=document.getElementById('zfit');
   if(zi) zi.onclick=function(){ zoomAt(cx,cy,1); };
@@ -702,6 +714,7 @@ function moonlight(){
       }).join('');
 }
 function show(){
+  prepare();
   renderMap();
   var el=document.getElementById('result'); if(!el) return;
   el.innerHTML = '<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'

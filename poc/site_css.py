@@ -163,7 +163,8 @@ b,strong{font-weight:650}
 .gh span{font-size:12.5px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
 .gd{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.55}
 .mapwrap{position:relative;border-radius:10px;overflow:hidden}
-.plot canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
+/* 한 손가락 세로 스크롤은 페이지로 넘긴다 — 지도 이동·확대는 두 손가락 */
+.plot canvas{display:block;width:100%;height:auto;touch-action:pan-y;cursor:grab}
 .plot canvas:active{cursor:grabbing}
 .zoom{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px}
 .zoom button{width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.22);
