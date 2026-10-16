@@ -697,11 +697,11 @@ function chips(h){
   var noBed=(h.av==null && h.oc==null), noPed=(!h.pd && !h.pc && !h.ni);
   if(noBed && noPed)
     c.push('<span class="chip none" title="이 병원은 응급실 병상 수와 소아 진료 정보를 '
-      +'공개 데이터에 올리지 않습니다. 자리가 없다는 뜻이 아닙니다 — 전화로 확인하세요.">'
+      +'공개 데이터에 올리지 않습니다. 자리가 없다는 뜻이 아닙니다. 전화로 확인하세요.">'
       +'병상 · 소아 정보 미제공</span>');
   else if(noBed)
     c.push('<span class="chip none" title="이 병원은 응급실 병상 수를 공개 데이터에 '
-      +'올리지 않습니다. 자리가 없다는 뜻이 아닙니다 — 전화로 확인하세요.">'
+      +'올리지 않습니다. 자리가 없다는 뜻이 아닙니다. 전화로 확인하세요.">'
       +'병상 정보 미제공</span>');
   else if(noPed) c.push('<span class="chip none">소아 정보 없음</span>');
   return c.join('');
@@ -1203,14 +1203,14 @@ def build(rows: list[dict], meta: dict) -> str:
     )
     A(
         f"<li><strong>병상 수 옆의 시각은 병원마다 다릅니다.</strong> 우리가 받아온 시각이 아니라 "
-        f"<strong>그 병원 숫자가 마지막으로 바뀐 때</strong>입니다 — 환자가 오갈 때마다 바뀌는 "
+        f"<strong>그 병원 숫자가 마지막으로 바뀐 때</strong>입니다. 환자가 오갈 때마다 바뀌는 "
         f"병원이 있고 하루 넘게 그대로인 병원이 있습니다. 오래 안 바뀐 값은 안정적이라는 뜻이 "
         f"아니라 <strong>자동 갱신이 끊겼을 수 있다</strong>는 뜻이라 따로 표시합니다.</li>"
     )
     A(
         f"<li><strong>응급실 병상 수를 아예 올리지 않는 기관이 "
         f"{meta.get('noBedCount', 0)}곳</strong>입니다(대부분 응급실운영신고기관). "
-        f"<strong>자리가 없다는 뜻이 아닙니다</strong> — 모르는 것이라 “병상 정보 미제공”으로 "
+        f"<strong>자리가 없다는 뜻이 아닙니다.</strong> 모르는 것이라 “병상 정보 미제공”으로 "
         f"적고, 그걸 이유로 순위에서 밀어내지도 않습니다. 전화로 확인하세요.</li>"
     )
     A(
