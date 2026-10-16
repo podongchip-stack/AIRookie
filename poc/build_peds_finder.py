@@ -316,6 +316,29 @@ function thread(h){
 }
 /* 전국 전체를 한 번만 계산해 둔다. 지도를 끌 때마다 530곳을 다시 재면 버벅인다 */
 var ALL=null;
+/* 지역 검색 — 외부 지오코딩을 쓰지 않는다. 병원 주소에 이미 "서울특별시 성동구"가
+   들어 있어서 그걸 색인하면 키도, 외부 요청도, 위치 유출도 없다.
+   고른 지역에 있는 병원들의 평균 좌표를 그 지역의 기준점으로 삼는다 */
+var PLACES=null;
+function places_index(){
+  if(PLACES) return PLACES;
+  var m={};
+  DATA.forEach(function(h){
+    if(!h.a) return;
+    var o=m[h.a]||(m[h.a]={n:0,y:0,x:0,label:h.a});
+    o.n++; o.y+=h.y; o.x+=h.x;
+  });
+  PLACES=Object.keys(m).map(function(k){
+    var o=m[k]; return {label:k, y:o.y/o.n, x:o.x/o.n, n:o.n};
+  }).sort(function(a,b){ return a.label.localeCompare(b.label,'ko'); });
+  return PLACES;
+}
+function place_search(q){
+  q=(q||'').trim().replace(/\s+/g,'');
+  if(!q) return [];
+  return places_index().filter(function(p){ return p.label.replace(/\s+/g,'').indexOf(q)>=0; })
+    .slice(0,8);
+}
 function prepare(){
   if(!here) { ALL=[]; return; }
   ALL=DATA.slice();
@@ -371,7 +394,7 @@ function drawWeb(rows){
   var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
   hit=[];
   var acc=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-  var BLK='#ff6b60', BUSY='#f0a94a', DIM='#7f8b9e';
+  var BLK='#ff6b60', BUSY='#f0a94a', DIM='#7f8b9e', GOOD='#46d07f';
 
   var top=rows.slice(0,3);
   if(!view || !viewLocked){            /* 상위 3곳이 들어오는 확대 단계로 맞춘다 */
@@ -404,13 +427,13 @@ function drawWeb(rows){
     var p=px(h.y,h.x);
     if(p[0]<4||p[0]>W-4||p[1]<4||p[1]>H-4) return;
     var rr=3+Math.min(3.5,h.pd/4);
-    g.fillStyle=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:DIM);
-    g.globalAlpha=.9; g.beginPath(); g.arc(p[0],p[1],rr,0,Math.PI*2); g.fill();
+    g.fillStyle=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:(good(h)?GOOD:DIM));
+    g.globalAlpha=.9; g.beginPath(); g.arc(p[0],p[1],good(h)?rr+1:rr,0,Math.PI*2); g.fill();
     g.strokeStyle='rgba(0,0,0,.55)'; g.lineWidth=1.5; g.stroke(); g.globalAlpha=1;
     hit.push({h:h,x:p[0],y:p[1],r:Math.max(rr,10)});
   });
   top.forEach(function(h,i){
-    var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:null);
+    var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:(good(h)?GOOD:null));
     g.strokeStyle='rgba(138,180,248,.85)'; g.lineWidth=1.5; g.setLineDash([4,3]);
     g.beginPath(); g.moveTo(cx,cy); g.lineTo(p[0],p[1]); g.stroke(); g.setLineDash([]);
     g.fillStyle='#2a4bd0'; g.beginPath(); g.arc(p[0],p[1],12,0,Math.PI*2); g.fill();
@@ -529,7 +552,7 @@ function renderPick(){
   box.innerHTML='<div class="card picked"><div class="row1"><span class="name">'+h.n+'</span>'
     +'<span class="dist">'+h._d.toFixed(1)+'km</span></div>'
     +'<p class="sub" style="margin-left:0">'+h.g+' · '+h.a+' · 차로 약 '+Math.round(h._travel)+'분(추정)</p>'
-    +'<div class="chips">'+chips(h)+'</div>'
+    +'<div class="chips">'+(good(h)?'<span class="chip ok">여건이 두루 좋음</span>':'')+chips(h)+'</div>'
     +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
        +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
     +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'">'
@@ -554,10 +577,12 @@ function chips(h){
 function card(h,i){
   var map='https://map.kakao.com/link/to/'+encodeURIComponent(h.n)+','+h.y+','+h.x;
   var pct = h._r==null?null:Math.round(h._r*100);
-  return '<div class="card"><div class="row1"><span class="num">'+(i+1)+'</span>'
+  var on = (key(h)===selKey ? ' picked' : '') + (good(h) ? ' good' : '');
+  return '<div class="card'+on+'" data-k="'+key(h).replace(/"/g,'')+'">'
+    +'<div class="row1">'+(i<3?'<span class="num">'+(i+1)+'</span>':'')
     +'<span class="name">'+h.n+'</span><span class="dist">'+h._d.toFixed(1)+'km</span></div>'
     +'<p class="sub">'+h.g+' · '+h.a+' · 차로 약 '+Math.round(h._travel)+'분(추정)</p>'
-    +'<div class="chips">'+chips(h)+'</div>'
+    +'<div class="chips">'+(good(h)?'<span class="chip ok">여건이 두루 좋음</span>':'')+chips(h)+'</div>'
     +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
        +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
     +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'">'
@@ -599,13 +624,14 @@ function renderMap(){
     +'<p class="maplabel">'+(usingDefault
         ? '<b>서울 중심을 기준으로 한 예시입니다.</b> 위 <b>[내 주변 응급실 보기]</b>를 누르면 '
           +'내 위치로 다시 그립니다. ' : '')
-    +'북쪽이 위입니다. <b>점을 누르면 그 병원 정보와 전화번호가 나옵니다.</b> '
-    +'<b>점을 누르면 그 병원 정보와 전화번호</b>가 나오고, 길 안내는 [길찾기]를 누르세요. '
+    +'<b>점을 누르면 그 병원 정보와 전화번호</b>가 나옵니다. 아래 카드를 눌러도 '
+    +'지도에서 같이 표시되고, 길 안내는 [길찾기]를 누르세요. '
     +'지도 배경은 외부에서 받아오므로 <b>보고 있는 지역이 지도 제공자에게 전달됩니다</b> — '
     +'정확한 좌표나 고른 내용은 보내지 않습니다.</p>'
     +'<div id="mapsel"></div>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
+    +'<span><i style="background:#46d07f"></i>여건이 두루 좋은 곳</span>'
     +'<span><i style="background:#d9892b"></i>응급실이 붐볐던 곳(전체 기준)</span>'
     +'<span><i style="background:#e05c54"></i>진료 제한 공지</span>'
     +'<span><i style="background:var(--mapdim)"></i>그 밖의 응급실 · 점 크기는 소아 진료 여건</span>'
@@ -613,6 +639,16 @@ function renderMap(){
   drawWeb(rows);
   renderPick();   /* 다시 그릴 때마다 칸이 비므로 고른 병원을 복원한다
                      (창 크기·화면 회전·나이 변경 때마다 renderMap이 돈다) */
+}
+/* 지금 조건이 두루 좋은 곳 — 제한 공지 없고, 소아 여건이 있고, 자리가 있고,
+   도착 때도 유지될 가능성이 괜찮은 곳. ⚠ "받아준다는 보장"이 아니다.
+   실제 수용 여부는 공개 데이터로 알 수 없고 전화로만 확인된다 */
+function good(h){
+  if(group(h)!==0) return false;                 /* 제한·조건 공지가 있으면 제외 */
+  if(!(h.pd>=2 || h.pc>0)) return false;         /* 소아 진료 여건 */
+  if(h.oc!=null && h.oc>=50) return false;       /* 붐비면 제외 */
+  if(h._r!=null && h._r<0.6) return false;       /* 도착 때 유지 가능성 */
+  return true;
 }
 function group(h){                    /* 병원이 스스로 말한 것으로 묶는다 */
   if(!h._ms.length) return 0;         /* 공지 없음 */
@@ -628,13 +664,13 @@ function places(){
   var out='', n=0;
   function block(list,title,desc,limit){
     if(!list.length) return '';
-    var h2='<h3 class="gh">'+title+'<span>'+list.length+'곳</span></h3>'
-      +(desc?'<p class="gd">'+desc+'</p>':'');
-    return h2+list.slice(0,limit).map(function(h){ return card(h,n++); }).join('');
+    return '<h3 class="gh">'+title+'<span>'+list.length+'곳</span></h3>'
+      +(desc?'<p class="gd">'+desc+'</p>':'')
+      +'<div class="cards">'+list.slice(0,limit).map(function(h){ return card(h,n++); }).join('')+'</div>';
   }
-  out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 그래도 출발 전 전화로 확인하세요.',3);
-  out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',2);
-  out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다 — 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',2);
+  out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 가까운 순으로 12곳까지 — 출발 전 전화로 확인하세요.',12);
+  out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',6);
+  out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다 — 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',6);
   out+=moonlight();
   return out;
 }
@@ -652,14 +688,14 @@ function moonlight(){
     +'<p class="gd">열이나 감기처럼 급하지 않은 증상이면 응급실보다 이쪽이 맞습니다. '
     +'<b>평일 밤 11~12시, 주말·공휴일 오후 6시까지</b>가 제도 기준이지만 병원마다 다르고 '
     +'임시 휴진도 있어 <b>가시기 전에 꼭 전화로 확인하세요.</b></p>'
-    + rows.map(function(r){
+    +'<div class="cards">'+ rows.map(function(r){
         var m=r.m, map='https://map.kakao.com/link/to/'+encodeURIComponent(m.n)+','+m.y+','+m.x;
         return '<div class="card moon"><div class="row1"><span class="name">'+m.n+'</span>'
           +'<span class="dist">'+r.d.toFixed(1)+'km</span></div>'
           +'<p class="sub" style="margin-left:0">'+(m.kind||'')+' · '+m.a+'</p>'
           +'<div class="acts">'+(m.t?'<a class="tel" href="tel:'+m.t+'">전화 '+m.t+'</a>':'')
           +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
-      }).join('');
+      }).join('')+'</div>';
 }
 function show(){
   prepare();
@@ -668,6 +704,34 @@ function show(){
   el.innerHTML = '<div class="ask">전화로 이렇게만 물어보시면 됩니다<br>'
     + '<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></div>'
     + places();
+}
+var q=document.getElementById('q'), sug=document.getElementById('sug');
+function pickPlace(p){
+  here=[p.y,p.x]; usingDefault=false; viewLocked=false; view=null; selKey=null;
+  q.value=p.label; sug.hidden=true;
+  document.getElementById('status').textContent=p.label+' 기준으로 보여 드립니다. 실제 위치와 다를 수 있습니다.';
+  show();
+}
+if(q){
+  q.oninput=function(){
+    var r=place_search(q.value);
+    if(!r.length){ sug.hidden=true; return; }
+    sug.innerHTML=r.map(function(p,i){
+      return '<button type="button" data-i="'+i+'">'+p.label+' <span>응급실 '+p.n+'곳</span></button>';
+    }).join('');
+    sug._r=r; sug.hidden=false;
+  };
+  q.onkeydown=function(e){
+    if(e.key==='Enter'){ e.preventDefault(); var r=place_search(q.value); if(r.length) pickPlace(r[0]); }
+    if(e.key==='Escape') sug.hidden=true;
+  };
+  sug.onclick=function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    pickPlace(sug._r[+b.dataset.i]);
+  };
+  document.addEventListener('click',function(e){
+    if(!sug.contains(e.target) && e.target!==q) sug.hidden=true;
+  });
 }
 document.getElementById('loc').onclick=function(){
   var st=document.getElementById('status');
@@ -679,6 +743,14 @@ document.getElementById('loc').onclick=function(){
   },function(){ st.textContent='위치를 가져오지 못했습니다. 119에 물어보시는 편이 빠릅니다.'; },
   {timeout:8000,maximumAge:60000});
 };
+/* 카드 ↔ 지도 양방향 — 카드를 누르면 지도에서 그 점이 선택된다 */
+document.addEventListener('click',function(e){
+  var c=e.target.closest('.card[data-k]'); if(!c) return;
+  if(e.target.closest('a')) return;                 /* 전화·길찾기는 그대로 */
+  selKey = (c.dataset.k===selKey) ? null : c.dataset.k;
+  if(lastRows) drawWeb(lastRows);
+  renderPick(); show();
+});
 addEventListener('resize',function(){ show(); });
 show();   /* 위치를 묻기 전에도 지도가 먼저 떠 있게 한다 */
 
@@ -730,8 +802,8 @@ ICON_MOON = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke
              '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>')
 
 TITLE = "아이가 아픈데 어디로 가야 할까요"
-DESC = ("아이 나이와 증상을 두 번만 고르면 지금 119인지 응급실인지 알려 드립니다. "
-        "소아 진료가 되는 응급실을 공개 데이터로 찾아 드립니다.")
+DESC = ("지금 아이를 데려갈 수 있는 응급실을 공개 데이터로 찾아 드립니다. "
+        "소아 진료 여건과 병원이 올린 공지, 응급실 혼잡도를 같이 봅니다.")
 
 
 def build(rows: list[dict], meta: dict) -> str:
@@ -759,11 +831,14 @@ def build(rows: list[dict], meta: dict) -> str:
     A('<header class="hero">')
     A("<h1>아이가 아픈데,<br><em>어디로</em> 가야 할까요?</h1>")
     A(
-        '<p class="lead">아이 나이와 증상을 두 번만 고르면 지금 무엇을 해야 할지 알려 드립니다. '
-        "고른 내용과 위치는 이 화면 밖으로 나가지 않습니다.</p>"
+        '<p class="lead">지금 아이를 데려갈 수 있는 응급실을 공개 데이터로 찾아 드립니다. '
+        "소아 진료 여건과 병원이 올린 공지까지 같이 봅니다.</p>"
     )
     A('<div class="ctas"><button class="btn btn-ghost" id="loc">내 주변 응급실 보기</button>')
     A('<a class="btn btn-call" href="tel:119">119 전화하기</a></div>')
+    A('<div class="find"><input id="q" type="search" autocomplete="off" '
+      'placeholder="위치 허용이 어려우면 지역을 입력하세요 — 예: 진주시, 성동구" '
+      'aria-label="지역으로 찾기"><div id="sug" class="sug" hidden></div></div>')
     A('<p class="fine">숨을 못 쉬거나 · 반응이 없거나 · 경련이 멈추지 않으면 고르지 말고 지금 119입니다</p>')
     A('<p id="status"></p>')
     A("</header>")
@@ -853,6 +928,12 @@ def build(rows: list[dict], meta: dict) -> str:
     A(
         "<li><strong>실시간 소아 병상이 아닙니다.</strong> 소아 병상은 전국 응급실 416곳 중 "
         "95곳(23%)만 값이 올라오고 거의 갱신되지 않아 “지금 몇 자리”를 말할 수 없습니다.</li>"
+    )
+    A(
+        "<li><strong>초록색은 “받아준다”는 뜻이 아닙니다.</strong> 제한 공지가 없고, "
+        "소아 진료 여건이 있고, 마지막 집계에서 자리가 있었고, 도착 시점까지 유지될 "
+        "가능성이 괜찮은 곳 — <strong>네 조건이 모두 맞은 곳</strong>입니다. "
+        "실제 수용 여부는 공개 데이터로 알 수 없고 전화로만 확인됩니다.</li>"
     )
     A(
         f"<li><strong>“응급실 N% 참”은 소아 혼잡도가 아닙니다.</strong> 그 병원 응급실 전체의 "

@@ -94,6 +94,20 @@ b,strong{font-weight:650}
 .btn-ghost:hover{border-color:var(--mapdim)}
 .btn-call{background:var(--urgent-fill);color:#fff;border-color:var(--urgent-fill)}
 .btn-call:hover{background:var(--urgent-fill-h);border-color:var(--urgent-fill-h)}
+/* 지역 검색 */
+.find{position:relative;max-width:460px;margin:16px auto 0}
+.find input{width:100%;font:inherit;font-size:15px;padding:13px 16px;border-radius:999px;
+  border:1px solid var(--line);background:var(--card);color:var(--ink);text-align:center}
+.find input::placeholder{color:var(--muted)}
+.find input:focus{border-color:var(--accent);outline:none}
+.sug{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:15;background:var(--card);
+  border:1px solid var(--line);border-radius:12px;overflow:hidden;text-align:left;
+  box-shadow:0 8px 24px -12px rgba(20,23,28,.3)}
+.sug button{display:block;width:100%;text-align:left;font:inherit;font-size:14.5px;
+  padding:11px 15px;border:0;background:transparent;color:var(--ink);cursor:pointer}
+.sug button+button{border-top:1px solid var(--line2)}
+.sug button:hover{background:var(--accentbg)}
+.sug span{color:var(--muted);font-size:12.5px;margin-left:6px}
 .hero .fine{font-size:13px;color:var(--muted);margin:18px auto 0;max-width:40em;line-height:1.55}
 #status{font-size:13.5px;color:var(--muted);margin:10px 0 0;min-height:19px;text-align:center}
 
@@ -188,13 +202,19 @@ b,strong{font-weight:650}
 .v1 .big{color:var(--urgent)} .v2 .big{color:var(--warn)} .v3 .big{color:var(--ok)}
 .verdict p{margin:0;font-size:14.5px;color:var(--ink2);line-height:1.6}
 .verdict .why{margin-top:10px;font-size:13px;color:var(--muted)}
+/* 카드 그리드 — 넓은 화면에서는 두 줄로 */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:11px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 17px;margin-bottom:10px;
       transition:border-color .18s var(--ease)}
 .card:hover{border-color:var(--mapdim)}
 /* 달빛은 응급실이 아니라는 걸 색으로도 구분한다 */
 .card.moon{background:var(--soft)}
 /* 지도에서 고른 병원 */
-.card.picked{margin:14px 0 0;border-color:var(--accent)}
+.card.picked{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+#mapsel .card.picked{margin:14px 0 0}
+.card[data-k]{cursor:pointer}
+/* 여건이 두루 좋은 곳 — 왼쪽 띠가 아니라 옅은 바탕으로 (굵은 색 띠는 쓰지 않는다) */
+.card.good{background:linear-gradient(0deg,var(--okbg),var(--okbg)),var(--card)}
 .card.moon .acts a.tel{background:var(--ink);border-color:var(--ink)}
 .row1{display:flex;align-items:baseline;gap:10px}
 .num{flex:none;width:22px;height:22px;border-radius:7px;background:var(--accent);color:#fff;font-size:12px;
