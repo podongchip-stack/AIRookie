@@ -268,6 +268,20 @@ b,strong{font-weight:650}
 .acts a:hover{border-color:var(--mapdim)}
 .acts a.tel{background:var(--accent);border-color:var(--accent);color:#fff}
 .acts a.tel:hover{background:var(--accent-d);border-color:var(--accent-d)}
+
+/* 검색 전 예시 카드 — 공간을 미리 잡고 읽는 법을 알린다.
+   진짜 카드로 오해하지 않게 테두리를 점선으로 두고 버튼을 누를 수 없게 둔다 */
+.demo{margin:22px 0 0}
+.card.ex{border-style:dashed;background:var(--card)}
+.card.ex .name,.card.ex .dist{color:var(--ink2)}
+.acts .off{flex:1;text-align:center;font-size:15px;font-weight:650;padding:12px;
+           border-radius:999px;border:1px dashed var(--line);color:var(--muted)}
+.exnote{list-style:none;margin:14px 0 0;padding:0;max-width:62ch}
+.exnote li{font-size:13.5px;color:var(--muted);line-height:1.6;padding:0 0 0 14px;
+           position:relative;margin-bottom:7px}
+.exnote li::before{content:'';position:absolute;left:0;top:9px;width:5px;height:5px;
+                   border-radius:50%;background:var(--mapdim)}
+.exnote b{color:var(--ink2);font-weight:650}
 /* 전화로 뭘 물을지 — 카드의 [전화] 옆에서 거드는 말이라 상자로 세우지 않는다.
    아래 .prompt(지금 눌러야 할 것)와 무게가 같으면 둘 다 안 읽힌다 */
 /* 가로줄은 긋지 않는다 — 글은 읽기 너비라 선이 카드 격자 밑에서 끊겨 보인다.

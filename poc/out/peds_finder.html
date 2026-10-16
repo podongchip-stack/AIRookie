@@ -259,6 +259,20 @@ b,strong{font-weight:650}
 .acts a:hover{border-color:var(--mapdim)}
 .acts a.tel{background:var(--accent);border-color:var(--accent);color:#fff}
 .acts a.tel:hover{background:var(--accent-d);border-color:var(--accent-d)}
+
+/* 검색 전 예시 카드 — 공간을 미리 잡고 읽는 법을 알린다.
+   진짜 카드로 오해하지 않게 테두리를 점선으로 두고 버튼을 누를 수 없게 둔다 */
+.demo{margin:22px 0 0}
+.card.ex{border-style:dashed;background:var(--card)}
+.card.ex .name,.card.ex .dist{color:var(--ink2)}
+.acts .off{flex:1;text-align:center;font-size:15px;font-weight:650;padding:12px;
+           border-radius:999px;border:1px dashed var(--line);color:var(--muted)}
+.exnote{list-style:none;margin:14px 0 0;padding:0;max-width:62ch}
+.exnote li{font-size:13.5px;color:var(--muted);line-height:1.6;padding:0 0 0 14px;
+           position:relative;margin-bottom:7px}
+.exnote li::before{content:'';position:absolute;left:0;top:9px;width:5px;height:5px;
+                   border-radius:50%;background:var(--mapdim)}
+.exnote b{color:var(--ink2);font-weight:650}
 /* 전화로 뭘 물을지 — 카드의 [전화] 옆에서 거드는 말이라 상자로 세우지 않는다.
    아래 .prompt(지금 눌러야 할 것)와 무게가 같으면 둘 다 안 읽힌다 */
 /* 가로줄은 긋지 않는다 — 글은 읽기 너비라 선이 카드 격자 밑에서 끊겨 보인다.
@@ -768,12 +782,20 @@ function renderPick(){
 function ageText(h){
   if(!h.rl || h.rl[1]==null) return null;
   var s=h.rl[1], m=Math.round(s/60);
+  /* 한 자리도 안 찬 응급실은 "안 바뀐 것"이 아니라 "바뀔 일이 없었던" 것이다.
+     실측: 6시간 넘게 그대로인 곳은 거의 전부 정원 4~8석짜리 지방 응급실이고
+     빈자리가 정원과 같다(환자가 없다). 그걸 "같은 값"이라고 쓰면 낡은 데이터처럼
+     읽혀 오히려 멀쩡한 선택지를 지우게 된다 */
+  var empty = (h.av!=null && h.cp && h.av>=h.cp);
+  var word = empty ? '자리 그대로' : '같은 값';
   if(m<2)    return {t:'방금 바뀐 값', w:0};
-  if(m<60)   return {t:m+'분째 같은 값', w:0};
+  if(m<60)   return {t:m+'분째 '+word, w:0};
   var hr=s/3600;
-  if(hr<24)  return {t:Math.round(hr)+'시간째 같은 값', w:(hr>=6?1:0)};
+  if(hr<24)  return {t:Math.round(hr)+'시간째 '+word, w:((hr>=6 && !empty)?1:0)};
   var d=Math.round(hr/24);
-  return {t:d+'일째 안 바뀐 값', w:2};
+  /* 며칠째 그대로면 비어 있든 아니든 의심한다 — 응급실 연동만 끊긴 병원이 있고
+     (실측 3곳, 전부 86.5시간으로 같은 순간에 멈췄다) 그쪽은 빈자리=정원으로 보인다 */
+  return {t:d+'일째 ' + (empty?'그대로':'안 바뀐 값'), w:2};
 }
 function stampOf(h){                 /* 병원별 나이가 있으면 그걸, 없으면 수집 시각 */
   var a=ageText(h);
@@ -808,6 +830,39 @@ function chips(h){
       +'병상 정보 미제공</span>');
   else if(noPed) c.push('<span class="chip none">소아 정보 없음</span>');
   return c.join('');
+}
+/* 검색 전에 보여 주는 예시 카드.
+   예전엔 위치를 고르기 전까지 결과 칸이 안내문 한 줄뿐이라, 무엇이 나올지 모른 채
+   검색해야 했고 결과가 뜨는 순간 화면이 크게 밀렸다. 진짜 카드와 같은 모양으로
+   한 장 깔아 두면 **공간도 미리 잡히고 읽는 법도 설명된다.**
+   ⚠ 진짜로 오해하지 않게 — 병원 이름 자리에 ○○를 쓰고, 테두리를 점선으로 두고,
+   전화·길찾기는 누를 수 없게 둔다. 실제 병원 이름·전화번호는 쓰지 않는다. */
+function sample(){
+  return '<div class="demo"><h3 class="gh">검색하면 이렇게 보여 드립니다'
+    +'<span>예시 · 실제 병원이 아닙니다</span></h3>'
+    +'<div class="cards"><div class="card ex">'
+    +'<div class="row1"><span class="num">1</span>'
+    +'<span class="name">○○대학교병원</span><span class="dist">2.4km</span></div>'
+    +'<p class="sub">지역센터 · ○○시 ○○구 · 차로 약 7분(추정)</p>'
+    +'<div class="chips"><span class="chip ok">여건이 두루 좋음</span>'
+    +'<span class="chip ok">소아과 전문의 6명</span>'
+    +'<span class="chip ok">소아 응급 병상 4석</span>'
+    +'<span class="chip">응급실 12/20석 · 방금 바뀐 값</span></div>'
+    +'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>78%</b>'
+    +'<div class="track"><div class="fill" style="width:78%"></div></div></div>'
+    +'<div class="notice info"><span class="lab">'+ICON_INFO+'이 병원이 올린 안내</span>'
+    +'<p>병원이 올린 공지가 있으면 문장 그대로 보여 드립니다.</p></div>'
+    +'<p class="calc">차로 약 7분 · 소아 여건 −5분 → 순위 점수 2분</p>'
+    +'<div class="acts"><span class="off">전화</span><span class="off">길찾기</span></div>'
+    +'</div></div>'
+    +'<ul class="exnote">'
+    +'<li><b>순위는 “분”으로 정합니다.</b> 이동 시간에서 소아 진료 여건만큼 빼고 붐빈 만큼 '
+    +'더한 값이라, 가까워도 여건이 얕으면 뒤로 갑니다.</li>'
+    +'<li><b>병상 옆 시각은 병원마다 다릅니다.</b> 우리가 받아온 때가 아니라 그 병원 숫자가 '
+    +'마지막으로 바뀐 때입니다.</li>'
+    +'<li><b>초록은 순위가 아니라 표시입니다.</b> 네 조건이 맞으면 칠합니다. 받아준다는 '
+    +'뜻이 아니니 출발 전 전화로 확인하세요.</li>'
+    +'</ul></div>';
 }
 function card(h,i){
   var map='https://map.kakao.com/link/to/'+encodeURIComponent(h.n)+','+h.y+','+h.x;
@@ -898,7 +953,8 @@ function places(){
      검색이 지도 위로 올라오면서 더 가까운 곳에 할 일이 생겼다) */
   if(usingDefault) return '<div class="prompt"><span class="t">아직 내 위치를 모릅니다</span>'
     +'위 <b>검색창</b>에 주소나 동네 이름을 넣거나, 맨 위 <b>[내 주변 응급실 보기]</b>를 눌러 주세요. '
-    +'위치는 이 화면 안에서만 쓰이고 저장되지 않습니다.</div>';
+    +'위치는 이 화면 안에서만 쓰이고 저장되지 않습니다.</div>'
+    + sample();
   var rows=candidates();
   if(!rows.length) return '<div class="prompt"><span class="t">가까운 곳을 찾지 못했습니다</span>'
     +'119에 물어보시는 편이 빠릅니다.</div>';
