@@ -197,11 +197,13 @@ def assemble(listing: list[dict], beds, severe, msgs: dict, rel: dict,
             "y": round(lat, 5), "x": round(lng, 5),
             "g": (h.get("dutyEmclsName") or "").replace("응급의료", ""),
             "a": " ".join(addr.split()[:2]),
+            "ad": addr,                       # 전체 주소 — 동·도로명 검색용
             "pd": next((iv(x.get("dtlSdrCnt")) or 0 for x in spec.get(hpid, [])
                         if x.get("dgsbjtCdNm") == PED_DEPT), 0),
             "pc": iv(bed.get("hvs02")) or 0,
             "ni": 1 if (iv(bed.get("hvs19")) or 0) > 0 else 0,
             "av": avail,
+            "cp": cap,                        # 응급실 정원 — "16/28석"을 쓰려면 필요
             "oc": None if (avail is None or not cap) else max(0, min(100, round((cap - avail) / cap * 100))),
             "iy": sum(1 for n in infant
                       if V.normalize_accept(sev.get(f"MKioskTy{n}")) == V.ACCEPT_YES),
@@ -301,46 +303,91 @@ function activeMsgs(h){var now=nowStamp();
   return (h.ms||[]).filter(function(m){ if(m[3]&&m[3]>now) return false; if(m[4]&&m[4]<now) return false; return true; });}
 
 function thread(h){
-  var travel=h._d*2.5, min=travel, why=[];
-  if(h.pc>0 && h.pd>=2){ min-=5; why.push('소아 응급 병상과 소아과 전문의를 갖춘 곳'); }
-  else if(h.pd>=2){ min-=3; why.push('소아과 전문의가 여러 명 있는 곳'); }
-  else if(h.pd>=1){ min-=1; why.push('소아과 전문의가 있는 곳'); }
-  if(h.oc!=null && h.oc>=80){ min+=5; why.push(STAMP+' 기준 응급실이 거의 찼던 곳'); }
-  else if(h.oc!=null && h.oc>=50){ min+=2; why.push(STAMP+' 기준 응급실이 붐볐던 곳'); }
+  var travel=h._d*2.5, min=travel, why=[], parts=[];
+  if(h.pc>0 && h.pd>=2){ min-=5; why.push('소아 응급 병상과 소아과 전문의를 갖춘 곳'); parts.push('소아 여건 −5분'); }
+  else if(h.pd>=2){ min-=3; why.push('소아과 전문의가 여러 명 있는 곳'); parts.push('소아 여건 −3분'); }
+  else if(h.pd>=1){ min-=1; why.push('소아과 전문의가 있는 곳'); parts.push('소아 여건 −1분'); }
+  if(h.oc!=null && h.oc>=80){ min+=5; why.push(STAMP+' 기준 응급실이 거의 찼던 곳'); parts.push('혼잡 +5분'); }
+  else if(h.oc!=null && h.oc>=50){ min+=2; why.push(STAMP+' 기준 응급실이 붐볐던 곳'); parts.push('혼잡 +2분'); }
   /* 병원 공지는 순위를 건드리지 않는다 — 분과 단위 제한을 전면 차단으로 오인하면
      2km 병원이 5km 병원보다 뒤로 간다. 문장만 보여 주고 판단은 보호자가 한다 */
   h._ms=activeMsgs(h); h._blk=h._ms.filter(function(m){return m[5]===2;});
   h._travel=travel; h._len=Math.max(1,min); h._why=why;
+  /* 순위를 어떻게 냈는지 한 줄로 — "왜 흰 2순위가 초록 3순위보다 위냐"에 답해야 한다 */
+  h._calc='차로 약 '+Math.round(travel)+'분'
+    + (parts.length?' · '+parts.join(' · '):'')
+    + ' → 순위 점수 '+Math.round(h._len)+'분';
   h._r=rArrive(h,travel);
   return h._len;
 }
 /* 전국 전체를 한 번만 계산해 둔다. 지도를 끌 때마다 530곳을 다시 재면 버벅인다 */
-var ALL=null;
 /* 지역 검색 — 외부 지오코딩을 쓰지 않는다. 병원 주소에 이미 "서울특별시 성동구"가
    들어 있어서 그걸 색인하면 키도, 외부 요청도, 위치 유출도 없다.
    고른 지역에 있는 병원들의 평균 좌표를 그 지역의 기준점으로 삼는다 */
 var PLACES=null;
 function places_index(){
   if(PLACES) return PLACES;
+  var out=[], seen={};
+  /* ① 시군구 — 그 지역 병원들의 평균 좌표를 기준점으로 */
   var m={};
   DATA.forEach(function(h){
     if(!h.a) return;
-    var o=m[h.a]||(m[h.a]={n:0,y:0,x:0,label:h.a});
-    o.n++; o.y+=h.y; o.x+=h.x;
+    var o=m[h.a]||(m[h.a]={n:0,y:0,x:0}); o.n++; o.y+=h.y; o.x+=h.x;
   });
-  PLACES=Object.keys(m).map(function(k){
-    var o=m[k]; return {label:k, y:o.y/o.n, x:o.x/o.n, n:o.n};
-  }).sort(function(a,b){ return a.label.localeCompare(b.label,'ko'); });
+  Object.keys(m).forEach(function(k){
+    var o=m[k];
+    out.push({label:k, sub:'응급실 '+o.n+'곳', y:o.y/o.n, x:o.x/o.n, kind:'area'});
+  });
+  /* ② 읍·면·동 — 전체 주소에서 뽑는다. 같은 이름이 여러 시군구에 있으므로 함께 적는다.
+     응급실 주소만 보면 "상암동"처럼 응급실이 없는 동이 안 걸린다. 달빛 주소도 같이 넣는다 */
+  var d={};
+  function dongs(addr, area, y, x){
+    (addr||'').split(/[\s,()]+/).forEach(function(tk){
+      if(!/^[가-힣0-9]+(동|읍|면|리|가)$/.test(tk) || tk.length<2) return;
+      var k=area+' '+tk, o=d[k]||(d[k]={n:0,y:0,x:0,area:area,tk:tk});
+      o.n++; o.y+=y; o.x+=x;
+    });
+  }
+  DATA.forEach(function(h){ dongs(h.ad, h.a, h.y, h.x); });
+  (MOON||[]).forEach(function(mm){
+    dongs(mm.a, (mm.a||'').split(' ').slice(0,2).join(' '), mm.y, mm.x);
+  });
+  Object.keys(d).forEach(function(k){
+    var o=d[k];
+    out.push({label:o.tk, sub:o.area, y:o.y/o.n, x:o.x/o.n, kind:'dong'});
+  });
+  /* ③ 병원 이름 — 응급실과 달빛 둘 다. 고르면 그 병원이 지도에서 선택된다 */
+  DATA.forEach(function(h){
+    if(seen[h.n]) return; seen[h.n]=1;
+    out.push({label:h.n, sub:h.a+' · 응급실', y:h.y, x:h.x, kind:'er', h:h});
+  });
+  (MOON||[]).forEach(function(mm){
+    if(seen[mm.n]) return; seen[mm.n]=1;
+    out.push({label:mm.n, sub:(mm.a||'').split(' ').slice(0,2).join(' ')+' · 달빛어린이병원',
+              y:mm.y, x:mm.x, kind:'moon'});
+  });
+  PLACES=out;
   return PLACES;
 }
 function place_search(q){
   q=(q||'').trim().replace(/\s+/g,'');
-  if(!q) return [];
-  return places_index().filter(function(p){ return p.label.replace(/\s+/g,'').indexOf(q)>=0; })
-    .slice(0,8);
+  if(q.length<1) return [];
+  var hit=[];
+  places_index().forEach(function(p){
+    var hay=(p.label+p.sub).replace(/\s+/g,'');
+    var i=hay.indexOf(q);
+    if(i<0) return;
+    /* 앞에서 맞을수록, 지역 → 동 → 병원 순으로 위에 */
+    var w=(p.kind==='area'?0:p.kind==='dong'?1:2)*100 + Math.min(i,50);
+    hit.push({p:p,w:w});
+  });
+  hit.sort(function(a,b){ return a.w-b.w; });
+  return hit.slice(0,8).map(function(x){ return x.p; });
 }
+/* 전국 전체를 한 번만 계산해 둔다. 지도를 끌 때마다 530곳을 다시 재면 버벅인다 */
+var ALL=null;
 function prepare(){
-  if(!here) { ALL=[]; return; }
+  if(!here){ ALL=[]; return; }
   ALL=DATA.slice();
   ALL.forEach(function(h){ h._d=km(here[0],here[1],h.y,h.x); thread(h); });
   ALL.sort(function(a,b){ return a._len-b._len; });
@@ -368,6 +415,7 @@ var tiles={}, lastRows=null;
    맞춤(상위 3곳이 들어오게)을 하지 않는다. [⌖]를 누르면 다시 맞춘다 */
 var view=null, viewLocked=false, drag=null;
 var onlyGood=false;   /* 지도에 '여건이 두루 좋은 곳'만 보이기 */
+var ZMIN=5, ZMAX=16;  /* 타일 제공자가 주는 범위. 넘어가면 빈 화면이 된다 */
 function lonAt(px,z){ return px/(256*Math.pow(2,z))*360-180; }
 function latAt(py,z){
   var n=Math.PI-2*Math.PI*py/(256*Math.pow(2,z));
@@ -402,7 +450,7 @@ function drawWeb(rows){
     var far=0.8;
     top.forEach(function(h){ far=Math.max(far,h._d); });
     var need=Math.min(W,H)/2-40, mpp=156543.03*Math.cos(here[0]*Math.PI/180);
-    view={z:Math.max(6,Math.min(16,Math.round(Math.log2(need*mpp/(far*1000))))),
+    view={z:Math.max(6,Math.min(ZMAX,Math.round(Math.log2(need*mpp/(far*1000))))),
           lat:here[0], lon:here[1]};
   }
   var z=view.z;
@@ -437,8 +485,9 @@ function drawWeb(rows){
   top.forEach(function(h,i){
     if(onlyGood && !good(h) && key(h)!==selKey) return;
     var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:(good(h)?GOOD:null));
+    var me=px(here[0],here[1]);
     g.strokeStyle='rgba(138,180,248,.85)'; g.lineWidth=1.5; g.setLineDash([4,3]);
-    g.beginPath(); g.moveTo(cx,cy); g.lineTo(p[0],p[1]); g.stroke(); g.setLineDash([]);
+    g.beginPath(); g.moveTo(me[0],me[1]); g.lineTo(p[0],p[1]); g.stroke(); g.setLineDash([]);
     g.fillStyle='#2a4bd0'; g.beginPath(); g.arc(p[0],p[1],12,0,Math.PI*2); g.fill();
     g.strokeStyle='rgba(255,255,255,.9)'; g.lineWidth=2; g.stroke();
     if(st){ g.strokeStyle=st; g.lineWidth=2.5; g.beginPath(); g.arc(p[0],p[1],16,0,Math.PI*2); g.stroke(); }
@@ -451,14 +500,20 @@ function drawWeb(rows){
     hit.push({h:h,x:p[0],y:p[1],r:15});
   });
 
-  /* 내 위치 */
-  g.fillStyle='#fff'; g.beginPath(); g.arc(cx,cy,5,0,Math.PI*2); g.fill();
-  g.strokeStyle='rgba(255,255,255,.45)'; g.lineWidth=2;
-  g.beginPath(); g.arc(cx,cy,11,0,Math.PI*2); g.stroke();
-  g.fillStyle='#cfd8e8'; g.font='10px system-ui'; g.textAlign='center';
-  g.strokeStyle='rgba(0,0,0,.7)'; g.lineWidth=3;
-  var me=usingDefault?'서울 중심(예시)':'내 위치';
-  g.strokeText(me,cx,cy+26); g.fillText(me,cx,cy+26); g.textAlign='left';
+  /* 내 위치 — **캔버스 중앙이 아니라 실제 좌표**에 그린다.
+     중앙에 고정하면 지도를 끌거나 확대할 때 혼자 따라다닌다(실제로 그랬다) */
+  var mp=px(here[0],here[1]);
+  if(mp[0]>-30 && mp[0]<W+30 && mp[1]>-30 && mp[1]<H+30){
+    g.fillStyle='#fff'; g.beginPath(); g.arc(mp[0],mp[1],5,0,Math.PI*2); g.fill();
+    g.strokeStyle='rgba(255,255,255,.45)'; g.lineWidth=2;
+    g.beginPath(); g.arc(mp[0],mp[1],11,0,Math.PI*2); g.stroke();
+    g.font='10px system-ui'; g.textAlign='center';
+    var lbl=usingDefault?'서울 중심(예시)':'내 위치';
+    g.strokeStyle='rgba(0,0,0,.7)'; g.lineWidth=3;
+    g.strokeText(lbl,mp[0],mp[1]+26);
+    g.fillStyle='#cfd8e8'; g.fillText(lbl,mp[0],mp[1]+26);
+    g.textAlign='left';
+  }
 
   /* 출처 표기 — 타일 제공자 약관상 필요하다 */
   g.fillStyle='rgba(255,255,255,.45)'; g.font='9.5px system-ui';
@@ -478,7 +533,9 @@ function drawWeb(rows){
     view.lon=lonAt(nox+cx,z); view.lat=latAt(noy+cy,z); viewLocked=true;
   }
   function zoomAt(mx,my,dir){
-    var nz=Math.max(5,Math.min(17,z+dir)); if(nz===z) return;   /* 5면 전국이 들어온다 */
+    /* 5면 전국이 들어온다. 위는 16까지 — Esri 다크 그레이는 z17부터 빈 타일을 준다
+       (응답은 200인데 내용이 없어 지도가 사라진 것처럼 보인다) */
+    var nz=Math.max(ZMIN,Math.min(ZMAX,z+dir)); if(nz===z) return;
     var lon0=lonAt(ox+mx,z), lat0=latAt(oy+my,z);
     view.z=nz; viewLocked=true;
     var nox=projX(lon0,nz)-mx, noy=projY(lat0,nz)-my;
@@ -543,8 +600,8 @@ function drawWeb(rows){
     renderMap();          /* 버튼 글자(개수)도 같이 바뀐다 */
   };
   var zi=document.getElementById('zin'), zo=document.getElementById('zout'), zc=document.getElementById('zfit');
-  if(zi) zi.onclick=function(){ zoomAt(cx,cy,1); };
-  if(zo) zo.onclick=function(){ zoomAt(cx,cy,-1); };
+  if(zi){ zi.onclick=function(){ zoomAt(cx,cy,1); }; zi.disabled=(z>=ZMAX); }
+  if(zo){ zo.onclick=function(){ zoomAt(cx,cy,-1); }; zo.disabled=(z<=ZMIN); }
   if(zc) zc.onclick=function(){ viewLocked=false; view=null; drawWeb(rows); };
 }
 
@@ -577,9 +634,14 @@ function chips(h){
   if(h.pd>0) c.push('<span class="chip'+(h.pd>=2?' ok':'')+'">소아과 전문의 '+h.pd+'명</span>');
   if(h.pc>0) c.push('<span class="chip ok">소아 응급 병상 '+h.pc+'석</span>');
   if(h.ni)   c.push('<span class="chip">신생아 중환자실</span>');
-  if(h.oc!=null) c.push(h.oc>=50
-      ? '<span class="chip warn">응급실 '+h.oc+'% 참 · '+STAMP+'</span>'
-      : '<span class="chip">응급실 자리 있었음 · '+STAMP+'</span>');
+  if(h.av!=null && h.cp){
+    var free=Math.max(0,h.av);
+    c.push('<span class="chip'+(h.oc>=50?' warn':'')+'">응급실 '+free+'/'+h.cp+'석'
+      +(h.av<0?' (정원 초과)':'')+' · '+STAMP+'</span>');
+  } else if(h.oc!=null) {
+    c.push(h.oc>=50 ? '<span class="chip warn">응급실 '+h.oc+'% 참 · '+STAMP+'</span>'
+                    : '<span class="chip">응급실 자리 있었음 · '+STAMP+'</span>');
+  }
   if(!h.pd && !h.pc && !h.ni) c.push('<span class="chip none">소아 정보 없음</span>');
   return c.join('');
 }
@@ -599,7 +661,7 @@ function card(h,i){
             :(group(h)===1?ICON_INFO+'전화로 먼저 확인해 달라는 공지':ICON_INFO+'이 병원이 올린 안내'))+'</span>'
        +h._ms.slice(0,2).map(function(m){return '<p>'+m[2]+'</p>';}).join('')
        +(h._ms.length>2?'<p style="color:var(--muted)">외 '+(h._ms.length-2)+'건</p>':'')+'</div>':'')
-    +(h._why.length?'<p class="reason">'+h._why.join(' · ')+'</p>':'')
+    +'<p class="calc">'+h._calc+'</p>'
     +'<div class="acts">'+(h.t?'<a class="tel" href="tel:'+h.t+'">전화 '+h.t+'</a>':'')
     +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
 }
@@ -679,7 +741,11 @@ function places(){
       +(desc?'<p class="gd">'+desc+'</p>':'')
       +'<div class="cards">'+list.slice(0,limit).map(function(h){ return card(h,n++); }).join('')+'</div>';
   }
-  out+=block(g[0],'바로 가 볼 만한 곳','병원이 지금 걸어 둔 제한 공지가 없는 곳입니다. 가까운 순으로 12곳까지 보여 드립니다. 출발 전 전화로 확인하세요.',12);
+  out+=block(g[0],'바로 가 볼 만한 곳',
+    '순서는 <b>“가는 데 드는 분”</b>으로 정합니다. 이동 시간에서 소아 진료 여건만큼 빼고 '
+    +'붐빈 만큼 더한 값이고, 카드마다 그 계산을 적어 뒀습니다. '
+    +'<b>초록색은 순위가 아니라 표시입니다</b> — 여건이 두루 좋아도 더 멀면 아래로 갑니다. '
+    +'출발 전 전화로 확인하세요.',12);
   out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',6);
   out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다. 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',6);
   out+=moonlight();
@@ -718,17 +784,21 @@ function show(){
 }
 var q=document.getElementById('q'), sug=document.getElementById('sug');
 function pickPlace(p){
-  here=[p.y,p.x]; usingDefault=false; viewLocked=false; view=null; selKey=null;
+  here=[p.y,p.x]; usingDefault=false; viewLocked=false; view=null;
+  selKey = (p.kind==='er' && p.h) ? key(p.h) : null;   /* 병원을 고르면 그 점을 선택 */
   q.value=p.label; sug.hidden=true;
-  document.getElementById('status').textContent=p.label+' 기준으로 보여 드립니다. 실제 위치와 다를 수 있습니다.';
+  var msg = p.kind==='area' ? p.label+' 한가운데를 기준으로 보여 드립니다.'
+          : p.kind==='dong' ? p.sub+' '+p.label+' 근처를 기준으로 보여 드립니다.'
+          : p.label+' 위치를 기준으로 보여 드립니다.';
+  document.getElementById('status').textContent=msg+' 실제 위치와 다를 수 있습니다.';
   show();
 }
 if(q){
   q.oninput=function(){
     var r=place_search(q.value);
-    if(!r.length){ sug.hidden=true; return; }
+    if(!r.length){ sug.innerHTML=''; sug.hidden=true; return; }   /* 옛 목록을 남기지 않는다 */
     sug.innerHTML=r.map(function(p,i){
-      return '<button type="button" data-i="'+i+'">'+p.label+' <span>응급실 '+p.n+'곳</span></button>';
+      return '<button type="button" data-i="'+i+'">'+p.label+' <span>'+p.sub+'</span></button>';
     }).join('');
     sug._r=r; sug.hidden=false;
   };
@@ -848,7 +918,7 @@ def build(rows: list[dict], meta: dict) -> str:
     A('<div class="ctas"><button class="btn btn-ghost" id="loc">내 주변 응급실 보기</button>')
     A('<a class="btn btn-call" href="tel:119">119 전화하기</a></div>')
     A('<div class="find"><input id="q" type="search" autocomplete="off" '
-      'placeholder="위치 허용이 어려우면 지역을 입력하세요 — 예: 진주시, 성동구" '
+      'placeholder="지역·동·병원 이름으로 찾기 (예: 성동구, 상암동, 고려대병원)" '
       'aria-label="지역으로 찾기"><div id="sug" class="sug" hidden></div></div>')
     A('<p class="fine">숨을 못 쉬거나 · 반응이 없거나 · 경련이 멈추지 않으면 고르지 말고 지금 119입니다</p>')
     A('<p id="status"></p>')
@@ -895,12 +965,16 @@ def build(rows: list[dict], meta: dict) -> str:
     A('<p class="desc">점수가 아니라 <b>분(分)</b>으로 계산합니다. 그래야 왜 이 순서인지 설명할 수 있습니다.</p>')
     A('<div class="steps">')
     for i, (t, d) in enumerate([
-        ("지금 119인지 먼저 가립니다",
-         "숨쉬기·경련·축 처짐이면 병원 목록을 보여 주지 않고 119만 안내합니다. "
-         "규칙으로만 판단하며 AI가 진단하지 않습니다."),
+        ("갈 수 있는 곳만 남깁니다",
+         "공개된 소아 진료 여건(전문의 수·소아 응급 병상)과 병원이 올린 공지를 보고, "
+         "그 아이를 볼 수 없다고 밝힌 곳은 따로 묶습니다. 빼지는 않습니다."),
         ("가는 데 드는 분을 계산합니다",
          "이동 시간에서 소아 진료 여건만큼 빼고, 응급실이 붐빈 만큼 더합니다. "
          "그래서 가까워도 여건이 얕으면 뒤로 갑니다."),
+        ("초록색은 순위가 아니라 표시입니다",
+         "제한 공지가 없고, 소아 여건이 있고, 자리가 있었고, 도착 때까지 유지될 가능성이 "
+         "괜찮으면 초록으로 칠합니다. 순서는 어디까지나 분으로 정하므로, "
+         "<b>초록인 곳이 흰 곳보다 아래에 올 수 있습니다.</b> 더 멀면 그렇게 됩니다."),
         ("병원이 올린 공지를 그대로 보여 드립니다",
          "순서에는 반영하지 않습니다. 일부 분과만의 제한일 수 있어, "
          "그 공지가 우리 아이에게 해당되는지는 저희가 판단하지 않습니다."),

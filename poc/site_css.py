@@ -193,6 +193,8 @@ b,strong{font-weight:650}
   display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);
   transition:background .15s var(--ease)}
 .zoom button:hover{background:rgba(32,40,52,.92)}
+.zoom button:disabled{opacity:.35;cursor:default}
+.zoom button:disabled:hover{background:rgba(14,18,24,.82)}
 .zoom button:last-child{font-size:15px}
 .maplabel{font-size:12.5px;color:var(--muted);margin:12px 2px 0;line-height:1.6}
 .legend{display:flex;flex-wrap:wrap;gap:7px 16px;margin:10px 2px 0;font-size:11.5px;color:var(--muted)}
@@ -239,6 +241,8 @@ b,strong{font-weight:650}
 .bar2 .track{height:6px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:6px}
 .bar2 .fill{height:100%;background:var(--accent);border-radius:99px}
 .reason{font-size:13px;color:var(--muted);margin:11px 0 0;line-height:1.55}
+.calc{font-size:12.5px;color:var(--muted);margin:11px 0 0;line-height:1.5;
+      font-variant-numeric:tabular-nums}
 .notice{border-radius:10px;padding:11px 13px;margin:11px 0 0;font-size:13.2px;line-height:1.55;
         background:var(--urgentbg);border:1px solid var(--urgentline);color:var(--ink)}
 .notice .lab{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:650;
