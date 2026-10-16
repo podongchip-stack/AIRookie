@@ -22,9 +22,17 @@
 //   → { etas: { "<key>": {sec, m} }, source: "kakao" }
 
 const KAKAO_URL = "https://apis-navi.kakaomobility.com/v1/destinations/directions";
+//: 반경 제한이 없는 1:1 길찾기. 다중 목적지가 10km 밖을 안 주기 때문에 필요하다.
+const KAKAO_ONE_URL = "https://apis-navi.kakaomobility.com/v1/directions";
 const MAX_DESTINATIONS = 30;
 const MAX_RADIUS_M = 10000;
+//: 10km 밖은 한 곳씩 물어야 해서 비싸다. 화면 앞쪽에 실제로 보이는 만큼만 채운다.
+//: 안 채우면 먼 병원만 추정값(도심에서 2.5배 낙관적)을 써서 부당하게 앞자리를 차지한다.
+const MAX_SINGLES = 26;   // 화면에 뜨는 카드(12+6+6)가 전부 덮이는 수
 const TIMEOUT_MS = 4000;
+//: 1:1 길찾기는 먼 경로일수록 계산이 오래 걸린다. 4초로는 서울 끝에서 끝(20km+)이
+//: 제때 안 와서 그 병원만 추정값으로 남고, 추정이 낙관적이라 오히려 앞자리를 차지했다.
+const SINGLE_TIMEOUT_MS = 9000;
 //: 같은 출발지·목적지는 잠깐 재사용한다. 교통 상황이 바뀌므로 짧게(hub와 같은 5분).
 const CACHE_TTL_MS = 300_000;
 //: 출발지를 약 10m로 반올림해 GPS 흔들림으로 캐시가 매번 빗나가지 않게 한다.
@@ -112,6 +120,37 @@ Deno.serve(async (req: Request) => {
       // 좌표는 남기지 않는다 — 사유만
       console.error(`kakao call failed: ${e instanceof Error ? e.name : "unknown"}`);
     }
+  }
+
+  // 다중 목적지가 못 준 곳(10km 밖 등)을 1:1 길찾기로 채운다.
+  // destinations 배열 순서를 화면 순위로 본다 — 앞쪽부터 채우고 나머지는 추정에 맡긴다.
+  const missing = destinations.filter((d) => d?.key && !(d.key in etas)).slice(0, MAX_SINGLES);
+  if (missing.length) {
+    await Promise.all(missing.map(async (d) => {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), SINGLE_TIMEOUT_MS);
+        const q = new URLSearchParams({
+          origin: `${origin.lng},${origin.lat}`,       // 카카오는 경도,위도 차례
+          destination: `${d.lng},${d.lat}`,
+          priority: "TIME",
+        });
+        const res = await fetch(`${KAKAO_ONE_URL}?${q}`, {
+          headers: { Authorization: `KakaoAK ${key}` },
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) return;
+        const data = await res.json();
+        const route = (data.routes || [])[0];
+        if (!route || route.result_code !== 0 || !route.summary) return;
+        const eta: Eta = { sec: Number(route.summary.duration), m: Number(route.summary.distance) };
+        etas[d.key] = eta;
+        cache.set(cacheKey(origin, d), { at: Date.now(), eta });
+      } catch (e) {
+        console.error(`kakao single failed: ${e instanceof Error ? e.name : "unknown"}`);
+      }
+    }));
   }
 
   return json({ etas, source: "kakao", radiusM: MAX_RADIUS_M });

@@ -1069,28 +1069,40 @@ function pull(){
    **출발지 좌표가 그 함수를 지나 카카오로 간다**(화면 설명에 밝혔다).
    받아 오기 전·못 받은 병원은 추정값 그대로 쓰고 카드에 "(추정)"으로 구분한다.
    ⚠ 카카오 다중 목적지는 반경 10km까지라 먼 병원은 값이 안 온다 — 그쪽은 계속 추정. */
-var ETA_URL=__ETA_URL__, etaFor=null, etaBusy=false;
+var ETA_URL=__ETA_URL__, etaFor=null, etaBusy=false, etaAsked={}, etaRounds=0;
+/* **여러 번 돌아야 수렴한다.** 도로 시간이 들어오면 가까운 병원이 정직해져(추정보다
+   오래 걸린다) 순위가 내려가고, 그 자리에 아직 추정값인 먼 병원이 올라온다. 한 번만
+   물으면 올라온 그 병원들이 영영 낙관적인 추정값으로 앞자리를 지킨다(실제로 그랬다 —
+   경찰병원이 추정 26분으로 3위였는데 실제는 72분이었다).
+   그래서 화면 앞쪽에 아직 추정값이 남아 있으면 그것만 다시 묻는다. 세 번이면 멎는다 */
+var ETA_ROUNDS_MAX=3, ETA_BATCH=30;
 function fetchEtas(){
   if(!ETA_URL || !here || etaBusy) return;
   var tag=here[0].toFixed(4)+','+here[1].toFixed(4);
-  if(etaFor===tag) return;                       /* 같은 자리면 다시 묻지 않는다 */
-  var near=(ALL||[]).filter(function(h){ return h._d<=9.5; }).slice(0,90);
-  if(!near.length){ etaFor=tag; return; }
-  etaBusy=true;
+  if(etaFor!==tag){ etaFor=tag; etaAsked={}; etaRounds=0; }   /* 자리가 바뀌면 처음부터 */
+  if(etaRounds>=ETA_ROUNDS_MAX) return;
+  /* 화면에 실제로 뜨는 후보만, 순위 차례로. 전체(ALL)에서 자르면 안 된다 — 카드는
+     소아 정보가 있는 곳만 추려 보여주는데 서울에선 그 4번째가 전체 60등 밖이다 */
+  var want=candidates().slice().sort(function(a,b){ return a._len-b._len; })
+    .slice(0,ETA_BATCH)
+    .filter(function(h){ return h._eta==null && !etaAsked[key(h)]; });
+  if(!want.length) return;
+  etaBusy=true; etaRounds++;
+  want.forEach(function(h){ etaAsked[key(h)]=1; });   /* 실패해도 같은 곳을 또 묻지 않는다 */
   fetch(ETA_URL,{method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({origin:{lat:here[0],lng:here[1]},
-      destinations:near.map(function(h){ return {key:key(h), lat:h.y, lng:h.x}; })})})
+      destinations:want.map(function(h){ return {key:key(h), lat:h.y, lng:h.x}; })})})
    .then(function(r){ return r.ok?r.json():null; })
    .then(function(j){
-     etaBusy=false; etaFor=tag;
+     etaBusy=false;
      if(!j||!j.etas) return;
      var n=0;
      (ALL||[]).forEach(function(h){
        var e=j.etas[key(h)];
        if(e && e.sec>0){ h._eta=e.sec; h._road=e.m; n++; }
      });
-     if(n) show();                                /* 순위를 도로 시간으로 다시 매긴다 */
-   }).catch(function(){ etaBusy=false; etaFor=tag; });
+     if(n) show();          /* 순위를 다시 매기고, 앞쪽에 추정이 남았으면 한 번 더 묻는다 */
+   }).catch(function(){ etaBusy=false; });
 }
 pull();
 setInterval(pull, 300000);
