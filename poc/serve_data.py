@@ -22,11 +22,19 @@ E-Gen 호출량
 HTML은 건드리지 않는다. 화면은 뜰 때 data.json을 먼저 보므로 이 파일만 갱신되면
 내용이 따라 바뀐다. 정적 호스팅이면 이 프로세스가 같은 자리에 파일을 덮어쓰면 된다.
 
+배포할 때
+  정적 호스팅(Cloudflare Pages·Vercel 등)은 파이썬 루프를 못 돌린다. 그래서
+  **파일만 올리는 곳**과 **값을 만드는 곳**을 나눈다 —
+      Pages(index.html) → fetch → Supabase Storage(data.json) ← 이 프로세스가 업로드
+  Storage 버킷(egen-snapshots)은 이미 공개 읽기라 추가 비용이 없고, 공개 URL은
+  CDN을 타므로 사이트가 어디에 있든 같은 값을 본다.
+
 실행:
     conda activate dev
-    cd poc && python serve_data.py              # 기본 out/data.json
-    python serve_data.py --out /srv/www/data.json --interval 300
-    python serve_data.py --once                 # 한 번만 만들고 끝
+    cd poc && python serve_data.py                      # 로컬 out/data.json만
+    python serve_data.py --upload                       # + Supabase Storage에 업로드
+    python serve_data.py --once --upload                # 한 번만
+    python serve_data.py --out /srv/www/data.json       # 다른 자리에 쓰기
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ import os
 import sys
 import time
 import traceback
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +59,32 @@ from egen.client import HttpEgenClient  # noqa: E402
 KST = timezone(timedelta(hours=9))
 LIST_EVERY = 3600          # 기관 목록
 MSG_EVERY = 6 * 3600       # 병원 공지
+#: 이미 쓰고 있는 스냅샷 버킷에 얹는다(공개 읽기). 새 자원을 만들지 않는다
+BUCKET = "egen-snapshots"
+OBJECT = "peds/data.json"
+ENV_PATH = os.path.join(ROOT, "info", "Hospital_inform", ".env")
+
+
+def storage_upload(body: bytes) -> str:
+    """Supabase Storage에 data.json을 덮어쓴다. 공개 URL을 돌려준다.
+
+    CDN이 옛 값을 주지 않도록 캐시를 짧게(60초) 건다 — 5분 주기보다 짧아야
+    보호자가 방금 값을 본다.
+    """
+    from dotenv import load_dotenv
+    load_dotenv(ENV_PATH)
+    base = os.environ["SNAPSHOT_SUPABASE_URL"].rstrip("/")
+    key = os.environ["SNAPSHOT_SUPABASE_SERVICE_KEY"]
+    url = f"{base}/storage/v1/object/{BUCKET}/{OBJECT}"
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "apikey": key, "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "max-age=60",
+        "x-upsert": "true",
+    })
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        resp.read()
+    return f"{base}/storage/v1/object/public/{BUCKET}/{OBJECT}"
 
 
 def log(msg: str) -> None:
@@ -89,7 +124,7 @@ class Builder:
         log(f"병원 공지 {len(rows)}건 → 소아 관련 {len(self.msgs)}곳")
 
     # ── 한 주기 ────────────────────────────────────────────────
-    def tick(self, out_path: str) -> None:
+    def tick(self, out_path: str, upload: bool = False) -> None:
         now_utc = datetime.now(timezone.utc)
         if time.time() - self.last_list > LIST_EVERY or not self.listing:
             self.refresh_listing()
@@ -116,6 +151,10 @@ class Builder:
         os.replace(tmp, out_path)          # 읽는 쪽이 반쯤 쓰인 파일을 보지 않게
         busy = sum(1 for r in rows if (r.get("oc") or 0) >= 50)
         log(f"data.json 갱신 — 병원 {len(rows)}곳 · 신뢰도 {len(rel)}곳 · 붐빔 {busy}곳 · {as_of}")
+        if upload:
+            with open(out_path, "rb") as fp:
+                public = storage_upload(fp.read())
+            log(f"  업로드 완료 → {public}")
 
 
 def main() -> None:
@@ -123,6 +162,7 @@ def main() -> None:
     ap.add_argument("--out", default=os.path.join(HERE, "out", "data.json"))
     ap.add_argument("--interval", type=int, default=300, help="초 단위, 기본 5분")
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--upload", action="store_true", help="Supabase Storage에도 올린다")
     args = ap.parse_args()
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
@@ -130,7 +170,7 @@ def main() -> None:
     while True:
         started = time.time()
         try:
-            b.tick(args.out)
+            b.tick(args.out, upload=args.upload)
         except Exception:
             # 한 주기 실패로 멈추지 않는다 — 다음 주기에 다시 시도한다
             log("이번 주기 실패:\n" + traceback.format_exc().rstrip())

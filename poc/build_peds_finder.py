@@ -649,16 +649,22 @@ document.getElementById('theme').onclick=function(){
   show();                               /* 그림은 CSS 변수를 읽으므로 다시 그린다 */
 };
 
-/* 배포본은 data.json을 따로 올려 주기적으로 갱신한다. 그게 있으면 그걸 쓰고,
-   없으면(로컬 파일로 열었을 때 등) HTML에 박아 둔 값으로 그대로 돈다 — 그래서
-   서버 없이도 열리고, 올려 두면 최신으로 뜬다 */
-fetch('data.json',{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; })
- .then(function(j){
-   if(!j||!j.rows||!j.rows.length) return;
-   DATA=j.rows; ASOF=j.asOf||ASOF; if(j.moon) MOON=j.moon;
-   document.querySelectorAll('[data-asof]').forEach(function(e){ e.textContent=ASOF; });
-   show();
- }).catch(function(){});
+/* 값은 바깥 data.json에서 가져온다. 그게 있으면 그걸 쓰고, 없으면(로컬 파일로
+   열었을 때 등) HTML에 박아 둔 값으로 그대로 돈다 — 서버 없이도 열리고,
+   올려 두면 최신으로 뜬다.
+   **열어 둔 탭도 5분마다 다시 가져온다** — 새벽에 띄워 놓고 한참 보는 화면이라
+   숫자가 굳어 있으면 안 된다 */
+var DATA_URL=__DATA_URL__;
+function pull(){
+  fetch(DATA_URL,{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; })
+   .then(function(j){
+     if(!j||!j.rows||!j.rows.length) return;
+     DATA=j.rows; ASOF=j.asOf||ASOF; STAMP=ASOF.slice(5); if(j.moon) MOON=j.moon;
+     show();
+   }).catch(function(){});
+}
+pull();
+setInterval(pull, 300000);
 """
 
 
@@ -869,9 +875,12 @@ def build(rows: list[dict], meta: dict) -> str:
 
     data = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
     moon = json.dumps(meta.get("moon", []), ensure_ascii=False, separators=(",", ":"))
+    # 배포본은 공개 URL을 가리킨다(PEDS_DATA_URL). 없으면 같은 폴더의 data.json.
+    data_url = os.environ.get("PEDS_DATA_URL", "data.json")
     js = (JS_TMPL.replace("__DATA__", data).replace("__MOON__", moon).replace("__ASOF__", meta["asOf"])
           .replace("__ICON_ALERT__", json.dumps(ICON_ALERT))
-          .replace("__ICON_INFO__", json.dumps(ICON_INFO)))
+          .replace("__ICON_INFO__", json.dumps(ICON_INFO))
+          .replace("__DATA_URL__", json.dumps(data_url)))
     A("<script>" + js + "</script>")
     A("</body></html>")
     return "\n".join(o)
