@@ -239,6 +239,8 @@ RULES_SYM = [
 
 JS_TMPL = r"""
 var DATA=__DATA__, MOON=__MOON__, ASOF="__ASOF__";
+/* "집계 때"는 우리 말이다. 보호자에겐 몇 시 기준인지를 직접 보여준다 */
+var STAMP=ASOF.slice(5);                 /* 2026-10-12 01:25 → 10-12 01:25 */
 var ICON_ALERT=__ICON_ALERT__, ICON_INFO=__ICON_INFO__;
 var age=null, sym={}, curLv=null;
 var hit=[], selKey=null;   /* 지도에서 누를 수 있는 점들과 고른 점 */
@@ -294,8 +296,8 @@ function thread(h){
   else if(h.pd>=2){ min-=3; why.push('소아과 전문의가 여러 명 있는 곳'); }
   else if(h.pd>=1){ min-=1; why.push('소아과 전문의가 있는 곳'); }
   if(age===0 && h.ni){ min-=2; why.push('신생아 중환자실이 있는 곳'); }
-  if(h.oc!=null && h.oc>=80){ min+=5; why.push('집계 때 응급실이 거의 찼던 곳'); }
-  else if(h.oc!=null && h.oc>=50){ min+=2; why.push('집계 때 응급실이 붐볐던 곳'); }
+  if(h.oc!=null && h.oc>=80){ min+=5; why.push(STAMP+' 기준 응급실이 거의 찼던 곳'); }
+  else if(h.oc!=null && h.oc>=50){ min+=2; why.push(STAMP+' 기준 응급실이 붐볐던 곳'); }
   /* 병원 공지는 순위를 건드리지 않는다 — 분과 단위 제한을 전면 차단으로 오인하면
      2km 병원이 5km 병원보다 뒤로 간다. 문장만 보여 주고 판단은 보호자가 한다 */
   h._ms=activeMsgs(h); h._blk=h._ms.filter(function(m){return m[5]===2;});
@@ -449,8 +451,9 @@ function chips(h){
   if(h.pd>0) c.push('<span class="chip'+(h.pd>=2?' ok':'')+'">소아과 전문의 '+h.pd+'명</span>');
   if(h.pc>0) c.push('<span class="chip ok">소아 응급 병상 '+h.pc+'석</span>');
   if(h.ni)   c.push('<span class="chip">신생아 중환자실</span>');
-  if(h.oc!=null) c.push(h.oc>=50?'<span class="chip warn">집계 때 응급실 '+h.oc+'% 참</span>'
-                                :'<span class="chip">집계 때 응급실 여유</span>');
+  if(h.oc!=null) c.push(h.oc>=50
+      ? '<span class="chip warn">응급실 '+h.oc+'% 참 · '+STAMP+'</span>'
+      : '<span class="chip">응급실 자리 있었음 · '+STAMP+'</span>');
   if(!h.pd && !h.pc && !h.ni) c.push('<span class="chip none">소아 정보 없음</span>');
   return c.join('');
 }
@@ -489,7 +492,7 @@ function renderMap(){
   box.innerHTML='<div class="tiles">'
     + tile('60km 안 응급실', near.length, '전부', 'var(--mapdim)')
     + tile('소아 진료 정보 있음', ped, '추천은 이 안에서', 'var(--accent)', true)
-    + tile('집계 때 붐빔', busy, '순위에서 뒤로', '#d9892b')
+    + tile('응급실이 붐볐던 곳', busy, '전체 응급실 기준 · '+STAMP, '#d9892b')
     + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
     + '</div>'
     +'<details class="plot" open><summary>어디쯤에 있는지 보기</summary>'
@@ -502,7 +505,7 @@ function renderMap(){
     +'<div id="mapsel"></div>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
-    +'<span><i style="background:#d9892b"></i>집계 때 붐빔</span>'
+    +'<span><i style="background:#d9892b"></i>응급실이 붐볐던 곳(전체 기준)</span>'
     +'<span><i style="background:#e05c54"></i>진료 제한 공지</span>'
     +'<span><i style="background:var(--mapdim)"></i>그 밖의 응급실 · 점 크기는 소아 진료 여건</span>'
     +'</div></details>';
@@ -784,6 +787,11 @@ def build(rows: list[dict], meta: dict) -> str:
     A(
         "<li><strong>실시간 소아 병상이 아닙니다.</strong> 소아 병상은 전국 응급실 416곳 중 "
         "95곳(23%)만 값이 올라오고 거의 갱신되지 않아 “지금 몇 자리”를 말할 수 없습니다.</li>"
+    )
+    A(
+        f"<li><strong>“응급실 N% 참”은 소아 혼잡도가 아닙니다.</strong> 그 병원 응급실 전체의 "
+        f"(정원 − 남은 자리) ÷ 정원이고 <strong>{esc(meta['asOf'])} 기준</strong>입니다. "
+        "소아 자리만 따로 세는 숫자는 공개되지 않습니다.</li>"
     )
     A(
         f"<li><strong>“도착할 때도 자리가 있을 가능성”</strong>은 응급실 전체 병상을 대상으로 한 "
