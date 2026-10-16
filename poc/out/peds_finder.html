@@ -398,64 +398,80 @@ function candidates(){
   return rows;
 }
 
-/* ── 거미줄 지도: 각도는 실제 방위, 반경은 '줄 길이' ───────────────── */
+/* ── 지도: 진짜 지리 배치(북쪽 위), 타일 없음 ─────────────────────
+   예전엔 반경을 "가는 데 드는 분"으로 그렸다. 개념은 맞았지만 읽히지 않았다 —
+   실제 위치가 아니니 "저기가 어디지"가 안 됐다. 지금은 좌표 그대로 찍고,
+   거리 감각은 동심원과 축척 막대로 준다.
+   **타일을 받지 않는다** — 받는 순간 내 위치가 지도 서버로 나간다 */
 function drawWeb(rows){
   var cv=document.getElementById('web'); if(!cv) return;
-  /* 넓은 화면에서 캔버스가 세로로 과하게 커지지 않게 상한을 둔다 */
-  var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.82),560), r=window.devicePixelRatio||1;
+  var W=cv.clientWidth||520, H=Math.min(Math.round(W*0.68),430), r=window.devicePixelRatio||1;
   cv.width=W*r; cv.height=H*r; cv.style.height=H+'px';
   var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,W,H);
-  var cx=W/2, cy=H/2+6, maxMin=Math.max(12, rows.length?rows[Math.min(rows.length,11)-1]._len:30);
-  var R=Math.min(W,H)/2-26;
-  /* 반경은 제곱근으로 편다 — 선형이면 가까운 상위 후보들이 가운데 뭉쳐 겹친다 */
-  function pos(h){
-    var ang=Math.atan2(h.x-here[1], h.y-here[0]);          /* 실제 방위 유지 */
-    /* 최소 반경을 둔다 — 도심에서는 상위 후보가 1분 안쪽이라 가운데 점에 붙어
-       서로도, '내 위치' 라벨과도 겹친다 */
-    var rad=R*(0.14+0.86*Math.sqrt(Math.min(1,h._len/maxMin)));
-    return [cx+Math.sin(ang)*rad, cy-Math.cos(ang)*rad];
-  }
   var C=function(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();};
   var ring=C('--mapring'), dim=C('--mapdim'), tx=C('--maptext'), acc=C('--accent'), ink=C('--ink');
   var BLK='#e05c54', BUSY='#d9892b';
 
-  g.strokeStyle=ring; g.lineWidth=1;
-  [1/3,2/3,1].forEach(function(f){                 /* 반경이 √이므로 눈금값은 f² */
-    g.beginPath(); g.arc(cx,cy,R*f,0,Math.PI*2); g.stroke();
-    g.fillStyle=tx; g.font='10px system-ui';
-    var v=maxMin*Math.pow(Math.max(0,(f-0.14)/0.86),2);
-    g.fillText((v<1?v.toFixed(1):Math.round(v))+'분', cx+5, cy-R*f+13);
-  });
   var top=rows.slice(0,3);
-  top.forEach(function(h,i){                                  /* 줄 */
-    var p=pos(h), grd=g.createLinearGradient(cx,cy,p[0],p[1]);
-    grd.addColorStop(0,acc); grd.addColorStop(1,dim);
-    g.strokeStyle=grd; g.lineWidth=3.5-i*0.9; g.lineCap='round';
-    g.beginPath(); g.moveTo(cx,cy); g.lineTo(p[0],p[1]); g.stroke();
+  var kx=111.32*Math.cos(here[0]*Math.PI/180), ky=110.57;   /* 위경도 → km */
+  function xy(lat,lng){ return [(lng-here[1])*kx, (lat-here[0])*ky]; }
+
+  /* 상위 3곳이 다 들어오게 범위를 잡고, 너무 좁지 않게 최소 2km */
+  var span=2;
+  top.forEach(function(h){ var p=xy(h.y,h.x); span=Math.max(span, Math.abs(p[0])*1.35, Math.abs(p[1])*1.5); });
+  var pad=34, sc=Math.min((W-pad*2)/(span*2), (H-pad*2)/(span*2));
+  var cx=W/2, cy=H/2;
+  function px(lat,lng){ var p=xy(lat,lng); return [cx+p[0]*sc, cy-p[1]*sc]; }
+
+  /* 거리 동심원 — 타일이 없어도 축척 감각을 준다 */
+  g.strokeStyle=ring; g.lineWidth=1; g.setLineDash([3,3]);
+  [1,3,5,10].forEach(function(km){
+    if(km*sc>Math.max(W,H)) return;
+    g.beginPath(); g.arc(cx,cy,km*sc,0,Math.PI*2); g.stroke();
+    /* 라벨은 위쪽 중앙이 아니라 왼쪽 가로축에 — 위쪽은 핀·이름표가 몰린다 */
+    g.fillStyle=tx; g.font='10px system-ui'; g.textAlign='left';
+    g.fillText(km+'km', cx-km*sc+5, cy-5);
   });
-  rows.slice(0,40).forEach(function(h){
-    var p=pos(h), isTop=top.indexOf(h)>=0;
-    var size=3+Math.min(4.5,h.pd/3)+(h.pc>0?1.8:0);
-    g.fillStyle = h._blk.length ? BLK : (h.oc!=null&&h.oc>=50 ? BUSY : (isTop?acc:dim));
-    g.beginPath(); g.arc(p[0],p[1],isTop?0.1:size,0,Math.PI*2); g.fill();
+  g.setLineDash([]); g.textAlign='left';
+
+  /* 주변 응급실(옅게) → 상위 3곳 순으로 */
+  rows.slice(0,60).forEach(function(h){
+    if(top.indexOf(h)>=0) return;
+    var p=px(h.y,h.x);
+    if(p[0]<4||p[0]>W-4||p[1]<4||p[1]>H-4) return;
+    g.fillStyle = h._blk.length?BLK : (h.oc!=null&&h.oc>=50?BUSY:dim);
+    g.globalAlpha=.55;
+    g.beginPath(); g.arc(p[0],p[1],3+Math.min(3.5,h.pd/4),0,Math.PI*2); g.fill();
+    g.globalAlpha=1;
   });
-  /* 상위 3곳은 이름 대신 번호 배지 — 가운데 몰리면 이름표가 서로 겹친다.
-     아래 카드가 같은 번호를 달고 있어 이름은 거기서 읽으면 된다 */
   top.forEach(function(h,i){
-    var p=pos(h), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:null);
+    var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:null);
+    g.strokeStyle=acc; g.lineWidth=1.5; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(cx,cy); g.lineTo(p[0],p[1]); g.stroke(); g.setLineDash([]);
     g.fillStyle=acc; g.beginPath(); g.arc(p[0],p[1],11,0,Math.PI*2); g.fill();
     g.strokeStyle=C('--mapbg'); g.lineWidth=2.5; g.stroke();
-    if(st){ g.strokeStyle=st; g.lineWidth=2.5;      /* 배지는 순서, 테두리는 상태 */
-            g.beginPath(); g.arc(p[0],p[1],14,0,Math.PI*2); g.stroke(); }
+    if(st){ g.strokeStyle=st; g.lineWidth=2.5; g.beginPath(); g.arc(p[0],p[1],14,0,Math.PI*2); g.stroke(); }
     g.fillStyle='#fff'; g.font='700 12px system-ui'; g.textAlign='center'; g.textBaseline='middle';
     g.fillText(String(i+1), p[0], p[1]+0.5);
-    g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillStyle=tx; g.font='11px system-ui'; g.textBaseline='alphabetic';
+    var gu=(h.a||'').split(' ').slice(-1)[0];
+    g.fillText(gu+' '+h._d.toFixed(1)+'km', p[0], p[1]+27);
+    g.textAlign='left';
   });
+
+  /* 내 위치 */
   g.fillStyle=ink; g.beginPath(); g.arc(cx,cy,5,0,Math.PI*2); g.fill();
-  g.strokeStyle=dim; g.lineWidth=1.5;
-  g.beginPath(); g.arc(cx,cy,10.5,0,Math.PI*2); g.stroke();
+  g.strokeStyle=dim; g.lineWidth=1.5; g.beginPath(); g.arc(cx,cy,10.5,0,Math.PI*2); g.stroke();
   g.fillStyle=tx; g.font='10px system-ui'; g.textAlign='center';
-  g.fillText(usingDefault?'서울 중심(예시)':'내 위치', cx, cy+25); g.textAlign='left';
+  g.fillText(usingDefault?'서울 중심(예시)':'내 위치', cx, cy+29); g.textAlign='left';
+
+  /* 북쪽 표시와 축척 막대 */
+  g.fillStyle=tx; g.font='600 11px system-ui'; g.fillText('↑ 북', W-34, 18);
+  var unit=span>6?5:(span>2.5?2:1), bw=unit*sc;
+  g.strokeStyle=tx; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(14,H-16); g.lineTo(14+bw,H-16);
+  g.moveTo(14,H-20); g.lineTo(14,H-12); g.moveTo(14+bw,H-20); g.lineTo(14+bw,H-12); g.stroke();
+  g.font='10px system-ui'; g.fillText(unit+'km', 14+bw+6, H-13);
 }
 
 function chips(h){
@@ -506,19 +522,18 @@ function renderMap(){
     + tile('집계 때 붐빔', busy, '순위에서 뒤로', '#d9892b')
     + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
     + '</div>'
-    +'<details class="plot"'+(usingDefault?' open':'')+'><summary>어디쯤에 있는지 보기</summary>'
+    +'<details class="plot" open><summary>어디쯤에 있는지 보기</summary>'
     +'<canvas id="web"></canvas>'
     +'<p class="maplabel">'+(usingDefault
         ? '<b>서울 중심을 기준으로 한 예시입니다.</b> 위 <b>[내 주변 응급실 보기]</b>를 누르면 '
-          +'내 위치로 다시 그립니다. '
-        : '')
-    +'가운데가 '+(usingDefault?'기준점':'내 위치')+'입니다. 방향은 실제 방위이고, <b>거리는 km가 아니라 '
-    +'“가는 데 드는 분”</b>입니다 — 가까워도 소아 진료 여건이 얕거나 붐비면 더 멀리 그려집니다.</p>'
+          +'내 위치로 다시 그립니다. ' : '')
+    +'북쪽이 위입니다. 실제 좌표 그대로 찍었고 거리는 동심원과 축척 막대로 봅니다 — '
+    +'<b>길 안내는 [길찾기]</b>를 누르세요. 지도 타일을 받지 않아 위치가 외부로 나가지 않습니다.</p>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
     +'<span><i style="background:#d9892b"></i>집계 때 붐빔</span>'
     +'<span><i style="background:#e05c54"></i>진료 제한 공지</span>'
-    +'<span><i style="background:var(--mapdim)"></i>그 밖 · 점 크기는 소아 진료 여건</span>'
+    +'<span><i style="background:var(--mapdim)"></i>그 밖의 응급실 · 점 크기는 소아 진료 여건</span>'
     +'</div></details>';
   drawWeb(rows);
 }
