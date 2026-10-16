@@ -367,6 +367,7 @@ var tiles={}, lastRows=null;
 /* 보기 상태 — 사용자가 끌거나 확대하면 viewLocked이 켜지고, 그때부터 자동
    맞춤(상위 3곳이 들어오게)을 하지 않는다. [⌖]를 누르면 다시 맞춘다 */
 var view=null, viewLocked=false, drag=null;
+var onlyGood=false;   /* 지도에 '여건이 두루 좋은 곳'만 보이기 */
 function lonAt(px,z){ return px/(256*Math.pow(2,z))*360-180; }
 function latAt(py,z){
   var n=Math.PI-2*Math.PI*py/(256*Math.pow(2,z));
@@ -424,6 +425,7 @@ function drawWeb(rows){
   /* 화면 안에 들어오는 응급실 전부 — 전국까지 축소해도 점이 보이게 */
   (ALL||rows).forEach(function(h){
     if(top.indexOf(h)>=0) return;
+    if(onlyGood && !good(h) && key(h)!==selKey) return;   /* 고른 점은 남긴다 */
     var p=px(h.y,h.x);
     if(p[0]<4||p[0]>W-4||p[1]<4||p[1]>H-4) return;
     var rr=3+Math.min(3.5,h.pd/4);
@@ -433,6 +435,7 @@ function drawWeb(rows){
     hit.push({h:h,x:p[0],y:p[1],r:Math.max(rr,10)});
   });
   top.forEach(function(h,i){
+    if(onlyGood && !good(h) && key(h)!==selKey) return;
     var p=px(h.y,h.x), st=h._blk.length?BLK:(h.oc!=null&&h.oc>=50?BUSY:(good(h)?GOOD:null));
     g.strokeStyle='rgba(138,180,248,.85)'; g.lineWidth=1.5; g.setLineDash([4,3]);
     g.beginPath(); g.moveTo(cx,cy); g.lineTo(p[0],p[1]); g.stroke(); g.setLineDash([]);
@@ -533,6 +536,12 @@ function drawWeb(rows){
   };
   cv.ontouchend=function(){ two=null; };
 
+  var gf=document.getElementById('gfilter');
+  if(gf) gf.onclick=function(){
+    onlyGood=!onlyGood;
+    gf.setAttribute('aria-pressed', String(onlyGood));
+    renderMap();          /* 버튼 글자(개수)도 같이 바뀐다 */
+  };
   var zi=document.getElementById('zin'), zo=document.getElementById('zout'), zc=document.getElementById('zfit');
   if(zi) zi.onclick=function(){ zoomAt(cx,cy,1); };
   if(zo) zo.onclick=function(){ zoomAt(cx,cy,-1); };
@@ -616,6 +625,8 @@ function renderMap(){
     + '</div>'
     +'<details class="plot" open><summary>어디쯤에 있는지 보기</summary>'
     +'<div class="mapwrap"><canvas id="web"></canvas>'
+    +'<button class="gfilter" id="gfilter" type="button" aria-pressed="'+(onlyGood?'true':'false')+'">'
+      +'<i></i>여건이 두루 좋은 곳만 '+(ALL||[]).filter(good).length+'곳</button>'
     +'<div class="zoom">'
       +'<button id="zin" type="button" aria-label="확대">+</button>'
       +'<button id="zout" type="button" aria-label="축소">−</button>'

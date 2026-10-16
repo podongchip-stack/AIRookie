@@ -179,6 +179,14 @@ b,strong{font-weight:650}
 /* 한 손가락 세로 스크롤은 페이지로 넘긴다 — 지도 이동·확대는 두 손가락 */
 .plot canvas{display:block;width:100%;height:auto;touch-action:pan-y;cursor:grab}
 .plot canvas:active{cursor:grabbing}
+.gfilter{position:absolute;left:10px;top:10px;z-index:2;display:flex;align-items:center;gap:7px;
+  font:600 12.5px/1 system-ui;padding:9px 13px;border-radius:999px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.22);background:rgba(14,18,24,.82);color:#cfd8e8;
+  backdrop-filter:blur(4px);transition:background .15s var(--ease),color .15s var(--ease)}
+.gfilter i{width:9px;height:9px;border-radius:50%;background:#46d07f;display:block;flex:none}
+.gfilter:hover{background:rgba(32,40,52,.92)}
+.gfilter[aria-pressed=true]{background:#46d07f;border-color:#46d07f;color:#06281a}
+.gfilter[aria-pressed=true] i{background:#06281a}
 .zoom{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px}
 .zoom button{width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.22);
   background:rgba(14,18,24,.82);color:#e8eefc;font:600 17px/1 system-ui;cursor:pointer;
