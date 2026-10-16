@@ -302,8 +302,19 @@ function nowStamp(){var d=new Date(),p=function(n){return(n<10?'0':'')+n;};
 function activeMsgs(h){var now=nowStamp();
   return (h.ms||[]).filter(function(m){ if(m[3]&&m[3]>now) return false; if(m[4]&&m[4]<now) return false; return true; });}
 
+/* 차로 걸리는 분 — 직선거리에서 어림한다(실제 도로 안내가 아니다).
+   예전엔 거리에 2.5분/km를 곧바로 곱했다. 그 값은 도심 단거리(평균 24km/h)에나 맞아서
+   먼 곳이 크게 부풀었다 — 경상국립대 → 삼천포(직선 26km)가 66분으로 떴지만 실제 도로는
+   37분이다. 가까울수록 신호·좁은 길에 묶이고 멀수록 국도·고속으로 빠지므로, 거리에 따라
+   평균 속도를 24 → 60km/h로 올려 잡고 직선거리에 우회 계수 1.28을 곱한다.
+   대조(실제 도로 안내): 26km 37분 → 39분, 3km 9분, 1km 3분. ±10% 안에 든다.
+   도로 ETA를 쓰려면 키가 필요하고 목적지 좌표를 바깥에 보내야 해서 쓰지 않는다 */
+function driveMin(d){
+  var v=24+36*(1-Math.exp(-d/18));     /* km/h — 거리에 따라 24에서 60으로 */
+  return d*1.28/v*60;
+}
 function thread(h){
-  var travel=h._d*2.5, min=travel, why=[], parts=[];
+  var travel=driveMin(h._d), min=travel, why=[], parts=[];
   if(h.pc>0 && h.pd>=2){ min-=5; why.push('소아 응급 병상과 소아과 전문의를 갖춘 곳'); parts.push('소아 여건 −5분'); }
   else if(h.pd>=2){ min-=3; why.push('소아과 전문의가 여러 명 있는 곳'); parts.push('소아 여건 −3분'); }
   else if(h.pd>=1){ min-=1; why.push('소아과 전문의가 있는 곳'); parts.push('소아 여건 −1분'); }
@@ -415,7 +426,17 @@ var tiles={}, lastRows=null;
    맞춤(상위 3곳이 들어오게)을 하지 않는다. [⌖]를 누르면 다시 맞춘다 */
 var view=null, viewLocked=false, drag=null;
 var onlyGood=false;   /* 지도에 '여건이 두루 좋은 곳'만 보이기 */
-var ZMIN=5, ZMAX=16;  /* 타일 제공자가 주는 범위. 넘어가면 빈 화면이 된다 */
+var ZMAX=16;          /* 타일 제공자가 주는 상한. 넘어가면 빈 화면이 된다 */
+var ZMIN=6;           /* 축소 한계 — 캔버스 크기를 알 때 drawWeb이 다시 잡는다 */
+/* 축소는 남한이 화면에 꽉 차는 단계에서 멈춘다 — 그보다 더 빼면 바다와 이웃 나라만
+   넓어진다(응급실은 전부 이 안에 있다). 레벨이 정수라 반올림으로 가장 가까운 단계를
+   고르고, 캔버스 크기가 화면마다 다르므로 상수로 박지 않고 그릴 때 계산한다 */
+var KR={n:38.65,s:33.10,w:125.90,e:129.60};   /* 제주 남단 ~ 최북단 */
+function fitZoomKR(W,H){
+  var dy=(projY(KR.s,0)-projY(KR.n,0))/256, dx=(projX(KR.e,0)-projX(KR.w,0))/256;
+  var z=Math.min(Math.log(H/(256*dy))/Math.LN2, Math.log(W/(256*dx))/Math.LN2);
+  return Math.max(5,Math.min(ZMAX,Math.round(z)));
+}
 function lonAt(px,z){ return px/(256*Math.pow(2,z))*360-180; }
 function latAt(py,z){
   var n=Math.PI-2*Math.PI*py/(256*Math.pow(2,z));
@@ -445,12 +466,15 @@ function drawWeb(rows){
   var acc=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
   var BLK='#ff6b60', BUSY='#f0a94a', DIM='#7f8b9e', GOOD='#46d07f';
 
+  ZMIN=fitZoomKR(W,H);                 /* 이 크기에서 전국이 꽉 차는 단계 */
+  if(view && view.z<ZMIN) view.z=ZMIN; /* 창이 작아져 한계가 올라가면 같이 끌어올린다 */
+
   var top=rows.slice(0,3);
   if(!view || !viewLocked){            /* 상위 3곳이 들어오는 확대 단계로 맞춘다 */
     var far=0.8;
     top.forEach(function(h){ far=Math.max(far,h._d); });
     var need=Math.min(W,H)/2-40, mpp=156543.03*Math.cos(here[0]*Math.PI/180);
-    view={z:Math.max(6,Math.min(ZMAX,Math.round(Math.log2(need*mpp/(far*1000))))),
+    view={z:Math.max(ZMIN,Math.min(ZMAX,Math.round(Math.log2(need*mpp/(far*1000))))),
           lat:here[0], lon:here[1]};
   }
   var z=view.z;
@@ -685,7 +709,8 @@ function renderMap(){
     + tile('응급실이 붐볐던 곳', busy, '전체 응급실 기준 · '+STAMP, '#d9892b')
     + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
     + '</div>'
-    +'<details class="plot" open><summary>어디쯤에 있는지 보기</summary>'
+    /* 지도는 접지 않는다 — 이 화면에서 제일 먼저 봐야 할 것이라 늘 펼쳐 둔다 */
+    +'<div class="plot">'
     +'<div class="mapwrap"><canvas id="web"></canvas>'
     +'<button class="gfilter" id="gfilter" type="button" aria-pressed="'+(onlyGood?'true':'false')+'">'
       +'<i></i>여건이 두루 좋은 곳만 '+(ALL||[]).filter(good).length+'곳</button>'
@@ -708,7 +733,7 @@ function renderMap(){
     +'<span><i style="background:#d9892b"></i>응급실이 붐볐던 곳(전체 기준)</span>'
     +'<span><i style="background:#e05c54"></i>진료 제한 공지</span>'
     +'<span><i style="background:var(--mapdim)"></i>그 밖의 응급실 · 점 크기는 소아 진료 여건</span>'
-    +'</div></details>';
+    +'</div></div>';
   drawWeb(rows);
   renderPick();   /* 다시 그릴 때마다 칸이 비므로 고른 병원을 복원한다
                      (창 크기·화면 회전·나이 변경 때마다 renderMap이 돈다) */
@@ -789,21 +814,78 @@ function pickPlace(p){
   q.value=p.label; sug.hidden=true;
   var msg = p.kind==='area' ? p.label+' 한가운데를 기준으로 보여 드립니다.'
           : p.kind==='dong' ? p.sub+' '+p.label+' 근처를 기준으로 보여 드립니다.'
+          : p.kind==='addr' ? '그 주소를 기준으로 보여 드립니다.'
           : p.label+' 위치를 기준으로 보여 드립니다.';
   document.getElementById('status').textContent=msg+' 실제 위치와 다를 수 있습니다.';
   show();
 }
+/* 주소 찾기 — 여기만 바깥에 물어본다.
+   병원 주소 색인(place_search)으로는 "진주대로 501" 같은 번지를 풀 수 없다. 키가 필요
+   없고 CORS가 열린 곳은 OSM Nominatim뿐이라 그걸 쓴다. 지도 타일에서 이미 대략적 위치가
+   타일 서버로 나가므로 "아무것도 안 보낸다"는 이 화면에서 더 이상 성립하지 않고, 대신
+   **입력한 글자가 나가는 건 사용자가 검색했을 때만**으로 묶는다(자동 조회 없음).
+   정책(초당 1회)을 지키려고 500ms 쉬었다가 한 번, 같은 질의는 기억해 두고 다시 묻지 않는다 */
+var GEO_CACHE={}, geoTimer=null, geoSeq=0;
+function geocode(term, done){
+  var k=term.trim();
+  if(GEO_CACHE[k]) { done(GEO_CACHE[k]); return; }
+  var url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5'
+        + '&countrycodes=kr&accept-language=ko&q='+encodeURIComponent(k);
+  fetch(url).then(function(r){ return r.ok?r.json():[]; }).then(function(js){
+    var out=(js||[]).map(function(o){
+      var nm=(o.display_name||'').split(',').map(function(s){return s.trim();});
+      /* 표시 이름은 "큰 지역 … 작은 지역" 차례로 뒤집혀 온다 — 앞 두 토막만 쓴다 */
+      return {label:nm.slice(0,2).join(' ')||k, sub:nm.slice(2,5).reverse().join(' ')||'주소',
+              y:+o.lat, x:+o.lon, kind:'addr'};
+    }).filter(function(p){ return isFinite(p.y)&&isFinite(p.x); });
+    GEO_CACHE[k]=out; done(out);
+  }).catch(function(){ GEO_CACHE[k]=[]; done([]); });
+}
+/* 번지·도로명이 섞인 입력인가 — 이때는 로컬에 몇 개 걸려도 주소 조회를 같이 띄운다 */
+function looksLikeAddress(s){
+  return /[0-9]/.test(s) || /(로|길)\s*$/.test(s.trim()) || /(로|길)\s*[0-9]/.test(s);
+}
+function drawSug(r){
+  if(!r.length){ sug.innerHTML=''; sug.hidden=true; return; }   /* 옛 목록을 남기지 않는다 */
+  sug.innerHTML=r.map(function(p,i){
+    var tag = p.kind==='addr' ? '<span class="geo">주소</span> ' : '';
+    return '<button type="button" data-i="'+i+'">'+tag+p.label+' <span>'+p.sub+'</span></button>';
+  }).join('');
+  sug._r=r; sug.hidden=false;
+}
 if(q){
   q.oninput=function(){
-    var r=place_search(q.value);
-    if(!r.length){ sug.innerHTML=''; sug.hidden=true; return; }   /* 옛 목록을 남기지 않는다 */
-    sug.innerHTML=r.map(function(p,i){
-      return '<button type="button" data-i="'+i+'">'+p.label+' <span>'+p.sub+'</span></button>';
-    }).join('');
-    sug._r=r; sug.hidden=false;
+    var term=q.value, local=place_search(term), mine=++geoSeq;
+    drawSug(local);
+    if(geoTimer) clearTimeout(geoTimer);
+    var wrap=q.parentNode;
+    if(term.trim().length<2 || (local.length>=3 && !looksLikeAddress(term))){
+      wrap.classList.remove('busy'); return;
+    }
+    wrap.classList.add('busy');
+    geoTimer=setTimeout(function(){
+      geocode(term, function(found){
+        wrap.classList.remove('busy');
+        if(mine!==geoSeq) return;                  /* 그새 더 친 글자가 있으면 버린다 */
+        if(found.length) drawSug(local.slice(0,3).concat(found));
+      });
+    },500);
   };
   q.onkeydown=function(e){
-    if(e.key==='Enter'){ e.preventDefault(); var r=place_search(q.value); if(r.length) pickPlace(r[0]); }
+    if(e.key==='Enter'){
+      e.preventDefault();
+      if(sug._r && sug._r.length && !sug.hidden){ pickPlace(sug._r[0]); return; }
+      var r=place_search(q.value);
+      if(r.length){ pickPlace(r[0]); return; }
+      /* 로컬에 없으면 주소로 한 번 물어본다 — 엔터가 빈손으로 끝나지 않게 */
+      q.parentNode.classList.add('busy');
+      geocode(q.value, function(found){
+        q.parentNode.classList.remove('busy');
+        if(found.length) pickPlace(found[0]);
+        else document.getElementById('status').textContent=
+          '그 주소를 찾지 못했습니다. 동(洞)이나 병원 이름으로도 찾을 수 있습니다.';
+      });
+    }
     if(e.key==='Escape') sug.hidden=true;
   };
   sug.onclick=function(e){
@@ -866,10 +948,23 @@ setInterval(pull, 300000);
 
 
 #: 아이콘은 그린다 — 이모지를 아이콘 자리에 쓰지 않는다. 획 두께 1.6으로 통일.
-LOGO = ('<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" '
-        'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        '<path d="M12 21s-7-4.6-7-10a4.6 4.6 0 0 1 7-3.9A4.6 4.6 0 0 1 19 11c0 5.4-7 10-7 10Z"/>'
-        '<path d="M12 10v4M10 12h4"/></svg>')
+#: 상단바 마크는 Playground 팀 로고(육각 노드 3개를 잇는 "A"). 로고가 브랜드 그린을
+#: 직접 들고 있어서 배경을 깔지 않는다 — `.bar .mark`의 초록 알약을 없앤 이유다.
+#: 원본: Desktop/playground-logo.svg. 그라디언트 id는 문서에 한 번만 나오게 둔다.
+LOGO = (
+    '<svg width="25" height="23" viewBox="0 0 48 44" role="img" aria-label="Playground">'
+    '<defs><linearGradient id="pg-logo-grad" x1="0" y1="0" x2="1" y2="1">'
+    '<stop offset="0%" stop-color="#a3e635"/><stop offset="55%" stop-color="#22c55e"/>'
+    '<stop offset="100%" stop-color="#0e7a3c"/></linearGradient></defs>'
+    '<g stroke="url(#pg-logo-grad)" stroke-linecap="round" stroke-linejoin="round" fill="none">'
+    '<path d="M24 8 L8.5 34 M24 8 L39.5 34 M24 8 L24 25 M24 25 L8.5 34 M24 25 L39.5 34" '
+    'stroke-width="3.2"/>'
+    '<g fill="url(#pg-logo-grad)" stroke-width="3">'
+    '<path d="M24 2.5 L28.8 5.25 L28.8 10.75 L24 13.5 L19.2 10.75 L19.2 5.25 Z"/>'
+    '<path d="M8.5 28.5 L13.3 31.25 L13.3 36.75 L8.5 39.5 L3.7 36.75 L3.7 31.25 Z"/>'
+    '<path d="M39.5 28.5 L44.3 31.25 L44.3 36.75 L39.5 39.5 L34.7 36.75 L34.7 31.25 Z"/>'
+    "</g></g></svg>"
+)
 ICON_ALERT = ('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
               'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
               '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>'
@@ -917,9 +1012,6 @@ def build(rows: list[dict], meta: dict) -> str:
     )
     A('<div class="ctas"><button class="btn btn-ghost" id="loc">내 주변 응급실 보기</button>')
     A('<a class="btn btn-call" href="tel:119">119 전화하기</a></div>')
-    A('<div class="find"><input id="q" type="search" autocomplete="off" '
-      'placeholder="지역·동·병원 이름으로 찾기 (예: 성동구, 상암동, 고려대병원)" '
-      'aria-label="지역으로 찾기"><div id="sug" class="sug" hidden></div></div>')
     A('<p class="fine">숨을 못 쉬거나 · 반응이 없거나 · 경련이 멈추지 않으면 고르지 말고 지금 119입니다</p>')
     A('<p id="status"></p>')
     A("</header>")
@@ -931,6 +1023,11 @@ def build(rows: list[dict], meta: dict) -> str:
     A('<div class="body">')
     A('<div class="topline"><span class="crumb">내 주변 <b>갈 수 있는 곳</b></span>'
       f'<span class="stamp">{esc(meta["asOf"])} 기준</span></div>')
+    # 검색은 지도를 쓰는 자리 바로 위에 둔다 — 히어로에 있을 때는 지도를 보다가
+    # 위치를 바꾸려면 화면을 거슬러 올라가야 했다. 초록 테두리로 "여기서 시작"을 알린다.
+    A('<div class="find find-map"><input id="q" type="search" autocomplete="off" '
+      'placeholder="주소·지역·동·병원 이름으로 찾기 (예: 진주시 진주대로 501, 성동구, 고려대병원)" '
+      'aria-label="주소나 지역으로 찾기"><div id="sug" class="sug" hidden></div></div>')
     A('<div id="mapPanel"></div>')
     A("</div></div></section>")
 

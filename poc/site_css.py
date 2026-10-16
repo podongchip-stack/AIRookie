@@ -64,8 +64,8 @@ b,strong{font-weight:650}
 .bar{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line2)}
 .bar .in{max-width:var(--col);margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:14px}
 .bar .logo{display:flex;align-items:center;gap:9px;font-size:16.5px;font-weight:720;letter-spacing:-.03em}
-.bar .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);display:flex;
-           align-items:center;justify-content:center;flex:none}
+/* 로고 마크는 Playground 로고가 브랜드 그린을 직접 들고 있어 바탕을 깔지 않는다 */
+.bar .mark{width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex:none}
 .bar nav{display:flex;gap:22px;margin-left:auto}
 .bar .theme{width:34px;height:34px;border-radius:999px;border:1px solid var(--line);
             background:var(--card);color:var(--ink2);cursor:pointer;display:flex;
@@ -94,12 +94,19 @@ b,strong{font-weight:650}
 .btn-ghost:hover{border-color:var(--mapdim)}
 .btn-call{background:var(--urgent-fill);color:#fff;border-color:var(--urgent-fill)}
 .btn-call:hover{background:var(--urgent-fill-h);border-color:var(--urgent-fill-h)}
-/* 지역 검색 */
+/* 지역·주소 검색 — 지도 바로 위. 초록 테두리로 "여기서 시작"을 알린다 */
 .find{position:relative;max-width:460px;margin:16px auto 0}
 .find input{width:100%;font:inherit;font-size:15px;padding:13px 16px;border-radius:999px;
   border:1px solid var(--line);background:var(--card);color:var(--ink);text-align:center}
 .find input::placeholder{color:var(--muted)}
 .find input:focus{border-color:var(--accent);outline:none}
+.find-map{max-width:none;margin:0 0 12px}
+.find-map input{text-align:left;border:1.5px solid var(--accent);padding:12px 18px;
+  transition:box-shadow .18s var(--ease)}
+.find-map input:focus{box-shadow:0 0 0 3px var(--accentbg)}
+/* 주소를 바깥(OSM)에 물어보는 동안 — 테두리만 옅게 */
+.find-map.busy input{border-color:var(--mapdim)}
+.sug .geo{color:var(--accent);font-weight:620}
 .sug{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:15;background:var(--card);
   border:1px solid var(--line);border-radius:12px;overflow:hidden;text-align:left}
 .sug button{display:block;width:100%;text-align:left;font:inherit;font-size:14.5px;
@@ -112,9 +119,11 @@ b,strong{font-weight:650}
 
 /* 대시보드 프레임 — 창 모양. 주소 줄은 우리 경로를 적는다 */
 .frame{max-width:var(--col);margin:34px auto 0;padding:0 24px}
-.win{border:1px solid var(--line);border-radius:14px 14px 0 0;overflow:hidden;background:var(--card)}
+/* overflow는 자르지 않는다 — 검색 제안 목록이 이 창 안에 있어서 잘리면 안 된다.
+   둥근 위 모서리는 창이 아니라 맨 위 줄(chrome)이 직접 깎는다 */
+.win{border:1px solid var(--line);border-radius:14px 14px 0 0;background:var(--card)}
 .win .chrome{background:var(--soft);border-bottom:1px solid var(--line);display:flex;align-items:center;
-             gap:7px;padding:13px 16px;position:relative}
+             gap:7px;padding:13px 16px;position:relative;border-radius:13px 13px 0 0}
 .win .chrome i{width:11px;height:11px;border-radius:50%;display:block}
 .win .chrome .path{position:absolute;left:0;right:0;text-align:center;font-size:13px;color:var(--muted);
                    pointer-events:none}
@@ -162,14 +171,8 @@ b,strong{font-weight:650}
   .tiles>div:nth-child(3){border-left:0}
   .tiles>div:nth-child(n+3){border-top:1px solid var(--line)}}
 
-.plot{margin:16px 0 0;border-top:1px solid var(--line);padding-top:4px}
-.plot>summary{font-size:13.5px;color:var(--ink2);padding:10px 2px;cursor:pointer;list-style:none;
-              display:flex;align-items:center;gap:8px;font-weight:600}
-.plot>summary::-webkit-details-marker{display:none}
-.plot>summary::after{content:'';width:8px;height:8px;border-right:1.6px solid var(--muted);
-  border-bottom:1.6px solid var(--muted);transform:rotate(45deg) translate(-2px,-2px);
-  transition:transform .2s var(--ease)}
-.plot[open]>summary::after{transform:rotate(-135deg) translate(-3px,-3px)}
+/* 지도는 접지 않는다(2026-10-16) — 접기 UI(summary·화살표)를 없앴다 */
+.plot{margin:16px 0 0;border-top:1px solid var(--line);padding-top:14px}
 .gh{font-size:15.5px;font-weight:700;letter-spacing:-.025em;margin:26px 0 4px;display:flex;
     align-items:baseline;gap:8px}
 .gh:first-child{margin-top:4px}
