@@ -83,3 +83,41 @@ secure context에서만 열린다. 위 호스팅은 전부 기본 HTTPS라 신�
 `poc/data/*.json`과 `out/*`은 공개 데이터라 올려도 되지만, `.env`(E-Gen·심평원
 서비스키, Supabase 서비스 키)는 **절대 배포 폴더에 들어가면 안 된다.** 업로드는
 상시 프로세스 쪽에서만 하고, 브라우저는 공개 읽기 URL만 본다.
+
+---
+
+## 4. 실제 도로 시간 (카카오모빌리티 프록시)
+
+카드의 "차로 N분"은 기본값이 **직선거리 추정**이다. 실제 도로 시간을 쓰려면
+카카오모빌리티 다중 목적지 길찾기가 필요한데, REST 키를 브라우저에 두면 그대로
+공개되므로 **우리 쪽 함수를 하나 거친다.**
+
+소스는 `poc/edge/peds-eta/index.ts`. 배포본은 `supabase/functions/peds-eta/`로
+복사해 올린다(Supabase CLI가 그 경로만 읽는다).
+
+```bash
+cp -r poc/edge/peds-eta supabase/functions/
+
+# 키는 함수 secret으로만 — 저장소·배포 폴더에 넣지 않는다
+npx supabase secrets set KAKAO_REST_API_KEY=<hub/.env의 값> --project-ref znmkosobxtqfgabrjjzg
+
+npx supabase functions deploy peds-eta --project-ref znmkosobxtqfgabrjjzg --no-verify-jwt
+```
+
+그다음 사이트를 빌드할 때 주소를 준다. 안 주면 이 기능만 꺼지고 추정값으로 돈다.
+
+```bash
+PEDS_ETA_URL=https://znmkosobxtqfgabrjjzg.supabase.co/functions/v1/peds-eta \
+PYTHONUTF8=1 python build_peds_finder.py
+```
+
+알아 둘 것
+
+- **반경 10km까지만 온다**(카카오 제한). 그 밖의 병원은 계속 추정값이고 카드에
+  "(직선거리 추정)"으로 구분해 적는다.
+- **출발지 좌표가 이 함수를 지나 카카오로 간다.** 지도 타일과 같은 성격이라
+  화면 설명에도 같이 적었다. 함수는 좌표를 로그에 남기지 않고 캐시 키로만 쓴다.
+- `--no-verify-jwt`라 **누구나 부를 수 있다.** 정적 페이지에 인증이 없어서인데,
+  그만큼 카카오 쿼터를 남이 쓸 수 있다. 시범 범위에서는 그대로 두고, 공개 범위가
+  넓어지면 Referer 검사나 간단한 토큰을 붙일 것.
+- 같은 출발지·목적지는 함수 안에서 5분간 재사용한다(교통 상황이 바뀌므로 짧게).

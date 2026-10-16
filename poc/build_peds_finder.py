@@ -316,7 +316,9 @@ function driveMin(d){
   return d*1.28/v*60;
 }
 function thread(h){
-  var travel=driveMin(h._d), min=travel, why=[], parts=[];
+  /* 도로 시간을 받았으면 그걸 쓰고, 없으면 직선거리 추정 */
+  var real=(h._eta!=null && h._eta>0);
+  var travel=real ? h._eta/60 : driveMin(h._d), min=travel, why=[], parts=[];
   if(h.pc>0 && h.pd>=2){ min-=5; why.push('소아 응급 병상과 소아과 전문의를 갖춘 곳'); parts.push('소아 여건 −5분'); }
   else if(h.pd>=2){ min-=3; why.push('소아과 전문의가 여러 명 있는 곳'); parts.push('소아 여건 −3분'); }
   else if(h.pd>=1){ min-=1; why.push('소아과 전문의가 있는 곳'); parts.push('소아 여건 −1분'); }
@@ -325,9 +327,9 @@ function thread(h){
   /* 병원 공지는 순위를 건드리지 않는다 — 분과 단위 제한을 전면 차단으로 오인하면
      2km 병원이 5km 병원보다 뒤로 간다. 문장만 보여 주고 판단은 보호자가 한다 */
   h._ms=activeMsgs(h); h._blk=h._ms.filter(function(m){return m[5]===2;});
-  h._travel=travel; h._len=Math.max(1,min); h._why=why;
+  h._travel=travel; h._len=Math.max(1,min); h._why=why; h._real=real;
   /* 순위를 어떻게 냈는지 한 줄로 — "왜 흰 2순위가 초록 3순위보다 위냐"에 답해야 한다 */
-  h._calc='차로 약 '+Math.round(travel)+'분'
+  h._calc=(real?'도로 ':'차로 약 ')+Math.round(travel)+'분'
     + (parts.length?' · '+parts.join(' · '):'')
     + ' → 순위 점수 '+Math.round(h._len)+'분';
   h._r=rArrive(h,travel);
@@ -747,6 +749,12 @@ function sample(){
     +'뜻이 아니니 출발 전 전화로 확인하세요.</li>'
     +'</ul></div>';
 }
+/* 카드 둘째 줄의 소요 시간. 도로 시간을 받았으면 "(추정)"을 떼고 도로 거리를 쓴다 */
+function travelText(h){
+  if(h._real) return '도로 '+Math.round(h._travel)+'분'
+    + (h._road?' · '+(h._road/1000).toFixed(1)+'km':'');
+  return '차로 약 '+Math.round(h._travel)+'분(직선거리 추정)';
+}
 function card(h,i){
   var map='https://map.kakao.com/link/to/'+encodeURIComponent(h.n)+','+h.y+','+h.x;
   var pct = h._r==null?null:Math.round(h._r*100);
@@ -754,7 +762,7 @@ function card(h,i){
   return '<div class="card'+on+'" data-k="'+key(h).replace(/"/g,'')+'">'
     +'<div class="row1">'+(i<3?'<span class="num">'+(i+1)+'</span>':'')
     +'<span class="name">'+h.n+'</span><span class="dist">'+h._d.toFixed(1)+'km</span></div>'
-    +'<p class="sub">'+h.g+' · '+h.a+' · 차로 약 '+Math.round(h._travel)+'분(추정)</p>'
+    +'<p class="sub">'+h.g+' · '+h.a+' · '+travelText(h)+'</p>'
     +'<div class="chips">'+(good(h)?'<span class="chip ok">여건이 두루 좋음</span>':'')+chips(h)+'</div>'
     +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
        +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
@@ -889,6 +897,7 @@ function moonlight(){
 }
 function show(){
   prepare();
+  fetchEtas();          /* 받아 오면 다시 그린다 — 받기 전엔 추정값으로 보여 준다 */
   renderMap();
   var el=document.getElementById('result'); if(!el) return;
   el.innerHTML = places();
@@ -1048,8 +1057,40 @@ function pull(){
    .then(function(j){
      if(!j||!j.rows||!j.rows.length) return;
      DATA=j.rows; ASOF=j.asOf||ASOF; STAMP=ASOF.slice(5); if(j.moon) MOON=j.moon;
+     etaFor=null;                 /* 행이 새로 와서 도로 시간이 날아갔다 — 다시 받는다 */
      show();
    }).catch(function(){});
+}
+
+/* ── 실제 도로 시간 ───────────────────────────────────────────
+   직선거리 추정은 길이 돌아가는 곳에서 크게 틀린다. 카카오모빌리티 다중 목적지
+   길찾기로 진짜 소요 시간을 받아 순위에 쓴다.
+   키를 브라우저에 둘 수 없어 우리 쪽 함수(poc/edge/peds-eta)를 거친다 —
+   **출발지 좌표가 그 함수를 지나 카카오로 간다**(화면 설명에 밝혔다).
+   받아 오기 전·못 받은 병원은 추정값 그대로 쓰고 카드에 "(추정)"으로 구분한다.
+   ⚠ 카카오 다중 목적지는 반경 10km까지라 먼 병원은 값이 안 온다 — 그쪽은 계속 추정. */
+var ETA_URL=__ETA_URL__, etaFor=null, etaBusy=false;
+function fetchEtas(){
+  if(!ETA_URL || !here || etaBusy) return;
+  var tag=here[0].toFixed(4)+','+here[1].toFixed(4);
+  if(etaFor===tag) return;                       /* 같은 자리면 다시 묻지 않는다 */
+  var near=(ALL||[]).filter(function(h){ return h._d<=9.5; }).slice(0,90);
+  if(!near.length){ etaFor=tag; return; }
+  etaBusy=true;
+  fetch(ETA_URL,{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({origin:{lat:here[0],lng:here[1]},
+      destinations:near.map(function(h){ return {key:key(h), lat:h.y, lng:h.x}; })})})
+   .then(function(r){ return r.ok?r.json():null; })
+   .then(function(j){
+     etaBusy=false; etaFor=tag;
+     if(!j||!j.etas) return;
+     var n=0;
+     (ALL||[]).forEach(function(h){
+       var e=j.etas[key(h)];
+       if(e && e.sec>0){ h._eta=e.sec; h._road=e.m; n++; }
+     });
+     if(n) show();                                /* 순위를 도로 시간으로 다시 매긴다 */
+   }).catch(function(){ etaBusy=false; etaFor=tag; });
 }
 pull();
 setInterval(pull, 300000);
@@ -1301,9 +1342,12 @@ def build(rows: list[dict], meta: dict) -> str:
     moon = json.dumps(meta.get("moon", []), ensure_ascii=False, separators=(",", ":"))
     # 배포본은 공개 URL을 가리킨다(PEDS_DATA_URL). 없으면 같은 폴더의 data.json.
     data_url = os.environ.get("PEDS_DATA_URL", "data.json")
+    # 도로 시간 프록시(poc/edge/peds-eta). 안 주면 빈 값이라 직선거리 추정으로 돈다.
+    eta_url = os.environ.get("PEDS_ETA_URL", "")
     js = (JS_TMPL.replace("__DATA__", data).replace("__MOON__", moon).replace("__ASOF__", meta["asOf"])
           .replace("__ICON_ALERT__", json.dumps(ICON_ALERT))
           .replace("__ICON_INFO__", json.dumps(ICON_INFO))
+          .replace("__ETA_URL__", json.dumps(eta_url))
           .replace("__DATA_URL__", json.dumps(data_url)))
     A("<script>" + js + "</script>")
     A("</body></html>")
