@@ -32,11 +32,15 @@
 
 운영 규칙(`sim/`·`spider/`와 같다): 다른 폴더의 기존 파일을 수정하지 않는다.
 
-실행:
+실행 (순서가 중요하다):
     conda activate dev
-    cd poc
-    python fetch_messages.py      # 병원 공지 (E-Gen 키 필요, 전국 1회)
-    python build_peds_finder.py   # 신뢰도 엔진 적재에 20초쯤
+    # 0) 클라우드에 5분마다 쌓이는 스냅샷을 이 장비로 내려받는다. **이걸 건너뛰면
+    #    로컬 사본 시각으로 굳은 화면이 나온다** — 신뢰도가 전부 0%에 가깝게 찍히고
+    #    (모델이 "이 값은 낡았다"고 정확히 말하는 것이다) 혼잡도도 옛날 값이 된다
+    cd ../info/Hospital_inform/info && python snapshot_cloud.py --sync
+    cd ../../../poc
+    python fetch_messages.py      # 병원 공지 (E-Gen 키 필요, 전국 1회, 매일 바뀐다)
+    python build_peds_finder.py   # 신뢰도 엔진 적재 포함 30초쯤
 산출물:
     poc/out/peds_finder.html
 """
