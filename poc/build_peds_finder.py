@@ -653,19 +653,42 @@ function renderPick(){
     +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
 }
 
+/* "이 숫자가 언제 적 것인가" — 병원마다 다르다.
+   예전엔 수집 시각(STAMP) 하나를 530곳에 똑같이 붙였다. 그러면 모든 병원이 방금
+   갱신한 것처럼 보이는데 사실이 아니다. 실제로는 환자가 오갈 때마다 바뀌는 병원이
+   있고, 며칠째 같은 값을 내보내는 병원이 있다. rl[1]이 **그 병원 값이 안 바뀐 채
+   지난 시간(초)** — infosurv가 claim 수명을 재는 바로 그 값이라 이미 들어 있다.
+   ⚠ 오래 안 바뀐 걸 "안정적"으로 읽으면 안 된다. 자동 연동이 끊긴 병원도 값이
+   그대로라서, 나이가 길수록 **덜** 믿어야 한다(하루 넘으면 경고로 뒤집는다) */
+function ageText(h){
+  if(!h.rl || h.rl[1]==null) return null;
+  var s=h.rl[1], m=Math.round(s/60);
+  if(m<2)    return {t:'방금 바뀐 값', w:0};
+  if(m<60)   return {t:m+'분째 같은 값', w:0};
+  var hr=s/3600;
+  if(hr<24)  return {t:Math.round(hr)+'시간째 같은 값', w:(hr>=6?1:0)};
+  var d=Math.round(hr/24);
+  return {t:d+'일째 안 바뀐 값', w:2};
+}
+function stampOf(h){                 /* 병원별 나이가 있으면 그걸, 없으면 수집 시각 */
+  var a=ageText(h);
+  return a ? a.t : STAMP+' 수집';
+}
 function chips(h){
-  var c=[];
+  var c=[], a=ageText(h);
   if(h.pd>0) c.push('<span class="chip'+(h.pd>=2?' ok':'')+'">소아과 전문의 '+h.pd+'명</span>');
   if(h.pc>0) c.push('<span class="chip ok">소아 응급 병상 '+h.pc+'석</span>');
   if(h.ni)   c.push('<span class="chip">신생아 중환자실</span>');
   if(h.av!=null && h.cp){
     var free=Math.max(0,h.av);
     c.push('<span class="chip'+(h.oc>=50?' warn':'')+'">응급실 '+free+'/'+h.cp+'석'
-      +(h.av<0?' (정원 초과)':'')+' · '+STAMP+'</span>');
+      +(h.av<0?' (정원 초과)':'')+' · '+stampOf(h)+'</span>');
   } else if(h.oc!=null) {
-    c.push(h.oc>=50 ? '<span class="chip warn">응급실 '+h.oc+'% 참 · '+STAMP+'</span>'
-                    : '<span class="chip">응급실 자리 있었음 · '+STAMP+'</span>');
+    c.push(h.oc>=50 ? '<span class="chip warn">응급실 '+h.oc+'% 참 · '+stampOf(h)+'</span>'
+                    : '<span class="chip">응급실 자리 있었음 · '+stampOf(h)+'</span>');
   }
+  /* 하루 넘게 안 바뀐 값은 따로 경고한다 — 숫자만 보면 믿어 버리기 때문 */
+  if(a && a.w===2) c.push('<span class="chip warn">자동 갱신이 끊겼을 수 있음</span>');
   if(!h.pd && !h.pc && !h.ni) c.push('<span class="chip none">소아 정보 없음</span>');
   return c.join('');
 }
