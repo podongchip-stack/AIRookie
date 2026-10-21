@@ -28,30 +28,16 @@ class Transcript(BaseModel):
 
 
 class Summary(BaseModel):
-    """MF_BERT 출력 그대로 — C:\Dev\HMM\data_v3\필드_설명.md의 v2 스키마 17개 필드 + meta.
+    """MF_BERT 활력징후판(2026-10-20) 출력 + 환자별 Pre-KTAS 추정.
 
-    값이 null인 것도 의미가 있다(모델이 안 배운 필드, 통화에 없는 정보). 중첩 구조는 모델 출력을 그대로
-    두고 여기서는 검증하지 않는다 — hub 담당자가 필요한 필드부터 타입을 좁힌다.
+    patients[]의 항목: gender · age_group · cc_major · cc_minor · avpu (AI, 선택지) / sbp · dbp · hr · rr · spo2 ·
+    temp · glucose · gcs (AI 구간 → 규칙 숫자 읽기, 말하지 않았으면 null) / pre_ktas (규칙, pre_ktas.py —
+    {"level": 1~5 | null, "basis": [{"rule", "level", "text"}], "source": "rule"}).
+    환자 항목은 모델 출력을 그대로 두고 여기서는 검증하지 않는다 — hub 담당자가 필요한 필드부터 타입을 좁힌다.
     """
 
-    call_type: Optional[str] = None
-    ktas_level: int
-    ktas_evidence: Optional[list[str]] = None
-    chief_complaint: dict
-    suspected_diagnosis: list[dict]
-    vitals: list[dict]
-    consciousness: list[dict]
-    symptoms: list[dict]
-    onset: dict
-    incidents: list[dict]
-    disease_category: Optional[str] = None
-    injuries: list[dict]
-    treatments: list[dict]
-    age: dict
-    sex: Optional[str] = None
-    medications: dict
-    notes: Optional[str] = None
-    meta: dict
+    patient_count: int
+    patients: list[dict]
 
 
 class ModelUsed(BaseModel):
@@ -72,7 +58,7 @@ class CallSummaryMessage(BaseModel):
     model_used: ModelUsed
 
     def to_payload(self) -> dict:
-        """hub 전송·저장용 dict. v2 필드의 null은 남기고(의미가 있다), 항상 비어 있는
+        """hub 전송·저장용 dict. summary의 null은 남기고(통화에서 말하지 않았다는 뜻), 항상 비어 있는
         turns[].excludedFromSummary만 빼서 예전 전송 형태를 유지한다."""
         payload = self.model_dump()
         for turn in payload["transcript"]["turns"]:
