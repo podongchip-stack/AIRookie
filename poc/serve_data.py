@@ -106,6 +106,8 @@ class Builder:
         self.msgs: dict[str, list[list]] = {}
         self.spec = B.load_specialists()
         self.moon = B.load_moonlight()
+        self.clinics = B.load_peds_clinics()       # 일반 소아병원 — 거의 안 바뀌어 시작할 때 한 번만
+        self.landmarks = B.load_landmarks()        # 역·대학 위치 색인 — 정적이라 시작할 때 한 번만
         self.last_list = 0.0
         self.last_msg = 0.0
         self.last_sync = 0.0
@@ -186,17 +188,15 @@ class Builder:
 
         # 엔진에 이번 관측을 먹인다 — 이게 증분이라 재생이 필요 없다
         self.engine.observe_rows(beds, now_utc)
-        preds = self.engine.predict(now_utc).get("hvec", {})
-        rel = {
-            hpid: [round(p.pred_t_sec), round((now_utc - p.born).total_seconds()), round(p.sigma, 4)]
-            for hpid, p in preds.items()
-        }
+        allp = self.engine.predict(now_utc)
+        rel = B.rel_rows(allp.get("hvec", {}), now_utc)
+        rel28 = B.rel_rows(allp.get("hv28", {}), now_utc)    # 소아 가용(hv28) 값의 나이
 
-        rows = B.assemble(self.listing, beds, severe, self.msgs, rel, self.spec)
+        rows = B.assemble(self.listing, beds, severe, self.msgs, rel, self.spec, rel28)
         as_of = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
         tmp = out_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fp:
-            json.dump({"asOf": as_of, "rows": rows, "moon": self.moon},
+            json.dump({"asOf": as_of, "rows": rows, "moon": self.moon, "clinics": self.clinics, "landmarks": self.landmarks},
                       fp, ensure_ascii=False, separators=(",", ":"))
         os.replace(tmp, out_path)          # 읽는 쪽이 반쯤 쓰인 파일을 보지 않게
         busy = sum(1 for r in rows if (r.get("oc") or 0) >= 50)

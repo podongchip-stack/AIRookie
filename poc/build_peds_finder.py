@@ -17,7 +17,9 @@
     성립하지 않는다. 그걸 쓰는 척하면 거짓이다.
   · **infosurv(병상 신뢰도) — 응급실 hvec 기준.** "출발해서 도착할 때도 지금과
     비슷할 가능성". hvec은 커버리지 100%에 실시간이라 모델이 설계된 그대로다.
-    소아 병상(hv28)은 23% 커버·폴링당 7% 변화라 **쓰지 않는다.**
+    소아 병상은 **정원(hvs02)**과 **지금 비어 있는 수(hv28)**가 다르다. hv28은 95곳(23%)만 올리고
+    그중 실시간처럼 움직이는 곳은 17곳뿐이라 **순서·판정에는 쓰지 않는다.** 값이 있는 병원에서만
+    "지금 N/정원석 · 갱신 나이"로 보조 표시한다(2026-10-19).
 
 설계 원칙 (바꾸기 전에 이유를 적을 것)
   1. **119가 먼저다.** 늘 화면에 떠 있고 우리 목록보다 크다.
@@ -28,13 +30,10 @@
   5. **해석하지 않는다.** 병원 공지는 문장을 그대로 보여 주고 순위를 건드리지
      않는다(분과 단위 제한을 전면 차단으로 오인하면 더 위험하다).
   6. **아무것도 저장하지 않는다.** 로그인·쿠키·기록이 없다.
-     ⚠ 다만 밖으로 나가는 것이 둘 생겼다(2026-10-16). 둘 다 화면 설명·FAQ·한계에
-     그대로 적었다.
+     ⚠ 다만 밖으로 나가는 것이 하나 있다. 화면 설명·FAQ·한계에 그대로 적었다.
        · **지도 타일**(Esri) — 보고 있는 지역이 지도 제공자에게 전달된다.
-       · **도로 시간**(카카오모빌리티) — 길찾기를 하려면 출발지가 있어야 하므로
-         **정확한 출발 좌표**가 우리 함수를 거쳐 카카오로 간다. 이건 "지역"이 아니라
-         "좌표"라 성격이 다르다. 함수는 좌표를 로그에 남기지 않고 캐시 키로만 쓴다.
-     고른 병원·검색어·증상은 여전히 어디로도 보내지 않는다.
+     고른 병원·검색어·증상·내 위치는 어디로도 보내지 않는다. 2026-10-20에 도로 시간(카카오모빌리티
+     프록시)과 외부 주소 검색(Nominatim)을 걷어냈다 — 출발 좌표·검색어가 밖으로 나가지 않게.
 
 운영 규칙(`sim/`·`spider/`와 같다): 다른 폴더의 기존 파일을 수정하지 않는다.
 
@@ -71,7 +70,11 @@ SNAP_DIR = os.path.join(INFO, "data", "snapshots_nationwide")
 HIRA_DIR = os.path.join(INFO, "data", "hira")
 MSG_CACHE = os.path.join(HERE, "data", "acceptance_messages.json")
 MOON_CACHE = os.path.join(HERE, "data", "moonlight.json")
+MOON_HOURS_CACHE = os.path.join(HERE, "data", "moonlight_hours.json")   # fetch_moonlight_hours.py가 만든다
+CLINIC_CACHE = os.path.join(HERE, "data", "peds_clinics.json")   # fetch_peds_clinics.py가 만든다
+LANDMARK_CACHE = os.path.join(HERE, "data", "landmarks.json")   # fetch_landmarks.py가 만든다
 OUT = os.path.join(HERE, "out", "peds_finder.html")
+DATA_JSON = os.path.join(HERE, "out", "data.json")
 
 sys.path.insert(0, INFO)
 from hospital_score import vocabulary as V  # noqa: E402
@@ -123,8 +126,16 @@ def load_messages() -> dict[str, list[list]]:
     return out
 
 
-def load_reliability(as_of: datetime) -> tuple[dict[str, list], str]:
-    """hpid -> [예측 생존초, 버전 나이(초), σ]. 엔진이 없으면 조용히 비운다.
+def rel_rows(preds: dict, as_of: datetime) -> dict[str, list]:
+    """엔진 예측 → hpid -> [예측 생존초, 버전 나이(초), σ]. 상시 갱신(serve_data)과 같은 모양이다."""
+    return {
+        hpid: [round(p.pred_t_sec), round((as_of - p.born).total_seconds()), round(p.sigma, 4)]
+        for hpid, p in preds.items()
+    }
+
+
+def load_reliability(as_of: datetime) -> tuple[dict[str, list], str, dict[str, list]]:
+    """(hvec 응급실, 모델 이름, hv28 소아) — 각각 hpid -> [예측 생존초, 버전 나이(초), σ]. 엔진이 없으면 조용히 비운다.
 
     예측 시각을 **스냅샷 마지막 시각**으로 둔다. 벽시계로 두면 수집이 며칠
     멈춘 장비에서 전부 0%가 되는데, 그건 "자리가 없다"가 아니라 "우리 데이터가
@@ -135,15 +146,14 @@ def load_reliability(as_of: datetime) -> tuple[dict[str, list], str]:
         from reliability.engine import BedReliabilityEngine
     except Exception as exc:  # 모델·xgboost 없으면 이 섹션만 빠진다
         print(f"  [reliability] 생략 — {type(exc).__name__}")
-        return {}, ""
+        return {}, "", {}
     engine = BedReliabilityEngine(warmup_days=14)
-    preds = engine.predict(as_of).get("hvec", {})
-    out = {
-        hpid: [round(p.pred_t_sec), round((as_of - p.born).total_seconds()), round(p.sigma, 4)]
-        for hpid, p in preds.items()
-    }
+    allp = engine.predict(as_of)
+    preds = allp.get("hvec", {})
+    out = rel_rows(preds, as_of)
+    out28 = rel_rows(allp.get("hv28", {}), as_of)
     tag = preds[next(iter(preds))].model_tag if preds else ""
-    return out, tag
+    return out, tag, out28
 
 
 def load_moonlight() -> list[dict]:
@@ -152,9 +162,48 @@ def load_moonlight() -> list[dict]:
     경증 아이를 응급실로 보내지 않으려고 만든 제도라, 우리가 "응급실로 가세요"만
     말하면 그 제도를 거스르게 된다(hub의 "경증은 센터를 아껴라"와 같은 원칙).
     그래서 응급실 목록과 **섞지 않고 따로** 보여준다.
+
+    병원이 심평원에 등록한 진료시간(`moonlight_hours.json`)이 있으면 항목의 `h`로 붙인다 — 병원 자체 등록 값이라
+    임시 휴진·변경은 반영되지 않고, 없는 곳이 절반이다. 캐시가 없으면 `h` 없이 그대로 나간다(화면은 "전화로 확인").
     """
     try:
         with open(MOON_CACHE, encoding="utf-8") as fp:
+            items = json.load(fp).get("items", [])
+    except FileNotFoundError:
+        return []
+    try:
+        with open(MOON_HOURS_CACHE, encoding="utf-8") as fp:
+            hours = json.load(fp).get("items", {})
+    except FileNotFoundError:
+        return items
+    for it in items:
+        h = hours.get(f'{it["n"]}|{it["t"]}')
+        if not h or not h.get("week"):
+            continue
+        it["h"] = {
+            "w": h["week"],                                   # {"mon": ["09:00", "23:00"], ...}
+            "u": bool(h.get("uniform")),                      # 7일 동일 = 임의로 채웠을 수 있는 값
+            "ns": h.get("noTrmtSun", ""),                     # 일요일·공휴일 안내는 자유 문장이라 원문 그대로
+            "nh": h.get("noTrmtHoli", ""),
+        }
+    return items
+
+
+def load_landmarks() -> list[dict]:
+    """위치 검색용 역·대학 색인(OpenStreetMap). 검색어를 밖으로 보내지 않으려고 좌표를 화면에 내장한다.
+    파일이 없으면(fetch_landmarks.py를 아직 안 돌렸으면) 빈 목록이고, 역·대학 검색만 안 된다."""
+    try:
+        with open(LANDMARK_CACHE, encoding="utf-8") as fp:
+            return json.load(fp).get("items", [])
+    except FileNotFoundError:
+        return []
+
+
+def load_peds_clinics() -> list[dict]:
+    """일반 소아병원(아동병원·소아청소년과 의원) — 응급실이 아니라 **외래**다. 달빛어린이병원처럼 응급실과 섞지 않는다.
+    파일이 없으면(fetch_peds_clinics.py를 아직 안 돌렸으면) 빈 목록이고, 화면은 그 구역을 그리지 않는다."""
+    try:
+        with open(CLINIC_CACHE, encoding="utf-8") as fp:
             return json.load(fp).get("items", [])
     except FileNotFoundError:
         return []
@@ -169,8 +218,40 @@ def load_specialists() -> dict:
         return {}
 
 
+#: 아이 상황별로 "이런 전문의가 있나"를 보여 주려고 따로 뽑는 진료과(심평원 전문과목 전문의 수).
+#: ⚠ 어느 상황에 어느 과가 필요한지는 의료진 검토 전 초안이다(화면 JS의 SITS와 같이 고칠 것).
+NEED_DEPTS = ("응급의학과", "외과", "정형외과", "신경외과")
+
+
+def need_dept_counts(spec: dict, hpid: str) -> dict | None:
+    """hpid의 NEED_DEPTS 전문의 수. 심평원 캐시가 아예 없으면 None(= 모른다), 있는데 해당 과가 없으면 {}."""
+    if not spec:
+        return None
+    out = {}
+    for x in spec.get(hpid, []):
+        name = x.get("dgsbjtCdNm")
+        n = iv(x.get("dtlSdrCnt")) or 0
+        if name in NEED_DEPTS and n > 0:
+            out[name] = n
+    return out
+
+
+def ped_available(av: int | None, cap: int) -> int | None:
+    """hv28(소아 가용)을 화면에 써도 되는 값으로 거른다. 못 믿을 값은 None — "모른다"로 둔다.
+
+    · 음수(-1)는 미입력이다(hvec과 달리 과밀 표현이 아니다).
+    · 정원이 있는데 가용이 정원보다 크면 입력 오류다(국립중앙의료원이 시험값을 넣는 일이 실제로 있다).
+    · 0은 정원이 있을 때만 "만실"이다 — 정원이 없으면 소아 응급실을 안 운영하는 것이라 값이 아니다.
+    """
+    if av is None or av < 0:
+        return None
+    if cap > 0:
+        return av if av <= cap else None
+    return None if av == 0 or av > 200 else av
+
+
 def assemble(listing: list[dict], beds, severe, msgs: dict, rel: dict,
-             spec: dict | None = None) -> list[dict]:
+             spec: dict | None = None, rel28: dict | None = None) -> list[dict]:
     """화면이 쓰는 병원 행을 만든다 — 스냅샷에서 오든 실시간 API에서 오든 같은 규칙.
 
     정적 빌드(build_peds_finder)와 상시 갱신(serve_data)이 **같은 함수**를 쓴다.
@@ -193,6 +274,8 @@ def assemble(listing: list[dict], beds, severe, msgs: dict, rel: dict,
         hpid = h["hpid"]
         bed = beds.get(hpid, {})
         avail, cap = iv(bed.get("hvec")), iv(bed.get("hvs01"))
+        ped_cap = iv(bed.get("hvs02")) or 0
+        ped_av = ped_available(iv(bed.get("hv28")), ped_cap)
         sev = severe.get(hpid, {})
         addr = h.get("dutyAddr") or ""
         rows.append({
@@ -204,7 +287,10 @@ def assemble(listing: list[dict], beds, severe, msgs: dict, rel: dict,
             "ad": addr,                       # 전체 주소 — 동·도로명 검색용
             "pd": next((iv(x.get("dtlSdrCnt")) or 0 for x in spec.get(hpid, [])
                         if x.get("dgsbjtCdNm") == PED_DEPT), 0),
-            "pc": iv(bed.get("hvs02")) or 0,
+            "pc": ped_cap,                    # 소아 병상 **정원**(hvs02) — 비어 있는 수가 아니다
+            "dp": need_dept_counts(spec, hpid),   # {과: 전문의 수} — 상황별 필요 여건 표시용
+            "pa": ped_av,                     # 소아 병상 **지금 비어 있는 수**(hv28). 값이 없으면 None
+            "pr": (rel28 or {}).get(hpid) if ped_av is not None else None,   # [예측초, 값 나이(초), σ]
             "ni": 1 if (iv(bed.get("hvs19")) or 0) > 0 else 0,
             "av": avail,
             "cp": cap,                        # 응급실 정원 — "16/28석"을 쓰려면 필요
@@ -249,10 +335,12 @@ def load() -> tuple[list[dict], dict]:
 
     spec = load_specialists()
 
-    rel, model_tag = load_reliability(as_of.astimezone(timezone.utc))
-    rows = assemble(listing, beds, severe, load_messages(), rel, spec)
+    rel, model_tag, rel28 = load_reliability(as_of.astimezone(timezone.utc))
+    rows = assemble(listing, beds, severe, load_messages(), rel, spec, rel28)
     moon = load_moonlight()
     meta = {
+        "clinics": load_peds_clinics(),
+        "landmarks": load_landmarks(),
         "moon": moon,
         "moonCount": len(moon),
         "asOf": as_of.astimezone(KST).strftime("%Y-%m-%d %H:%M"),
@@ -263,6 +351,32 @@ def load() -> tuple[list[dict], dict]:
         "noBedCount": sum(1 for r in rows if r.get("av") is None and r.get("oc") is None),
     }
     return rows, meta
+
+
+def load_from_data() -> tuple[list[dict], dict]:
+    """스냅샷 없이 out/data.json으로 meta를 되살린다 — 화면(HTML·CSS)만 고치며 다시 만들 때 쓴다.
+    data.json에 없는 모델 이름은 지금 out/peds_finder.html 문구에서 읽는다(없으면 비움)."""
+    with open(DATA_JSON, encoding="utf-8") as fp:
+        d = json.load(fp)
+    rows = d["rows"]
+    model_tag = os.environ.get("PEDS_MODEL_TAG", "")
+    if not model_tag and os.path.exists(OUT):
+        # 문구가 바뀌어도 읽히게 두 형태를 다 본다: "모델 X, 적용 N곳" / "(모델 X, N곳에 적용)"
+        m = re.search(r"모델 ([^\s,)]+), (?:적용 )?\d+곳", open(OUT, encoding="utf-8").read())
+        model_tag = m.group(1) if m else ""
+    moon = d.get("moon", [])
+    clinics = d.get("clinics") or load_peds_clinics()
+    return rows, {
+        "clinics": clinics,
+        "landmarks": d.get("landmarks") or load_landmarks(),
+        "moon": moon,
+        "moonCount": len(moon),
+        "asOf": d["asOf"],
+        "modelTag": model_tag,
+        "relCount": sum(1 for r in rows if r.get("rl")),
+        "msgCount": sum(1 for r in rows if r["ms"]),
+        "noBedCount": sum(1 for r in rows if r.get("av") is None and r.get("oc") is None),
+    }
 
 
 RULES_AGE = ["3개월 미만", "3~12개월", "1~3세", "3세 이상"]
@@ -320,9 +434,7 @@ function driveMin(d){
   return d*1.28/v*60;
 }
 function thread(h){
-  /* 도로 시간을 받았으면 그걸 쓰고, 없으면 직선거리 추정 */
-  var real=(h._eta!=null && h._eta>0);
-  var travel=real ? h._eta/60 : driveMin(h._d), min=travel, why=[], parts=[];
+  var travel=driveMin(h._d), min=travel, why=[], parts=[];
   if(h.pc>0 && h.pd>=2){ min-=5; why.push('소아 응급 병상과 소아과 전문의를 갖춘 곳'); parts.push('소아 여건 −5분'); }
   else if(h.pd>=2){ min-=3; why.push('소아과 전문의가 여러 명 있는 곳'); parts.push('소아 여건 −3분'); }
   else if(h.pd>=1){ min-=1; why.push('소아과 전문의가 있는 곳'); parts.push('소아 여건 −1분'); }
@@ -331,11 +443,11 @@ function thread(h){
   /* 병원 공지는 순위를 건드리지 않는다 — 분과 단위 제한을 전면 차단으로 오인하면
      2km 병원이 5km 병원보다 뒤로 간다. 문장만 보여 주고 판단은 보호자가 한다 */
   h._ms=activeMsgs(h); h._blk=h._ms.filter(function(m){return m[5]===2;});
-  h._travel=travel; h._len=Math.max(1,min); h._why=why; h._real=real;
+  h._travel=travel; h._len=Math.max(1,min); h._why=why;
   /* 순위를 어떻게 냈는지 한 줄로 — "왜 흰 2순위가 초록 3순위보다 위냐"에 답해야 한다 */
-  h._calc=(real?'도로 ':'차로 약 ')+Math.round(travel)+'분'
+  h._calc='차로 약 '+Math.round(travel)+'분'
     + (parts.length?' · '+parts.join(' · '):'')
-    + ' → 순위 점수 '+Math.round(h._len)+'분';
+    + ' → 순서를 정하는 시간 '+Math.round(h._len)+'분';
   h._r=rArrive(h,travel);
   return h._len;
 }
@@ -639,24 +751,44 @@ function drawWeb(rows){
 
 function key(h){ return h.n+'@'+h.y+','+h.x; }
 
+/* 병원이 올린 공지 — 문장은 그대로, 해석하지 않는다. 다만 읽는 순서만 정한다:
+   진료 제한(2) → 먼저 문의(1) → 안내(0). 이미 나눠 둔 분류를 쓸 뿐이고, 처음 2건만 펼치며
+   나머지는 숨기지 않고 [나머지 N건 보기]로 접어 둔다(예전엔 "외 N건"이라고만 쓰고 읽을 수 없었다) */
+function noticeHtml(h){
+  if(!h._ms.length) return '';
+  var list=h._ms.slice().sort(function(a,b){ return b[5]-a[5]; });
+  function p(m){ return '<p>'+m[2]+'</p>'; }
+  return '<div class="notice'+(h._blk.length?'':' info')+'">'
+    +'<span class="lab">'+(h._blk.length?ICON_ALERT+'병원이 올린 진료 제한 공지 — 우리 아이에게 해당되는지 읽어 보세요'
+         :(group(h)===1?ICON_INFO+'전화로 먼저 확인해 달라는 공지':ICON_INFO+'병원이 올린 안내'))+'</span>'
+    +list.slice(0,2).map(p).join('')
+    +(list.length>2?'<details class="rest"><summary>나머지 '+(list.length-2)+'건 보기</summary>'
+        +list.slice(2).map(p).join('')+'</details>':'')
+    +'</div>';
+}
 /* 지도에서 고른 병원의 정보 — 지도 바로 아래 */
 function renderPick(){
-  var box=document.getElementById('mapsel'); if(!box) return;
-  if(!selKey){ box.innerHTML=''; return; }
-  var t=hit.filter(function(x){return key(x.h)===selKey;})[0];
+  var box=document.getElementById('mapsel'), bar=document.getElementById('fbar');
+  var t=selKey ? hit.filter(function(x){return key(x.h)===selKey;})[0] : null;
+  /* 좁은 화면의 하단 고정 바 — 목록을 내려 보는 중에도 고른 병원에 바로 전화·길찾기 */
+  if(bar){
+    bar.hidden=!t;
+    bar.innerHTML = t ? '<span class="fn">'+t.h.n+'</span>'
+      +(t.h.t?'<a class="tel" href="tel:'+t.h.t+'">전화</a>':'')
+      +'<a href="https://map.kakao.com/link/to/'+encodeURIComponent(t.h.n)+','+t.h.y+','+t.h.x
+      +'" target="_blank" rel="noopener">길찾기</a>' : '';
+  }
+  if(!box) return;
   if(!t){ box.innerHTML=''; return; }
   var h=t.h, map='https://map.kakao.com/link/to/'+encodeURIComponent(h.n)+','+h.y+','+h.x;
   var pct = h._r==null?null:Math.round(h._r*100);
   box.innerHTML='<div class="card picked"><div class="row1"><span class="name">'+h.n+'</span>'
     +'<span class="dist">'+h._d.toFixed(1)+'km</span></div>'
-    +'<p class="sub" style="margin-left:0">'+h.g+' · '+h.a+' · 차로 약 '+Math.round(h._travel)+'분(추정)</p>'
+    +'<p class="sub">'+h.g+' · '+h.a+' · 차로 약 '+Math.round(h._travel)+'분(추정)</p>'
     +'<div class="chips">'+(good(h)?'<span class="chip ok">여건이 두루 좋음</span>':'')+chips(h)+'</div>'
-    +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
+    +(pct!=null?'<div class="bar2">도착할 때까지 지금 자리가 유지될 가능성 <b>'+pct+'%</b>'
        +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
-    +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'">'
-       +'<span class="lab">'+(h._blk.length?ICON_ALERT+'이 병원이 올린 진료 제한 공지'
-            :(group(h)===1?ICON_INFO+'전화로 먼저 확인해 달라는 공지':ICON_INFO+'이 병원이 올린 안내'))+'</span>'
-       +h._ms.slice(0,2).map(function(m){return '<p>'+m[2]+'</p>';}).join('')+'</div>':'')
+    +noticeHtml(h)
     +'<div class="acts">'+(h.t?'<a class="tel" href="tel:'+h.t+'">전화 '+h.t+'</a>':'')
     +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
 }
@@ -676,32 +808,34 @@ function ageText(h){
      빈자리가 정원과 같다(환자가 없다). 그걸 "같은 값"이라고 쓰면 낡은 데이터처럼
      읽혀 오히려 멀쩡한 선택지를 지우게 된다 */
   var empty = (h.av!=null && h.cp && h.av>=h.cp);
-  var word = empty ? '자리 그대로' : '같은 값';
-  if(m<2)    return {t:'방금 바뀐 값', w:0};
+  var word = empty ? '자리 그대로' : '그대로';
+  if(m<2)    return {t:'방금 갱신', w:0};
   if(m<60)   return {t:m+'분째 '+word, w:0};
   var hr=s/3600;
   if(hr<24)  return {t:Math.round(hr)+'시간째 '+word, w:((hr>=6 && !empty)?1:0)};
   var d=Math.round(hr/24);
   /* 며칠째 그대로면 비어 있든 아니든 의심한다 — 응급실 연동만 끊긴 병원이 있고
      (실측 3곳, 전부 86.5시간으로 같은 순간에 멈췄다) 그쪽은 빈자리=정원으로 보인다 */
-  return {t:d+'일째 ' + (empty?'그대로':'안 바뀐 값'), w:2};
+  return {t:d+'일째 ' + '그대로', w:2};
 }
 function stampOf(h){                 /* 병원별 나이가 있으면 그걸, 없으면 수집 시각 */
   var a=ageText(h);
   return a ? a.t : STAMP+' 수집';
 }
-function chips(h){
-  var c=[], a=ageText(h);
+/* p1 = 카드에서 먼저 읽혀야 하는 칩(응급실 자리·소아 병상). 나머지는 그 뒤에 온다.
+   noStamp면 병상 칩에서 "방금 갱신" 같은 시각을 뺀다 — 카드는 그걸 아래 줄에 따로 둔다 */
+function chips(h,noStamp){
+  var c=[], a=ageText(h), st=noStamp?'':' · '+stampOf(h);
   if(h.pd>0) c.push('<span class="chip'+(h.pd>=2?' ok':'')+'">소아과 전문의 '+h.pd+'명</span>');
-  if(h.pc>0) c.push('<span class="chip ok">소아 응급 병상 '+h.pc+'석</span>');
+  if(h.pc>0) c.push('<span class="chip p1 ok">소아 응급 병상 '+h.pc+'석</span>');
   if(h.ni)   c.push('<span class="chip">신생아 중환자실</span>');
   if(h.av!=null && h.cp){
     var free=Math.max(0,h.av);
-    c.push('<span class="chip'+(h.oc>=50?' warn':'')+'">응급실 '+free+'/'+h.cp+'석'
-      +(h.av<0?' (정원 초과)':'')+' · '+stampOf(h)+'</span>');
+    c.push('<span class="chip p1'+(h.oc>=50?' warn':(h.av>0?' ok':''))+'">응급실 '+free+'/'+h.cp+'석'
+      +(h.av<0?' (정원 초과)':'')+st+'</span>');
   } else if(h.oc!=null) {
-    c.push(h.oc>=50 ? '<span class="chip warn">응급실 '+h.oc+'% 참 · '+stampOf(h)+'</span>'
-                    : '<span class="chip">응급실 자리 있었음 · '+stampOf(h)+'</span>');
+    c.push(h.oc>=50 ? '<span class="chip p1 warn">응급실 '+h.oc+'% 참'+st+'</span>'
+                    : '<span class="chip p1">응급실 자리 있었음'+st+'</span>');
   }
   /* 하루 넘게 안 바뀐 값은 따로 경고한다 — 숫자만 보면 믿어 버리기 때문 */
   if(a && a.w===2) c.push('<span class="chip warn">자동 갱신이 끊겼을 수 있음</span>');
@@ -731,53 +865,69 @@ function sample(){
     +'<span>예시 · 실제 병원이 아닙니다</span></h3>'
     +'<div class="cards"><div class="card ex">'
     +'<div class="row1"><span class="num">1</span>'
-    +'<span class="name">○○대학교병원</span><span class="dist">2.4km</span></div>'
-    +'<p class="sub">지역센터 · ○○시 ○○구 · 차로 약 7분(추정)</p>'
+    +'<span class="name">○○대학교병원</span><span class="tel-top off">전화</span></div>'
+    +'<p class="eta"><b>차로 약 7분(직선거리 추정) · 2.4km</b><span>지역센터</span></p>'
+    +'<p class="sub">○○시 ○○구</p>'
+    +'<p class="whyline"><span>소아과 전문의 6명이 있고,</span> <span>차로 약 7분이에요</span></p>'
     +'<div class="chips"><span class="chip ok">여건이 두루 좋음</span>'
     +'<span class="chip ok">소아과 전문의 6명</span>'
-    +'<span class="chip ok">소아 응급 병상 4석</span>'
-    +'<span class="chip">응급실 12/20석 · 방금 바뀐 값</span></div>'
-    +'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>78%</b>'
+    +'<span class="chip p1 ok">소아 응급 병상 4석</span>'
+    +'<span class="chip p1 ok">응급실 12/20석</span></div>'
+    +'<div class="bar2">도착할 때까지 지금 자리가 유지될 가능성 <b>78%</b>'
     +'<div class="track"><div class="fill" style="width:78%"></div></div></div>'
     +'<div class="notice info"><span class="lab">'+ICON_INFO+'이 병원이 올린 안내</span>'
     +'<p>병원이 올린 공지가 있으면 문장 그대로 보여 드립니다.</p></div>'
-    +'<p class="calc">차로 약 7분 · 소아 여건 −5분 → 순위 점수 2분</p>'
-    +'<div class="acts"><span class="off">전화</span><span class="off">길찾기</span></div>'
+    +'<p class="calc">차로 약 7분 · 소아 여건 −5분 → 순서를 정하는 시간 2분</p>'
+    +'<div class="foot"><span class="stamp2">방금 갱신</span><span class="route off">길찾기 →</span></div>'
     +'</div></div>'
     +'<ul class="exnote">'
-    +'<li><b>순위는 “분”으로 정합니다.</b> 이동 시간에서 소아 진료 여건만큼 빼고 붐빈 만큼 '
-    +'더한 값이라, 가까워도 여건이 얕으면 뒤로 갑니다.</li>'
+    +'<li><b>순서는 “가는 데 드는 시간”으로 정합니다.</b> 차로 가는 시간에서 소아 진료 여건이 좋은 만큼 '
+    +'덜어 내고 붐비는 만큼 더해서, 가까워도 여건이 약하면 뒤로 갑니다.</li>'
     +'<li><b>병상 옆 시각은 병원마다 다릅니다.</b> 우리가 받아온 때가 아니라 그 병원 숫자가 '
     +'마지막으로 바뀐 때입니다.</li>'
     +'<li><b>초록은 순위가 아니라 표시입니다.</b> 네 조건이 맞으면 칠합니다. 받아준다는 '
     +'뜻이 아니니 출발 전 전화로 확인하세요.</li>'
     +'</ul></div>';
 }
-/* 카드 둘째 줄의 소요 시간. 도로 시간을 받았으면 "(추정)"을 떼고 도로 거리를 쓴다 */
+/* 카드 둘째 줄의 소요 시간 — 직선거리에서 어림한 값이라 그렇게 밝힌다 */
 function travelText(h){
-  if(h._real) return '도로 '+Math.round(h._travel)+'분'
-    + (h._road?' · '+(h._road/1000).toFixed(1)+'km':'');
   return '차로 약 '+Math.round(h._travel)+'분(직선거리 추정)';
+}
+/* "바로 가 볼 만한 곳" 카드의 큰 한 줄 — 왜 이곳인지. 공개 데이터에 있는 사실만 말한다.
+   "받아준다"는 말은 쓰지 않는다(그건 전화로만 확인된다). 제한 공지가 없는 곳(group 0)에만 붙는다 */
+function whyLine(h){
+  /* 두 토막으로 나눠 토막 단위로만 줄을 바꾼다 — 좁은 화면에서 "전문의 6/명이"처럼 단어 중간이 끊기지 않게 */
+  var m=Math.round(h._travel), go='차로 약 '+m+'분이에요', why;
+  if(h.pd>=2)       why='소아과 전문의 '+h.pd+'명이 있고,';
+  else if(h.pc>0)   why='소아 응급 병상이 있고,';
+  else if(h.pd===1) why='소아과 전문의 1명이 있고,';
+  else              why='진료 제한 공지가 없고,';
+  return '<span>'+why+'</span> <span>'+go+'</span>';
 }
 function card(h,i){
   var map='https://map.kakao.com/link/to/'+encodeURIComponent(h.n)+','+h.y+','+h.x;
   var pct = h._r==null?null:Math.round(h._r*100);
   var on = (key(h)===selKey ? ' picked' : '') + (good(h) ? ' good' : '');
+  /* 진료 제한 공지는 접지 않는다 — 안전에 관한 것이라 항상 보인다. 전화·길찾기는 그 바로 아래,
+     "왜 이 순서인가"(도착 가능성·분 계산)는 [자세히]로 접는다 */
+  /* 읽는 순서: 병원명·전화 → 이동 시간·등급 → 응급실/소아 병상 → 공지 → 갱신 시각·길찾기.
+     시각은 병상 칩 안이 아니라 맨 아래 줄에 둔다(병상 숫자가 언제 적 것인지는 그 줄에서 읽는다) */
+  var hasBed=(h.av!=null || h.oc!=null), ag=ageText(h);
   return '<div class="card'+on+'" data-k="'+key(h).replace(/"/g,'')+'">'
     +'<div class="row1">'+(i<3?'<span class="num">'+(i+1)+'</span>':'')
-    +'<span class="name">'+h.n+'</span><span class="dist">'+h._d.toFixed(1)+'km</span></div>'
-    +'<p class="sub">'+h.g+' · '+h.a+' · '+travelText(h)+'</p>'
-    +'<div class="chips">'+(good(h)?'<span class="chip ok">여건이 두루 좋음</span>':'')+chips(h)+'</div>'
-    +(pct!=null?'<div class="bar2">도착할 때도 지금처럼 자리가 있을 가능성 <b>'+pct+'%</b>'
+    +'<span class="name">'+h.n+'</span>'
+    +(h.t?'<a class="tel-top" href="tel:'+h.t+'" aria-label="'+h.n+' 전화하기">전화</a>':'')+'</div>'
+    +'<p class="eta"><b>'+travelText(h)+' · '+h._d.toFixed(1)+'km</b><span>'+h.g+'</span></p>'
+    +'<p class="sub">'+h.a+'</p>'
+    +(group(h)===0?'<p class="whyline">'+whyLine(h)+'</p>':'')
+    +'<div class="chips">'+(good(h)?'<span class="chip ok">여건이 두루 좋음</span>':'')+chips(h,true)+'</div>'
+    +noticeHtml(h)
+    +'<div class="foot"><span class="stamp2'+(ag&&ag.w?' warn':'')+'">'+(hasBed?stampOf(h):'')+'</span>'
+    +'<a class="route" href="'+map+'" target="_blank" rel="noopener">길찾기 →</a></div>'
+    +'<details class="why"><summary>왜 이 순서인가요</summary>'
+    +(pct!=null?'<div class="bar2">도착할 때까지 지금 자리가 유지될 가능성 <b>'+pct+'%</b>'
        +'<div class="track"><div class="fill" style="width:'+pct+'%"></div></div></div>':'')
-    +(h._ms.length?'<div class="notice'+(h._blk.length?'':' info')+'">'
-       +'<span class="lab">'+(h._blk.length?ICON_ALERT+'이 병원이 올린 진료 제한 공지'
-            :(group(h)===1?ICON_INFO+'전화로 먼저 확인해 달라는 공지':ICON_INFO+'이 병원이 올린 안내'))+'</span>'
-       +h._ms.slice(0,2).map(function(m){return '<p>'+m[2]+'</p>';}).join('')
-       +(h._ms.length>2?'<p style="color:var(--muted)">외 '+(h._ms.length-2)+'건</p>':'')+'</div>':'')
-    +'<p class="calc">'+h._calc+'</p>'
-    +'<div class="acts">'+(h.t?'<a class="tel" href="tel:'+h.t+'">전화 '+h.t+'</a>':'')
-    +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
+    +'<p class="calc">'+h._calc+'</p></details></div>';
 }
 /* 지도는 선택과 무관하게 위치만 있으면 바로 그린다 — 히어로 바로 아래가 주인공 자리다 */
 function renderMap(){
@@ -795,7 +945,7 @@ function renderMap(){
   }
   box.innerHTML='<div class="tiles">'
     + tile('60km 안 응급실', near.length, '전부', 'var(--mapdim)')
-    + tile('소아 진료 정보 있음', ped, '추천은 이 안에서', 'var(--accent)', true)
+    + tile('소아 진료 정보 있음', ped, '이 안에서 순서를 정해요', 'var(--accent)', true)
     + tile('응급실이 붐볐던 곳', busy, '전체 응급실 기준 · '+STAMP, '#d9892b')
     + tile('진료 제한 공지', blk, '내용을 읽어 보세요', '#e05c54')
     + '</div>'
@@ -815,8 +965,7 @@ function renderMap(){
     +'<b>점을 누르면 그 병원 정보와 전화번호</b>가 나옵니다. 아래 카드를 눌러도 '
     +'지도에서 같이 표시되고, 길 안내는 [길찾기]를 누르세요. '
     +'지도 배경은 외부에서 받아오므로 <b>보고 있는 지역이 지도 제공자에게 전달됩니다.</b> '
-    +'도로 시간을 쓸 때는 <b>출발 좌표가 길찾기 제공자에게 전달됩니다.</b> '
-    +'고른 병원과 검색어는 보내지 않습니다.</p>'
+    +'고른 병원·검색어·내 위치는 보내지 않습니다.</p>'
     +'<div id="mapsel"></div>'
     +'<div class="legend">'
     +'<span><i style="background:var(--accent)"></i>①②③ 아래 카드와 같은 순서</span>'
@@ -848,7 +997,7 @@ function places(){
      가리키는 대상은 바로 위 검색창이다(예전 문구는 히어로 버튼을 가리켰는데,
      검색이 지도 위로 올라오면서 더 가까운 곳에 할 일이 생겼다) */
   if(usingDefault) return '<div class="prompt"><span class="t">아직 내 위치를 모릅니다</span>'
-    +'위 <b>검색창</b>에 주소나 동네 이름을 넣거나, 맨 위 <b>[내 주변 응급실 보기]</b>를 눌러 주세요. '
+    +'위 <b>검색창</b>에 동네나 병원 이름을 넣거나, 맨 위 <b>[내 주변 응급실 보기]</b>를 눌러 주세요. '
     +'위치는 이 화면 안에서만 쓰이고 저장되지 않습니다.</div>'
     + sample();
   var rows=candidates();
@@ -857,22 +1006,27 @@ function places(){
   var g=[[],[],[]];
   rows.forEach(function(h){ g[group(h)].push(h); });
   var out='', n=0;
-  function block(list,title,desc,limit){
+  /* 처음 3곳만 펼쳐 두고 나머지는 [더 보기]로 접는다 — 새벽에 아이를 안고 12장을 읽을 수 없다 */
+  var FIRST=3;
+  /* 전화에서 뭘 물을지는 [전화] 버튼이 보이는 바로 아래에 둔다 */
+  var ask='<p class="ask">전화로는 이렇게만 물어보시면 됩니다 — '
+    +'<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></p>';
+  function block(list,title,desc,limit,after){
     if(!list.length) return '';
+    var shown=list.slice(0,limit), head=shown.slice(0,FIRST), rest=shown.slice(FIRST);
     return '<h3 class="gh">'+title+'<span>'+list.length+'곳</span></h3>'
       +(desc?'<p class="gd">'+desc+'</p>':'')
-      +'<div class="cards">'+list.slice(0,limit).map(function(h){ return card(h,n++); }).join('')+'</div>';
+      +'<div class="cards">'+head.map(function(h){ return card(h,n++); }).join('')+'</div>'
+      +(after||'')
+      +(rest.length?'<details class="more"><summary>더 보기 ('+rest.length+'곳)</summary>'
+        +'<div class="cards">'+rest.map(function(h){ return card(h,n++); }).join('')+'</div></details>':'');
   }
   out+=block(g[0],'바로 가 볼 만한 곳',
-    '순서는 <b>“가는 데 드는 분”</b>으로 정합니다. 이동 시간에서 소아 진료 여건만큼 빼고 '
-    +'붐빈 만큼 더한 값이고, 카드마다 그 계산을 적어 뒀습니다. '
-    +'<b>초록색은 순위가 아니라 표시입니다</b> — 여건이 두루 좋아도 더 멀면 아래로 갑니다. '
-    +'출발 전 전화로 확인하세요.',12);
-  /* 전화에서 뭘 물을지는 [전화] 버튼을 처음 본 다음에 필요한 말이다.
-     목록 맨 위에 두면 아직 걸 곳도 없는데 통화법부터 읽게 된다 */
-  out+='<p class="ask">전화로는 이렇게만 물어보시면 됩니다 — '
-    +'<b>“○개월 아기가 △△한데, 지금 소아 진료 되나요?”</b></p>';
-  out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',6);
+    '가까운 순이 아니라, 소아 진료 여건과 응급실 혼잡까지 따져 정한 순서입니다. '
+    +'<b>출발 전에 꼭 전화로 확인하세요.</b>',12,
+    ask);
+  out+=block(g[1],'전화로 먼저 확인하라고 한 곳','병원이 "사전 문의"를 요청해 둔 곳입니다. 전화가 꼭 필요합니다.',6,
+    g[0].length?'':ask);
   out+=block(g[2],'지금 제한을 걸어 둔 곳','빼지 않고 보여 드립니다. 제한이 우리 아이에게 해당되는지는 내용을 읽고 판단하세요.',6);
   out+=moonlight();
   return out;
@@ -881,6 +1035,27 @@ function places(){
 /* 달빛어린이병원 — 응급실이 아니라 야간·휴일 소아 외래.
    응급실 목록과 **섞지 않는다.** 경증이 응급실을 채우지 않게 하려고 만든 제도인데
    우리가 한 줄에 늘어놓으면 그 구분이 사라진다 */
+function esc(s){ return String(s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+/* 병원이 심평원에 등록한 진료시간 한 줄. 병원 자체 등록 값이라 "지금 열려 있다"는 말은 하지 않는다.
+   7일이 전부 같으면 임의로 채웠을 수 있어 시간을 보여 주지 않고, 없으면 없다고 말한다 */
+function hoursLine(m){
+  var h=m.h;
+  if(!h) return '<p class="hrs none">진료시간 등록 정보 없음 · 전화로 확인하세요</p>';
+  if(h.u) return '<p class="hrs none">등록된 진료시간이 요일 구분 없이 같아 정확하지 않을 수 있어요 · 전화로 확인하세요</p>';
+  var D=[['mon','월'],['tue','화'],['wed','수'],['thu','목'],['fri','금'],['sat','토'],['sun','일']], runs=[], cur=null;
+  D.forEach(function(d){
+    var v=h.w[d[0]], k=v?v[0]+'~'+v[1]:'등록 없음';
+    if(cur && cur.k===k){ cur.to=d[1]; cur.n++; } else { cur={k:k,from:d[1],to:d[1],n:1}; runs.push(cur); }
+  });
+  var parts=runs.map(function(r){
+    var lab = (r.from==='월' && r.to==='금') ? '평일' : r.n===1 ? r.from : r.from+'~'+r.to;
+    return lab+' '+r.k;
+  });
+  var note=function(lab,t){ return t ? ' · '+lab+' 안내: <span title="'+esc(t)+'">'+esc(t.length>40?t.slice(0,40)+'…':t)+'</span>' : ''; };
+  var tail = (h.ns && h.ns===h.nh) ? note('일요일·공휴일',h.ns) : note('일요일',h.ns)+note('공휴일',h.nh);
+  return '<p class="hrs"><b>병원이 등록한 진료시간</b> '+esc(parts.join(' · '))+tail
+    +'<small>심평원 등록 · 야간·휴일 달빛 운영시간과 다를 수 있고, 임시 휴진·변경은 반영되지 않아요</small></p>';
+}
 function moonlight(){
   if(!MOON.length || !here) return '';
   var rows=MOON.map(function(m){
@@ -890,19 +1065,19 @@ function moonlight(){
   return '<h3 class="gh">응급실 말고 — 야간·휴일 소아 외래<span>달빛어린이병원</span></h3>'
     +'<p class="gd">열이나 감기처럼 급하지 않은 증상이면 응급실보다 이쪽이 맞습니다. '
     +'<b>평일 밤 11~12시, 주말·공휴일 오후 6시까지</b>가 제도 기준이지만 병원마다 다르고 '
-    +'임시 휴진도 있어 <b>가시기 전에 꼭 전화로 확인하세요.</b></p>'
+    +'임시 휴진도 있어 <b>가시기 전에 꼭 전화로 확인하세요.</b> 카드의 진료시간은 병원이 심평원에 등록한 값이라 실제와 다를 수 있습니다.</p>'
     +'<div class="cards">'+ rows.map(function(r){
         var m=r.m, map='https://map.kakao.com/link/to/'+encodeURIComponent(m.n)+','+m.y+','+m.x;
         return '<div class="card moon"><div class="row1"><span class="name">'+m.n+'</span>'
           +'<span class="dist">'+r.d.toFixed(1)+'km</span></div>'
-          +'<p class="sub" style="margin-left:0">'+(m.kind||'')+' · '+m.a+'</p>'
+          +'<p class="sub">'+(m.kind||'')+' · '+m.a+'</p>'
+          +hoursLine(m)
           +'<div class="acts">'+(m.t?'<a class="tel" href="tel:'+m.t+'">전화 '+m.t+'</a>':'')
           +'<a href="'+map+'" target="_blank" rel="noopener">길찾기</a></div></div>';
       }).join('')+'</div>';
 }
 function show(){
   prepare();
-  fetchEtas();          /* 받아 오면 다시 그린다 — 받기 전엔 추정값으로 보여 준다 */
   renderMap();
   var el=document.getElementById('result'); if(!el) return;
   el.innerHTML = places();
@@ -914,77 +1089,29 @@ function pickPlace(p){
   q.value=p.label; sug.hidden=true;
   var msg = p.kind==='area' ? p.label+' 한가운데를 기준으로 보여 드립니다.'
           : p.kind==='dong' ? p.sub+' '+p.label+' 근처를 기준으로 보여 드립니다.'
-          : p.kind==='addr' ? '그 주소를 기준으로 보여 드립니다.'
           : p.label+' 위치를 기준으로 보여 드립니다.';
   document.getElementById('status').textContent=msg+' 실제 위치와 다를 수 있습니다.';
   show();
 }
-/* 주소 찾기 — 여기만 바깥에 물어본다.
-   병원 주소 색인(place_search)으로는 "진주대로 501" 같은 번지를 풀 수 없다. 키가 필요
-   없고 CORS가 열린 곳은 OSM Nominatim뿐이라 그걸 쓴다. 지도 타일에서 이미 대략적 위치가
-   타일 서버로 나가므로 "아무것도 안 보낸다"는 이 화면에서 더 이상 성립하지 않고, 대신
-   **입력한 글자가 나가는 건 사용자가 검색했을 때만**으로 묶는다(자동 조회 없음).
-   정책(초당 1회)을 지키려고 500ms 쉬었다가 한 번, 같은 질의는 기억해 두고 다시 묻지 않는다 */
-var GEO_CACHE={}, geoTimer=null, geoSeq=0;
-function geocode(term, done){
-  var k=term.trim();
-  if(GEO_CACHE[k]) { done(GEO_CACHE[k]); return; }
-  var url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5'
-        + '&countrycodes=kr&accept-language=ko&q='+encodeURIComponent(k);
-  fetch(url).then(function(r){ return r.ok?r.json():[]; }).then(function(js){
-    var out=(js||[]).map(function(o){
-      var nm=(o.display_name||'').split(',').map(function(s){return s.trim();});
-      /* 표시 이름은 "큰 지역 … 작은 지역" 차례로 뒤집혀 온다 — 앞 두 토막만 쓴다 */
-      return {label:nm.slice(0,2).join(' ')||k, sub:nm.slice(2,5).reverse().join(' ')||'주소',
-              y:+o.lat, x:+o.lon, kind:'addr'};
-    }).filter(function(p){ return isFinite(p.y)&&isFinite(p.x); });
-    GEO_CACHE[k]=out; done(out);
-  }).catch(function(){ GEO_CACHE[k]=[]; done([]); });
-}
-/* 번지·도로명이 섞인 입력인가 — 이때는 로컬에 몇 개 걸려도 주소 조회를 같이 띄운다 */
-function looksLikeAddress(s){
-  return /[0-9]/.test(s) || /(로|길)\s*$/.test(s.trim()) || /(로|길)\s*[0-9]/.test(s);
-}
+/* 입력한 글자는 밖으로 보내지 않는다 — 시군구·동·병원 이름만 이 화면 안의 색인(place_search)으로 찾는다.
+   번지·도로명 주소는 외부 지오코더가 있어야 풀려서 쓰지 않는다 */
 function drawSug(r){
   if(!r.length){ sug.innerHTML=''; sug.hidden=true; return; }   /* 옛 목록을 남기지 않는다 */
   sug.innerHTML=r.map(function(p,i){
-    var tag = p.kind==='addr' ? '<span class="geo">주소</span> ' : '';
-    return '<button type="button" data-i="'+i+'">'+tag+p.label+' <span>'+p.sub+'</span></button>';
+    return '<button type="button" data-i="'+i+'">'+p.label+' <span>'+p.sub+'</span></button>';
   }).join('');
   sug._r=r; sug.hidden=false;
 }
 if(q){
-  q.oninput=function(){
-    var term=q.value, local=place_search(term), mine=++geoSeq;
-    drawSug(local);
-    if(geoTimer) clearTimeout(geoTimer);
-    var wrap=q.parentNode;
-    if(term.trim().length<2 || (local.length>=3 && !looksLikeAddress(term))){
-      wrap.classList.remove('busy'); return;
-    }
-    wrap.classList.add('busy');
-    geoTimer=setTimeout(function(){
-      geocode(term, function(found){
-        wrap.classList.remove('busy');
-        if(mine!==geoSeq) return;                  /* 그새 더 친 글자가 있으면 버린다 */
-        if(found.length) drawSug(local.slice(0,3).concat(found));
-      });
-    },500);
-  };
+  q.oninput=function(){ drawSug(place_search(q.value)); };
   q.onkeydown=function(e){
     if(e.key==='Enter'){
       e.preventDefault();
       if(sug._r && sug._r.length && !sug.hidden){ pickPlace(sug._r[0]); return; }
       var r=place_search(q.value);
       if(r.length){ pickPlace(r[0]); return; }
-      /* 로컬에 없으면 주소로 한 번 물어본다 — 엔터가 빈손으로 끝나지 않게 */
-      q.parentNode.classList.add('busy');
-      geocode(q.value, function(found){
-        q.parentNode.classList.remove('busy');
-        if(found.length) pickPlace(found[0]);
-        else document.getElementById('status').textContent=
-          '그 주소를 찾지 못했습니다. 동(洞)이나 병원 이름으로도 찾을 수 있습니다.';
-      });
+      document.getElementById('status').textContent=
+        '찾지 못했습니다. 시군구·동(洞)·병원 이름으로 찾아 주세요. 번지 주소는 찾지 않습니다.';
     }
     if(e.key==='Escape') sug.hidden=true;
   };
@@ -1026,7 +1153,7 @@ function fitPair(a,b){
 /* 카드 ↔ 지도 양방향 — 카드를 누르면 지도에서 그 점이 선택된다 */
 document.addEventListener('click',function(e){
   var c=e.target.closest('.card[data-k]'); if(!c) return;
-  if(e.target.closest('a')) return;                 /* 전화·길찾기는 그대로 */
+  if(e.target.closest('a,summary,details')) return;                 /* 전화·길찾기는 그대로 */
   var off=(c.dataset.k===selKey);
   selKey = off ? null : c.dataset.k;
   if(!off && here){
@@ -1062,53 +1189,10 @@ function pull(){
    .then(function(j){
      if(!j||!j.rows||!j.rows.length) return;
      DATA=j.rows; ASOF=j.asOf||ASOF; STAMP=ASOF.slice(5); if(j.moon) MOON=j.moon;
-     etaFor=null;                 /* 행이 새로 와서 도로 시간이 날아갔다 — 다시 받는다 */
      show();
    }).catch(function(){});
 }
 
-/* ── 실제 도로 시간 ───────────────────────────────────────────
-   직선거리 추정은 길이 돌아가는 곳에서 크게 틀린다. 카카오모빌리티 다중 목적지
-   길찾기로 진짜 소요 시간을 받아 순위에 쓴다.
-   키를 브라우저에 둘 수 없어 우리 쪽 함수(poc/edge/peds-eta)를 거친다 —
-   **출발지 좌표가 그 함수를 지나 카카오로 간다**(화면 설명에 밝혔다).
-   받아 오기 전·못 받은 병원은 추정값 그대로 쓰고 카드에 "(추정)"으로 구분한다.
-   ⚠ 카카오 다중 목적지는 반경 10km까지라 먼 병원은 값이 안 온다 — 그쪽은 계속 추정. */
-var ETA_URL=__ETA_URL__, etaFor=null, etaBusy=false, etaAsked={}, etaRounds=0;
-/* **여러 번 돌아야 수렴한다.** 도로 시간이 들어오면 가까운 병원이 정직해져(추정보다
-   오래 걸린다) 순위가 내려가고, 그 자리에 아직 추정값인 먼 병원이 올라온다. 한 번만
-   물으면 올라온 그 병원들이 영영 낙관적인 추정값으로 앞자리를 지킨다(실제로 그랬다 —
-   경찰병원이 추정 26분으로 3위였는데 실제는 72분이었다).
-   그래서 화면 앞쪽에 아직 추정값이 남아 있으면 그것만 다시 묻는다. 세 번이면 멎는다 */
-var ETA_ROUNDS_MAX=3, ETA_BATCH=30;
-function fetchEtas(){
-  if(!ETA_URL || !here || etaBusy) return;
-  var tag=here[0].toFixed(4)+','+here[1].toFixed(4);
-  if(etaFor!==tag){ etaFor=tag; etaAsked={}; etaRounds=0; }   /* 자리가 바뀌면 처음부터 */
-  if(etaRounds>=ETA_ROUNDS_MAX) return;
-  /* 화면에 실제로 뜨는 후보만, 순위 차례로. 전체(ALL)에서 자르면 안 된다 — 카드는
-     소아 정보가 있는 곳만 추려 보여주는데 서울에선 그 4번째가 전체 60등 밖이다 */
-  var want=candidates().slice().sort(function(a,b){ return a._len-b._len; })
-    .slice(0,ETA_BATCH)
-    .filter(function(h){ return h._eta==null && !etaAsked[key(h)]; });
-  if(!want.length) return;
-  etaBusy=true; etaRounds++;
-  want.forEach(function(h){ etaAsked[key(h)]=1; });   /* 실패해도 같은 곳을 또 묻지 않는다 */
-  fetch(ETA_URL,{method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify({origin:{lat:here[0],lng:here[1]},
-      destinations:want.map(function(h){ return {key:key(h), lat:h.y, lng:h.x}; })})})
-   .then(function(r){ return r.ok?r.json():null; })
-   .then(function(j){
-     etaBusy=false;
-     if(!j||!j.etas) return;
-     var n=0;
-     (ALL||[]).forEach(function(h){
-       var e=j.etas[key(h)];
-       if(e && e.sec>0){ h._eta=e.sec; h._road=e.m; n++; }
-     });
-     if(n) show();          /* 순위를 다시 매기고, 앞쪽에 추정이 남았으면 한 번 더 묻는다 */
-   }).catch(function(){ etaBusy=false; });
-}
 pull();
 setInterval(pull, 300000);
 """
@@ -1175,6 +1259,10 @@ def build(rows: list[dict], meta: dict) -> str:
       'aria-pressed="false">' + ICON_MOON + '</button>')
     A('<a class="cta" href="tel:119">119 전화하기</a></div></nav>')
 
+    # 좁은 화면 전용 긴급 카드 — 히어로의 119 버튼과 경고 문장을 한 덩어리로 묶는다
+    A('<div class="sos"><p>숨을 못 쉬거나 · 반응이 없거나 · 경련이 멈추지 않으면 '
+      '<b>고르지 말고 지금 119</b></p><a href="tel:119">119 전화</a></div>')
+
     A('<header class="hero">')
     A("<h1>아이가 아픈데,<br><em>어디로</em> 가야 할까요?</h1>")
     A(
@@ -1198,8 +1286,8 @@ def build(rows: list[dict], meta: dict) -> str:
     # 위치를 바꾸려면 화면을 거슬러 올라가야 했다. 초록 테두리로 "여기서 시작"을 알린다.
     A('<div class="find find-map">' + ICON_SEARCH + '<input id="q" type="search" autocomplete="off" '
       # 좁은 화면에서는 예시가 중간에 잘린다 — 한 줄에 들어오는 길이로 줄였다
-      'placeholder="주소·지역·병원으로 찾기 (예: 진주대로 501)" '
-      'aria-label="주소나 지역으로 찾기"><div id="sug" class="sug" hidden></div></div>')
+      'placeholder="지역·동·병원 이름으로 찾기 (예: 진주시, 상암동)" '
+      'aria-label="지역이나 병원 이름으로 찾기"><div id="sug" class="sug" hidden></div></div>')
     A('<div id="mapPanel"></div>')
     A("</div></div></section>")
 
@@ -1231,18 +1319,18 @@ def build(rows: list[dict], meta: dict) -> str:
 
     # ── 랜딩: 어떻게 고르나 ──
     A('<section class="sec" id="how"><div class="in"><h2 class="st">어떻게 고르나요</h2>')
-    A('<p class="desc">점수가 아니라 <b>분(分)</b>으로 계산합니다. 그래야 왜 이 순서인지 설명할 수 있습니다.</p>')
+    A('<p class="desc">병원마다 <b>“가는 데 드는 시간”</b>으로 순서를 정합니다. 점수가 아니라 시간이라서 왜 이 순서인지 설명할 수 있습니다.</p>')
     A('<div class="steps">')
     for i, (t, d) in enumerate([
         ("갈 수 있는 곳만 남깁니다",
          "공개된 소아 진료 여건(전문의 수·소아 응급 병상)과 병원이 올린 공지를 보고, "
          "그 아이를 볼 수 없다고 밝힌 곳은 따로 묶습니다. 빼지는 않습니다."),
-        ("가는 데 드는 분을 계산합니다",
-         "이동 시간에서 소아 진료 여건만큼 빼고, 응급실이 붐빈 만큼 더합니다. "
-         "그래서 가까워도 여건이 얕으면 뒤로 갑니다."),
+        ("가는 시간으로 순서를 정합니다",
+         "차로 가는 시간에서 소아 진료 여건이 좋은 만큼 덜어 내고, 응급실이 붐비는 만큼 더합니다. "
+         "그래서 가까워도 소아 진료 여건이 약하면 뒤로 갑니다."),
         ("초록색은 순위가 아니라 표시입니다",
          "제한 공지가 없고, 소아 여건이 있고, 자리가 있었고, 도착 때까지 유지될 가능성이 "
-         "괜찮으면 초록으로 칠합니다. 순서는 어디까지나 분으로 정하므로, "
+         "괜찮으면 초록으로 칠합니다. 순서는 어디까지나 시간으로 정하므로, "
          "<b>초록인 곳이 흰 곳보다 아래에 올 수 있습니다.</b> 더 멀면 그렇게 됩니다."),
         ("병원이 올린 공지를 그대로 보여 드립니다",
          "순서에는 반영하지 않습니다. 일부 분과만의 제한일 수 있어, "
@@ -1263,10 +1351,9 @@ def build(rows: list[dict], meta: dict) -> str:
          "이 화면은 갈 필요가 없는 곳을 줄여서 전화 횟수를 줄이는 것까지만 합니다."),
         ("제 위치가 저장되나요?",
          "저장은 하지 않습니다 — 로그인·쿠키·접속 기록이 없습니다. 다만 밖으로 나가는 것이 "
-         "둘 있습니다. <b>지도 배경</b>을 외부에서 받아오기 때문에 보고 있는 지역이 지도 "
-         "제공자에게 전달되고, <b>차로 걸리는 시간</b>을 계산하려면 출발지가 있어야 하므로 "
-         "<b>출발 좌표가 길찾기 제공자(카카오모빌리티)에게 전달됩니다.</b> 어느 병원을 "
-         "눌렀는지, 무엇을 검색했는지는 보내지 않고, 저희도 좌표를 기록하지 않습니다."),
+         "하나 있습니다. <b>지도 배경</b>을 외부에서 받아오기 때문에 보고 있는 지역이 지도 "
+         "제공자에게 전달됩니다. 어느 병원을 눌렀는지, 무엇을 검색했는지, 내 위치는 밖으로 "
+         "보내지 않고 이 화면 안에서만 쓰며, 저희도 좌표를 기록하지 않습니다."),
         ("병원을 추천해 주는 건가요?",
          "아닙니다. 거리와 소아 진료 여건으로 정한 <b>순서</b>일 뿐이고 어디가 더 낫다는 추천이 아닙니다. "
          "판단 기준도 의사가 검토하기 전의 초안입니다. 헷갈리시면 119에 전화해 물어보셔도 됩니다 — "
@@ -1292,15 +1379,31 @@ def build(rows: list[dict], meta: dict) -> str:
         "실제 수용 여부는 공개 데이터로 알 수 없고 전화로만 확인됩니다.</li>"
     )
     A(
+        "<li><strong>병원 공지는 순서에 반영하지 않습니다.</strong> “소아신경분과 진료불가”처럼 "
+        "일부 분과만의 제한일 수 있어, 그 공지가 우리 아이에게 해당되는지는 저희가 판단하지 "
+        "않습니다. 문장을 그대로 보여 드리니 직접 읽고 판단하세요."
+        + (f" (적용 {meta['msgCount']}곳)" if meta.get("msgCount") else "")
+        + "</li>"
+    )
+    A(
+        "<li><strong>아무것도 저장하지 않습니다</strong> — 로그인·쿠키·접속 기록이 없습니다. "
+        "다만 밖으로 나가는 것이 하나 있습니다. 지도 배경은 외부(Esri·OpenStreetMap)에서 "
+        "받아오므로 <strong>보고 있는 지역이 지도 제공자에게 전달됩니다.</strong> "
+        "고른 병원·검색어·내 위치는 보내지 않으며 저희도 좌표를 기록하지 않습니다. 가는 시간은 "
+        "직선거리에서 어림한 추정이라 카드에 그렇게 적습니다.</li>"
+    )
+    A("</ul>")
+    A('<details class="limits"><summary>자세한 한계와 용어 설명</summary><ul>')
+    A(
         f"<li><strong>“응급실 N% 참”은 소아 혼잡도가 아닙니다.</strong> 그 병원 응급실 전체의 "
         f"(정원 − 남은 자리) ÷ 정원이고 <strong>{esc(meta['asOf'])} 기준</strong>입니다. "
         "소아 자리만 따로 세는 숫자는 공개되지 않습니다.</li>"
     )
     A(
-        f"<li><strong>“도착할 때도 자리가 있을 가능성”</strong>은 응급실 전체 병상을 대상으로 한 "
-        f"생존 모델(infosurv)의 출력입니다. 지금 값이 도착 시점까지 유지될 확률이고 "
-        f"<strong>{esc(meta['asOf'])} 기준</strong>입니다. 소아 전용 수치가 아닙니다."
-        + (f" 모델 {esc(meta['modelTag'])}, 적용 {meta['relCount']}곳." if meta.get("modelTag") else "")
+        f"<li><strong>“도착할 때까지 자리가 유지될 가능성”</strong>은 병원 병상 숫자가 얼마나 자주 "
+        f"바뀌었는지를 학습한 통계 모델이 어림한 값입니다. 응급실 전체 병상 기준이고 "
+        f"<strong>{esc(meta['asOf'])} 기준</strong>이며 소아 전용 수치가 아닙니다."
+        + (f" (모델 {esc(meta['modelTag'])}, {meta['relCount']}곳에 적용)" if meta.get("modelTag") else "")
         + "</li>"
     )
     A(
@@ -1321,13 +1424,6 @@ def build(rows: list[dict], meta: dict) -> str:
         "가까워도 여건이 얕으면 멀리 그려집니다.</li>"
     )
     A(
-        "<li><strong>병원 공지는 순서에 반영하지 않습니다.</strong> “소아신경분과 진료불가”처럼 "
-        "일부 분과만의 제한일 수 있어, 그 공지가 우리 아이에게 해당되는지는 저희가 판단하지 "
-        "않습니다. 문장을 그대로 보여 드리니 직접 읽고 판단하세요."
-        + (f" (적용 {meta['msgCount']}곳)" if meta.get("msgCount") else "")
-        + "</li>"
-    )
-    A(
         "<li>전문의 수는 그 병원 소속 인원이고 <strong>지금 당직인지는 알 수 없습니다.</strong> "
         f"소아 응급 병상과 소아과 전문의 2명을 함께 갖춘 곳은 전국 <strong>{tier2}곳</strong>뿐입니다.</li>"
     )
@@ -1339,19 +1435,13 @@ def build(rows: list[dict], meta: dict) -> str:
         f"<li><strong>달빛어린이병원은 응급실이 아닙니다.</strong> 야간·휴일에 경증 소아를 보는 "
         f"외래로, 전국 <strong>{meta.get('moonCount', 0)}곳</strong>입니다(국립중앙의료원 집계). "
         "제도 기준은 평일 밤 11~12시·주말 공휴일 오후 6시까지이지만 <strong>병원마다 다르고 "
-        "임시 휴진도 있어</strong> 운영시간은 공개되지 않습니다 — 반드시 전화로 확인하세요.</li>"
+        "임시 휴진도 있어</strong> 국립중앙의료원 목록에는 병원별 운영시간이 없습니다. 병원이 심평원에 등록한 진료시간이 "
+        "있는 곳만 카드에 적었고(등록하지 않은 곳이 절반 가까이 됩니다), 병원이 스스로 올린 값이라 실제와 다를 수 있어 "
+        "반드시 전화로 확인하세요.</li>"
     )
     A("<li>출처: 중앙응급의료센터 E-Gen 공개 API, 건강보험심사평가원 공개 API, "
       "국립중앙의료원 달빛어린이병원 목록.</li>")
-    A(
-        "<li><strong>아무것도 저장하지 않습니다</strong> — 로그인·쿠키·접속 기록이 없습니다. "
-        "다만 밖으로 나가는 것이 둘 있습니다. 지도 배경은 외부(Esri·OpenStreetMap)에서 "
-        "받아오므로 <strong>보고 있는 지역이 지도 제공자에게 전달되고</strong>, 도로 시간은 "
-        "카카오모빌리티 길찾기로 계산하므로 <strong>출발 좌표가 그쪽으로 전달됩니다.</strong> "
-        "고른 병원·검색어는 보내지 않으며 저희도 좌표를 기록하지 않습니다. 도로 시간을 "
-        "못 받은 병원은 직선거리 추정이라 카드에 그렇게 적습니다.</li>"
-    )
-    A("</ul></div>")
+    A("</ul></details></div>")
     A(
         "<footer><b>우리 아이 응급 길잡이</b> — 중앙응급의료센터 E-Gen·건강보험심사평가원 "
         f"공개 API로 만든 비영리 시연 서비스입니다. 데이터 기준 {esc(meta['asOf'])}.<br>"
@@ -1364,32 +1454,32 @@ def build(rows: list[dict], meta: dict) -> str:
     moon = json.dumps(meta.get("moon", []), ensure_ascii=False, separators=(",", ":"))
     # 배포본은 공개 URL을 가리킨다(PEDS_DATA_URL). 없으면 같은 폴더의 data.json.
     data_url = os.environ.get("PEDS_DATA_URL", "data.json")
-    # 도로 시간 프록시(poc/edge/peds-eta). 안 주면 빈 값이라 직선거리 추정으로 돈다.
-    eta_url = os.environ.get("PEDS_ETA_URL", "")
     js = (JS_TMPL.replace("__DATA__", data).replace("__MOON__", moon).replace("__ASOF__", meta["asOf"])
           .replace("__ICON_ALERT__", json.dumps(ICON_ALERT))
           .replace("__ICON_INFO__", json.dumps(ICON_INFO))
-          .replace("__ETA_URL__", json.dumps(eta_url))
           .replace("__DATA_URL__", json.dumps(data_url)))
+    A('<div class="fbar" id="fbar" hidden></div>')
     A("<script>" + js + "</script>")
     A("</body></html>")
     return "\n".join(o)
 
 
 def main() -> None:
-    rows, meta = load()
+    # --from-data: 스냅샷 없이 out/data.json 그대로 HTML만 다시 만든다(화면 작업용, 데이터는 건드리지 않음)
+    from_data = "--from-data" in sys.argv
+    rows, meta = load_from_data() if from_data else load()
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as fp:
         fp.write(build(rows, meta))
-    # 배포용으로 데이터를 따로도 떨군다. 이 파일만 주기적으로 다시 올리면
-    # HTML은 그대로 두고 내용이 갱신된다(화면이 있으면 data.json을 우선 쓴다).
-    data_path = os.path.join(os.path.dirname(OUT), "data.json")
-    with open(data_path, "w", encoding="utf-8") as fp:
-        json.dump({"asOf": meta["asOf"], "rows": rows, "moon": meta.get("moon", [])}, fp, ensure_ascii=False, separators=(",", ":"))
     print(f"생성: {OUT}  ({os.path.getsize(OUT)/1024:.0f} KB)")
-    print(f"      {data_path}  ({os.path.getsize(data_path)/1024:.0f} KB)")
+    if not from_data:
+        # 배포용으로 데이터를 따로도 떨군다. 이 파일만 주기적으로 다시 올리면
+        # HTML은 그대로 두고 내용이 갱신된다(화면이 있으면 data.json을 우선 쓴다).
+        with open(DATA_JSON, "w", encoding="utf-8") as fp:
+            json.dump({"asOf": meta["asOf"], "rows": rows, "moon": meta.get("moon", []), "clinics": meta.get("clinics", []), "landmarks": meta.get("landmarks", [])}, fp, ensure_ascii=False, separators=(",", ":"))
+        print(f"      {DATA_JSON}  ({os.path.getsize(DATA_JSON)/1024:.0f} KB)")
     print(f"  전국 {len(rows)}곳 · 기준 {meta['asOf']}")
-    print(f"  달빛어린이병원 {meta['moonCount']}곳")
+    print(f"  달빛어린이병원 {meta['moonCount']}곳 · 일반 소아병원 {len(meta.get('clinics', []))}곳")
     print(f"  병원 공지 {meta['msgCount']}곳 · 신뢰도 {meta['relCount']}곳 ({meta['modelTag'] or '없음'})")
 
 

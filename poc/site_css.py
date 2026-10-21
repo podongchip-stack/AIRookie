@@ -108,9 +108,6 @@ b,strong{font-weight:650}
   color:var(--muted);pointer-events:none}
 .find-map:focus-within .ic{color:var(--accent)}
 .find-map input:focus{box-shadow:0 0 0 3px var(--accentbg)}
-/* 주소를 바깥(OSM)에 물어보는 동안 — 테두리만 옅게 */
-.find-map.busy input{border-color:var(--mapdim)}
-.sug .geo{color:var(--accent);font-weight:620}
 .sug{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:15;background:var(--card);
   border:1px solid var(--line);border-radius:12px;overflow:hidden;text-align:left}
 .sug button{display:block;width:100%;text-align:left;font:inherit;font-size:14.5px;
@@ -222,8 +219,8 @@ b,strong{font-weight:650}
 .verdict p{margin:0;font-size:14.5px;color:var(--ink2);line-height:1.6}
 .verdict .why{margin-top:10px;font-size:13px;color:var(--muted)}
 /* 카드 그리드 — 넓은 화면에서는 두 줄로 */
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:11px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 17px;margin-bottom:10px;
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:11px}
+.card{text-align:left;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 17px;margin-bottom:10px;
       transition:border-color .18s var(--ease)}
 .card:hover{border-color:var(--mapdim)}
 /* 달빛은 응급실이 아니라는 걸 색으로도 구분한다 */
@@ -235,18 +232,71 @@ b,strong{font-weight:650}
 /* 여건이 두루 좋은 곳 — 왼쪽 띠가 아니라 옅은 바탕으로 (굵은 색 띠는 쓰지 않는다) */
 .card.good{background:linear-gradient(0deg,var(--okbg),var(--okbg)),var(--card)}
 .card.moon .acts a.tel{background:var(--ink);border-color:var(--ink)}
+.card.moon .hrs{font-size:13px;color:var(--ink2);margin:8px 0 0;line-height:1.55}
+.card.moon .hrs b{font-weight:650;color:var(--ink)}
+.card.moon .hrs.none{color:var(--muted)}
+.card.moon .hrs small{display:block;font-size:12px;color:var(--muted);margin-top:2px}
 .row1{display:flex;align-items:baseline;gap:10px}
 .num{flex:none;width:22px;height:22px;border-radius:7px;background:var(--accent);color:#fff;font-size:12px;
      font-weight:700;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
-.name{font-size:17px;font-weight:680;letter-spacing:-.025em;line-height:1.33;flex:1}
+.name{font-size:18px;font-weight:700;letter-spacing:-.025em;line-height:1.33;flex:1}
 .dist{font-size:13.5px;color:var(--accent);font-weight:680;white-space:nowrap;font-variant-numeric:tabular-nums}
-.sub{font-size:12.5px;color:var(--muted);margin:5px 0 0 32px;font-variant-numeric:tabular-nums}
+.sub{font-size:12.5px;color:var(--muted);margin:5px 0 0;font-variant-numeric:tabular-nums}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:11px 0 0}
 .chip{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--accentbg);color:var(--accent);
       white-space:nowrap;font-variant-numeric:tabular-nums}
 .chip.ok{background:var(--okbg);color:var(--ok)}
 .chip.warn{background:var(--warnbg);color:var(--warn)}
 .chip.none{background:transparent;color:var(--muted);border:1px solid var(--line)}
+/* 응급실 자리·소아 병상은 카드에서 먼저 읽힌다 — 앞으로 보내고 점으로 상태를 알린다 */
+.chip.p1{order:-1;font-size:13px;font-weight:650;padding:5px 11px}
+.chip.p1::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;
+                 background:currentColor;margin-right:6px;vertical-align:1px}
+/* 카드 읽는 순서의 위·아래 — 위는 병원명과 전화, 아래는 갱신 시각과 길찾기 */
+.row1{align-items:center}
+.tel-top{flex:none;text-decoration:none;font-size:14px;font-weight:650;color:#fff;background:var(--accent);
+         border-radius:999px;padding:9px 16px;min-height:38px;display:inline-flex;align-items:center;
+         transition:background .16s var(--ease)}
+.tel-top:hover{background:var(--accent-d)}
+.tel-top.off{background:transparent;border:1px dashed var(--line);color:var(--muted)}
+.eta{font-size:15px;margin:6px 0 0;color:var(--ink);font-variant-numeric:tabular-nums}
+.eta b{font-weight:650}
+.eta span{font-size:13px;color:var(--muted);font-weight:500}
+.eta span::before{content:'|';margin:0 8px;color:var(--line)}
+.foot{display:flex;align-items:center;gap:10px;margin-top:14px}
+.stamp2{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.stamp2.warn{color:var(--warn)}
+.route{margin-left:auto;text-decoration:none;font-size:14px;font-weight:650;color:var(--ink);
+       border:1px solid var(--line);border-radius:999px;padding:9px 16px;min-height:38px;
+       display:inline-flex;align-items:center;transition:border-color .16s var(--ease)}
+.route:hover{border-color:var(--mapdim)}
+.route.off{border-style:dashed;color:var(--muted)}
+
+/* 좁은 화면 전용: 긴급 카드와 하단 고정 바. 넓은 화면에서는 안 보인다 */
+.sos,.fbar{display:none}
+@media (max-width:720px){
+  .sos{display:flex;align-items:center;gap:12px;margin:12px 16px 0;padding:13px 14px;border-radius:14px;
+       background:var(--urgentbg);border:1px solid var(--urgentline)}
+  .sos p{margin:0;flex:1;font-size:13.5px;line-height:1.5;color:var(--ink2)}
+  .sos b{color:var(--urgent)}
+  .sos a{flex:none;text-decoration:none;font-size:15px;font-weight:700;color:#fff;background:var(--urgent-fill);
+         border-radius:999px;padding:12px 18px;min-height:44px;display:inline-flex;align-items:center}
+  .sos a:hover{background:var(--urgent-fill-h)}
+  /* 119 버튼과 경고 문장은 위 긴급 카드로 옮겼다 */
+  .hero{padding-top:28px}
+  .hero .btn-call,.hero .fine{display:none}
+  .frame,.results{padding-left:16px;padding-right:16px}
+  .card{border-radius:16px;box-shadow:0 1px 4px rgba(24,24,27,.07)}
+  .card .whyline{font-size:14px;font-weight:620;color:var(--ink2);margin:8px 0 0}
+  .fbar:not([hidden]){display:flex;align-items:center;gap:8px;position:fixed;left:0;right:0;bottom:0;z-index:25;
+       padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:var(--card);
+       border-top:1px solid var(--line);box-shadow:0 -2px 10px rgba(24,24,27,.08)}
+  .fbar .fn{flex:1;min-width:0;font-size:14.5px;font-weight:680;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fbar a{flex:none;text-decoration:none;font-size:14.5px;font-weight:650;padding:11px 16px;min-height:44px;
+          display:inline-flex;align-items:center;border-radius:999px;border:1px solid var(--line);color:var(--ink)}
+  .fbar a.tel{background:var(--accent);border-color:var(--accent);color:#fff}
+  .sec footer{padding-bottom:110px}
+}
 .bar2{margin:13px 0 0;font-size:12.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
 .bar2 .track{height:6px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:6px}
 .bar2 .fill{height:100%;background:var(--accent);border-radius:99px}
@@ -261,6 +311,30 @@ b,strong{font-weight:650}
 .notice p{margin:0 0 5px}.notice p:last-child{margin:0}
 .notice.info{background:var(--accentbg);border-color:transparent}
 .notice.info .lab{color:var(--accent)}
+/* 접는 영역 — [더 보기]와 카드 안 [왜 이 순서인가요]. 기본은 닫혀 있다 */
+details.more{margin:6px 0 0}
+details.more>summary,details.why>summary{cursor:pointer;list-style:none;color:var(--muted);font-weight:600}
+details.more>summary::-webkit-details-marker,details.why>summary::-webkit-details-marker{display:none}
+details.more>summary{text-align:center;font-size:15px;padding:13px;border:1px solid var(--line);border-radius:999px;
+                     color:var(--ink);margin-bottom:11px}
+details.more[open]>summary{margin-bottom:11px}
+details.why{margin-top:12px}
+details.why>summary{font-size:13px}
+details.why>summary::before{content:"+ ";}
+details.why[open]>summary::before{content:"− ";}
+details.why .calc{margin-top:8px}
+/* 한계 박스 — 핵심 몇 줄은 펼쳐 두고 나머지는 접는다 */
+/* 카드의 큰 한 줄 — 왜 이곳인지. 카드에서 가장 크게 읽힌다 */
+.whyline{font-size:19px;font-weight:750;letter-spacing:-.02em;line-height:1.4;color:var(--ink);margin:10px 0 4px;word-break:keep-all;text-wrap:balance}
+.whyline span{display:inline-block}
+details.rest{margin-top:6px}
+details.rest>summary{cursor:pointer;list-style:none;font-size:13px;font-weight:650;color:var(--muted)}
+details.rest>summary::-webkit-details-marker{display:none}
+details.limits{margin-top:10px}
+details.limits>summary{cursor:pointer;list-style:none;font-weight:650;color:var(--ink)}
+details.limits>summary::-webkit-details-marker{display:none}
+details.limits>summary::before{content:"+ "}
+details.limits[open]>summary::before{content:"− "}
 .acts{display:flex;gap:9px;margin-top:14px}
 .acts a{flex:1;text-align:center;text-decoration:none;font-size:15px;font-weight:650;padding:12px;
         border-radius:999px;border:1px solid var(--line);color:var(--ink);
@@ -274,8 +348,6 @@ b,strong{font-weight:650}
 .demo{margin:22px 0 0}
 .card.ex{border-style:dashed;background:var(--card)}
 .card.ex .name,.card.ex .dist{color:var(--ink2)}
-.acts .off{flex:1;text-align:center;font-size:15px;font-weight:650;padding:12px;
-           border-radius:999px;border:1px dashed var(--line);color:var(--muted)}
 .exnote{list-style:none;margin:14px 0 0;padding:0;max-width:62ch}
 .exnote li{font-size:13.5px;color:var(--muted);line-height:1.6;padding:0 0 0 14px;
            position:relative;margin-bottom:7px}

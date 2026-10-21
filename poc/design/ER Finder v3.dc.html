@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><link rel="stylesheet" href="_ds/organic-a4b37068-5af0-4ffb-9721-c9410903cf38/styles.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css"><style>.erf3 *{box-sizing:border-box}.erf3 a{color:inherit;text-decoration:none}.erf3 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0;text-align:left}.erf3 button:focus-visible,.erf3 a:focus-visible,.erf3 input:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}.erf3 *::-webkit-scrollbar{display:none}.erf3 *{scrollbar-width:none}.erf3 summary{list-style:none}.erf3 summary::-webkit-details-marker{display:none}</style></helmet>
+<div class="erf3" style="width:390px;height:844px;position:relative;overflow:hidden;background:var(--color-bg);color:var(--color-text);font-family:'Pretendard Variable','Pretendard',system-ui,sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.01em;word-break:keep-all;display:flex;flex-direction:column">
+<div style="height:44px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 28px;font-size:14px;font-weight:600"><span>23:40</span><span style="width:20px;height:10px;border-radius:3px;border:1.5px solid var(--color-text)"></span></div>
+
+<div style="flex:none;padding:2px 20px 10px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:15px;font-weight:700">아이응급실</span><a href="tel:119" style="height:36px;padding:0 16px;border-radius:999px;background:oklch(0.55 0.19 27);color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center">119 전화</a></div>
+<button onClick="{{ openLoc }}" style="display:flex;align-items:center;gap:10px;height:44px;padding:0 14px;border-radius:12px;background:var(--color-surface)"><span style="flex:none;width:8px;height:8px;border-radius:50%;background:{{ locDot }}"></span><span style="flex:1;min-width:0;font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ locLabel }}</span><svg aria-label="위치 변경" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-700)" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg></button>
+</div>
+
+<sc-if value="{{ showList }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;min-height:0;overflow-y:auto;padding:0 20px 28px;display:flex;flex-direction:column">
+
+<sc-if value="{{ isExample }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding:12px 14px;border-radius:12px;background:var(--color-neutral-200)"><span style="flex:1;font-size:13.5px;line-height:1.5">위치를 아직 몰라서 <b>서울 중심 예시</b>를 보여드려요. 실제 가까운 곳과 달라요.</span><button onClick="{{ openLoc }}" style="flex:none;font-size:13.5px;font-weight:700;color:var(--color-accent-700)">위치 입력</button></div></sc-if>
+
+
+<sc-for list="{{ groups }}" as="g" hint-placeholder-count="2">
+<div style="display:flex;flex-direction:column;padding-top:{{ g.pt }}">
+<div style="position:sticky;top:0;z-index:2;background:var(--color-bg);margin:0 -20px;padding:12px 20px 10px;border-top:3px solid {{ g.dot }};display:flex;align-items:baseline;gap:8px"><span style="font-size:17px;font-weight:700;letter-spacing:-.025em;color:{{ g.fg }}">{{ g.title }}</span><span style="font-size:14px;font-weight:600;color:var(--color-neutral-600)">{{ g.count }}곳</span></div>
+
+
+<sc-if value="{{ g.hasHero }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:14px;padding:16px 0 20px;border-bottom:1px solid var(--color-divider)">
+<button onClick="{{ g.hero.open }}" style="display:flex;flex-direction:column;gap:5px">
+<span style="display:flex;align-items:center;gap:8px"><span style="flex:none;width:24px;height:24px;border-radius:50%;background:var(--color-text);color:var(--color-bg);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center">1</span><sc-if value="{{ g.hero.good }}" hint-placeholder-val="{{ false }}"><span style="font-size:13px;font-weight:700;color:var(--color-accent-2-700)">여건이 두루 좋음</span></sc-if></span>
+<span style="display:flex;align-items:baseline;gap:10px"><span style="flex:1;font-size:23px;font-weight:700;letter-spacing:-.03em;line-height:1.3">{{ g.hero.n }}</span></span>
+<span style="font-size:13.5px;color:var(--color-neutral-700)">{{ g.hero.g }} · {{ g.hero.a }} · {{ g.hero.travel }}</span>
+</button>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:14px 0;border-top:1px solid var(--color-divider);border-bottom:1px solid var(--color-divider)"><sc-for list="{{ g.hero.big }}" as="t" hint-placeholder-count="3"><span style="display:flex;flex-direction:column;gap:2px;padding-left:{{ t.pl }};border-left:{{ t.bl }}"><span style="display:flex;align-items:baseline;gap:1px;color:{{ t.fg }}"><span style="font-size:28px;font-weight:800;letter-spacing:-.04em;line-height:1.1">{{ t.v }}</span><span style="font-size:14px;font-weight:700">{{ t.u }}</span></span><span style="font-size:12px;color:var(--color-neutral-700)">{{ t.k }}</span></span></sc-for></div>
+<span style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;font-weight:600"><sc-for list="{{ g.hero.flags }}" as="fl" hint-placeholder-count="1"><span style="color:{{ fl.fg }}">{{ fl.t }}</span></sc-for></span>
+<sc-for list="{{ g.hero.notices }}" as="nt" hint-placeholder-count="0"><div style="display:flex;gap:10px;padding:10px 12px;border-radius:10px;background:{{ nt.bg }}"><span style="flex:none;font-size:12.5px;font-weight:700;color:{{ nt.fg }};padding-top:1px">{{ nt.lab }}</span><span style="font-size:13.5px;line-height:1.5"><span style="color:var(--color-neutral-700)">{{ nt.dept }} · </span>{{ nt.text }}</span></div></sc-for>
+<div style="display:flex;gap:8px"><a href="{{ g.hero.telHref }}" style="flex:1.6;height:50px;border-radius:12px;background:var(--color-accent-2-700);color:#fff;font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center">전화걸기</a><a href="#" style="flex:1;height:50px;border-radius:12px;border:1px solid var(--color-divider);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center">길찾기</a></div>
+</div>
+</sc-if>
+
+<sc-for list="{{ g.rows }}" as="h" hint-placeholder-count="2">
+<div style="display:flex;flex-direction:column;gap:10px;padding:18px 0;border-bottom:1px solid var(--color-divider)">
+<button onClick="{{ h.open }}" style="display:flex;flex-direction:column;gap:8px">
+<span style="display:flex;align-items:flex-start;gap:8px">
+<sc-if value="{{ h.badge }}" hint-placeholder-val="{{ false }}"><span style="flex:none;width:22px;height:22px;margin-top:1px;border-radius:50%;background:var(--color-text);color:var(--color-bg);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">{{ h.rank }}</span></sc-if>
+<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:16px;font-weight:700;letter-spacing:-.02em;line-height:1.35">{{ h.n }}</span><span style="font-size:12.5px;color:var(--color-neutral-700)">{{ h.g }} · {{ h.a }} · {{ h.dist }}</span></span>
+<span style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:0"><span style="font-size:17px;font-weight:800;letter-spacing:-.03em">{{ h.timeBig }}</span><span style="font-size:11px;font-weight:600;color:var(--color-neutral-600)">{{ h.timeKind }}</span></span>
+</span>
+<span style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13.5px;color:var(--color-neutral-800)"><sc-for list="{{ h.metrics }}" as="m" hint-placeholder-count="2"><span style="color:{{ m.lc }}">{{ m.k }} <b style="font-size:16px;font-weight:800;color:{{ m.fg }}">{{ m.v }}</b>{{ m.u }}</span></sc-for></span>
+<span style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;font-weight:600"><sc-for list="{{ h.flags }}" as="fl" hint-placeholder-count="1"><span style="color:{{ fl.fg }}">{{ fl.t }}</span></sc-for></span>
+</button>
+<sc-for list="{{ h.notices }}" as="nt" hint-placeholder-count="0"><div style="display:flex;gap:10px;padding:9px 12px;border-radius:10px;background:{{ nt.bg }}"><span style="flex:none;font-size:12px;font-weight:700;color:{{ nt.fg }};padding-top:1px">{{ nt.lab }}</span><span style="font-size:13px;line-height:1.5"><span style="color:var(--color-neutral-700)">{{ nt.dept }} · </span>{{ nt.text }}</span></div></sc-for>
+<div style="display:flex;gap:6px;padding-top:2px"><a href="{{ h.telHref }}" style="height:38px;padding:0 14px;border-radius:10px;border:1px solid var(--color-accent-2-600);color:var(--color-accent-2-700);font-size:14px;font-weight:700;display:flex;align-items:center">전화걸기</a><a href="#" style="height:38px;padding:0 12px;border-radius:10px;border:1px solid var(--color-divider);font-size:14px;font-weight:600;display:flex;align-items:center">길찾기</a><button onClick="{{ h.open }}" style="margin-left:auto;height:38px;padding:0 4px;font-size:13.5px;font-weight:600;color:var(--color-neutral-700)">자세히 ›</button></div>
+</div>
+</sc-for>
+<sc-if value="{{ g.hasMore }}" hint-placeholder-val="{{ false }}"><button onClick="{{ g.toggle }}" style="height:46px;margin-top:10px;border-radius:12px;background:var(--color-neutral-200);text-align:center;font-size:14.5px;font-weight:600">{{ g.moreLabel }}</button></sc-if>
+</div>
+</sc-for>
+
+<div style="margin:44px -20px 0;padding:22px 20px 10px;background:var(--color-surface);display:flex;flex-direction:column">
+<div style="display:flex;flex-direction:column;gap:3px;padding-bottom:6px"><span style="font-size:12.5px;font-weight:700;color:var(--color-neutral-700)">응급실이 아닌 곳</span><span style="font-size:18px;font-weight:700;letter-spacing:-.025em">달빛어린이병원</span><span style="font-size:13px;color:var(--color-neutral-700);line-height:1.55">응급실이 아니에요. 밤·휴일에 가벼운 증상을 보는 소아 외래예요. 운영시간은 병원마다 달라 전화로 확인하세요.</span></div>
+<sc-for list="{{ moons }}" as="mo" hint-placeholder-count="2"><div style="display:flex;flex-direction:column;gap:6px;padding:14px 0;border-top:1px solid var(--color-divider)"><span style="display:flex;align-items:baseline;gap:10px"><span style="flex:1;font-size:15.5px;font-weight:700">{{ mo.n }}</span><span style="font-size:14px;font-weight:700">{{ mo.d }}</span></span><span style="font-size:12.5px;color:var(--color-neutral-700)">{{ mo.k }} · {{ mo.a }} · 운영시간은 전화 확인</span><div style="display:flex;gap:6px;padding-top:2px"><a href="{{ mo.telHref }}" style="height:36px;padding:0 13px;border-radius:10px;border:1px solid var(--color-divider);font-size:13.5px;font-weight:600;display:flex;align-items:center">전화걸기</a><a href="#" style="height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--color-divider);font-size:13.5px;font-weight:600;display:flex;align-items:center">길찾기</a></div></div></sc-for>
+
+</div>
+<div style="margin:0 -20px -28px;padding:22px 20px 32px;background:var(--color-neutral-200);display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.7;color:var(--color-neutral-800)"><span>초록 표시는 여건이 맞는다는 뜻이지 수용을 보장하지 않아요. 소아 병상 수는 실시간이 아니고, 응급실 자리와 혼잡도는 응급실 전체 기준이에요. 마지막 확인은 항상 전화로 하세요.</span><span>지도를 불러오면 보고 있는 지역이 지도 제공자에게, 도로 시간을 계산하면 출발 좌표가 길찾기 제공자에게 전달돼요. 저장하지는 않아요.</span><span>자료: 중앙응급의료센터 E-Gen, 건강보험심사평가원, 국립중앙의료원</span></div>
+</div>
+</sc-if>
+
+<sc-if value="{{ showMap }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;min-height:0;position:relative;overflow:hidden;background:repeating-linear-gradient(135deg,var(--color-neutral-200) 0 12px,var(--color-neutral-100) 12px 24px)">
+<span style="position:absolute;left:20px;top:164px;font:500 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">지도 타일 · 기존 지도 컴포넌트</span>
+<div style="position:absolute;left:12px;right:12px;top:10px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:10px 0;border-radius:12px;background:var(--color-neutral-100);box-shadow:var(--shadow-sm);z-index:2"><sc-for list="{{ summary }}" as="sm" hint-placeholder-count="4"><span style="display:flex;flex-direction:column;gap:1px;padding:0 10px;border-left:{{ sm.bl }}"><span style="font-size:19px;font-weight:800;letter-spacing:-.03em;color:{{ sm.fg }}">{{ sm.v }}</span><span style="font-size:10.5px;line-height:1.3;color:var(--color-neutral-700)">{{ sm.k }}</span></span></sc-for></div>
+<span style="position:absolute;left:50%;top:46%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:var(--color-text);border:3px solid #fff;box-shadow:0 0 0 6px rgba(32,30,29,.12)"></span>
+<sc-for list="{{ all }}" as="h" hint-placeholder-count="5"><button onClick="{{ h.pick }}" aria-label="{{ h.n }}" style="position:absolute;left:{{ h.px }};top:{{ h.py }};width:{{ h.ds }};height:{{ h.ds }};transform:translate(-50%,-50%);border-radius:50%;background:{{ h.dc }};border:2px solid #fff;box-shadow:{{ h.ring }}"></button></sc-for>
+<div style="position:absolute;left:12px;right:12px;top:94px;display:flex;flex-wrap:wrap;gap:4px 12px;padding:7px 12px;border-radius:10px;background:var(--color-neutral-100);font-size:11.5px;font-weight:600;z-index:2"><sc-for list="{{ legend }}" as="lg" hint-placeholder-count="4"><span style="display:flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:{{ lg.c }}"></span>{{ lg.t }}</span></sc-for><span style="color:var(--color-neutral-700);font-weight:500">점이 클수록 소아 여건이 좋아요</span></div>
+<div style="position:absolute;left:0;right:0;bottom:0;padding:14px 20px 14px;background:var(--color-bg);border-top:1px solid var(--color-divider);display:flex;flex-direction:column;gap:10px">
+<button onClick="{{ sel.open }}" style="display:flex;flex-direction:column;gap:2px"><span style="display:flex;align-items:baseline;gap:10px"><span style="flex:1;font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ sel.n }}</span><span style="font-size:13px;font-weight:600;color:var(--color-neutral-700)">자세히 ›</span></span><span style="font-size:12.5px;color:var(--color-neutral-700)">{{ sel.g }} · {{ sel.travel }}</span></button>
+<div style="display:flex;gap:8px"><a href="{{ sel.telHref }}" style="flex:1.6;height:46px;border-radius:12px;background:var(--color-accent-2-700);color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center">전화걸기</a><a href="#" style="flex:1;height:46px;border-radius:12px;border:1px solid var(--color-divider);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center">길찾기</a></div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ showGuide }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;min-height:0;overflow-y:auto;padding:0 20px 24px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;flex-direction:column;gap:4px;padding:6px 0 4px"><span style="font-size:20px;font-weight:700;letter-spacing:-.03em">어디로 가야 할지 헷갈릴 때</span><span style="font-size:13.5px;color:var(--color-neutral-700)">일반적인 안내이며 진단이 아니에요.</span></div>
+<div style="border-radius:14px;background:oklch(0.95 0.035 28);padding:16px;display:flex;flex-direction:column;gap:8px"><span style="font-size:13px;font-weight:700;color:oklch(0.5 0.16 28)">지금 바로</span><span style="font-size:17px;font-weight:700">119에 전화하세요</span><ul style="margin:0;padding-left:18px;font-size:14.5px;line-height:1.75"><li>숨쉬기 힘들어하거나 입술이 파래요</li><li>불러도 반응이 없거나 축 처져요</li><li>경련이 5분 넘게 멈추지 않아요</li><li>생후 3개월 미만인데 열이 나요</li></ul><a href="tel:119" style="height:44px;border-radius:12px;background:oklch(0.5 0.16 28);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:4px">119 전화</a></div>
+<div style="padding:14px 0;border-bottom:1px solid var(--color-divider);display:flex;flex-direction:column;gap:6px"><span style="font-size:13px;font-weight:700;color:var(--color-neutral-700)">오늘 안에</span><span style="font-size:16px;font-weight:700">응급실에서 확인해요</span><span style="font-size:14px;line-height:1.7;color:var(--color-neutral-800)">열이 높고 계속 처지거나 먹지 못할 때, 토하거나 설사가 심해 소변이 줄었을 때, 머리를 부딪친 뒤 계속 토할 때</span></div>
+<div style="padding:14px 0;border-bottom:1px solid var(--color-divider);display:flex;flex-direction:column;gap:6px"><span style="font-size:13px;font-weight:700;color:var(--color-accent-2-700)">밤이지만 급하지 않으면</span><span style="font-size:16px;font-weight:700">달빛어린이병원</span><span style="font-size:14px;line-height:1.7;color:var(--color-neutral-800)">열은 있지만 잘 놀고 잘 먹을 때, 기침·콧물이 밤에 심해졌을 때. 목록 아래에서 가까운 곳을 볼 수 있어요.</span></div>
+<span style="font-size:17px;font-weight:700;padding:14px 0 0">가기 전에 챙길 것</span>
+<div style="display:flex;flex-direction:column"><sc-for list="{{ checks }}" as="k" hint-placeholder-count="5"><button onClick="{{ k.toggle }}" style="width:100%;display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--color-divider);font-size:15px"><span style="flex:none;width:22px;height:22px;border-radius:6px;border:1.5px solid {{ k.bd }};background:{{ k.bg }};color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center">{{ k.mark }}</span><span style="flex:1;color:{{ k.fg }}">{{ k.t }}</span></button></sc-for></div>
+<span style="font-size:17px;font-weight:700;padding:14px 0 0">자주 묻는 것</span>
+<div style="display:flex;flex-direction:column">
+<details style="padding:14px 0;border-bottom:1px solid var(--color-divider)"><summary style="font-size:15px;font-weight:600;cursor:pointer">지금 소아 자리가 있는지 알 수 있나요?</summary><p style="margin:8px 0 0;font-size:14px;line-height:1.65;color:var(--color-neutral-800)">아니요. 소아 병상 수는 일부 병원만 올리고 실시간이 아니에요. 응급실 자리와 혼잡도는 응급실 전체 기준이에요.</p></details>
+<details style="padding:14px 0;border-bottom:1px solid var(--color-divider)"><summary style="font-size:15px;font-weight:600;cursor:pointer">이 순서가 추천인가요?</summary><p style="margin:8px 0 0;font-size:14px;line-height:1.65;color:var(--color-neutral-800)">아니요. 거리와 소아 진료 여건으로 정한 순서일 뿐이에요. 오늘 밤 소아과 당직이 누구인지는 공개된 데이터에 없어서, 마지막 확인은 전화로 해야 해요.</p></details>
+<details style="padding:14px 0;border-bottom:1px solid var(--color-divider)"><summary style="font-size:15px;font-weight:600;cursor:pointer">제 위치가 저장되나요?</summary><p style="margin:8px 0 0;font-size:14px;line-height:1.65;color:var(--color-neutral-800)">저장하지 않아요. 지도 배경을 받으며 보고 있는 지역이 지도 제공자에게, 도로 시간을 계산하며 출발 좌표가 길찾기 제공자(카카오모빌리티)에게 전달돼요.</p></details>
+</div>
+</div>
+</sc-if>
+
+<div style="flex:none;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--color-divider);background:var(--color-bg);padding:0 8px 24px;position:relative;z-index:3"><sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3"><button onClick="{{ t.go }}" style="height:54px;text-align:center;font-size:14px;font-weight:{{ t.fw }};color:{{ t.fg }};border-top:2px solid {{ t.bar }};margin-top:-1px">{{ t.label }}</button></sc-for></div>
+
+<sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:44px 0 0 0;background:var(--color-bg);display:flex;flex-direction:column;z-index:6">
+<div style="flex:none;padding:4px 12px"><button onClick="{{ closeDetail }}" style="height:40px;padding:0 8px;font-size:15px;font-weight:600">‹ 목록</button></div>
+<div style="flex:1;min-height:0;overflow-y:auto;padding:4px 20px 20px;display:flex;flex-direction:column;gap:18px">
+<div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:13px;font-weight:700;color:{{ d.groupFg }}">{{ d.groupTitle }}</span><span style="font-size:24px;font-weight:700;letter-spacing:-.03em;line-height:1.35">{{ d.n }}</span><span style="font-size:14px;color:var(--color-neutral-700)">{{ d.g }} · {{ d.a }}</span><span style="font-size:14px;font-weight:600">{{ d.travel }}</span></div>
+<sc-for list="{{ d.notices }}" as="nt" hint-placeholder-count="0"><div style="display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-radius:12px;background:{{ nt.bg }}"><span style="font-size:12.5px;font-weight:700;color:{{ nt.fg }}">{{ nt.lab }} · {{ nt.dept }}</span><span style="font-size:14.5px;line-height:1.55">{{ nt.text }}</span></div></sc-for>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 20px"><sc-for list="{{ d.facts }}" as="f" hint-placeholder-count="4"><div style="border-top:2px solid {{ f.line }};padding-top:10px;display:flex;flex-direction:column;gap:2px"><span style="font-size:13px;color:var(--color-neutral-700)">{{ f.k }}</span><span style="display:flex;align-items:baseline;gap:2px;color:{{ f.fg }}"><span style="font-size:26px;font-weight:800;letter-spacing:-.04em;line-height:1.2">{{ f.v }}</span><span style="font-size:14px;font-weight:700">{{ f.u }}</span></span><span style="font-size:12px;line-height:1.5;color:var(--color-neutral-700)">{{ f.note }}</span></div></sc-for></div>
+<sc-if value="{{ d.hasFresh }}" hint-placeholder-val="{{ false }}"><div style="font-size:13.5px;font-weight:600;color:{{ d.freshFg }}">병상 숫자 {{ d.freshText }}</div></sc-if>
+<sc-if value="{{ d.hasHold }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:8px;padding:14px 0;border-top:1px solid var(--color-divider);border-bottom:1px solid var(--color-divider)"><span style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:14px;font-weight:600">도착할 때 자리가 남아 있을 가능성</span><span style="font-size:20px;font-weight:800">{{ d.hold }}%</span></span><span style="display:block;height:6px;border-radius:99px;background:var(--color-neutral-200);overflow:hidden"><span style="display:block;height:100%;width:{{ d.holdW }};background:var(--color-accent-2-600)"></span></span><span style="font-size:12px;line-height:1.55;color:var(--color-neutral-700)">병상 숫자가 바뀐 기록으로 어림한 값이에요. 응급실 전체 기준이고 소아 전용이 아니에요.</span></div></sc-if>
+<p style="margin:0;font-size:12.5px;line-height:1.7;color:var(--color-neutral-700)">소아과 전문의 수는 병원 소속 인원이며 지금 당직인지는 알 수 없어요. 소아 병상 수는 실시간이 아니에요. 마지막 확인은 전화로 하세요.</p>
+</div>
+<div style="flex:none;display:flex;gap:8px;padding:10px 20px 26px;border-top:1px solid var(--color-divider)"><a href="{{ d.telHref }}" style="flex:1.6;height:52px;border-radius:14px;background:var(--color-accent-2-700);color:#fff;font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center">전화걸기</a><a href="#" style="flex:1;height:52px;border-radius:14px;border:1px solid var(--color-divider);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center">길찾기</a></div>
+</div>
+</sc-if>
+
+<sc-if value="{{ locOpen }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:0;z-index:8;display:flex;flex-direction:column;justify-content:flex-end">
+<button onClick="{{ closeLoc }}" aria-label="닫기" style="position:absolute;inset:0;background:rgba(32,30,29,.4)"></button>
+<div style="position:relative;background:var(--color-bg);border-radius:20px 20px 0 0;padding:22px 20px 30px;display:flex;flex-direction:column;gap:14px">
+<span style="font-size:19px;font-weight:700;letter-spacing:-.02em">어디서 출발하세요?</span>
+<input value="{{ q }}" onChange="{{ onQ }}" placeholder="주소·지역·병원 (예: 진주대로 501)" style="height:48px;border-radius:12px;border:1.5px solid var(--color-text);background:#fff;padding:0 14px;font:inherit;font-size:16px;color:var(--color-text)">
+<button onClick="{{ useHere }}" style="height:48px;border-radius:12px;background:var(--color-text);color:var(--color-bg);text-align:center;font-size:15px;font-weight:700">현재 위치 사용</button>
+<div style="display:flex;flex-direction:column"><button onClick="{{ useHere }}" style="padding:13px 0;border-bottom:1px solid var(--color-divider);font-size:15px">경상남도 진주시 진주대로 501 <span style="font-size:12.5px;color:var(--color-neutral-600)">· 최근</span></button><button onClick="{{ useExample }}" style="padding:13px 0;font-size:15px;color:var(--color-neutral-700)">위치 없이 서울 중심 예시 보기</button></div>
+<span style="font-size:12px;line-height:1.6;color:var(--color-neutral-700)">위치는 저장하지 않아요. 도로 시간을 계산하려고 출발 좌표가 길찾기 제공자(카카오모빌리티)에게 전달돼요.</span>
+</div>
+</div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:390,&quot;height&quot;:844},&quot;loc&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;jinju&quot;,&quot;none&quot;],&quot;default&quot;:&quot;jinju&quot;,&quot;tsType&quot;:&quot;'jinju'|'none'&quot;},&quot;start&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;list&quot;,&quot;map&quot;,&quot;guide&quot;,&quot;detail&quot;],&quot;default&quot;:&quot;list&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;detailId&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;gnu&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const J=[
+{id:'gnu',n:'경상국립대학교병원',t:'055-750-8000',g:'권역센터',a:'진주시',road:true,min:6,km:2.3,av:7,cp:28,pb:3,doc:9,nicu:1,oc:75,upd:0,hold:64,x:60,y:36,ms:[[2,'소아청소년과','8세 미만 요붕증(DI) 환자 수용 불가'],[2,'소아청소년과','두드러기(urticaria) 환아 진료 불가'],[2,'장중첩/폐색(유아)','진료 및 수술 불가'],[2,'정형외과','수부 질환, 소아정형 환자 수용 불가']]},
+{id:'goryeo',n:'진주고려병원',t:'055-751-2500',g:'지역기관',a:'진주시',road:true,min:7,km:2.6,av:9,cp:9,pb:0,doc:2,nicu:0,oc:0,upd:900,hold:91,x:55,y:40,ms:[]},
+{id:'bando',n:'반도병원',t:'055-747-6000',g:'지역기관',a:'진주시',road:true,min:9,km:3.4,av:7,cp:7,pb:0,doc:0,nicu:0,oc:0,upd:180000,hold:88,x:40,y:30,ms:[]},
+{id:'bareun',n:'바른병원',t:'055-790-3000',g:'응급실운영신고기관',a:'진주시',road:true,min:7,km:2.7,av:null,cp:null,pb:0,doc:0,nicu:0,oc:null,upd:null,hold:null,x:57,y:43,ms:[]},
+{id:'scf',n:'삼천포제일병원',t:'055-833-4400',g:'지역기관',a:'사천시',road:false,min:32,km:25,av:8,cp:8,pb:0,doc:3,nicu:0,oc:0,upd:16225,hold:84,x:30,y:74,ms:[]},
+{id:'scs',n:'삼천포서울병원',t:'055-835-9900',g:'지역기관',a:'사천시',road:false,min:31,km:24,av:8,cp:9,pb:0,doc:2,nicu:0,oc:11,upd:600,hold:86,x:34,y:70,ms:[]},
+{id:'masan',n:'경상남도마산의료원',t:'055-249-1000',g:'지역기관',a:'창원시',road:true,min:48,km:52,av:8,cp:13,pb:0,doc:1,nicu:0,oc:38,upd:600,hold:80,x:84,y:58,ms:[]}];
+const S=[
+{id:'sch',n:'순천향대학교 서울병원',t:'02-709-9114',g:'지역센터',a:'서울 용산구',road:true,min:14,km:4.9,av:12,cp:20,pb:4,doc:14,nicu:1,oc:40,upd:0,hold:86,x:56,y:66,ms:[]},
+{id:'nmc',n:'국립중앙의료원',t:'02-2260-7114',g:'지역센터',a:'서울 중구',road:true,min:8,km:2.4,av:9,cp:15,pb:3,doc:2,nicu:0,oc:40,upd:0,hold:83,x:62,y:44,ms:[]},
+{id:'redc',n:'서울적십자병원',t:'02-2002-8000',g:'지역기관',a:'서울 종로구',road:true,min:4,km:1.1,av:10,cp:10,pb:0,doc:1,nicu:0,oc:0,upd:900,hold:92,x:44,y:42,ms:[]},
+{id:'seran',n:'세란병원',t:'02-737-0181',g:'지역기관',a:'서울 종로구',road:true,min:6,km:2.0,av:10,cp:10,pb:0,doc:0,nicu:0,oc:0,upd:300,hold:90,x:40,y:36,ms:[]},
+{id:'smc',n:'삼성서울병원',t:'02-3410-2114',g:'지역센터',a:'서울 강남구',road:false,min:28,km:13,av:-23,cp:52,pb:4,doc:63,nicu:0,oc:100,upd:0,hold:18,x:86,y:80,ms:[[1,'응급실','소아 중환자 및 뇌전증 지속상태 환자는 전원 수용 여부 사전 확인']]},
+{id:'kbs',n:'강북삼성병원',t:'02-2001-2001',g:'지역센터',a:'서울 종로구',road:true,min:5,km:1.2,av:-4,cp:15,pb:2,doc:15,nicu:1,oc:100,upd:0,hold:30,x:46,y:46,ms:[[2,'소아청소년과','요일별 운영 시간이 달라 내원 전 문의 바랍니다 (진료시간 1시간 전 접수 마감)']]},
+{id:'snu',n:'서울대학교병원',t:'02-1588-5700',g:'권역센터',a:'서울 종로구',road:true,min:12,km:4.1,av:-10,cp:24,pb:10,doc:0,nicu:1,oc:100,upd:600,hold:22,x:60,y:28,ms:[[2,'소아청소년과','의료진 부족/부재로 중증 진료 제한']]},
+{id:'sev',n:'세브란스병원',t:'02-2228-0114',g:'지역센터',a:'서울 서대문구',road:true,min:13,km:4.6,av:2,cp:39,pb:8,doc:74,nicu:0,oc:95,upd:0,hold:41,x:24,y:38,ms:[[2,'소아청소년과','학회 일정으로 입원 및 응급내시경 불가'],[2,'응급실','(소아신경외과) 기존 환자가 아닌 신환의 협진·전원 수용 불가']]}];
+const MOON={jinju:[{n:'○○아동병원',k:'아동병원',a:'진주시 ○○동',d:'3.1km',t:'055-000-0000'},{n:'○○소아청소년과의원',k:'의원',a:'진주시 ○○동',d:'4.8km',t:'055-000-0000'}],none:[{n:'○○어린이병원',k:'아동병원',a:'서울 ○○구',d:'2.9km',t:'02-000-0000'},{n:'○○소아청소년과의원',k:'의원',a:'서울 ○○구',d:'3.6km',t:'02-000-0000'}]};
+const CHECKS=['건강보험증 또는 신분증','먹고 있는 약과 알레르기','체온 기록과 열이 시작된 시각','아이 몸무게','마지막으로 먹고 마신 시각','기저귀 · 여벌 옷 · 수유 용품'];
+const RED={fg:'oklch(0.5 0.16 28)',bg:'oklch(0.95 0.035 28)'},YEL={fg:'oklch(0.5 0.11 70)',bg:'oklch(0.95 0.055 88)'},BLU={fg:'oklch(0.48 0.11 250)',bg:'oklch(0.95 0.03 250)'};
+const GREEN='var(--color-accent-2-700)',ORANGE='var(--color-accent-600)',DIM='var(--color-neutral-500)',INK='var(--color-text)',GREY='var(--color-neutral-500)';
+const GROUPS=[
+ {key:0,title:'바로 가 볼 만한 곳',desc:'진료 제한 공지가 없는 곳이에요. 그래도 출발 전에 전화로 확인하세요.',dot:GREEN,fg:GREEN},
+ {key:1,title:'전화로 먼저 확인하라고 한 곳',desc:'병원이 사전 문의를 요청했어요. 전화로 아이 상태를 말하고 가도 되는지 물어보세요.',dot:YEL.fg,fg:YEL.fg},
+ {key:2,title:'지금 제한을 걸어 둔 곳',desc:'일부 환자를 받기 어렵다고 공지했어요. 공지가 아이와 관련 없는지 확인하세요.',dot:RED.fg,fg:RED.fg}];
+function fresh(u){if(u===null||u===undefined)return null;if(u<120)return{t:'방금 갱신',stale:false};if(u<3600)return{t:Math.round(u/60)+'분 전 갱신',stale:false};if(u<86400)return{t:Math.round(u/3600)+'시간 전 갱신',stale:false};return{t:Math.floor(u/86400)+'일 전 갱신 · 자동 갱신이 끊겼을 수 있어요',stale:true};}
+class Component extends DCLogic {
+  state={loc:null,tab:null,detail:undefined,sel:null,more:{},checks:{},locOpen:false,q:''};
+  build(){
+    const loc=this.state.loc||this.props.loc||'jinju';
+    const src=loc==='none'?S:J;
+    const hs=src.map(h=>{
+      const sev=Math.max(-1,...h.ms.map(m=>m[0]));
+      const grp=sev===2?2:sev===1?1:0;
+      const fr=fresh(h.upd);
+      const busy=h.oc!==null&&h.oc>=50;
+      const good=h.doc>=2&&h.pb>0&&h.oc!==null&&h.oc<50&&grp===0&&!(fr&&fr.stale);
+      const score=(good?50:0)+Math.min(h.doc,10)*2+h.pb*3+(h.oc!==null&&h.oc<50?10:0)-h.min;
+      return {...h,grp,fr,busy,good,score};
+    }).sort((a,b)=>a.grp-b.grp||b.score-a.score).map((h,i)=>({...h,rank:i+1}));
+    return {loc,hs};
+  }
+  dec(h){
+    const seat=h.av===null?null:Math.max(h.av,0);
+    const metrics=[];
+    if(h.av===null)metrics.push({k:'응급실 병상 미제공 · 전화로 확인',v:'',u:'',fg:DIM,lc:'var(--color-neutral-700)'});
+    else metrics.push({k:'응급실',v:String(seat),u:'/'+h.cp+'석',fg:seat===0?RED.fg:INK,lc:'var(--color-neutral-800)'});
+    if(h.pb>0)metrics.push({k:'소아 병상',v:String(h.pb),u:'석',fg:GREEN,lc:'var(--color-neutral-800)'});
+    if(h.doc>0)metrics.push({k:'소아과',v:String(h.doc),u:'명',fg:GREEN,lc:'var(--color-neutral-800)'});
+    if(h.nicu)metrics.push({k:'신생아중환자실 보유',v:'',u:'',fg:INK,lc:'var(--color-neutral-800)'});
+    const flags=[];
+    if(h.good)flags.push({t:'여건이 두루 좋음',fg:GREEN});
+    if(h.busy)flags.push({t:'응급실 혼잡 '+h.oc+'%'+(h.av!==null&&h.av<0?' · 정원 초과':''),fg:ORANGE});
+    if(h.fr)flags.push({t:'병상 '+h.fr.t,fg:h.fr.stale?YEL.fg:'var(--color-neutral-600)'});
+    const notices=h.ms.map(m=>{const c=m[0]===2?RED:m[0]===1?YEL:BLU;return{lab:m[0]===2?'제한':m[0]===1?'사전 문의':'안내',dept:m[1],text:m[2],fg:c.fg,bg:c.bg};});
+    const travel=h.road?'도로 '+h.min+'분 · '+h.km+'km':'차로 약 '+h.min+'분 (직선거리 추정)';
+    const big=[];
+    big.push(h.av===null?{k:'응급실 자리',v:'–',u:'',fg:DIM}:{k:'응급실 자리',v:String(seat),u:'/'+h.cp+'석',fg:seat===0?RED.fg:INK});
+    big.push(h.pb>0?{k:'소아 응급 병상',v:String(h.pb),u:'석',fg:GREEN}:{k:'소아 병상 정보 없음',v:'–',u:'',fg:DIM});
+    big.push(h.doc>0?{k:'소아과 전문의',v:String(h.doc),u:'명',fg:GREEN}:{k:'소아과 전문의 정보 없음',v:'–',u:'',fg:DIM});
+    return {...h,metrics,flags,notices,travel,
+      dist:h.road?h.km+'km':'직선 '+h.km+'km',timeBig:(h.road?'':'약 ')+h.min+'분',timeKind:h.road?'도로':'추정',
+      badge:h.rank<=3,big:big.map((x,i)=>({...x,pl:i?'12px':'0',bl:i?'1px solid var(--color-divider)':'0'})),
+      telHref:'tel:'+h.t.replace(/[^0-9]/g,''),
+      px:h.x+'%',py:(28+h.y*0.42)+'%',
+      dc:h.grp===2?RED.fg:h.busy?ORANGE:h.good?GREEN:GREY,
+      ds:(h.doc>=5||h.pb>=3?24:h.doc>0||h.pb>0?17:12)+'px',
+      ring:h.id===this.selId?'0 0 0 3px var(--color-text)':'var(--shadow-sm)',
+      open:()=>this.setState({detail:h.id}), pick:()=>this.setState({sel:h.id})};
+  }
+  renderVals(){
+    const s=this.state;
+    const {loc,hs}=this.build();
+    this.selId=s.sel&&hs.find(h=>h.id===s.sel)?s.sel:hs[0].id;
+    const all=hs.map(h=>this.dec(h));
+    const tab=s.tab||(this.props.start==='map'?'map':this.props.start==='guide'?'guide':'list');
+    const detailId=s.detail!==undefined?s.detail:(this.props.start==='detail'?(this.props.detailId||'gnu'):null);
+    const groups=GROUPS.map(G=>{
+      const items=all.filter(h=>h.grp===G.key);
+      if(!items.length)return null;
+      const open=!!s.more[G.key];
+      const hasHero=G.key===0&&items[0].rank===1;
+      const vis=open?items:items.slice(0,3);
+      return {...G,count:items.length,hasHero,hero:hasHero?items[0]:items[0],rows:hasHero?vis.slice(1):vis,
+        hasMore:items.length>3,moreLabel:open?'접기':'더 보기 ('+(items.length-3)+'곳)',
+        toggle:()=>this.setState(p=>({more:{...p.more,[G.key]:!p.more[G.key]}}))};
+    }).filter(Boolean).map((g,i)=>({...g,pt:i?'36px':'0'}));
+    const sel=all.find(h=>h.id===this.selId);
+    const dh=all.find(h=>h.id===detailId)||all[0];
+    const G=GROUPS[dh.grp];
+    const facts=[];
+    facts.push(dh.av===null?{k:'응급실 자리',v:'미제공',u:'',fg:DIM,line:DIM,note:'병원이 올리지 않았어요. 자리가 없다는 뜻은 아니에요.'}:{k:'응급실 자리',v:Math.max(dh.av,0)+'/'+dh.cp,u:'석',fg:dh.av<=0?RED.fg:INK,line:dh.av<=0?RED.fg:INK,note:dh.av<0?'정원보다 '+(-dh.av)+'명 더 있어요':'응급실 전체 기준'});
+    facts.push(dh.pb>0?{k:'소아 응급 병상',v:String(dh.pb),u:'석',fg:GREEN,line:GREEN,note:'실시간 아님'}:{k:'소아 응급 병상',v:'정보 없음',u:'',fg:DIM,line:DIM,note:'올리는 병원이 많지 않아요'});
+    facts.push(dh.doc>0?{k:'소아과 전문의',v:String(dh.doc),u:'명',fg:GREEN,line:GREEN,note:'소속 인원 · 당직 여부 모름'}:{k:'소아과 전문의',v:'정보 없음',u:'',fg:DIM,line:DIM,note:'전화로 소아 진료 여부 확인'});
+    facts.push(dh.oc===null?{k:'응급실 혼잡도',v:'정보 없음',u:'',fg:DIM,line:DIM,note:''}:{k:'응급실 혼잡도',v:String(dh.oc),u:'%',fg:dh.busy?ORANGE:INK,line:dh.busy?ORANGE:INK,note:dh.busy?'50% 이상 · 혼잡':'여유'});
+    if(dh.nicu)facts.push({k:'신생아 중환자실',v:'보유',u:'',fg:INK,line:INK,note:''});
+    const d={...dh,facts,groupTitle:(dh.rank<=3?dh.rank+'순위 · ':'')+G.title,groupFg:G.fg,hasFresh:!!dh.fr,freshText:dh.fr?dh.fr.t:'',freshFg:dh.fr&&dh.fr.stale?YEL.fg:'var(--color-neutral-700)',hasHold:dh.hold!==null,holdW:(dh.hold||0)+'%'};
+    const nRestrict=all.reduce((n,h)=>n+h.ms.filter(m=>m[0]===2).length,0);
+    const summary=[{k:'60km 안 응급실',v:all.length,fg:INK},{k:'소아 진료 정보 있음',v:all.filter(h=>h.doc>0||h.pb>0).length,fg:GREEN},{k:'응급실 붐빔',v:all.filter(h=>h.busy).length,fg:ORANGE},{k:'진료 제한 공지',v:nRestrict,fg:RED.fg}].map((x,i)=>({...x,v:String(x.v),bl:i?'1px solid var(--color-divider)':'0'}));
+    const tabs=[['list','목록'],['map','지도'],['guide','안내']].map(([k,l])=>({label:l,fg:tab===k?INK:'var(--color-neutral-600)',fw:tab===k?700:500,bar:tab===k?INK:'transparent',go:()=>this.setState({tab:k,detail:null})}));
+    return {
+      isExample:loc==='none', locLabel:loc==='none'?'위치 없음 · 서울 중심 예시':'경상남도 진주시 진주대로 501', locDot:loc==='none'?GREY:GREEN,
+      baseTime:'2026-10-16 15:30 기준',
+      openLoc:()=>this.setState({locOpen:true}), closeLoc:()=>this.setState({locOpen:false}), locOpen:s.locOpen,
+      q:s.q, onQ:e=>this.setState({q:e.target.value}),
+      useHere:()=>this.setState({loc:'jinju',locOpen:false,sel:null,more:{}}), useExample:()=>this.setState({loc:'none',locOpen:false,sel:null,more:{}}),
+      showList:tab==='list', showMap:tab==='map', showGuide:tab==='guide',
+      groups, all, sel, summary, d, isDetail:!!detailId,
+      legend:[{t:'일반',c:GREY},{t:'여건 좋음',c:GREEN},{t:'혼잡',c:ORANGE},{t:'제한 공지',c:RED.fg}],
+      moons:MOON[loc].map(m=>({...m,telHref:'tel:'+m.t.replace(/[^0-9]/g,'')})),
+      closeDetail:()=>this.setState({detail:null}),
+      tabs,
+      checks:CHECKS.map((t,i)=>{const on=!!s.checks[i];return{t,mark:on?'✓':'',bg:on?GREEN:'transparent',bd:on?GREEN:'var(--color-neutral-400)',fg:on?'var(--color-neutral-600)':INK,toggle:()=>this.setState(p=>({checks:{...p.checks,[i]:!p.checks[i]}}))};})
+    };
+  }
+}
+</script>
+</body>
+</html>
