@@ -7,7 +7,15 @@ import { useEffect, useState } from "react";
 export const PAUSED_MESSAGE = "현재 시연 일시정지 중입니다.";
 const SHOW_MS = 2500;
 
-export function usePauseToast(refused: { at: number; reason: string } | null) {
+/**
+ * @param refused hub가 조작을 거부했을 때(일시정지 등) — 같은 안내를 띄운다
+ * @param notice 거부가 아닌 일반 안내를 같은 토스트로 띄울 때(2026-10-22, 병원 미선택 통보 등).
+ *               문구를 호출부가 정하므로 토스트 UI만 빌려 쓰는 셈이다.
+ */
+export function usePauseToast(
+  refused: { at: number; reason: string } | null,
+  notice?: { at: number; text: string } | null,
+) {
   const [shownAt, setShownAt] = useState<number | null>(null);
   const [message, setMessage] = useState(PAUSED_MESSAGE);
   // hub가 거부를 알려 오면(다른 탭에서 우회한 경우 등) 같은 안내 — 렌더 중 이전 값과 비교(effect 대신)
@@ -16,6 +24,12 @@ export function usePauseToast(refused: { at: number; reason: string } | null) {
     setSeenRefusal(refused.at);
     setMessage(refused.reason === "paused" ? PAUSED_MESSAGE : "지금은 이 조작을 할 수 없습니다.");
     setShownAt(refused.at);
+  }
+  const [seenNotice, setSeenNotice] = useState<number | null>(notice?.at ?? null);
+  if (notice && notice.at !== seenNotice) {
+    setSeenNotice(notice.at);
+    setMessage(notice.text);
+    setShownAt(notice.at);
   }
   useEffect(() => {
     if (shownAt == null) return;
