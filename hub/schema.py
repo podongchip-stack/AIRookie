@@ -538,9 +538,15 @@ class HospitalMatch(BaseModel):
     bedDataStale: bool = False
     # 이 사건에서 제외된 병원(2026-10-05) — 도착 후 수용 불가·이송 중 수용 철회. 같은 사건엔 다시 승인할 수 없다
     excluded: bool = False
+    # 수용 승인은 했지만 이송은 다른 병원으로 확정된 병원(2026-10-22). 임상 자문 요구 — 수용 승낙은 빈 병상 확인이
+    # 아니라 처치 공간 확보·기존 진료 조정·신규 수용 제한 같은 **자원 선배정**이므로, 선택되지 않았음을 즉시 알려
+    # 그 준비를 풀 수 있게 해야 한다(poc/CLINICAL_CONVERGENCE.md §4). status는 approved 그대로이고 — 승인 자체는
+    # 유효하다(재선택 원칙) — 이 깃발만 선다. 확정이 풀리면(재선택·도착 후 수용 불가) 다시 False가 된다.
+    notSelected: bool = False
     # spider 매칭 규칙(2026-10-15, spider_rule.py) — 설명용. 순위는 finalScore(줄 길이에서 만든 값)가 정한다.
     # spiderLen: 줄 길이(분, 짧을수록 앞) · spiderGap: 유효 역량 − 필요 역량 · spiderBlocked: 줄이 없는 이유(벽·역량 모자람)
-    # spiderWindow: 같은 τ 창에 먼저 와 있는(우선하는) 다른 사건 — 한도를 채우면 이 병원을 건너뛴다(양보)
+    # spiderWindow: 같은 τ 창(도착 ±10분)에 먼저 자리를 가진 다른 사건 — **표시용이고 순위에 영향이 없다**
+    #   (2026-10-22. 예전엔 한도 2를 채우면 그 병원을 건너뛰었다 — spider_rule.py 모듈 설명 ⚠)
     spiderLen: Optional[float] = None
     spiderGap: Optional[float] = None
     spiderBlocked: Optional[str] = None
@@ -852,6 +858,8 @@ class MonitorCaseHospital(BaseModel):
     inFlightCount: Optional[int] = None
     excluded: Optional[bool] = None
     acceptanceMessages: Optional[list[AcceptanceMessageMatch]] = None
+    # 수용 승인은 했지만 이송은 다른 병원으로 확정됨(2026-10-24) — 관제 지도·시연 콘솔도 "선택 안 됨"을 보이게
+    notSelected: Optional[bool] = None
 
 
 class MonitorCase(BaseModel):

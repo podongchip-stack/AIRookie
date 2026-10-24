@@ -192,8 +192,19 @@ def main() -> None:
                                   "actor": "hospital", "timestamp": "2026-10-03T00:05:00Z"})
     again = next(h for h in app.engine.get_case_result(case3).hospitals if h.hospitalId == "T_FULL")
     assert again.status == "approved" and again.rejectReason is None, "번복해 승인하면 사유는 지운다"
-    app._close_case(case3, "scene_ended")
     print("  [확인] 거절 사유 STAFF_BUSY 전달, 승인으로 번복하면 사유 지움")
+
+    # 미선택 통보(2026-10-24): 다른 병원으로 확정되면 관제 요약에도 notSelected가 실린다(콘솔·관제 지도 "선택 안 됨")
+    other = next(h.hospitalId for h in app.engine.get_case_result(case3).hospitals if h.hospitalId != "T_FULL")
+    app._handle_dashboard_action({"caseId": case3, "action": "hospital_approve", "hospital_id": other,
+                                  "actor": "hospital", "timestamp": "2026-10-03T00:06:00Z"})
+    app._handle_dashboard_action({"caseId": case3, "action": "final_approval", "hospital_id": other,
+                                  "actor": "paramedic", "timestamp": "2026-10-03T00:07:00Z"})
+    on_map = {h["hospitalId"]: h for h in _last(monitor, "case_overview")["hospitals"]}
+    assert on_map[other]["status"] == "confirmed" and not on_map[other]["notSelected"]
+    assert on_map["T_FULL"]["status"] == "approved" and on_map["T_FULL"]["notSelected"], "승인했지만 선택 안 된 병원"
+    app._close_case(case3, "scene_ended")
+    print("  [확인] 다른 병원 확정 → 관제 요약에 T_FULL 선택 안 됨(승인은 유지)")
 
     print("=== 구급차가 도착한 뒤에 병원 대시보드를 열어도 '도착' 상태를 받는다([환자 수용 완료] 버튼) ===")
     unit = app.sim._units["A_MAP"]

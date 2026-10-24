@@ -466,9 +466,25 @@ def _unavailable_reason(status: HospitalStatus, demote_reasons: list[str]) -> st
     return "beds_full" if status == "pending" and "beds_full" in demote_reasons else None
 
 
+def _mark_not_selected(matches: list[HospitalMatch]) -> list[HospitalMatch]:
+    """이송이 확정된 사건에서 "승인했지만 선택되지 않은" 병원에 깃발을 세운다(2026-10-22).
+
+    임상 자문 요구 — 수용 승낙은 빈 병상 확인이 아니라 처치 공간 확보·기존 진료 조정·신규 수용 제한 같은
+    **자원 선배정**이라, 선택되지 않았음을 알려 주지 않으면 그 준비가 계속 묶여 있다. status(approved)는
+    건드리지 않는다: 승인 자체는 유효하고 이동 중 재선택의 대상으로 남아야 한다(뺑뺑이 방지 원칙).
+    확정이 풀리면(재선택·도착 후 수용 불가·철회) 다음 계산에서 자동으로 False로 돌아간다.
+    """
+    if not any(m.status == "confirmed" for m in matches):
+        return [m.model_copy(update={"notSelected": False}) if m.notSelected else m for m in matches]
+    return [
+        m.model_copy(update={"notSelected": True}) if m.status == "approved" and not m.notSelected else m
+        for m in matches
+    ]
+
+
 def _sort_matches(matches: list[HospitalMatch]) -> list[HospitalMatch]:
     return sorted(
-        matches,
+        _mark_not_selected(matches),
         key=lambda m: rank_key(m.finalScore or 0.0, m.distanceKm, m.hospitalId, m.demoteReasons, m.status),
     )
 
@@ -1460,12 +1476,15 @@ class HubEngine:
                     self._spider_window(voice.caseId, info.hospitalId, now + timedelta(minutes=travel_min), sp_k)
                     if sp["len"] is not None and status == "pending" else []
                 )
-                sp_full = len(sp_window) >= spider_rule.WINDOW_CAP
                 bonus_min = round(sp["gain_min"], 1)
                 bonus_reasons = [f"거미줄 {spider_rule.COND_LABEL[sp_cond]} K{sp_k} · {sp['parts']}"] + spider_rule.gain_reasons(sp, sp_k) + (
                     [f"줄 없음({sp['blocked']}) — 뒤로"] if sp["blocked"] else
                     [f"줄 길이 {sp['len']:.1f}분 (도로 {travel_min:.1f} − 이득 {sp['gain_min']:.1f} + 부하 {load_min + occupancy_min:.1f})"]
-                ) + ([f"τ 창 충돌 — 먼저 닿는 사건 {len(sp_window)}건(한도 {spider_rule.WINDOW_CAP}), 양보"] if sp_full else [])
+                ) + (
+                    # τ 창은 사실만 알린다(2026-10-22) — 순위를 내리지도, 병원을 건너뛰지도 않는다. 수용 판단은 병원이.
+                    [f"같은 10분 안에 도착 예정인 다른 사건 {len(sp_window)}건 — 순위 영향 없음, 수용 판단은 병원"]
+                    if sp_window else []
+                )
                 matches.append(
                     HospitalMatch(
                         hospitalId=info.hospitalId,
@@ -1506,7 +1525,7 @@ class HubEngine:
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
                         roadDistanceKm=round(eta[1] / 1000.0, 2) if eta is not None else None,
-                        finalScore=spider_rule.score(sp["len"], travel_min, sp_full, load_min + occupancy_min),
+                        finalScore=spider_rule.score(sp["len"], travel_min, load_min + occupancy_min),
                         spiderLen=round(sp["len"], 1) if sp["len"] is not None else None,
                         spiderGap=round(sp["gap"], 2),
                         spiderBlocked=sp["blocked"],
@@ -1550,11 +1569,12 @@ class HubEngine:
         self._spider_record_pick(voice.caseId, result, sp_k, now)
         return result, best_group
 
-    # ── spider 매칭 규칙: τ 창 충돌·양보(2026-10-15) ───────────────────────────────────────
-    # spider의 해소 루프(map.html solve)를 hub의 사건 단위로 옮겼다. 사건마다 지금 잡은 줄(가장 앞 병원)을 기억해 두고,
-    # 다른 사건을 계산할 때 그 병원의 같은 τ 창에 (a) 이미 이송 확정된 사건과 (b) 우선하는(KTAS 낮은 숫자, 같으면 먼저
-    # 닿는) 사건의 줄이 한도만큼 차 있으면 그 병원을 건너뛴다(점수 띠를 한 단계 내림). 우선하는 사건이 새로 들어오면
-    # app.py가 나머지 사건을 우선순위대로 다시 계산해 — 밀린 사건이 다음 병원으로 줄을 옮긴다(spider의 "양보").
+    # ── spider 매칭 규칙: τ 창 표시(2026-10-15 충돌·양보 → 2026-10-22 표시만) ─────────────────
+    # 사건마다 지금 잡은 줄(가장 앞 병원)을 기억해 두고, 다른 사건을 계산할 때 그 병원의 같은 τ 창에 (a) 이미 이송
+    # 확정된 사건과 (b) 우선하는(KTAS 낮은 숫자, 같으면 먼저 닿는) 사건이 있으면 `spiderWindow`에 적는다.
+    # ⚠ **순위에는 쓰지 않는다**(2026-10-22) — 예전엔 한도(2)가 차면 그 병원을 건너뛰고 밀린 사건이 다음 병원으로
+    # 줄을 옮겼다(spider의 "양보"). 실측(창 켜면 거절 46→51·56→65)과 임상 자문("둘 다 받으려 노력한다")이 같은
+    # 방향이라 걷어냈다 — spider_rule.py 모듈 설명 ⚠ · poc/CLINICAL_CONVERGENCE.md §3.
     def _spider_ktas(self, case_id: str) -> int:
         voice = self._case_voice.get(case_id)
         if voice is None:
@@ -1598,22 +1618,23 @@ class HubEngine:
         return members
 
     def _spider_record_pick(self, case_id: str, result: HubMatchResult, k: int, now: datetime) -> None:
-        """이 사건이 지금 잡은 줄 = 정렬 맨 앞의 받을 수 있는 병원(판단 대기·승인, 내림·벽·창 충돌·제외 없음)."""
+        """이 사건이 지금 잡은 줄 = 정렬 맨 앞의 받을 수 있는 병원(판단 대기·승인, 내림·벽·제외 없음).
+        창이 찼는지는 보지 않는다(2026-10-22) — 창은 표시용이라 줄 선택을 바꾸지 않는다."""
         with self._lock:
             if any(h.status == "confirmed" for h in result.hospitals):
                 self._spider_pick.pop(case_id, None)
                 return
             for h in result.hospitals:
                 if (h.status in ("pending", "approved") and not h.demoteReasons and h.spiderBlocked is None
-                        and len(h.spiderWindow or []) < spider_rule.WINDOW_CAP and not h.excluded):
+                        and not h.excluded):
                     self._spider_pick[case_id] = {"hospitalId": h.hospitalId, "k": k,
                                                   "arrival": now + timedelta(minutes=h.travelMin or 0.0)}
                     return
             self._spider_pick.pop(case_id, None)
 
     def spider_priority_order(self, case_ids: list[str]) -> list[str]:
-        """재계산 순서 — 우선하는 사건(KTAS 낮은 숫자, 같으면 먼저 닿는)부터. 앞 사건의 줄이 정해진 뒤 뒷 사건이 계산돼야
-        양보가 한 번에 맞는다."""
+        """재계산 순서 — 우선하는 사건(KTAS 낮은 숫자, 같으면 먼저 닿는)부터. 앞 사건의 줄이 정해진 뒤 뒷 사건이
+        계산돼야 τ 창 표시(`spiderWindow`)가 한 번에 맞는다. 순위 자체는 이 순서에 영향받지 않는다(2026-10-22)."""
         far = datetime.max.replace(tzinfo=timezone.utc)
         with self._lock:
             def key(cid: str) -> tuple:
@@ -1788,8 +1809,8 @@ class HubEngine:
         앞 사상자를 배정할 때마다 그 병원의 이송 중 건수를 하나 늘리고 병상을 하나 줄여 부하 페널티를 다시 매긴다 —
         한 병원에 몰리지 않고 다음 병원으로 퍼진다. 병상 신뢰도는 쓰지 않는다(순위 원칙)."""
         # spider 매칭 규칙(2026-10-15) — KTAS 낮은 숫자부터(같으면 먼저 닿는 쪽), 사상자마다 승인 병원 중
-        # 줄 길이(spiderLen — 도로 분 − μ×이득 + 부하)가 가장 짧은 곳. 앞 배정마다 이송 중 +1·병상 −1로 부하를 다시 매기고,
-        # 같은 τ 창(도착 ±10분)에 이미 한도(2)만큼 배정된 병원은 건너뛴다(spider의 충돌·양보). 줄 없는 병원은 마지막 수단.
+        # 줄 길이(spiderLen — 도로 분 − μ×이득 + 부하)가 가장 짧은 곳. 앞 배정마다 이송 중 +1·병상 −1로 부하를 다시 매겨
+        # 분산시킨다(τ 창 한도는 2026-10-22에 걷어냈다 — spider_rule.py 모듈 설명 ⚠). 줄 없는 병원은 마지막 수단.
         now = _utcnow()
         with self._lock:
             items = []
@@ -1799,7 +1820,6 @@ class HubEngine:
                     continue
                 items.append((self._spider_ktas(case_id), index, case_id, result))
             extra: dict[str, int] = {}
-            arrivals: dict[str, list[float]] = {}
             plan = []
             for _, _, case_id, result in sorted(items, key=lambda x: (x[0], x[1])):
                 best = None
@@ -1815,12 +1835,10 @@ class HubEngine:
                     else:
                         load_min = 0.0
                     travel = h.travelMin if h.travelMin is not None else h.distanceKm * 3.0
-                    window = sum(1 for t in arrivals.get(h.hospitalId, []) if abs(t - travel) <= spider_rule.TAU_MIN)
                     if h.spiderLen is not None:
-                        length = h.spiderLen - (h.loadPenaltyMin or 0.0) + load_min
-                        key = (0 if window < spider_rule.WINDOW_CAP else 1, length, rank)
+                        key = (0, h.spiderLen - (h.loadPenaltyMin or 0.0) + load_min, rank)
                     else:
-                        key = (2, travel + load_min, rank)
+                        key = (1, travel + load_min, rank)
                     if best is None or key < best[0]:
                         best = (key, rank, h, load_min)
                 if best is None:
@@ -1828,7 +1846,6 @@ class HubEngine:
                     continue
                 _, _, h, load_min = best
                 extra[h.hospitalId] = extra.get(h.hospitalId, 0) + 1
-                arrivals.setdefault(h.hospitalId, []).append(h.travelMin if h.travelMin is not None else h.distanceKm * 3.0)
                 plan.append({"caseId": case_id, "hospitalId": h.hospitalId, "hospitalName": h.name,
                              "severityTag": result.patientInfo.severityTag, "loadPenaltyMin": round(load_min, 1)})
             return plan

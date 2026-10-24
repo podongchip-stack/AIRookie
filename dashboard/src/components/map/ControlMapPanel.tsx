@@ -6,7 +6,7 @@ import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { escapeHtml } from "@/lib/kakao-map-markers";
 import { centerInView, focusInView, inView } from "@/lib/map-view";
 import {
-  C, LEVEL_DEFAULT, LEVEL_DOT, ST_DOT, ST_LABEL, ST_PILL, ambState, shortAmb, shortHospital, zoneText, type Incident, type St,
+  C, LEVEL_DEFAULT, LEVEL_DOT, ST_DOT, ST_PILL, ambState, reqLabel, shortAmb, shortHospital, zoneText, type Incident, type St,
 } from "@/lib/control-map";
 import type { AmbulanceSimState, MapOverview } from "@/types/dashboard";
 
@@ -148,7 +148,7 @@ export function ControlMapPanel({
           `background:${ST_DOT[req.st]};opacity:${inTab || on ? 1 : 0.18};` + (on ? "transform:scale(1.7);" : "");
       }
       if (showPill && req) {
-        const label = req.st === "r" && req.bedsFull ? "병상 없음" : ST_LABEL[req.st];
+        const label = reqLabel(req);
         layer.pill.style.cssText =
           "position:absolute;left:0;bottom:11px;transform:translateX(-50%);display:flex;align-items:center;gap:3px;" +
           "height:17px;padding:0 7px 0 5px;border-radius:9px;border:1.5px solid #fff;color:#fff;font-size:10.5px;" +

@@ -1,0 +1,203 @@
+
+<style>
+.viz-root{--iso:#eb6834;--dense:#2a78d6}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) .viz-root{--iso:#d95926;--dense:#3987e5}}
+:root[data-theme=dark] .viz-root{--iso:#d95926;--dense:#3987e5}
+.ask{border-left:3px solid var(--good)}
+.ask ol{margin:8px 0 0;padding-left:20px;color:var(--ink2)}
+.ask li{margin:6px 0}
+</style>
+<title>경남 구급대 현장 업무 부담 — 공개 데이터 실측</title>
+<style>
+*{box-sizing:border-box}
+.viz-root{
+  color-scheme:light;
+  --page:#f9f9f7; --surface:#fcfcfb;
+  --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --series:#2a78d6; --good:#0ca30c; --critical:#d03b3b; --warning:#fab219;
+  --g-0:#104281; --g-1:#256abf; --g-2:#3987e5; --g-3:#86b6ef;
+}
+@media (prefers-color-scheme:dark){
+  :root:where(:not([data-theme=light])) .viz-root{
+    color-scheme:dark;
+    --page:#0d0d0d; --surface:#1a1a19;
+    --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+    --series:#3987e5;
+    --g-0:#cde2fb; --g-1:#86b6ef; --g-2:#3987e5; --g-3:#184f95;
+  }
+}
+:root[data-theme=dark] .viz-root{
+  color-scheme:dark;
+  --page:#0d0d0d; --surface:#1a1a19;
+  --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --series:#3987e5;
+  --g-0:#cde2fb; --g-1:#86b6ef; --g-2:#3987e5; --g-3:#184f95;
+}
+/* --page는 .viz-root 스코프라 body에서는 안 보인다. 콘텐츠 아래 여백이 검게 남아서 따로 깐다 */
+html,body{margin:0;background:#f9f9f7}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])) html,
+  :root:where(:not([data-theme=light])) body{background:#0d0d0d}}
+:root[data-theme=dark] body{background:#0d0d0d}
+.viz-root{
+  font:400 15px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:var(--ink);background:var(--page);
+  max-width:1120px;margin:0 auto;padding:40px 24px 80px;
+}
+h1{font-size:28px;line-height:1.3;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:20px;margin:52px 0 6px;letter-spacing:-.01em}
+h2 .n{color:var(--muted);font-weight:400;margin-right:8px}
+h3{font-size:15px;margin:28px 0 8px;color:var(--ink2)}
+p{margin:10px 0;color:var(--ink2);max-width:74ch}
+.sub{color:var(--muted);font-size:13px;margin:0}
+.lede{font-size:17px;color:var(--ink);max-width:68ch}
+strong{color:var(--ink);font-weight:600}
+.banner{
+  border:1px solid var(--border);border-left:3px solid var(--warning);
+  background:var(--surface);border-radius:6px;padding:12px 16px;margin:20px 0;
+  font-size:13px;color:var(--ink2)
+}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px 22px;margin:18px 0}
+.find{border-left:3px solid var(--series)}
+.find p{margin:0;color:var(--ink);font-size:16px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+.sm{display:grid;grid-template-columns:repeat(auto-fill,minmax(282px,1fr));gap:14px}
+.sm .panel{border:1px solid var(--border);border-radius:8px;padding:10px 12px 4px;background:var(--surface)}
+.sm .panel h4{margin:0 0 2px;font-size:13.5px;font-weight:600}
+.sm .panel .meta{margin:0 0 4px;font-size:11.5px;color:var(--muted)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+svg{display:block;max-width:100%;height:auto}
+text.ax{font-size:10px;fill:var(--muted)}
+text.lb{font-size:11.5px;fill:var(--ink2)}
+text.mk{font-size:13px;fill:#fff;font-weight:600}
+.dot,.cell{cursor:default}
+table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+caption{text-align:left;color:var(--muted);font-size:12px;padding-bottom:8px}
+th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--grid)}
+th:first-child,td:first-child{text-align:left;font-variant-numeric:normal}
+thead th{color:var(--muted);font-weight:500;font-size:12px;white-space:nowrap}
+tbody tr:hover{background:color-mix(in srgb,var(--series) 6%,transparent)}
+td.no{color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin:12px 0 4px;font-size:12.5px;color:var(--ink2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:3px;border:2px solid var(--surface);box-shadow:0 0 0 1px var(--border)}
+.sw.hollow{background:transparent;border:1px dashed var(--axis);box-shadow:none}
+#tip{
+  position:fixed;z-index:30;pointer-events:none;opacity:0;transition:opacity .1s;
+  background:var(--ink);color:var(--page);font-size:12.5px;padding:6px 10px;
+  border-radius:6px;max-width:300px;line-height:1.45
+}
+footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--grid);font-size:12.5px;color:var(--muted)}
+footer li{margin:4px 0}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+@media print{.viz-root{max-width:none}h2{page-break-after:avoid}}
+</style>
+<div class="viz-root"><div id="tip"></div>
+<h1>경남 구급대 현장 업무 부담 — 공개 데이터 실측</h1>
+<p class="sub">E-Gen 전국 스냅샷 2026-08-12 ~ 2026-10-22 (병상 폴링 5,789회) · 심평원 공개 API · 소방청 119안전센터 현황 · 규칙 기반 집계, 추정 모델 없음 · 병원 실명은 쓰지 않았다</p>
+<div class="banner"><strong>이 문서의 성격</strong> — 공개 데이터만으로 과거를 되감아 본 관찰 기록이다. 환자 데이터와 현장 수집 자료는 한 건도 들어 있지 않고, 특정 기관을 평가하지 않는다. 신고가 비어 있는 것은 “수용 불가”가 아니라 “알 수 없음”을 뜻한다.</div>
+<div class="card find">
+<p>응급실 수용 지연(이른바 뺑뺑이)의 상당 부분은 <strong>현장에서 전화를 돌리는 시간</strong>에서 생긴다. 그 전화가 왜 필요한지를 경남 공개 데이터로 확인했다.</p>
+<p style='margin-top:12px'>경남 응급의료기관 <strong>48곳</strong>의 응급실은 실제로는 비어 있었다 — 가용 병상 0 이하인 시간 비율 <strong>중앙값 0.2%</strong>. 병상은 병목이 아니다.</p>
+<p style='margin-top:12px'>대신 <strong>“이 환자를 받을 수 있는가”가 비어 있다</strong> — 중증질환 수용가능 신고 28항목 기준 <strong>80%가 알 수 없음</strong>이고, 11곳은 실시간 병상 정보 자체가 올라오지 않는다. 그래서 구급대원은 전화를 건다.</p>
+<p style='margin-top:12px'>그리고 <strong>부담이 큰 곳일수록 정보가 없다</strong>. 반경 5km 안에 다른 응급실이 하나도 없는 <strong>16곳</strong>은 신고 공백이 <strong>93%</strong>, 응급의학과 전문의가 1명 이하인 곳이 <strong>16곳(16/16)</strong>, 한 번 거절되면 다음 응급의료센터까지 <strong>중앙 23km</strong>다. 그중 <strong>7곳</strong>은 가장 가까운 센터가 <strong>경남 밖</strong>에 있다.</p>
+</div>
+<h2><span class="n">1</span>무엇을 덜어드리려 하는가</h2>
+<p>사람을 줄이는 도구가 아니다. <strong>같은 인원이 현장 처치에 더 머물 수 있게</strong> 하는 것이 목적이고, 효과는 체감이 아니라 시간으로 잰다.</p>
+<div class="card scroll"><table>
+<thead><tr><th>덜어드리는 부담</th><th>지금</th><th>확인 시점</th></tr></thead><tbody>
+<tr><td><strong>통화 내용을 옮겨 적는 일</strong></td><td style='text-align:left;color:var(--ink2)'>현장에서 전화를 돌리며 동시에 기록</td><td style='text-align:left;color:var(--ink2)'>지금 확인 가능</td></tr>
+<tr><td><strong>어디에 먼저 연락할지 고르는 일</strong></td><td style='text-align:left;color:var(--ink2)'>경험과 전화에 의존</td><td style='text-align:left;color:var(--ink2)'>지금 확인 가능</td></tr>
+<tr><td><strong>왜 그 병원으로 갔는지 남기는 일</strong></td><td style='text-align:left;color:var(--ink2)'>사후 재구성이 어려움</td><td style='text-align:left;color:var(--ink2)'>이미 구현</td></tr>
+<tr><td><strong>수용 가능 병원을 수소문하는 일</strong></td><td style='text-align:left;color:var(--ink2)'>상황실·구급대가 개별 통화</td><td style='text-align:left;color:var(--ink2)'>실증 이후</td></tr>
+</tbody></table></div>
+<p>첫 두 줄만으로도 측정이 된다 — <strong>현장 체류 시간</strong>과 <strong>기록 작성 시간</strong>. 둘 다 구급활동 기록에서 이미 나오는 값이다. ⚠ 구급활동일지 자체를 자동 작성하지는 않는다(소방청 전산 연계가 선행돼야 한다). 지금 되는 것은 <strong>일지에 옮겨 적을 내용을 통화에서 구조화해 두는 것</strong>까지다.</p>
+<h2><span class="n">2</span>경남의 응급 자원</h2>
+<p>구급차 <strong>116대</strong> · 소방서 18곳 · 119안전센터 81곳이 응급의료기관 48곳을 상대한다. 기관 수로는 전국 3위(경기·서울 다음)지만 넓게 흩어져 있다.</p>
+<div class="grid2">
+<div class="card scroll"><table><caption>등급별</caption>
+<thead><tr><th>등급</th><th>곳</th><th>병상 정보<br>올라오는 곳</th><th>응급의학과<br>전문의 ≤1명</th></tr></thead><tbody>
+<tr><td>권역응급의료센터</td><td>3</td><td>3</td><td>0</td></tr>
+<tr><td>지역응급의료센터</td><td>8</td><td>8</td><td>0</td></tr>
+<tr><td>지역응급의료기관</td><td>24</td><td>24</td><td>22</td></tr>
+<tr><td>응급실운영신고기관</td><td>13</td><td>2</td><td>13</td></tr>
+</tbody></table></div>
+<div class="card scroll"><table><caption>시군별 (상위 8)</caption>
+<thead><tr><th>시군</th><th>곳</th><th>신고 공백</th></tr></thead><tbody>
+<tr><td>창원시</td><td>10</td><td>63%</td></tr>
+<tr><td>진주시</td><td>8</td><td>75%</td></tr>
+<tr><td>김해시</td><td>5</td><td>80%</td></tr>
+<tr><td>양산시</td><td>4</td><td>71%</td></tr>
+<tr><td>거제시</td><td>3</td><td>79%</td></tr>
+<tr><td>밀양시</td><td>3</td><td>98%</td></tr>
+<tr><td>사천시</td><td>3</td><td>88%</td></tr>
+<tr><td>고성군</td><td>2</td><td>98%</td></tr>
+</tbody></table></div>
+</div>
+<h2><span class="n">3</span>전화 전에 알 수 있는 것이 적다</h2>
+<p>중증질환 수용가능 신고 28항목 가운데 “알 수 없음”으로 남는 비율. <strong>등급이 낮아질수록 계단처럼 올라간다</strong> — 특정 병원의 문제가 아니라 신고 체계가 상위 기관에 맞춰져 있다는 뜻으로 읽는 게 맞다.</p>
+<div class="card"><svg viewBox="0 0 620 204" role="img" aria-label="등급별 중증질환 신고 공백 비율"><line x1="150.0" y1="18" x2="150.0" y2="194" stroke="var(--grid)" stroke-width="1"/><text x="150.0" y="12" class="ax" text-anchor="middle">0%</text><line x1="246.0" y1="18" x2="246.0" y2="194" stroke="var(--grid)" stroke-width="1"/><text x="246.0" y="12" class="ax" text-anchor="middle">25%</text><line x1="342.0" y1="18" x2="342.0" y2="194" stroke="var(--grid)" stroke-width="1"/><text x="342.0" y="12" class="ax" text-anchor="middle">50%</text><line x1="438.0" y1="18" x2="438.0" y2="194" stroke="var(--grid)" stroke-width="1"/><text x="438.0" y="12" class="ax" text-anchor="middle">75%</text><line x1="534.0" y1="18" x2="534.0" y2="194" stroke="var(--grid)" stroke-width="1"/><text x="534.0" y="12" class="ax" text-anchor="middle">100%</text><text x="138" y="46.0" class="lb" text-anchor="end">권역응급의료센터 (3곳)</text><rect class="cell" x="150" y="31" width="50.3" height="24" rx="4" fill="var(--g-0)" data-tip="권역응급의료센터 3곳 · 28항목 중 13%가 정보미제공"/><text x="210.3" y="48.0" class="lb">13%</text><text x="138" y="88.0" class="lb" text-anchor="end">지역응급의료센터 (8곳)</text><rect class="cell" x="150" y="73" width="188.6" height="24" rx="4" fill="var(--g-1)" data-tip="지역응급의료센터 8곳 · 28항목 중 49%가 정보미제공"/><text x="348.6" y="90.0" class="lb">49%</text><text x="138" y="130.0" class="lb" text-anchor="end">지역응급의료기관 (24곳)</text><rect class="cell" x="150" y="115" width="339.4" height="24" rx="4" fill="var(--g-2)" data-tip="지역응급의료기관 24곳 · 28항목 중 88%가 정보미제공"/><text x="499.4" y="132.0" class="lb">88%</text><text x="138" y="172.0" class="lb" text-anchor="end">응급실운영신고기관 (13곳)</text><rect class="cell" x="150" y="157" width="381.9" height="24" rx="4" fill="var(--g-3)" data-tip="응급실운영신고기관 13곳 · 28항목 중 99%가 정보미제공"/><text x="541.9" y="174.0" class="lb">99%</text></svg></div>
+<p>문제는 구급대가 실제로 가장 자주 상대하는 곳이 아래쪽 등급이라는 점이다. 경남 48곳 중 지역응급의료기관·응급실운영신고기관이 <strong>37곳</strong>이고, 실시간 병상 정보가 올라오지 않는 <strong>11곳</strong>도 대부분 여기에 몰려 있다.</p>
+<h2><span class="n">4</span>부담이 큰 곳일수록 정보가 없다</h2>
+<p>가장 가까운 응급의료센터까지의 직선거리(먼 순). <span style="color:var(--iso);font-weight:600">주황</span>은 반경 5km 안에 다른 응급실이 하나도 없는 곳이다. 도 경계는 무시하고 전국 기준으로 쟀다 — 구급차는 행정구역을 따지지 않는다.</p>
+<div class="card"><svg viewBox="0 0 620 760" role="img" aria-label="가장 가까운 응급의료센터까지 거리"><line x1="150.0" y1="18" x2="150.0" y2="746" stroke="var(--grid)" stroke-width="1"/><text x="150.0" y="12" class="ax" text-anchor="middle">0km</text><line x1="219.4" y1="18" x2="219.4" y2="746" stroke="var(--grid)" stroke-width="1"/><text x="219.4" y="12" class="ax" text-anchor="middle">10km</text><line x1="288.9" y1="18" x2="288.9" y2="746" stroke="var(--grid)" stroke-width="1"/><text x="288.9" y="12" class="ax" text-anchor="middle">20km</text><line x1="358.3" y1="18" x2="358.3" y2="746" stroke="var(--grid)" stroke-width="1"/><text x="358.3" y="12" class="ax" text-anchor="middle">30km</text><line x1="427.7" y1="18" x2="427.7" y2="746" stroke="var(--grid)" stroke-width="1"/><text x="427.7" y="12" class="ax" text-anchor="middle">40km</text><line x1="497.2" y1="18" x2="497.2" y2="746" stroke="var(--grid)" stroke-width="1"/><text x="497.2" y="12" class="ax" text-anchor="middle">50km</text><rect class="cell" x="150" y="28" width="370.4" height="11" rx="3" fill="var(--iso)" data-tip="거창군 · 지역응급의료기관 · 가장 가까운 센터 53.3km(경상북도) · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><text x="140" y="37.0" class="ax" text-anchor="end">거창군 · 道 밖</text><text x="527.4" y="37.0" class="ax">53</text><rect class="cell" x="150" y="43" width="297.9" height="11" rx="3" fill="var(--iso)" data-tip="합천군 · 지역응급의료기관 · 가장 가까운 센터 42.9km(대구광역시) · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><text x="140" y="52.0" class="ax" text-anchor="end">합천군 · 道 밖</text><text x="454.9" y="52.0" class="ax">43</text><rect class="cell" x="150" y="58" width="263.4" height="11" rx="3" fill="var(--iso)" data-tip="통영시 · 지역응급의료기관 · 가장 가까운 센터 37.9km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><text x="140" y="67.0" class="ax" text-anchor="end">통영시</text><text x="420.4" y="67.0" class="ax">38</text><rect class="cell" x="150" y="73" width="245.5" height="11" rx="3" fill="var(--iso)" data-tip="거제시 · 지역응급의료기관 · 가장 가까운 센터 35.4km(부산광역시) · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><text x="140" y="82.0" class="ax" text-anchor="end">거제시 · 道 밖</text><text x="402.5" y="82.0" class="ax">35</text><rect class="cell" x="150" y="88" width="244.8" height="11" rx="3" fill="var(--dense)" data-tip="거제시 · 지역응급의료기관 · 가장 가까운 센터 35.3km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><text x="140" y="97.0" class="ax" text-anchor="end">거제시</text><text x="401.8" y="97.0" class="ax">35</text><rect class="cell" x="150" y="103" width="236.9" height="11" rx="3" fill="var(--iso)" data-tip="창녕군 · 지역응급의료기관 · 가장 가까운 센터 34.1km(대구광역시) · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><text x="140" y="112.0" class="ax" text-anchor="end">창녕군 · 道 밖</text><text x="393.9" y="112.0" class="ax">34</text><rect class="cell" x="150" y="118" width="228.6" height="11" rx="3" fill="var(--dense)" data-tip="거제시 · 지역응급의료기관 · 가장 가까운 센터 32.9km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><text x="140" y="127.0" class="ax" text-anchor="end">거제시</text><text x="385.6" y="127.0" class="ax">33</text><rect class="cell" x="150" y="133" width="224.0" height="11" rx="3" fill="var(--iso)" data-tip="산청군 · 지역응급의료기관 · 가장 가까운 센터 32.3km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><text x="140" y="142.0" class="ax" text-anchor="end">산청군</text><text x="381.0" y="142.0" class="ax">32</text><rect class="cell" x="150" y="148" width="213.7" height="11" rx="3" fill="var(--iso)" data-tip="함양군 · 지역응급의료기관 · 가장 가까운 센터 30.8km(전북특별자치도) · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><text x="140" y="157.0" class="ax" text-anchor="end">함양군 · 道 밖</text><text x="370.7" y="157.0" class="ax">31</text><rect class="cell" x="150" y="163" width="194.6" height="11" rx="3" fill="var(--dense)" data-tip="고성군 · 응급실운영신고기관 · 가장 가까운 센터 28.0km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><text x="140" y="172.0" class="ax" text-anchor="end">고성군</text><text x="351.6" y="172.0" class="ax">28</text><rect class="cell" x="150" y="178" width="193.9" height="11" rx="3" fill="var(--dense)" data-tip="고성군 · 지역응급의료기관 · 가장 가까운 센터 27.9km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="193" width="187.6" height="11" rx="3" fill="var(--dense)" data-tip="밀양시 · 지역응급의료기관 · 가장 가까운 센터 27.0km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="208" width="184.2" height="11" rx="3" fill="var(--dense)" data-tip="밀양시 · 응급실운영신고기관 · 가장 가까운 센터 26.5km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="223" width="183.2" height="11" rx="3" fill="var(--dense)" data-tip="사천시 · 지역응급의료기관 · 가장 가까운 센터 26.4km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 1명"/><rect class="cell" x="150" y="238" width="179.8" height="11" rx="3" fill="var(--dense)" data-tip="사천시 · 지역응급의료기관 · 가장 가까운 센터 25.9km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="253" width="163.5" height="11" rx="3" fill="var(--iso)" data-tip="남해군 · 지역응급의료기관 · 가장 가까운 센터 23.6km(전남광주통합특별시) · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="268" width="157.3" height="11" rx="3" fill="var(--iso)" data-tip="하동군 · 응급실운영신고기관 · 가장 가까운 센터 22.7km(전남광주통합특별시) · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="283" width="143.0" height="11" rx="3" fill="var(--iso)" data-tip="의령군 · 지역응급의료기관 · 가장 가까운 센터 20.6km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="298" width="116.8" height="11" rx="3" fill="var(--iso)" data-tip="양산시 · 지역응급의료기관 · 가장 가까운 센터 16.8km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 1명"/><rect class="cell" x="150" y="313" width="105.8" height="11" rx="3" fill="var(--iso)" data-tip="밀양시 · 응급실운영신고기관 · 가장 가까운 센터 15.2km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="328" width="103.2" height="11" rx="3" fill="var(--dense)" data-tip="양산시 · 권역응급의료센터 · 가장 가까운 센터 14.9km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 9명"/><rect class="cell" x="150" y="343" width="70.6" height="11" rx="3" fill="var(--iso)" data-tip="사천시 · 응급실운영신고기관 · 가장 가까운 센터 10.2km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="358" width="70.5" height="11" rx="3" fill="var(--iso)" data-tip="함안군 · 응급실운영신고기관 · 가장 가까운 센터 10.2km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="373" width="61.0" height="11" rx="3" fill="var(--dense)" data-tip="김해시 · 응급실운영신고기관 · 가장 가까운 센터 8.8km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="388" width="54.4" height="11" rx="3" fill="var(--dense)" data-tip="김해시 · 지역응급의료기관 · 가장 가까운 센터 7.8km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 2명"/><rect class="cell" x="150" y="403" width="52.3" height="11" rx="3" fill="var(--iso)" data-tip="창원시 · 지역응급의료기관 · 가장 가까운 센터 7.5km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="418" width="47.6" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 지역응급의료센터 · 가장 가까운 센터 6.9km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 4명"/><rect class="cell" x="150" y="433" width="34.9" height="11" rx="3" fill="var(--iso)" data-tip="창원시 · 지역응급의료기관 · 가장 가까운 센터 5.0km · 반경 5km 안 다른 응급실 0곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="448" width="33.1" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 권역응급의료센터 · 가장 가까운 센터 4.8km · 반경 5km 안 다른 응급실 1곳 · 응급의학과 전문의 9명"/><rect class="cell" x="150" y="463" width="33.1" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 지역응급의료센터 · 가장 가까운 센터 4.8km · 반경 5km 안 다른 응급실 3곳 · 응급의학과 전문의 10명"/><rect class="cell" x="150" y="478" width="31.8" height="11" rx="3" fill="var(--dense)" data-tip="김해시 · 지역응급의료센터 · 가장 가까운 센터 4.6km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 6명"/><rect class="cell" x="150" y="493" width="31.8" height="11" rx="3" fill="var(--dense)" data-tip="김해시 · 지역응급의료센터 · 가장 가까운 센터 4.6km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 4명"/><rect class="cell" x="150" y="508" width="30.8" height="11" rx="3" fill="var(--dense)" data-tip="양산시 · 지역응급의료기관 · 가장 가까운 센터 4.4km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="523" width="30.4" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 지역응급의료센터 · 가장 가까운 센터 4.4km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 11명"/><rect class="cell" x="150" y="538" width="30.4" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 지역응급의료센터 · 가장 가까운 센터 4.4km · 반경 5km 안 다른 응급실 3곳 · 응급의학과 전문의 13명"/><rect class="cell" x="150" y="553" width="22.3" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 응급실운영신고기관 · 가장 가까운 센터 3.2km · 반경 5km 안 다른 응급실 3곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="568" width="22.0" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 지역응급의료센터 · 가장 가까운 센터 3.2km · 반경 5km 안 다른 응급실 6곳 · 응급의학과 전문의 5명"/><rect class="cell" x="150" y="583" width="13.8" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 지역응급의료기관 · 가장 가까운 센터 2.0km · 반경 5km 안 다른 응급실 6곳 · 응급의학과 전문의 1명"/><rect class="cell" x="150" y="598" width="10.5" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 응급실운영신고기관 · 가장 가까운 센터 1.5km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="613" width="10.1" height="11" rx="3" fill="var(--dense)" data-tip="창원시 · 지역응급의료기관 · 가장 가까운 센터 1.5km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 5명"/><rect class="cell" x="150" y="628" width="9.6" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 지역응급의료기관 · 가장 가까운 센터 1.4km · 반경 5km 안 다른 응급실 7곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="643" width="7.7" height="11" rx="3" fill="var(--dense)" data-tip="김해시 · 응급실운영신고기관 · 가장 가까운 센터 1.1km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="658" width="5.9" height="11" rx="3" fill="var(--dense)" data-tip="양산시 · 응급실운영신고기관 · 가장 가까운 센터 0.9km · 반경 5km 안 다른 응급실 2곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="673" width="4.3" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 권역응급의료센터 · 가장 가까운 센터 0.6km · 반경 5km 안 다른 응급실 7곳 · 응급의학과 전문의 8명"/><rect class="cell" x="150" y="688" width="4.3" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 지역응급의료센터 · 가장 가까운 센터 0.6km · 반경 5km 안 다른 응급실 7곳 · 응급의학과 전문의 5명"/><rect class="cell" x="150" y="703" width="2.2" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 응급실운영신고기관 · 가장 가까운 센터 0.3km · 반경 5km 안 다른 응급실 7곳 · 응급의학과 전문의 0명"/><rect class="cell" x="150" y="718" width="1.6" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 지역응급의료기관 · 가장 가까운 센터 0.2km · 반경 5km 안 다른 응급실 7곳 · 응급의학과 전문의 1명"/><rect class="cell" x="150" y="733" width="1.5" height="11" rx="3" fill="var(--dense)" data-tip="진주시 · 응급실운영신고기관 · 가장 가까운 센터 0.2km · 반경 5km 안 다른 응급실 7곳 · 응급의학과 전문의 0명"/><text x="140" y="758" class="ax" text-anchor="end">응급의료기관 48곳</text></svg></div>
+<div class="card scroll"><table><caption>두 집단 비교</caption>
+<thead><tr><th></th><th>곳</th><th>신고<br>공백</th><th>병상 정보<br>올라옴</th><th>응급의학과<br>전문의 ≤1명</th><th>센터까지<br>거리 중앙</th></tr></thead><tbody>
+<tr><td><strong>반경 5km 안 대안 없음</strong></td><td>16</td><td>93%</td><td>12/16</td><td>16/16</td><td>23.1km</td></tr>
+<tr><td><strong>그 외</strong></td><td>32</td><td>74%</td><td>25/32</td><td>19/32</td><td>4.5km</td></tr>
+</tbody></table></div>
+<p>여기서 한 번 거절되는 비용은 도심과 다르다. 다음 센터까지 중앙 23km이고, 가장 먼 곳은 <strong>53km</strong>다. 그리고 이 16곳 중 <strong>7곳은 가장 가까운 센터가 경남 밖</strong>이다 — 거제시 · 거창군 · 남해군 · 창녕군 · 하동군 · 함양군 · 합천군. 현장에서 도 경계를 넘는 판단을, 전화로 하고 있다.</p>
+<h2><span class="n">5</span>병상은 병목이 아니다</h2>
+<p>가용 병상이 0 이하였던 시간 비율은 경남 전체 중앙값 <strong>0.2%</strong>, 최대 16%다. 5%를 넘는 곳은 5곳뿐이고 대부분 창원·양산 등 도시권 중심 병원이다. 즉 경남에서 전화를 돌리게 만드는 것은 “자리가 없어서”가 아니라 <strong>“받을 수 있는지 알 수 없어서”</strong>다.</p>
+<p>덧붙여, 이 값들은 폴링마다 실제로 움직인다 — 경남 응급실 병상은 대체로 실시간으로 연동되고 있다. <strong>병상 정보 자체는 잘 돌아가고 있다</strong>는 점은 분명히 해 둘 필요가 있다.</p>
+<h2><span class="n">6</span>요청 — 진주에서 먼저 재보겠습니다</h2>
+<div class="card">
+<p style='color:var(--ink)'>경남 48곳 가운데 <strong>진주시</strong>를 첫 실증지로 제안한다 — 응급실 8곳이 모두 반경 5km 안에 모여 있어 효과를 짧은 기간에 측정할 수 있고, 권역응급의료센터가 그 안에 있으며, 진주소방서 구급차 10대로 표본이 충분하다.</p>
+<h3>어떻게</h3>
+<p>구급대원은 <strong>평소대로 전화를 돌린다.</strong> 앱은 같은 시점에 “이 병원을 먼저 추천했다”를 기록만 한다. 추천을 따를 필요도, 참고할 필요도 없다. 업무 절차는 하나도 바뀌지 않는다.</p>
+<h3>무엇을 재는가</h3>
+<p>① 현장 체류 시간 ② 재이송률 ③ 첫 연락 수용률·통화 횟수 ④ 기록 작성 시간. 모두 <strong>병원명·시각·횟수</strong>만으로 계산되므로 <strong>환자 식별정보가 들어가지 않고</strong>, 병원 측 협조도 필요하지 않다. ①②는 이미 구급활동 기록에 있는 값이다.</p>
+<h3>성공 기준</h3>
+<p>현장 체류 시간 중앙값과 재이송률이 개선되지 않으면 <strong>실패로 보고한다.</strong> 추천 적중률이 기존보다 낮게 나오는 경우도 그대로 공개한다.</p>
+<div class="card ask" style="margin:18px 0 0">
+<p style='color:var(--ink);font-weight:600;margin:0'>허락을 구하는 것은 하나입니다</p>
+<ol>
+<li>구급대원 <strong>1~2명</strong>이 <strong>2~3주간</strong> 업무 절차를 바꾸지 않고 병행 사용</li>
+<li>환자 정보는 수집하지 않으며, 병원 측 협조도 필요하지 않습니다</li>
+<li>결과는 개선·악화 여부와 무관하게 그대로 보고드립니다</li>
+</ol></div>
+</div>
+<footer>
+<p style='color:var(--ink2)'><strong>데이터 출처와 한계</strong></p><ul>
+<li>E-Gen 응급의료기관 목록·실시간 가용병상·중증질환 수용가능 공개 API를 2026-08-12부터 2026-10-22까지 직접 수집한 원본 스냅샷 52일분.</li>
+<li>심평원 의료기관별상세 공개 API(전문과목 전문의 수). 공통 식별자가 없어 좌표 최근접으로 이었다.</li>
+<li>소방청 119안전센터 현황·센터별 구급차 대수 공개자료.</li>
+<li>집계는 전부 규칙 기반이다. 이 문서에 추정·예측 모델은 쓰이지 않았다.</li>
+<li>“알 수 없음”은 수용 불가가 아니라 미신고다. 신고 공백은 본 항목 28칸만 세므로 동반 메시지 칸에 적힌 내용은 반영되지 않는다 — <strong>보수적으로 높게 잡힌 값</strong>이다.</li>
+<li>전문의 수는 보유 인원이고 특정 시각의 당직이 아니다. “전문의가 적다”는 “수용 불가”와 같은 말이 아니다.</li>
+<li>거리는 직선거리다. 실제 이송 시간은 도로 사정에 따라 다르다.</li>
+<li>현장 데이터는 한 건도 포함돼 있지 않다. 6절은 수행 전 설계안이다.</li>
+</ul></footer>
+</div>
+<script>
+(function(){
+  var tip=document.getElementById('tip');
+  document.addEventListener('pointerover',function(e){
+    var t=e.target.closest('[data-tip]'); if(!t)return;
+    tip.textContent=t.getAttribute('data-tip'); tip.style.opacity='1';
+  });
+  document.addEventListener('pointermove',function(e){
+    if(tip.style.opacity!=='1')return;
+    var w=tip.offsetWidth,h=tip.offsetHeight;
+    var x=e.clientX+14, y=e.clientY-h-10;
+    if(x+w>innerWidth-8)x=e.clientX-w-14;
+    if(y<8)y=e.clientY+16;
+    tip.style.left=x+'px'; tip.style.top=y+'px';
+  });
+  document.addEventListener('pointerout',function(e){
+    if(e.target.closest('[data-tip]')) tip.style.opacity='0';
+  });
+})();
+</script>

@@ -36,6 +36,9 @@ AIRookie/
 ├── info/             병원 정보 관리: E-Gen·심평원 API·OCR (feature/info)
 ├── dashboard/        구급차·병원·관제 대시보드, 온디바이스 앱 (feature/dashboard)
 ├── sim/              대량사고 분산 이송 시뮬레이션 — 발표·IR 검증 재료 (feature/sim)
+├── spider/           거미줄 분배 모델 실험실 + 3D 화면 서버 (feature/spider)
+├── poc/              현장 실증(PoC) 재료 · IR 숫자 정본 · 임상 자문 대조
+├── CODE_AUDIT.md     코드 전수검사 기록(구조·인터페이스·검사 결과·결함)
 ├── lidar3d/          3D 뷰어(선택, start-all --lidar)
 └── supabase/         E-Gen 스냅샷 클라우드 수집(Edge Function·cron)
 ```
@@ -49,6 +52,13 @@ AIRookie/
 | `info/` | [info/README.md](info/README.md), [info/REPORT_NOTES.md](info/REPORT_NOTES.md) | E-Gen·심평원 API 병원 정보 정규화, 신뢰도 진단(`hospital_score`), 서류 OCR |
 | `dashboard/` | [dashboard/README.md](dashboard/README.md) | 구급차/병원/관제 실시간 화면, 승인 워크플로우, 통화 요약 확인·수정 |
 | `sim/` | [sim/README.md](sim/README.md) | 대량사고(MCI) 분산 이송 시뮬레이션 |
+| `spider/` | [spider/README.md](spider/README.md) | 거미줄 분배 모델 실험실 + 3D 화면 서버(hub 순위 규칙의 원본) |
+| `poc/` | [poc/README.md](poc/README.md) | 현장 실증 재료 · [IR_NUMBERS.md](poc/IR_NUMBERS.md)(숫자 정본) · [CLINICAL_CONVERGENCE.md](poc/CLINICAL_CONVERGENCE.md)(임상 자문 대조) |
+
+> **[CODE_AUDIT.md](CODE_AUDIT.md) — 코드 전수검사 기록(2026-10-22).** 폴더별 구조·포트·hub의
+> 실제 HTTP/WS 인터페이스·순위 규칙, 그리고 **그날 실제로 돌려 본 검사 결과표**(hub 19/19 ·
+> info 4/4 · spider 13/14 · dashboard tsc·eslint)와 발견한 결함 목록이 들어 있다. "지금 코드가
+> 실제로 무엇을 하는가"는 이 문서가, "무엇을 하기로 했는가"는 `CLAUDE.md`가 기준이다.
 
 `info/ocr/`, `info/LLMdata/`, `info/simulation/`은 병원 서류 OCR 기반 정보
 추출 경로다(경로 B). 현재 상시 파이프라인은 `info/Hospital_inform/`(경로 A,
@@ -90,6 +100,31 @@ E-Gen·심평원 실 API)을 기준으로 하며, 경로 B는 아직 경로 A와
 - 서류 OCR(경로 B) → E-Gen 정규화(경로 A) 병합
 - 구급차 실시간 GPS(지금은 `AmbulanceInfo`에 저장된 고정값)
 - 카카오내비 자동 연동(CLAUDE.md 시스템 흐름도에만 명시, 코드 없음)
+
+---
+
+## ⚠ 고쳐야 할 것 (2026-10-22 전수검사에서 발견, 미해결)
+
+전수검사 전문·재현 명령은 [CODE_AUDIT.md](CODE_AUDIT.md) §7. 고치면 이 표에서 지우지 말고
+"고침 + 날짜"로 바꾼다 — 무엇이 한 번 깨졌는지가 다음 검사의 재료다.
+
+| 우선 | 무엇 | 왜 지금 | 어디 |
+|---|---|---|---|
+| **1** | **dashboard eslint 오류 3건 — 전부 시연 경로다** | `tsc`는 통과하므로 **런타임에 조용히 틀리는 쪽**이다. 특히 "선언 전 변수 접근"은 렌더 순서에 따라 `undefined`가 될 수 있다. **발표·시연 전에 볼 것** | `src/app/case/page.tsx:33`(effect 안 동기 setState → 연쇄 렌더) · `:48`(의존성 배열이 단순 식이 아님) · `src/components/ambulance/TransportMonitorPanel.tsx:158`(선언 전 변수 접근) |
+| **2** | **hub 테스트의 실행 환경 안내가 없다** | conda `dev`에는 `flask_sock`·`sentence_transformers`가 없어 **19개 중 13개가 import 단계에서 실패**한다. 올바른 환경은 `rookie_info`인데 `hub/`에 적혀 있지 않아 실제로 한 번 헤맸다 | `hub/README.md`에 "환경 `rookie_info` + `PYTHONUTF8=1` + `HUB_SPIDER_HOUR=14`" 한 줄 |
+| 3 | spider py ↔ js 쌍둥이가 14사례 중 1건 어긋남 | 도로 거리 표시만 다르다(8.4km vs 8.7km). 줄 길이·도착 예정·선택 병원은 같아 **순위에는 영향 없음**. 경로 탐색 타이브레이크 차이로 추정 | `spider/parity_check.py` |
+| 4 | `CLAUDE.md`에 `lidar3d/`가 한 줄도 없다 | 95파일·10,649줄 모듈이 공통 컨텍스트의 브랜치 표·흐름도·담당 영역 어디에도 없다(이 README에만 한 줄). `--lidar`로만 켜지는 선택 모듈이라 급하지는 않다 | `CLAUDE.md` |
+| 5 | 빈 untracked 폴더 `memo/` | 0바이트 파일 하나. 정리만 | `memo/` |
+
+**측정 지표 쪽 숙제**(코드 결함은 아니지만 발표 전 정리 필요, 근거는
+[poc/CLINICAL_CONVERGENCE.md](poc/CLINICAL_CONVERGENCE.md)):
+
+- 발표 지표를 **평균 이송 시간**에서 **최종치료기관 직행률 · 재전원 발생률 · 접촉~치료 개시
+  시간**으로 바꿀 것(§2-3). 임상 자문과 우리 GPU 벤치가 독립적으로 "μ(상급 역량 이득)는
+  아직 가정"이라는 같은 결론에 도달했다
+- 신뢰도 **% 노출을 밴드 + 주어 명시**로 바꿀 것(§7-3). 밴드 근거로는 **조건부 폴링 채점만**
+  쓸 수 있다 — `/verify` 무작위 표본에서는 최하 밴드(91.3%)가 50~80% 밴드(90.8%)와 구분되지
+  않는다
 
 ---
 

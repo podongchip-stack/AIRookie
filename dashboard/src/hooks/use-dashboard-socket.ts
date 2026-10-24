@@ -77,6 +77,7 @@ const INITIAL_STATE: DashboardState = {
   caseMeta: {},
   caseHistory: [],
   actionRefused: null,
+  selectionReleased: null,
   mciAllocated: null,
   mciPlan: null,
   sceneInputMode: {},
@@ -406,6 +407,15 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
               break;
             case "action_refused":
               setState((prev) => ({ ...prev, actionRefused: { at: Date.now(), reason: parsed.reason, caseId: parsed.caseId } }));
+              break;
+            // 미선택 통보(2026-10-22): 이송이 다른 병원으로 확정됐다 — 승인은 유효하지만 준비는 풀 수 있다.
+            case "selection_released":
+              setState((prev) => ({
+                ...prev,
+                selectionReleased: {
+                  at: Date.now(), caseId: parsed.caseId, confirmedHospitalName: parsed.confirmedHospitalName,
+                },
+              }));
               break;
             case "match_result":
             case undefined:
