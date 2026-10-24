@@ -36,6 +36,9 @@ export const C = {
 export type St = "w" | "r" | "a" | "t";
 export const ST_OF: Record<HospitalStatus, St> = { pending: "w", rejected: "r", approved: "a", confirmed: "t" };
 export const ST_LABEL: Record<St, string> = { w: "판단 대기", r: "수용 불가", a: "수용 승인", t: "이송 확정" };
+// 요청 병원 한 곳의 상태 문구 — "병상 없음"(E-Gen)·"선택 안 됨"(승인했지만 다른 병원으로 확정)을 상태와 구분해 보인다
+export const reqLabel = (h: Pick<IncHospital, "st" | "bedsFull" | "notSelected">) =>
+  h.st === "r" && h.bedsFull ? "병상 없음" : h.st === "a" && h.notSelected ? "선택 안 됨" : ST_LABEL[h.st];
 export const ST_DOT: Record<St, string> = { w: "#F6C21B", r: "#D93025", a: "#7CB342", t: "#168A55" };
 export const ST_PILL: Record<St, string> = { w: "#F2B90F", r: "#D93025", a: "#7CB342", t: "#168A55" };
 export const ST_TEXT: Record<St, string> = { w: "#C75B00", r: "#D93025", a: "#4E8B1F", t: "#168A55" };
@@ -86,6 +89,8 @@ export interface IncHospital {
   st: St;
   // "병상 없음"(E-Gen) 또는 병원이 직접 거절 — 표시 문구가 다르다
   bedsFull: boolean;
+  // 수용 승인했지만 이송은 다른 병원으로 확정됨(hub notSelected, 2026-10-24) — st는 "a" 그대로, 문구만 "선택 안 됨"
+  notSelected?: boolean;
   km: number;
   zone: number;
   respondedAt: string | null;
@@ -173,6 +178,7 @@ export function buildIncidents(input: {
         name: h.name,
         st: ST_OF[h.status],
         bedsFull: h.status === "rejected" && h.unavailableReason === "beds_full",
+        notSelected: h.status === "approved" && !!h.notSelected,
         km: h.distanceKm,
         zone: h.zone,
         respondedAt: h.respondedAt ?? null,
