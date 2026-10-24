@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 _TMP = tempfile.TemporaryDirectory()
@@ -23,12 +24,19 @@ from scoring import OCCUPANCY_PENALTY_MAX_MIN, final_score, occupancy_penalty_mi
 from test_acceptance_messages import SCENE, _FakeMatcher, _voice  # noqa: E402
 
 
+#: 병상 값의 신고 시각. **지금 기준**으로 만든다(2026-10-22) — 예전엔 "2026-10-07T00:00:00Z"로 박혀 있어서,
+#: 그날이 1일을 넘기는 순간부터 `_is_bed_data_stale`이 True가 되고 `_er_capacity`가 포화도를 내지 않아
+#: 이 검사가 영구히 실패했다(시한폭탄). 포화도 자체를 재는 검사이므로 신고가 신선한 상태를 전제해야 한다.
+def _fresh_updated_at() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _hospital(hpid: str, lat: float, beds: dict[str, int] | None, capacity: dict[str, int] | None) -> HospitalInfo:
     return HospitalInfo(
         hospitalId=hpid, name=f"[테스트] {hpid}", gps=GpsPoint(lat=lat, lng=126.9780),
         availableBedCount=(beds or {}).get("ER_ADULT", 0), nightDutyAvailable=True,
         specialties=[Specialty(department="흉부외과", doctorCount=0)],
-        updatedAt="2026-10-07T00:00:00Z", bedsByType=beds, bedCapacityByType=capacity,
+        updatedAt=_fresh_updated_at(), bedsByType=beds, bedCapacityByType=capacity,
     )
 
 

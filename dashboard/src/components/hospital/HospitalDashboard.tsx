@@ -10,7 +10,7 @@ import { RequestCard, cardKind, kindMeta } from "@/components/hospital/RequestCa
 import { MapPanel } from "@/components/hospital/MapPanel";
 import { HD } from "@/components/hospital/hospital-design";
 import { useDashboardSocket } from "@/hooks/use-dashboard-socket";
-import type { PreAlert, TransportAssessment } from "@/types/dashboard";
+import type { DashboardState, PreAlert, TransportAssessment } from "@/types/dashboard";
 
 // 예비 고지 모달(2026-10-04) — 구급대가 출동한 순간 hub가 현장 존 안 후보 병원에 먼저
 // 보내는 선(先) 경고. 실제 수용 요청이 오기 전에 "올 수 있다"를 알려 준비 시간을 벌어 준다.
@@ -117,6 +117,43 @@ function TransportAlertBanner({ assessments }: { assessments: TransportAssessmen
   );
 }
 
+/**
+ * 미선택 통보 안내 문구를 만든다(2026-10-22).
+ *
+ * 아래 `myCases` 필터는 "다른 병원으로 이송이 확정된 사건"의 카드를 목록에서 뺀다(2026-08-11 결정). 그래서
+ * 통보가 없으면 승인해 둔 카드가 **설명 없이 사라진다** — 수용 승낙은 빈 병상 확인이 아니라 처치 공간 확보·
+ * 기존 진료 조정 같은 자원 선배정이므로, 왜 사라졌는지 알려 줘야 그 준비를 풀 수 있다(임상 자문 요구,
+ * poc/CLINICAL_CONVERGENCE.md §4).
+ *
+ * 두 경로를 모두 받는다 — ① hub 푸시(`selection_released`, 탭이 떠 있을 때) ② 매칭 결과의 `notSelected`
+ * 깃발(재접속·뒤늦게 연 탭은 푸시를 못 받고 따라잡기로만 받는다). 같은 사건으로 두 번 뜨지 않게 caseId로
+ * 가른다. 승인이 풀린 건 아니다(status는 approved 그대로 — 이동 중 재선택 대상으로 남는다).
+ */
+function useSelectionNotice(
+  state: { selectionReleased: DashboardState["selectionReleased"]; matchResults: DashboardState["matchResults"] },
+  myHospitalId: string | null,
+): { at: number; text: string } | null {
+  const fromFlag = myHospitalId
+    ? Object.values(state.matchResults).find((result) =>
+        result.hospitals.some((h) => h.hospitalId === myHospitalId && h.notSelected),
+      )
+    : undefined;
+  const caseId = state.selectionReleased?.caseId ?? fromFlag?.caseId ?? null;
+  const confirmedName =
+    state.selectionReleased?.confirmedHospitalName ??
+    fromFlag?.hospitals.find((h) => h.status === "confirmed")?.name ??
+    null;
+
+  // `at`은 "새 안내인가"를 가르는 식별자일 뿐이라 시각이 아니라 증가하는 번호를 쓴다 — 렌더 중 Date.now()는
+  // 순수하지 않아 eslint(react-hooks/purity)가 막고, 재렌더마다 값이 흔들려 토스트가 다시 뜰 수 있다.
+  const [noticed, setNoticed] = useState<{ caseId: string; seq: number } | null>(null);
+  if (caseId && confirmedName && caseId !== noticed?.caseId) {
+    setNoticed((prev) => ({ caseId, seq: (prev?.seq ?? 0) + 1 }));
+  }
+  if (!noticed || !confirmedName) return null;
+  return { at: noticed.seq, text: `${confirmedName}(으)로 이송이 확정됐습니다 — 귀원은 선택되지 않았습니다.` };
+}
+
 // 수용 요청 카드 정렬 — 같은 단계 안에서 위험한 순(2026-10-04)
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
@@ -132,8 +169,12 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
     MY_HOSPITAL_ID ? { role: "hospital", id: MY_HOSPITAL_ID } : null,
   );
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
-  // 시연 일시정지 안내(2026-10-05) — 일시정지 중 버튼을 누르거나 hub가 조작을 거부하면 화면 위에 잠깐
-  const pauseToast = usePauseToast(state.actionRefused);
+  // 시연 일시정지 안내(2026-10-05) — 일시정지 중 버튼을 누르거나 hub가 조작을 거부하면 화면 위에 잠깐.
+  // 미선택 통보(2026-10-22)도 같은 토스트로 띄운다 — 아래 myCases 필터가 "다른 병원으로 확정된 사건"의
+  // 카드를 목록에서 빼기 때문에, 통보가 없으면 승인해 둔 카드가 **설명 없이 사라진다.** 수용 승낙은 처치
+  // 공간 확보·기존 진료 조정 같은 자원 선배정이라, 왜 사라졌는지 알려 줘야 그 준비를 풀 수 있다(임상 자문).
+  const selectionNotice = useSelectionNotice(state, MY_HOSPITAL_ID);
+  const pauseToast = usePauseToast(state.actionRefused, selectionNotice);
   // 예비 고지에서 [확인]을 누른 사건 — 모달만 닫고, 실제 요청·사건 종료 시 훅이 데이터를 지운다.
   const [dismissedPreAlerts, setDismissedPreAlerts] = useState<Set<string>>(new Set());
   const activePreAlerts = Object.values(state.preAlerts).filter((alert) => !dismissedPreAlerts.has(alert.caseId));

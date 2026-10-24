@@ -219,6 +219,10 @@ export interface HospitalCandidate {
   bedDataStale?: boolean;
   // 이 사건에서 제외된 병원(2026-10-05, 도착 후 수용 불가·이송 중 수용 철회) — 같은 사건엔 다시 승인·이송 승인 불가
   excluded?: boolean;
+  // 수용 승인은 했지만 이송은 다른 병원으로 확정된 병원(hub 2026-10-22). 수용 승낙은 처치 공간 확보·기존 진료
+  // 조정 같은 자원 선배정이라, 선택되지 않았음을 알려 그 준비를 풀 수 있게 해야 한다(임상 자문 요구).
+  // status는 approved 그대로다 — 승인 자체는 유효하고 이동 중 재선택 대상으로 남는다.
+  notSelected?: boolean;
   status: HospitalStatus;
   etaMin?: number;
   reliability?: ReliabilityInfo;
@@ -465,6 +469,18 @@ export interface ActionRefused {
   reason: string;
 }
 
+// 미선택 통보(hub 2026-10-22) — 이송이 다른 병원으로 확정된 순간, 승인은 했지만 선택되지 않은 병원에 온다.
+// 매칭 결과의 `notSelected` 깃발과 같은 사실을 푸시로 한 번 더 받는 것이라, 카드 목록을 다시 훑지 않고
+// 바로 안내를 띄울 수 있다. 승인이 풀린 건 아니다(status는 approved 그대로 — 이동 중 재선택 대상으로 남는다).
+export interface SelectionReleased {
+  type: "selection_released";
+  caseId: string;
+  hospitalId: string;
+  confirmedHospitalId: string;
+  confirmedHospitalName: string;
+  timestamp: string;
+}
+
 export type DashboardRole = "ambulance" | "hospital";
 // hub 소켓 접속 역할. monitor(2026-10-03)는 관제 지도 — 승인 같은 행위는 하지 않고 보기만 한다.
 export type SocketRole = DashboardRole | "monitor";
@@ -549,6 +565,8 @@ export interface DashboardState {
   caseHistory: CaseHistoryItem[];
   // 마지막으로 hub가 거부한 조작(2026-10-05) — 화면이 "현재 시연 일시정지 중입니다." 같은 안내를 잠깐 띄운다
   actionRefused: { at: number; reason: string; caseId: string | null } | null;
+  // 미선택 통보(2026-10-22) — 병원 화면이 안내를 띄우는 데 쓴다. at은 받은 시각(같은 사건이 또 와도 다시 띄우게).
+  selectionReleased: { at: number; caseId: string; confirmedHospitalName: string } | null;
   // 마지막 대량사고 분배 확정 결과(시연 콘솔)
   mciAllocated: { at: number; results: MciAllocationResult[] } | null;
   // 마지막 대량사고 자동 분배 미리 보기(시연 콘솔 ③)
@@ -933,6 +951,7 @@ export type InboundMessage =
   | CaseMeta
   | CaseHistory
   | ActionRefused
+  | SelectionReleased
   | MciAllocated
   | MciPlan
   | SceneInputModeMessage;

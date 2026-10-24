@@ -1276,6 +1276,54 @@ def _hospital_dashboard_connected(hospital_id: str) -> bool:
         )
 
 
+def _send_selection_released(case_id: str, result, timestamp: str) -> None:
+    """이송이 확정된 순간, **승인했지만 선택되지 않은** 병원들에 "선택되지 않았습니다"를 즉시 보낸다(2026-10-22).
+
+    임상 자문 요구 — *"다수 병원이 수용 가능성을 회신하더라도 실제 수용 확약은 최종 선택한 한 병원에만 부여하고,
+    나머지 병원에는 선택되지 않았음을 즉시 자동으로 알리는 기능이 필요합니다."* 수용 승낙은 빈 병상 확인이 아니라
+    처치 공간 확보·기존 진료 조정·신규 수용 제한 같은 자원 선배정이라, 알려 주지 않으면 그 준비가 묶여 있는다.
+
+    매칭 결과의 `notSelected` 깃발(hub_engine._mark_not_selected)과 같은 사실을 **푸시로** 한 번 더 보내는 것이다 —
+    병원 화면이 카드 목록을 다시 훑지 않아도 바로 안내를 띄울 수 있게. 승인 자체는 풀지 않는다(status는 approved
+    그대로): 이동 중 재선택의 대상으로 남아야 한다는 원칙 그대로다. 근거·수치는 poc/CLINICAL_CONVERGENCE.md §4
+    (배정이 공유되지 않으면 도착 거절이 12~72% 늘고, 거절만 공유해도 대부분 되찾는다).
+    """
+    confirmed = next((h for h in result.hospitals if h.status == "confirmed"), None)
+    released = [h.hospitalId for h in result.hospitals if h.notSelected]
+    if confirmed is None or not released:
+        return
+    payload = {
+        "type": "selection_released",
+        "caseId": case_id,
+        "confirmedHospitalId": confirmed.hospitalId,
+        "confirmedHospitalName": confirmed.name,
+        "timestamp": timestamp,
+    }
+    message_by_hospital = {
+        hid: json.dumps({**payload, "hospitalId": hid}, ensure_ascii=False) for hid in released
+    }
+    sent, dead = [], set()
+    with _sockets_lock:
+        for ws in _dashboard_sockets:
+            role, id_ = _socket_identity.get(ws, (None, None))
+            if role != "hospital" or id_ not in message_by_hospital:
+                continue
+            try:
+                ws.send(message_by_hospital[id_])
+                sent.append(id_)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [통신] 미선택 통보 전송 실패, 연결 제거: {e}")
+                dead.add(ws)
+        _dashboard_sockets.difference_update(dead)
+    print(f"  [통신] 미선택 통보 — 확정 {confirmed.hospitalId} / 대상 {released} / 전달 {sent}")
+    # 통보 누락·지연을 나중에 셀 수 있게 "보낼 대상"과 "실제 전달"을 따로 남긴다. 떠 있지 않은 병원 탭은
+    # 다음 identify 따라잡기에서 notSelected 깃발로 같은 사실을 받는다.
+    decision_log.log_decision("selection_released", {
+        "caseId": case_id, "confirmedHospitalId": confirmed.hospitalId,
+        "releasedHospitalIds": released, "deliveredHospitalIds": sent, "timestamp": timestamp,
+    })
+
+
 def _rejection_payload(case_id: str, hospital_id: str, timestamp: str, reason_code: str) -> dict:
     """feature/info 거절 로그 수신구가 받는 형태로 조립한다. 필수는 hospitalId
     하나뿐이고(수신구가 관대하게 받는다), 나머지는 사건 캐시에서 best-effort로
@@ -1507,7 +1555,7 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
     # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
     arrival_refusal = _build_rejection_payload(action) if action.action in ("arrival_refused", "transport_withdraw") else None
     applied = engine.apply_approval_action(action)
-    # spider 매칭 규칙(2026-10-15): 승인·확정·도착 결과로 줄·창이 바뀌면 다른 사건의 양보도 다시 맞춘다
+    # spider 매칭 규칙(2026-10-15): 승인·확정·도착 결과로 부하·줄 길이가 바뀌면 다른 사건의 순위·τ 창 표시를 다시 맞춘다
     if applied:
         _match_executor.submit(_refresh_active_cases)
 
@@ -1539,6 +1587,9 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
     updated_result = expanded_result or engine.get_case_result(action.caseId)
     if updated_result is not None:
         _send_to_dashboard(updated_result.model_dump())
+        # 이송이 확정됐으면 승인했지만 선택되지 않은 병원들에 즉시 알린다(2026-10-22, 임상 자문 요구).
+        if action.action == "final_approval" and applied:
+            _send_selection_released(action.caseId, updated_result, action.timestamp)
     if action.action == "arrival_accepted" and applied:
         # 환자 수용으로 이송이 끝났다 — 두 대시보드에서 이 사건(병원 후보·수용 요청·통화 요약)을 지운다
         # (2026-10-01). 엔진에는 기록·병상 차감 때문에 확정 60분 동안 남지만, 따라잡기에서도 빠진다.
