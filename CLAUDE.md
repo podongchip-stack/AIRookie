@@ -659,12 +659,20 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   줄 길이 = 도로 분 − μ×역량 이득(유효 역량 = 등급 + 응급의학과 전문의 두께 + 야간 감점, 필요 역량 = KTAS 1→4·2→3·3→2·4·5→1;
   μ K1·2 30분/레벨·K3 5분·K4·5 −λ 5분, 이송 중 중증 10명이면 0까지 감쇠) 또는 + ν×모자람(30/15/5, 0.75 넘게 모자라면 줄 없음)
   + 부하(이송 중·포화 — 기존 식). 질환군 벽(심근경색 → 혈관조영 운영, 뇌졸중 → CT + 등급 2↑, 중증외상 = 외상 기전 + K1·2 →
-  등급 3↑; voice v2 변환에 `trauma` 추가). τ(10분) 창 충돌·양보: 같은 병원·같은 창에 확정 사건 + 우선하는(KTAS 낮은 숫자, 같으면
-  먼저 닿는) 사건의 줄이 한도(2)만큼 있으면 그 병원을 건너뛴다 — 새 매칭·승인 액션 뒤 나머지 사건을 우선순위대로 다시 계산해 양보가
-  반영된다. 정렬 띠는 줄 있음 > 창 찬 줄 > 줄 없음(줄 없는 병원도 후보에서 빼지 않고 맨 뒤로). 승인·확정 앞·거절/만실/declared_no 내림은
-  그대로. **빠진 것**: 진료과 임베딩 점수·전문성/등급 가산·경증 센터 역가산(설명 문구 `bonusReasons`로만 — μ·λ·ν가 대신).
-  `plan_mci`(대량사고 분배)도 KTAS 순 + 줄 길이 + 창 한도. `HospitalMatch.spiderLen·spiderGap·spiderBlocked·spiderWindow`(설명용).
+  등급 3↑; voice v2 변환에 `trauma` 추가). ~~τ(10분) 창 충돌·양보: 같은 병원·같은 창에 우선하는 사건의 줄이 한도(2)만큼 있으면
+  그 병원을 건너뛴다~~ → **2026-10-22 τ 창은 순위에서 뺐다 — 표시만 한다**(`spiderWindow`에 "같은 10분 안 도착 예정 다른 사건 N건"만
+  싣고, 건너뛰거나 내리지 않는다. 수용 판단은 병원이. 근거: replay_probe에서 창을 켜면 서울 밀집 도착 거절이 46→51·56→65로 늘고 시간
+  이득이 없음 + 임상 자문 "둘 다 받으려 노력한다", `poc/CLINICAL_CONVERGENCE.md` §3). spider 연구 엔진(`spider/engine/`·`map.html`)은
+  창 항을 연구 대상으로 그대로 둔다. 정렬 띠는 줄 있음 > 줄 없음(줄 없는 병원도 후보에서 빼지 않고 맨 뒤로). 승인·확정 앞·거절/만실/
+  declared_no 내림은 그대로. **빠진 것**: 진료과 임베딩 점수·전문성/등급 가산·경증 센터 역가산(설명 문구 `bonusReasons`로만 — μ·λ·ν가 대신).
+  `plan_mci`(대량사고 분배)도 KTAS 순 + 줄 길이(창 한도는 2026-10-22에 뺌 — 분산은 부하 페널티가). `HospitalMatch.spiderLen·spiderGap·spiderBlocked·spiderWindow`(설명용).
   숫자는 spider 표기 그대로 "전문의 검토 전 초안". 야간 감점(22~06시)은 실제 시각 기준이라 밤에 돌리면 얇은 지역기관이 경증도 못 받는 순위가 나온다 — `HUB_SPIDER_HOUR`로 시각을 고정할 수 있다(검사는 14시 고정). 검증 `python test_spider_rule.py`
+- **미선택 병원 통보(2026-10-22, 관제 반영 2026-10-24)**: 이송이 확정되면 수용 승인했지만 선택되지 않은 병원에 `HospitalMatch.notSelected`
+  깃발이 서고(status는 approved 그대로 — 이동 중 재선택 대상으로 남는다, 확정이 풀리면 내려감), 그 병원 탭에 WS `selection_released`
+  (`confirmedHospitalId·confirmedHospitalName`)를 바로 보낸다. 임상 자문 요구 — 수용 승낙은 처치 공간·진료 조정 같은 자원 선배정이라 선택되지
+  않았음을 알려 그 준비를 풀게 한다. 병원 대시보드는 토스트 "○○(으)로 이송이 확정됐습니다 — 귀원은 선택되지 않았습니다"(푸시 + 따라잡기 깃발
+  두 경로). 의사결정 로그 `selection_released`(보낼 대상·실제 전달 따로). **2026-10-24** 관제 요약 `case_overview.hospitals[].notSelected`에도
+  실어 관제 지도 말풍선·시연 콘솔 ③ 칩이 "선택 안 됨", 콘솔 ④에 "미선택 통보 N곳"을 보인다. 검증 `test_spider_rule.py`(4)·`test_monitor_map.py`
 - **질환군 매칭을 임베딩에서 키워드 규칙으로(2026-10-02)**: 예상 병명 → 15개 중증질환군(신뢰도 칩·`declared_no` 내림·신고 신선도에 쓰임)을 고를 때 기준선 없이 임베딩 최근접을 골라, 다리 골절·심근경색·뇌출혈·"미상"이 전부 담낭담관질환으로 붙었다(유사도 0.47~0.93이라 기준선으로도 못 거름). 상관없는 신고로 병원이 뒤로 밀릴 수 있는 오류였다. `hub/disease_group.py`가 E-Gen 항목명 키워드로만 고르고, 해당 없으면 None(칩·내림 없음). 진료과 매칭은 그대로 임베딩. 검사 `python disease_group.py`
 - **E-Gen 수용 제한 메시지 수신·강등(2026-10-07)**: info의 `acceptanceMessages`를 매칭 시점에 시작~종료로 다시 걸러 `HospitalMatch.acceptanceMessages`(matched = severe는 사건 질환군 일치, er는 필요 진료과 일치·응급실 전체 공지)로 싣는다. 사건 질환군에 유효한 중증질환 차단이 있으면 `demoteReasons`에 `severe_blocked` — `declared_no`와 같은 원칙(순서만 내림, 후보 유지, 병원이 이 사건에 승인·확정하면 안 내림). 검증 `python test_acceptance_messages.py`(임베딩 모델 없이 가짜 매처)
 - **응급실 정원·포화도 + 포화도 페널티(2026-10-07)**: `HospitalMatch.erBedCapacity`·`erOccupancyPct`(=(정원-가용)÷정원, 이송 확정 차감 반영 표시값, info가 과밀을 0으로 보내므로 100% 상한, 병상 미상·1일 넘은 값이면 None). **순위에도 들어간다** — `scoring.occupancy_penalty_min()`이 차감 **전** E-Gen 포화도에 비례해 이동시간에 최대 **+5분**(`OCCUPANCY_PENALTY_MAX_MIN`, 부하 페널티의 절반 — 신고값이라 낡을 수 있어서. 이송 중 환자는 부하 페널티가 세므로 이중 계산 없음). `occupancyPenaltyMin`·`occupancyReason`, `plan_mci`도 같은 값. 불변식: 5분 넘게 가까운 병원은 역전 안 됨. 팀 합의 전 초기값. ⚠ `sim/` goldenlink 팔엔 아직 없음(시뮬↔실코드 로직 일치가 깨짐). 검증 `python test_er_occupancy.py`
