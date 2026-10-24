@@ -726,6 +726,8 @@ export interface MonitorCaseHospital {
   zone: number;
   // 이 병원이 이 사건에 응답(승인·불가·확정)한 시각(2026-10-04, hub case_history)
   respondedAt?: string | null;
+  // 수용 승인했지만 이송은 다른 병원으로 확정됨(hub 2026-10-22, 관제 요약엔 2026-10-24부터). status는 approved 그대로
+  notSelected?: boolean | null;
 }
 
 // 사건 진행 과정 한 줄(2026-10-04, hub case_history — 규칙 기반 기록). kind: p 출동·통화 / s 요청 시작 /

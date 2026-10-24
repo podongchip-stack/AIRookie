@@ -858,6 +858,8 @@ class MonitorCaseHospital(BaseModel):
     inFlightCount: Optional[int] = None
     excluded: Optional[bool] = None
     acceptanceMessages: Optional[list[AcceptanceMessageMatch]] = None
+    # 수용 승인은 했지만 이송은 다른 병원으로 확정됨(2026-10-24) — 관제 지도·시연 콘솔도 "선택 안 됨"을 보이게
+    notSelected: Optional[bool] = None
 
 
 class MonitorCase(BaseModel):

@@ -725,6 +725,7 @@ _MONITOR_EXPLAIN_FIELDS = (
     "gps", "emergencyLevel", "availableBedCount", "bedCountUnknown", "bedDataStale", "erBedCapacity", "erOccupancyPct",
     "travelMin", "travelBasis", "etaMin", "finalScore", "specialtyMatch", "bedReliability", "reliability", "severeFreshness",
     "demoteReasons", "bonusReasons", "loadReason", "occupancyReason", "inFlightCount", "excluded", "acceptanceMessages",
+    "notSelected",
 )
 
 

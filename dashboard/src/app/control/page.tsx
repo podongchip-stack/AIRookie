@@ -492,6 +492,8 @@ const STATUS_CHIP: Record<HospitalStatus, { label: string; bg: string; fg: strin
   rejected: { label: "수용 불가", bg: C.redSoft, fg: C.redInk },
   confirmed: { label: "이송 확정", bg: C.blueSoft, fg: C.blue },
 };
+// 수용 승인했지만 이송은 다른 병원으로 확정된 병원(hub notSelected, 2026-10-24) — 승인은 그대로라 상태는 approved, 칩만 따로
+const NOT_SELECTED_CHIP = { label: "선택 안 됨", bg: C.bg, fg: C.ink3 };
 
 const LEVEL_SHORT: Record<string, string> = {
   권역응급의료센터: "권역센터",
@@ -1718,6 +1720,16 @@ export default function ControlPage() {
               {/* ── ④ 이송 중 상황 부여 ── */}
               {screen === "transport" && (
                   <ScreenCard title="④ 이송 중 — 상황을 부여하세요 (판정은 hub 규칙 엔진)">
+                    {/* 미선택 통보(2026-10-24) — hub가 승인했지만 선택되지 않은 병원 탭에 "선택되지 않았습니다"를 보냈다. 승인은 유지(재선택 대상) */}
+                    {(() => {
+                      const released = myCase?.hospitals.filter((h) => h.status === "approved" && h.notSelected) ?? [];
+                      return released.length > 0 ? (
+                        <div style={{ background: C.bg, borderRadius: 10, padding: "8px 14px", fontSize: 13, lineHeight: 1.5, color: C.ink2 }}>
+                          <b>미선택 통보 {released.length}곳</b> — {released.map((h) => h.name).join(", ")}
+                          <span style={{ color: C.muted }}> · 병원 화면에 &quot;선택되지 않았습니다&quot;가 갔습니다. 승인은 유지돼 이동 중 재선택할 수 있습니다.</span>
+                        </div>
+                      ) : null;
+                    })()}
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "stretch" }}>
                       <div style={{ flex: "1 1 380px", minWidth: 0, boxSizing: "border-box", background: "#f8fafc", border: `1px solid ${C.lineSoft}`, borderRadius: 12, padding: "20px 22px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 16 }}>
                         {simOn ? (
@@ -2722,7 +2734,7 @@ function HospitalRow({ hospital, info, onApprove, onReject }: {
   onReject: () => void;
 }) {
   const status = hospital.status;
-  const chip = STATUS_CHIP[status];
+  const chip = status === "approved" && hospital.notSelected ? NOT_SELECTED_CHIP : STATUS_CHIP[status];
   const lock = status !== "pending";
   const reason = status === "rejected"
     ? unavailableReasonLabel(hospital.unavailableReason) ?? rejectionReasonLabel(hospital.rejectReason) ?? "병원 판단"

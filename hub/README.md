@@ -137,6 +137,12 @@ unknown 계층보다 절대 안 앞서게 완전히 보장하려면 신뢰도 �
 
 ## 순위 규칙 (2026-09-28 정비, 2026-10-01 보강)
 
+> ⚠ **2026-10-15부터 finalScore는 spider 거미줄 분배 모델의 줄 길이에서 만든다**(`spider_rule.py` — 줄 길이 = 도로 분 −
+> μ×역량 이득 또는 + ν×모자람 + 부하·포화 페널티, 질환군 벽, 정렬 띠 줄 있음 > 줄 없음). 아래 `0.6×진료과 + 0.4×이동시간` 식과
+> 전문성·등급 가산은 이제 설명 문구(`bonusReasons`)로만 남는다. 정렬 순서(확정 → 승인 → 나머지 → 내림 → 거절)는 그대로.
+> **τ 창(같은 병원에 10분 안 도착 겹침)은 2026-10-22부터 순위에 쓰지 않는다** — `spiderWindow`로 사실만 싣는다(예전엔 한도 2가 차면
+> 그 병원을 건너뛰었다). 근거는 `spider_rule.py` 모듈 설명 ⚠ · `poc/CLINICAL_CONVERGENCE.md` §3. 검증 `python test_spider_rule.py`
+
 `finalScore = 0.6 × 진료과 점수 + 0.4 × 이동시간 점수(이동분 − 가산분 + 부하 페널티분 + 포화도 페널티분)`으로 매기고, 아래 순서로
 정렬한다(`scoring.rank_key()`). 후보에서 빼는 병원은 없다 — 뒤로 내릴 뿐이다. **순위는 hub 한 곳에서만
 정한다** — dashboard는 받은 `hospitals[]` 순서를 그대로 쓴다(2026-10-01, 그 전엔 dashboard가 자체
@@ -224,6 +230,10 @@ beds_full 절벽 강등). 이 페널티는 만실 **전에** 연속적으로 분
 - 어긋난 액션은 상태를 바꾸지 않고 `approval_action_refused` 이벤트로 사유만 의사결정 로그에 남긴다
 - **재선택**: 같은 사건에서 다른 병원을 이송 승인하면, 이전 확정 병원은 `approved`로 되돌리고(새 상태값 없음 — dashboard 타입 유지) 그 확정이 얹은 병상 차감을 회수한다(`approval_released` 이벤트)
 - dashboard는 이미 이 규칙대로만 버튼을 연다(`HospitalCandidateListPanel.tsx`의 `approvable`, `ApprovalActions.tsx`의 role 분기)
+- **미선택 통보(2026-10-22)**: 이송이 확정되면 승인했지만 선택되지 않은 병원에 `HospitalMatch.notSelected = true`(status는 `approved`
+  그대로 — 재선택 대상, 확정이 풀리면 false)를 세우고, 그 병원 탭에 `{"type": "selection_released", caseId, hospitalId,
+  confirmedHospitalId, confirmedHospitalName, timestamp}`를 보낸다. 탭이 없던 병원은 따라잡기의 깃발로 받는다. 의사결정 로그
+  `selection_released`(releasedHospitalIds·deliveredHospitalIds). 관제 요약(`case_overview`)에도 `notSelected`가 실린다(2026-10-24)
 
 ### 도착 결과와 신뢰도 정답 데이터 (2026-10-01)
 
@@ -753,7 +763,7 @@ dashboard의 관제 지도(`/map`, 보기 전용 — 병원 대시보드와는 �
 |---|---|---|
 | `identity_info` | 연결 직후 | `name: "관제 지도"`, `known: true` |
 | `map_overview` | 연결 직후 · 병원 목록 한 주기 끝(`POST /info/hospitals/roster`) · 구급차 정보 갱신 | `hospitals[] {hospitalId, name, gps, emergencyLevel}`, `ambulances[] {apid, name, gps(시뮬레이션 위치 우선), base}`, `simDispatch` |
-| `case_overview` | 연결 직후(진행 중 사건 전부) · 매칭 결과가 나갈 때마다 | `caseId, apid, ambulanceName, ambulanceGps, severityTag, zoneActive, zoneBandKm(5), hospitals[] {hospitalId, name, status, distanceKm, zone}` — 거절 비율로 존이 넓혀지면 바깥 존 병원이 `hospitals`에 새로 들어온다. **2026-10-14** spider 실시간 화면(`/spider/?mode=live`, 같은 monitor 소켓)용 환자 요약 `ktasLevel, expectedDiagnosis, chiefComplaint, requiredDepartment, patient, confirmedBy`(모두 Optional) 추가 — 통화 전문·활력징후·의식은 여전히 안 보낸다 |
+| `case_overview` | 연결 직후(진행 중 사건 전부) · 매칭 결과가 나갈 때마다 | `caseId, apid, ambulanceName, ambulanceGps, severityTag, zoneActive, zoneBandKm(5), hospitals[] {hospitalId, name, status, distanceKm, zone, notSelected(2026-10-24)}` — 거절 비율로 존이 넓혀지면 바깥 존 병원이 `hospitals`에 새로 들어온다. **2026-10-14** spider 실시간 화면(`/spider/?mode=live`, 같은 monitor 소켓)용 환자 요약 `ktasLevel, expectedDiagnosis, chiefComplaint, requiredDepartment, patient, confirmedBy`(모두 Optional) 추가 — 통화 전문·활력징후·의식은 여전히 안 보낸다 |
 | `ambulance_phase`·`ambulance_position` | 연결 직후(구급차 전부) · 이동 중 1초마다 | 출동 시뮬레이션 상태(구급차 탭과 같은 형식, 전 구급차) |
 | `case_closed` | 사건이 끝날 때 | 지도에서 그 사건의 요청 표시·존 범위를 지운다 |
 | `case_sync` | 연결(재연결) 직후 따라잡기 끝(모든 역할 공통, 2026-10-03) | `caseIds` — 지금 진행 중인 사건. 탭은 이 목록에 없는 사건을 지운다(hub 재시작 등으로 그 사이 끝난 사건). 구급차 탭은 매칭 결과 전(출동·통화 중) 사건도 포함 |

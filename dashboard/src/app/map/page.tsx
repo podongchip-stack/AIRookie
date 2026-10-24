@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ControlMapPanel } from "@/components/map/ControlMapPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
-  AMB_CHIP, AMB_RANK, C, EVENT_TONE, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL, ST_TEXT,
+  AMB_CHIP, AMB_RANK, C, EVENT_TONE, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL, ST_TEXT, reqLabel,
   ambState, buildIncidents, counts, fmtClock, fmtElapsed, fmtHm, haversineKm, pastResult, sevOf, shortAmb, shortHospital,
   stageOf, zoneText,
   type AmbKey, type Incident, type St,
@@ -329,7 +329,7 @@ export default function MonitorMapPage() {
                           const at = h.respondedAt ? Date.parse(h.respondedAt) : null;
                           const fresh = h.st !== "w" && at != null && now - at < 10000;
                           const flash = h.st !== "w" && at != null && now - at < 2400;
-                          const text = h.st === "r" && h.bedsFull ? "병상 없음" : ST_LABEL[h.st];
+                          const text = reqLabel(h);
                           return (
                             <div
                               key={h.hospitalId}
