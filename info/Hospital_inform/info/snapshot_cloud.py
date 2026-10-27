@@ -37,6 +37,15 @@ watch(2026-10-04 추가): 클라우드 수집기가 원본을 올리면 그걸 �
 Supabase가 이 장비로 직접 알릴 길(들어오는 연결)이 없어서, WATCH_INTERVAL_SEC(기본 60초)마다
 오늘 raw/ 목록 개수만 가볍게 보고 늘었으면 sync한다(한 회차의 두 오퍼레이션이 1~2초 차이로
 올라오므로 조금 기다렸다 한 번에). 예전 20분 고정 주기보다 그래프 반영이 최대 20분 빨라진다.
+
+raw 로컬 캐시(2026-10-25 추가): 내려받은 raw 객체를 .raw_cache/<날짜>/에 두고 다시 쓴다.
+그전에는 재조립마다 그날 raw를 처음부터 전부 다시 받아서, 5분 수집으로 하루 288번
+재조립되면 하루 raw 16.8MB가 **하루 약 2.4GB 다운로드**(필요량의 약 145배)로 불어났다 —
+Supabase Free의 Cached Egress 한도(5GB/월)를 이것만으로 넘겼다(실측 8GB/160%).
+공개 URL은 CDN을 타므로 그 트래픽이 'Egress'가 아니라 'Cached Egress'로 잡힌다.
+누적량이 폴링 횟수의 제곱으로 늘어, 20분 → 5분 단축(2026-10-10) 때 폴링은 4배인데
+트래픽은 16배가 됐다. raw는 불변 객체라 캐시 무효화를 따질 필요가 없다(_cached_raw).
+수집 주기·데이터 내용·소비 코드는 그대로이고, 바뀐 것은 같은 객체를 다시 받지 않는 것뿐이다.
 """
 from __future__ import annotations
 
@@ -62,6 +71,8 @@ KST = timezone(timedelta(hours=9))
 BUCKET = "egen-snapshots"
 SNAPSHOT_DIR = BASE_DIR / "data" / "snapshots_nationwide"
 STATE_PATH = SNAPSHOT_DIR / ".cloud_sync_state.json"
+# 내려받은 raw 원본을 그대로 두는 곳 — 재조립할 때마다 다시 받지 않기 위한 것(_cached_raw 참고)
+RAW_CACHE_DIR = SNAPSHOT_DIR / ".raw_cache"
 # 로컬 수집기가 이만큼 안 쓰면 꺼진 것으로 보고 그 날짜를 sync가 넘겨받는다
 ADOPT_IDLE_SEC = int(os.environ.get("SNAPSHOT_ADOPT_IDLE_SEC", "3600"))
 WATCH_INTERVAL_SEC = int(os.environ.get("SNAPSHOT_WATCH_INTERVAL_SEC", "60"))
@@ -104,6 +115,39 @@ def _download(url: str, path: str) -> bytes:
     res = requests.get(f"{url}/storage/v1/object/public/{BUCKET}/{path}", timeout=60)
     res.raise_for_status()
     return res.content
+
+
+def _cached_raw(url: str, date: str, name: str) -> bytes:
+    """raw/<날짜>/<객체>를 로컬에 한 번만 내려받아 두고 다시 쓴다.
+
+    raw 객체는 그 시각의 E-Gen 응답을 적은 불변 파일이라(한 번 올라오면 안 바뀐다)
+    캐시 무효화를 따질 필요가 없다. 예전엔 `_rebuild_day()`가 재조립마다 그날 raw를
+    처음부터 전부 다시 받아서, 5분 수집(하루 288회 재조립) × 하루 raw 16.8MB가
+    하루 약 2.4GB 다운로드로 불어났다 — 필요한 양의 약 145배이고, 이것만으로
+    Supabase Free의 Cached Egress 한도(5GB/월)를 넘겼다(2026-10-25 확인).
+    공개 URL은 CDN을 타므로 그 트래픽이 전부 'Cached Egress'로 잡힌다.
+    """
+    path = RAW_CACHE_DIR / date / name
+    if path.is_file():
+        return path.read_bytes()
+    body = _download(url, f"raw/{date}/{name}")
+    if name.endswith(".xml.gz"):
+        gzip.decompress(body)  # 중간에 끊긴 내려받기를 캐시에 남기면 영구히 깨진 날짜가 된다
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(body)
+    tmp.replace(path)
+    return body
+
+
+def _prune_raw_cache(dates: set[str]) -> None:
+    """days/로 승격된 날짜는 다시 조립하지 않으므로 그 캐시를 지운다(날짜당 약 17MB)."""
+    if not RAW_CACHE_DIR.is_dir():
+        return
+    for entry in sorted(RAW_CACHE_DIR.iterdir()):
+        if entry.is_dir() and entry.name in dates:
+            shutil.rmtree(entry, ignore_errors=True)
+            print(f"  {entry.name}: days/로 승격됨 — raw 캐시 정리")
 
 
 def _upload(url: str, service_key: str, path: str, data: bytes, content_type: str) -> None:
@@ -238,13 +282,13 @@ def _rebuild_day(url: str, anon: str, date: str, objects: list[dict], has_partia
             del records[(ts, op)]
         record: dict = {"ts": ts, "operation": op, "stage1": "", "stage2": ""}
         if entry.get("error_obj") and not entry["pages"]:
-            err = json.loads(_download(url, f"raw/{date}/{entry['error_obj']}"))
+            err = json.loads(_cached_raw(url, date, entry["error_obj"]))
             record["error"] = err.get("error", "unknown")
         else:
             items: list[dict] = []
             try:
                 for _, name in sorted(entry["pages"]):
-                    xml = gzip.decompress(_download(url, f"raw/{date}/{name}")).decode("utf-8")
+                    xml = gzip.decompress(_cached_raw(url, date, name)).decode("utf-8")
                     rows, _total = HttpEgenClient._parse(xml)
                     items.extend(rows)
                 record["count"] = len(items)
@@ -270,6 +314,7 @@ def sync(url: str, anon: str) -> None:
             continue
         local.write_bytes(gzip.decompress(_download(url, f"days/{name}")))
         print(f"  {date}: days/에서 복원 ({local.stat().st_size / 1e6:.1f}MB)")
+    _prune_raw_cache({name[: -len(".jsonl.gz")] for name in day_objects})
 
     # 2) 클라우드 수집(raw/)·중간본(partial/) 날짜 — days/에 없는 날짜만,
     #    내용이 변한 날(raw 객체 수 또는 partial 갱신 시각)만 다시 만든다

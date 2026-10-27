@@ -1,86 +1,10 @@
 import SwiftUI
 
-/// 왼쪽 열 맨 위 — 현장 상태(출동 시뮬레이션 단계 · 발생 위치 · 확정 병원). 웹 DispatchControlPanel의 보기 전용판.
-/// 출동·현장 종료는 웹 구급차 대시보드·시연 콘솔에서 한다.
-struct SceneStatusCard: View {
-    @EnvironmentObject private var model: AppModel
-    /// 카드 위아래 여백을 이만큼 더 준다(구급차 화면 왼쪽 열 — 카드 사이 간격을 줄인 만큼 카드를 키움, 2026-10-16)
-    var extraV: CGFloat = 0
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("현장 상태").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-                Spacer()
-                if model.sim?.paused == true { Pill(text: model.sim?.pauseReason == "call" ? "통화 중 정지" : "시연 정지", bg: AD.redSoft, fg: AD.red, bold: true) }
-                Pill(text: model.simDispatch ? "시뮬레이션 위치" : "위치 정보", bg: AD.chip, fg: AD.ink3)
-            }
-            HStack(spacing: 10) {
-                Image(systemName: icon).font(.system(size: 20, weight: .semibold)).foregroundStyle(phaseColor)
-                    .frame(width: 40, height: 40).background(phaseColor.opacity(0.12)).clipShape(Circle())
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(Labels.phase(model.sim?.phase ?? (model.hasIncident ? "on_scene" : "idle")))
-                        .font(.system(size: 15, weight: .bold)).foregroundStyle(AD.ink)
-                    Text(detail).font(.system(size: 12)).foregroundStyle(AD.sub).lineLimit(2)
-                }
-                Spacer(minLength: 0)
-            }
-            if model.hasIncident, let p = model.sim?.incident ?? model.result?.ambulanceGps {
-                HStack(spacing: 6) {
-                    Text("발생 위치").font(.system(size: 11.5)).foregroundStyle(AD.sub)
-                    Text(String(format: "%.5f, %.5f", p.lat, p.lng)).font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(AD.ink)
-                }
-            }
-            if !model.hasIncident {
-                Text(model.apid == nil && model.autoFollow
-                     ? "출동 대기 중 — 상황이 발생하면 출동하는 구급대 화면으로 자동 전환됩니다. 병원 후보는 사고가 발생하면 아래에 나타납니다."
-                     : "출동 대기 중 — 사고가 발생하면 환자 정보와 병원 후보가 나타납니다.")
-                    .font(.system(size: 12)).foregroundStyle(AD.muted)
-            }
-        }
-        .padding(.vertical, extraV)
-        .card()
-    }
-
-    private var phase: String { model.sim?.phase ?? (model.hasIncident ? "on_scene" : "idle") }
-    private var icon: String {
-        switch phase {
-        case "dispatching": return "light.beacon.max"
-        case "on_scene": return "cross.case"
-        case "transporting": return "arrow.triangle.turn.up.right.diamond"
-        case "at_hospital": return "building.2"
-        case "rerouting": return "arrow.triangle.branch"
-        case "returning": return "house"
-        default: return "house"
-        }
-    }
-    private var phaseColor: Color {
-        switch phase {
-        case "dispatching", "transporting": return AD.orange
-        case "on_scene", "rerouting": return AD.red
-        case "at_hospital": return AD.green
-        default: return AD.gray
-        }
-    }
-    private var detail: String {
-        if let c = model.confirmed {
-            let eta = model.sim?.etaSec.map { " · 도착까지 약 \(Labels.minutes($0))" } ?? ""
-            return "이송 확정 \(c.name)\(eta)"
-        }
-        switch phase {
-        case "dispatching": return model.sim?.etaSec.map { "현장까지 약 \(Labels.minutes($0))" } ?? "현장으로 이동 중"
-        case "on_scene": return model.result == nil ? "대원 휴대폰 전화 앱으로 병원에 전화합니다" : "병원 응답을 받는 중 — 후보 등록 병원에 이송 승인"
-        case "rerouting": return "도착 후 수용 불가 — 다른 후보로 재선택"
-        case "returning": return "사건 종료"
-        default: return model.ambulanceName ?? model.apid ?? "구급차 미지정"
-        }
-    }
-}
-
-/// 왼쪽 열 — 통화 요약 · 구조화(웹 CallSummaryEditablePanel의 보기 전용판) + 통화 현황
+/// 왼쪽 열 — 통화 요약 · 구조화(웹 CallSummaryEditablePanel의 보기 전용판)
 struct CallSummaryCard: View {
     @EnvironmentObject private var model: AppModel
     @State private var showTranscript = false
+    @State private var showEdit = false
 
     /// true면 왼쪽 열의 남는 높이를 채운다(구급차 화면, 2026-10-16) — 내용은 위부터, 넘치면 카드 안에서 스크롤
     var fill = false
@@ -88,8 +12,6 @@ struct CallSummaryCard: View {
     /// 칸 높이 = 실제 내용 높이라 위아래 빈칸이 생기지 않는다(frame(maxHeight:)로 묶으면 칸이 최대치까지 커지고 카드가 가운데 떠서
     /// 큰 화면 패드에서 카드 사이가 벌어졌다)
     var fitMax: CGFloat? = nil
-    /// 카드 위아래 여백 추가분(SceneStatusCard.extraV와 같은 뜻)
-    var extraV: CGFloat = 0
     @State private var contentH: CGFloat = 0
 
     var body: some View {
@@ -100,12 +22,14 @@ struct CallSummaryCard: View {
                 }
                 .scrollIndicators(.hidden)
                 .scrollBounceBehavior(.basedOnSize)
-                .frame(height: max(0, min(contentH, m - 28 - extraV * 2)))
+                .frame(height: max(0, min(contentH, m - 28)))
             } else if fill { ScrollView { inner }.scrollIndicators(.hidden) } else { inner }
         }
-            .padding(.vertical, extraV)
             .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
             .card()
+            .sheet(isPresented: $showEdit) {
+                if let p = model.result?.patientInfo { CallSummaryEditSheet(p: p).environmentObject(model) }
+            }
     }
 
     private var inner: some View {
@@ -116,11 +40,18 @@ struct CallSummaryCard: View {
                     Text("통화 음성 → 항목 추출").font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 }
                 Spacer()
+                // 구급대원 확인·수정(2026-10-27) — 누르면 칸을 고쳐 hub로 보낸다(보낸 칸만 바뀜)
+                if let p = model.result?.patientInfo {
+                    Button { showEdit = true } label: {
+                        Label("수정", systemImage: "square.and.pencil")
+                            .font(.system(size: 13, weight: .bold)).foregroundStyle(AD.blue)
+                            .padding(.horizontal, 12).frame(minHeight: 32)
+                            .background(AD.blueSoft).clipShape(Capsule())
+                    }
+                }
                 VStack(alignment: .trailing, spacing: 4) {
-                    Pill(text: "Qwen3-ASR · MF_BERT", bg: AD.blueSoft, fg: AD.blue)
                     if let p = model.result?.patientInfo {
                         if p.confirmedBy == "paramedic" { Pill(text: "구급대원 확인", bg: AD.greenSoft, fg: AD.green, bold: true) }
-                        else { Pill(text: "AI 요약 · 구급대원 확인 전", bg: AD.orangeSoft, fg: AD.orange, bold: true) }
                         if (p.callRound ?? 1) > 1 { Pill(text: "\(p.callRound ?? 1)차 통화로 갱신", bg: AD.orangeSoft, fg: AD.orange, bold: true) }
                     }
                 }
@@ -155,43 +86,19 @@ struct CallSummaryCard: View {
                 }
                 if showTranscript { transcriptBox }
             } else if calling || !model.transcript.isEmpty {
-                Text("실시간 자막 (voice 음성 인식)").font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 transcriptBox
-            } else {
-                Text(model.sim?.phase == "dispatching"
-                     ? "현장 도착 후 대원 휴대폰의 전화 앱으로 병원에 전화합니다."
-                     : "수신 대기 중 — 대원 휴대폰의 전화 앱으로 병원에 전화하면 통화 내용이 여기 정리됩니다.")
-                    .font(.system(size: 13)).foregroundStyle(AD.muted)
             }
-            Divider().overlay(AD.line)
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text("통화 현황").font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy)
-                        if calling { Dot(color: AD.green) }
-                    }
-                    Text(callText).font(.system(size: 11.5, weight: calling ? .bold : .regular)).foregroundStyle(calling ? AD.green : AD.sub)
-                }
-                Spacer()
-                if model.result?.patientInfo != nil && !model.transcript.isEmpty {
+            if model.result?.patientInfo != nil && !model.transcript.isEmpty {
+                Divider().overlay(AD.line)
+                HStack {
+                    Spacer()
                     Button { showTranscript.toggle() } label: { Pill(text: showTranscript ? "자막 접기" : "자막 \(model.transcript.count)줄", bg: AD.blueSoft, fg: AD.blue) }
-                } else {
-                    Pill(text: "voice 음성 인식", bg: AD.blueSoft, fg: AD.blue)
                 }
             }
         }
     }
 
     private var calling: Bool { model.callStatus?.state == "calling" }
-    private var callText: String {
-        guard let c = model.callStatus else { return "휴대폰 전화 앱 P-\(model.apid ?? "AUTO")" }
-        if c.state == "calling" {
-            let since = c.startedAt.flatMap(ISO.parse).map { Labels.elapsed(model.now.timeIntervalSince($0)) } ?? ""
-            return "\(c.hospitalName ?? "병원")과 통화 중\(c.followup == true ? "(추가 통화)" : "") · \(since)"
-        }
-        if c.cancelled == true { return "통화 취소 — 전달하지 않았습니다" }
-        return "통화 종료 · \(model.result.map { "후보 병원 \($0.hospitals.count)곳에 전달" } ?? "요약 정리 중")"
-    }
 
     private var transcriptBox: some View {
         ScrollView {
@@ -246,5 +153,179 @@ struct FlowLayout: Layout {
             s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sz))
             x += sz.width + spacing; rowH = max(rowH, sz.height)
         }
+    }
+}
+
+/// 오른쪽 — 추가 정보(2026-10-26). 통화 요약(AI 구조화)에 없는 것을 구급대원이 직접 적어 그 사건의 후보 병원들에
+/// 보낸다. hub `patient_override`의 extraNote 칸으로 가고, 쌓인 목록은 hub가 되돌려주는 `patientInfo.extraNotes`
+/// 그대로다(앱이 따로 기억하지 않는다 — 재연결·탭 전환에도 같은 목록이 보인다).
+struct ExtraInfoCard: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var draft = ""
+    @FocusState private var editing: Bool
+
+    private var notes: [ExtraNote] { model.result?.patientInfo?.extraNotes ?? [] }
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (model.result?.caseId ?? model.caseId) != nil && !model.paused
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("추가 정보").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
+                Spacer()
+                if !notes.isEmpty { Pill(text: "전달 \(notes.count)건", bg: AD.greenSoft, fg: AD.green, bold: true) }
+            }
+            // 입력칸 — 여러 줄, 보내면 비운다
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $draft)
+                    .focused($editing)
+                    .font(.system(size: 15))
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(height: 112)
+                    .background(AD.chip)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                if draft.isEmpty && !editing {
+                    Text("투약 · 현장 처치 · 보호자 진술 · 상태 변화")
+                        .font(.system(size: 14)).foregroundStyle(AD.muted)
+                        .padding(.horizontal, 13).padding(.vertical, 16).allowsHitTesting(false)
+                }
+            }
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                if !draft.isEmpty {
+                    Button { draft = ""; editing = false } label: {
+                        Text("지우기").font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.ink3)
+                            .padding(.horizontal, 14).frame(minHeight: 36)
+                            .background(AD.chip).clipShape(Capsule())
+                    }
+                }
+                Button {
+                    if model.sendExtraNote(draft) { draft = ""; editing = false }
+                } label: {
+                    Label("병원에 전달", systemImage: "paperplane.fill")
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 16).frame(minHeight: 36)
+                        .background(canSend ? AD.blue : AD.gray).clipShape(Capsule())
+                }
+                .disabled(!canSend)
+            }
+            Divider().overlay(AD.line)
+            if notes.isEmpty {
+                Spacer(minLength: 0)
+                Text("전달한 추가 정보가 없습니다").font(.system(size: 13)).foregroundStyle(AD.muted)
+                    .frame(maxWidth: .infinity)
+                Spacer(minLength: 0)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(notes.reversed()) { n in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(Labels.clock(n.at)).font(.system(size: 11, design: .monospaced)).foregroundStyle(AD.muted)
+                                Text(n.text).font(.system(size: 14)).foregroundStyle(AD.ink)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .card()
+    }
+}
+
+/// 통화 요약 확인·수정 시트(2026-10-27) — 웹 대시보드 CallSummaryEditablePanel의 [수정] → [확인·전송]과 같은 규칙.
+/// **바뀐 칸만** hub `patient_override`로 보내고(안 보낸 칸은 그대로), 아무 칸도 안 고치면 "수정 없이 확인"이다.
+/// 예상 병명·KTAS·필요 진료과는 순위 칸이라 hub가 다시 매칭한다 — 넓힌 존·병원 승인은 유지된다.
+struct CallSummaryEditSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let p: PatientInfo
+
+    @State private var diagnosis = ""
+    @State private var symptoms = ""
+    @State private var ktas = 0          // 0 = 그대로
+    @State private var department = ""
+    @State private var complaint = ""
+
+    private var symptomList: [String] {
+        symptoms.split(whereSeparator: { ",;\n".contains($0) })
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    /// 예상 병명은 hub가 빈 값을 받지 않는다 — 지웠으면 보내지 않는다
+    private var diagnosisChanged: Bool {
+        let v = diagnosis.trimmingCharacters(in: .whitespaces)
+        return !v.isEmpty && v != (p.expectedDiagnosis ?? "")
+    }
+    private var changedCount: Int {
+        [diagnosisChanged, symptomList != (p.injuryStatus ?? []), ktas != (p.ktasLevel ?? 0),
+         department.trimmingCharacters(in: .whitespaces) != (p.requiredDepartment ?? ""),
+         complaint.trimmingCharacters(in: .whitespaces) != (p.chiefComplaint ?? "")].filter { $0 }.count
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("예상 병명") {
+                    TextField("예: 경색 의심", text: $diagnosis)
+                    if diagnosis.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Text("비울 수 없습니다 — 그대로 두려면 손대지 않아도 됩니다")
+                            .font(.system(size: 12)).foregroundStyle(AD.orange)
+                    }
+                }
+                Section("증상 (쉼표로 구분)") { TextField("예: 흉통, 호흡 곤란", text: $symptoms) }
+                Section("KTAS") {
+                    Picker("KTAS", selection: $ktas) {
+                        Text("—").tag(0)
+                        ForEach(1...5, id: \.self) { Text("\($0)").tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    Text("바꾸면 중증도도 1·2 중증 / 3 중등증 / 4·5 경증으로 따라 바뀝니다")
+                        .font(.system(size: 12)).foregroundStyle(AD.sub)
+                }
+                Section("필요 진료과") { TextField("예: 순환기내과", text: $department) }
+                Section("주 호소") { TextField("예: 심와부 통증", text: $complaint) }
+                Section {
+                    Text(changedCount == 0
+                         ? "고친 칸이 없습니다 — [확인·전송]을 누르면 '수정 없이 확인'으로 전달됩니다"
+                         : "고친 칸 \(changedCount)곳이 후보 병원들에 다시 전달됩니다")
+                        .font(.system(size: 12.5)).foregroundStyle(AD.sub)
+                }
+            }
+            .navigationTitle("통화 요약 확인·수정")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("확인·전송") { if send() { dismiss() } }.bold()
+                }
+            }
+            .onAppear {
+                diagnosis = p.expectedDiagnosis ?? ""
+                symptoms = (p.injuryStatus ?? []).joined(separator: ", ")
+                ktas = p.ktasLevel ?? 0
+                department = p.requiredDepartment ?? ""
+                complaint = p.chiefComplaint ?? ""
+            }
+        }
+    }
+
+    private func send() -> Bool {
+        func changed(_ v: String, _ was: String?) -> String? {
+            let t = v.trimmingCharacters(in: .whitespaces)
+            return t == (was ?? "") ? nil : t
+        }
+        return model.sendPatientOverride(
+            expectedDiagnosis: diagnosisChanged ? diagnosis.trimmingCharacters(in: .whitespaces) : nil,
+            injuryStatus: symptomList == (p.injuryStatus ?? []) ? nil : symptomList,
+            ktasLevel: (ktas != 0 && ktas != p.ktasLevel) ? ktas : nil,
+            requiredDepartment: changed(department, p.requiredDepartment),
+            chiefComplaint: changed(complaint, p.chiefComplaint))
     }
 }
