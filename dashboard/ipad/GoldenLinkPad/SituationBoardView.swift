@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 상황판 — 전체 사건을 한 화면에(대량사고용). 구급차 화면과 같은 디자인이지만 병원 후보 리스트·현장 상태·통화 요약은 없다.
-/// 왼쪽: 상황 요약 + 사건 목록(누르면 지도가 그 현장으로) / 오른쪽 전체: 거미줄 3D(모든 사건). 병원별 분산은 자료가 생기면
+/// 왼쪽: 상황 요약 + 사건 목록 / 오른쪽 전체: 거미줄 3D(모든 사건). 병원별 분산은 자료가 생기면
 /// 지도 오른쪽 위에 떠 있는 카드로 올라온다(2026-10-15) — 그동안 지도는 그 카드 폭만큼 비켜서 맞춘다(spider setViewPadding).
 struct SituationBoardView: View {
     @EnvironmentObject private var board: BoardModel
@@ -37,7 +37,6 @@ struct SituationBoardView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("상황 요약").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
                 Spacer()
-                Text("관제 · 보기 전용").font(.system(size: 11)).foregroundStyle(AD.muted)
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("\(total)").font(.system(size: 34, weight: .black)).foregroundStyle(AD.navy)
@@ -89,7 +88,6 @@ struct SituationBoardView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("사건 목록").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-                Text("누르면 지도가 그 현장으로").font(.system(size: 11)).foregroundStyle(AD.muted)
                 Spacer()
             }
             if board.ordered.isEmpty {
@@ -160,9 +158,7 @@ struct SituationBoardView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text("거미줄 분배 · 전체 상황").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
-                Text("환자 → 최적 병원 · 이송 경로").font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 Spacer()
-                Pill(text: "초록 = 요청 병원·최적", bg: AD.greenSoft, fg: AD.green)
                 Button { NotificationCenter.default.post(name: .spiderEval, object: nil, userInfo: ["js": "fitAllNow()"]) } label: {
                     Label("전체 보기", systemImage: "arrow.up.left.and.arrow.down.right").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
                         .padding(.horizontal, 12).frame(minHeight: 30).background(AD.blue).clipShape(Capsule())

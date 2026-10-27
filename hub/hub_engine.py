@@ -36,6 +36,7 @@ from schema import (
     HospitalMatch,
     HospitalStatus,
     HubMatchResult,
+    ExtraNote,
     OverrideRecord,
     PatientInfo,
     PatientOverride,
@@ -620,6 +621,8 @@ class HubEngine:
         # 고친 값 자체는 _case_voice의 요약에 반영돼 이후 재계산(60초 주기·존 확장)에도 유지되고, 여기는 "누가·언제·
         # 무엇을 고쳤나"만 둔다. 새 통화 회차가 오면 지운다(새 AI 요약은 아직 확인 전).
         self._case_override: dict[str, dict] = {}
+        # caseId -> 구급대원이 적어 보낸 추가 정보 목록(2026-10-26, patient_override의 extraNote). 덮어쓰지 않고 쌓는다.
+        self._case_extra_notes: dict[str, list[ExtraNote]] = {}
         # hospitalId -> 병원 대시보드가 "현재 정보 확인"을 누른 시각(2026-09-29).
         # infosurv의 조건부 생존 갱신 S(a)/S(u)에 쓰는 유효 확인 이력 —
         # E-Gen 자기 신고 바깥에서 처음 생기는 관측이다. 값이 바뀌면(새 claim
@@ -965,6 +968,7 @@ class HubEngine:
         self._case_arrival.pop(case_id, None)
         self._case_prev_calls.pop(case_id, None)
         self._case_override.pop(case_id, None)
+        self._case_extra_notes.pop(case_id, None)
         self._case_excluded = {k for k in self._case_excluded if k[0] != case_id}
         for key in [k for k in self._reject_reason if k[0] == case_id]:
             del self._reject_reason[key]
@@ -1646,6 +1650,7 @@ class HubEngine:
         with self._lock:
             previous = list(self._case_prev_calls.get(voice.caseId, []))
             override = self._case_override.get(voice.caseId)
+            extra_notes = list(self._case_extra_notes.get(voice.caseId, []))
         confirmation = {} if override is None else {
             "confirmedBy": "paramedic", "confirmedAt": override["confirmedAt"],
             "overrides": list(override["records"].values()),
@@ -1666,6 +1671,7 @@ class HubEngine:
             requiredDepartment=voice.summary.required_department,
             callRound=len(previous) + 1,
             previousCalls=previous,
+            extraNotes=extra_notes,
             **confirmation,
         )
 
@@ -1698,8 +1704,15 @@ class HubEngine:
             confirmed = case_id in self._case_confirmed_at
             max_zone = self._case_max_zone.get(case_id, 1)
             gps_fallback = self._case_gps_fallback.get(case_id, False)
-            state = self._case_override.setdefault(case_id, {"confirmedAt": now, "records": {}})
-            state["confirmedAt"] = now
+            # 추가 정보만 보낸 것은 "요약 확인"이 아니다(2026-10-26) — 확인 도장(confirmedBy)은 요약 칸을 보낸
+            # 경우에만 찍는다. 아니면 추가 정보 한 줄로 "구급대원 확인"이 돼 버린다.
+            touches_summary = bool(override.model_fields_set & set(self._OVERRIDE_SUMMARY_FIELD)) or not (
+                override.extraNote or "").strip()
+            if touches_summary:
+                state = self._case_override.setdefault(case_id, {"confirmedAt": now, "records": {}})
+                state["confirmedAt"] = now
+            else:
+                state = self._case_override.get(case_id) or {"confirmedAt": now, "records": {}}
             summary_updates: dict = {}
             changes = []
             for field in sorted(override.model_fields_set & set(self._OVERRIDE_SUMMARY_FIELD)):
@@ -1724,6 +1737,11 @@ class HubEngine:
                 else:
                     state["records"][field] = OverrideRecord(field=field, ai=ai_value, value=value, at=now)
                 changes.append({"field": field, "before": before, "after": value})
+            # 추가 정보는 칸을 덮어쓰지 않고 쌓는다(2026-10-26) — 순위 칸이 아니라 재매칭을 일으키지 않는다
+            note = (override.extraNote or "").strip() if "extraNote" in override.model_fields_set else ""
+            if note:
+                self._case_extra_notes.setdefault(case_id, []).append(ExtraNote(text=note, at=now))
+                changes.append({"field": "extraNote", "before": None, "after": note})
             if summary_updates:
                 voice = voice.model_copy(update={"summary": voice.summary.model_copy(update=summary_updates)})
                 self._case_voice[case_id] = voice
@@ -2068,6 +2086,7 @@ class HubEngine:
                     "voice": _voice_without_transcript(voice) if voice else None,
                     "result": _result_without_transcript(result) if result else None,
                     "override": _override_to_json(self._case_override.get(cid)),
+                    "extraNotes": [n.model_dump() for n in self._case_extra_notes.get(cid, [])],
                 }
             return {
                 "version": STATE_VERSION,
@@ -2140,6 +2159,14 @@ class HubEngine:
                             self._case_arrival[cid] = arrival
                     self._case_group[cid] = case.get("group")
                     self._case_gps_fallback[cid] = bool(case.get("gpsFallback"))
+                    notes = []
+                    for item in case.get("extraNotes") or []:
+                        try:
+                            notes.append(ExtraNote.model_validate(item))
+                        except Exception:  # noqa: BLE001 — 한 줄이 깨져도 나머지는 살린다
+                            continue
+                    if notes:
+                        self._case_extra_notes[cid] = notes
                     override = _override_from_json(case.get("override"))
                     if override is not None:
                         self._case_override[cid] = override

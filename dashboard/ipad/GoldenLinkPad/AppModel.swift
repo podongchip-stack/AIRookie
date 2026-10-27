@@ -226,6 +226,42 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // ── 추가 정보 전송(2026-10-26) — 통화 요약에 없는 것을 구급대원이 적어 후보 병원들에 보낸다 ──
+    /// 보냈으면 true. hub는 patient_override로 받아 PatientInfo.extraNotes에 쌓고 같은 사건의 후보 병원 탭에 다시 보낸다
+    /// (순위 칸이 아니라 재매칭·승인 초기화는 없다).
+    func sendExtraNote(_ text: String) -> Bool {
+        let note = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if paused { show("현재 시연 일시정지 중입니다."); return false }
+        guard !note.isEmpty else { return false }
+        guard let caseId = result?.caseId ?? caseId, let ambulance else {
+            show("진행 중인 사건이 없어 보내지 못했습니다."); return false
+        }
+        if !ambulance.send(ExtraNoteMessage(caseId: caseId, extraNote: note, timestamp: ISO.now())) {
+            show("hub에 연결되지 않아 보내지 못했습니다."); return false
+        }
+        show("추가 정보를 병원에 전달했습니다.")
+        return true
+    }
+
+    /// 통화 요약 확인·수정(2026-10-27) — 바뀐 칸만 담아 hub로 보낸다. hub가 환자 정보를 갈아 끼워(순위 칸이면 재매칭)
+    /// 같은 사건의 후보 병원 탭·관제 지도·시연 콘솔에 갱신본을 다시 뿌리고, 요약 카드에 "구급대원 확인" 도장이 찍힌다
+    func sendPatientOverride(expectedDiagnosis: String?, injuryStatus: [String]?,
+                             ktasLevel: Int?, requiredDepartment: String?, chiefComplaint: String?) -> Bool {
+        if paused { show("현재 시연 일시정지 중입니다."); return false }
+        guard let caseId = result?.caseId ?? caseId, let ambulance else {
+            show("진행 중인 사건이 없어 보내지 못했습니다."); return false
+        }
+        let msg = PatientOverrideMessage(caseId: caseId, expectedDiagnosis: expectedDiagnosis,
+                                         injuryStatus: injuryStatus, ktasLevel: ktasLevel,
+                                         requiredDepartment: requiredDepartment, chiefComplaint: chiefComplaint,
+                                         timestamp: ISO.now())
+        if !ambulance.send(msg) { show("hub에 연결되지 않아 보내지 못했습니다."); return false }
+        let changed = [expectedDiagnosis != nil, injuryStatus != nil, ktasLevel != nil,
+                       requiredDepartment != nil, chiefComplaint != nil].contains(true)
+        show(changed ? "수정한 내용을 병원에 전달했습니다." : "통화 요약을 확인했습니다.")
+        return true
+    }
+
     /// 병원별 상태를 직전 결과와 비교해 바뀐 것만 응답 기록에 남긴다. 사건이 바뀌면 비운다(연결 직후 따라잡기엔 시각이 없어 남기지 않음)
     private func logResponses(old: HubMatchResult?, new m: HubMatchResult) {
         guard let old else { responseLog = []; return }

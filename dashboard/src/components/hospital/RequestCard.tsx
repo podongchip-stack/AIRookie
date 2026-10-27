@@ -5,7 +5,7 @@ import { distanceLabel } from "@/lib/distance";
 import { REJECTION_REASON_GROUPS, rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import { HD } from "@/components/hospital/hospital-design";
 import { FollowupCallBox } from "@/components/panels/FollowupCallBox";
-import { ConfirmationChip, OverrideChangesBox } from "@/components/panels/PatientConfirmation";
+import { ConfirmationChip, ExtraNotesBox, OverrideChangesBox } from "@/components/panels/PatientConfirmation";
 import type {
   AmbulanceSimState, ApprovalAction, HospitalCandidate, HubMatchResult, RejectionReason, Severity,
 } from "@/types/dashboard";
@@ -148,6 +148,8 @@ export function RequestCard({
         <FollowupCallBox patientInfo={p} />
         {/* 구급대원이 AI 요약을 고쳤으면 무엇이 바뀌었는지(2026-10-13, Override) — 승인은 유지되니 다시 판단할 근거 */}
         <OverrideChangesBox patientInfo={p} />
+        {/* 구급대원이 통화 요약 밖에서 적어 보낸 추가 정보(2026-10-26) — 이송 중에도 계속 덧붙는다 */}
+        <ExtraNotesBox patientInfo={p} />
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "10px 14px" }}>
           {/* KTAS */}
           <div

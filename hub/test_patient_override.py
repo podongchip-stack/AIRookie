@@ -9,6 +9,7 @@
 - 새 통화 회차가 오면 확인 상태가 초기화된다(새 AI 요약은 확인 전)
 - 60초 주기 재계산(refresh_case)에도 고친 값·확인 상태가 유지된다
 - 상태 저장·복구 뒤에도 확인 상태가 남는다
+- 추가 정보(extraNote)는 덮어쓰지 않고 쌓이고, 재매칭·확인 도장 없이 환자 정보만 갱신된다
 - 없는 사건이면 None
 
 임베딩 모델 없이 돌도록 가짜 진료과 매처를 쓴다. 의사결정 로그·상태 파일은 임시 경로.
@@ -144,6 +145,29 @@ def main() -> None:
     assert _order(after) == _order(before) and after.patientInfo.ktasLevel == 1
     assert {h.hospitalId: h.status for h in after.hospitals}["C100"] == "confirmed"
     print("ok — 이송 확정 사건은 KTAS를 고쳐도 병원 순서·확정 유지, 환자 정보만 바뀜")
+
+    # ── 추가 정보(2026-10-26): 쌓이고, 재매칭 없고, 확인 도장은 안 찍힌다 ──
+    engine4 = _engine()
+    engine4.process_voice_summary(_voice("case-d", 3, "medium"), SCENE, max_zone=3)
+    base = _order(engine4.get_case_result("case-d"))
+    r1, log1 = engine4.apply_patient_override(PatientOverride(caseId="case-d", extraNote=" 아스피린 300mg 투여 "), SCENE)
+    assert [n.text for n in r1.patientInfo.extraNotes] == ["아스피린 300mg 투여"]
+    assert not log1["rematched"] and _order(r1) == base
+    assert r1.patientInfo.confirmedBy == "ai", "추가 정보만 보낸 건 요약 확인이 아니다"
+    assert log1["changes"] == [{"field": "extraNote", "before": None, "after": "아스피린 300mg 투여"}]
+    r2, _ = engine4.apply_patient_override(PatientOverride(caseId="case-d", extraNote="보호자 진술: 당뇨 병력"), SCENE)
+    assert [n.text for n in r2.patientInfo.extraNotes] == ["아스피린 300mg 투여", "보호자 진술: 당뇨 병력"]
+    r3, _ = engine4.apply_patient_override(PatientOverride(caseId="case-d", extraNote="   "), SCENE)
+    assert len(r3.patientInfo.extraNotes) == 2, "빈 줄은 쌓지 않는다"
+    # 새 통화 회차가 와도 추가 정보는 남는다(구급대원이 적은 사실이라 AI 요약과 함께 초기화하지 않는다)
+    r4 = engine4.add_call_summary(_voice("case-d", 2, "high", "흉통"), SCENE, max_zone=3)
+    assert len(r4.patientInfo.extraNotes) == 2 and r4.patientInfo.confirmedBy == "ai"
+    # 저장·복구
+    rest = HubEngine(specialty_matcher=_FakeMatcher())
+    rest.import_state(engine4.export_state())
+    back = rest.refresh_case("case-d", SCENE) or rest.get_case_result("case-d")
+    assert [n.text for n in back.patientInfo.extraNotes] == ["아스피린 300mg 투여", "보호자 진술: 당뇨 병력"]
+    print("ok — 추가 정보는 쌓이고 재매칭 없음·확인 도장 없음, 통화 회차·재시작에도 유지")
 
     # ── 상태 저장·복구 ──
     state = engine2.export_state()

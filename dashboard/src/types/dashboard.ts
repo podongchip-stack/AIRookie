@@ -32,6 +32,14 @@ export interface PatientInfo {
   confirmedBy?: "ai" | "paramedic";
   confirmedAt?: string | null;
   overrides?: OverrideRecord[];
+  // 구급대원이 직접 적어 보낸 추가 정보(2026-10-26, 아이패드 구급차 화면). 통화 요약에 없는 것(투약·현장 처치·
+  // 보호자 진술·이송 중 상태 변화)을 보낸 순서대로 쌓는다 — 덮어쓰지 않는다. 구버전 hub면 없다.
+  extraNotes?: ExtraNote[];
+}
+
+export interface ExtraNote {
+  text: string;
+  at: string;
 }
 
 export interface OverrideRecord {
