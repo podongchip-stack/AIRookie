@@ -299,6 +299,16 @@ struct ExtraNoteMessage: Encodable {
 
 // ── 표시 도우미 ──
 enum Labels {
+    /// 의식 수준 글자 → A·V·P·U 한 글자. hub는 "통증 반응(P)"처럼 풀어서 보내므로 괄호 안을 본다
+    static func avpu(_ text: String?) -> String? {
+        guard let text, !text.isEmpty else { return nil }
+        if let m = text.range(of: "\\(([AVPU])\\)", options: .regularExpression) {
+            return String(text[m].dropFirst().dropLast())
+        }
+        let first = String(text.prefix(1)).uppercased()
+        return ["A", "V", "P", "U"].contains(first) ? first : nil
+    }
+
     static func status(_ s: String) -> String {
         switch s {
         case "approved": return "후보 등록"

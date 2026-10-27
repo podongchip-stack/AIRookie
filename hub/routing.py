@@ -29,6 +29,8 @@ _DIRECTIONS_URL = "https://apis-navi.kakaomobility.com/v1/directions"
 # 카카오 로컬(주소·장소 검색, 2026-10-01): 출동 시뮬레이션의 "주소 지정" — 같은 REST 키를 쓴다.
 _ADDRESS_URL = "https://dapi.kakao.com/v2/local/search/address.json"
 _KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
+# 좌표 → 주소(2026-10-27): 인계확인서(출동 및 처치 기록지)의 "출발지 주소"에 좌표 대신 실제 주소를 적으려고.
+_COORD2ADDRESS_URL = "https://dapi.kakao.com/v2/local/geo/coord2address.json"
 _SEARCH_LIMIT = 5
 _MAX_DESTINATIONS = 30        # 다중 목적지 API 한도
 _MAX_RADIUS_M = 10000         # 다중 목적지 API 반경 한도
@@ -61,6 +63,7 @@ class KakaoRouting:
         self._eta_cache: dict[tuple, tuple[float, int, int]] = {}      # key -> (저장시각, 초, 미터)
         self._route_cache: dict[tuple, tuple[float, dict]] = {}
         self._search_cache: dict[str, tuple[float, list[dict]]] = {}
+        self._address_cache: dict[tuple, tuple[float, str | None]] = {}
 
     @classmethod
     def from_env(cls) -> "KakaoRouting | None":
@@ -139,6 +142,33 @@ class KakaoRouting:
         results = results[:_SEARCH_LIMIT]
         self._search_cache[query] = (time.time(), results)
         return results
+
+    def reverse_geocode(self, point: GpsPoint) -> str | None:
+        """좌표 → 주소 문자열(도로명 우선, 없으면 지번). 못 구하면 None — 부르는 쪽이 좌표를 그대로 쓴다.
+        좌표는 10m 단위로 반올림해 캐시 키로만 쓰고 로그에 남기지 않는다(사고 현장 위치)."""
+        key = (round(point.lat, 4), round(point.lng, 4))
+        hit = self._fresh(self._address_cache, key)
+        if hit:
+            return hit[1]
+        address: str | None = None
+        try:
+            response = requests.get(_COORD2ADDRESS_URL, params={"x": point.lng, "y": point.lat},
+                                    headers=self._headers, timeout=_TIMEOUT_SEC)
+            response.raise_for_status()
+            documents = response.json().get("documents") or []
+            if documents:
+                doc = documents[0]
+                road = doc.get("road_address") or {}
+                lot = doc.get("address") or {}
+                address = road.get("address_name") or lot.get("address_name")
+                building = road.get("building_name")
+                if address and building:
+                    address = f"{address} ({building})"
+        except (requests.RequestException, ValueError, KeyError) as e:
+            print(f"  [주소 변환] 실패 — 좌표 그대로 사용: {type(e).__name__}")
+            return None
+        self._address_cache[key] = (time.time(), address)
+        return address
 
     def route(self, origin: GpsPoint, dest: GpsPoint) -> dict | None:
         """도로 경로: {"path": [[lat, lng], ...], "durationSec", "distanceM"} 또는 None."""

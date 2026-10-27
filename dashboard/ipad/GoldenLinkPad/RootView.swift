@@ -1,67 +1,43 @@
 import SwiftUI
 
-/// 구급차 대시보드(웹 /ambulance 시안)와 같은 배치 — 상단바 · 범례 → 왼쪽 열(현장 상태 · 통화 요약) + 오른쪽 거미줄 3D 지도.
-/// 상단바의 [상황판 | 병원 리스트 | 구급차]로 화면을 바꾼다(2026-10-16, 앱은 상황판에서 시작) — 병원 리스트는 지도 없이 현장 상태·통화 요약 + 병원 후보
-/// (HospitalListScreen), 상황판은 이 구급차가 아니라 전체 사건(대량사고). 예전엔 병원 리스트가 구급차 화면 아래 띠였다.
-/// 자동 전환: 음성 요약이 처음 도착하면 병원 리스트로, 이송이 확정되면(hub 응답) 구급차 지도로(AppModel.requestScreen).
+/// 구급차 대시보드(웹 /ambulance 시안)와 같은 배치 — 상단바 → 두 화면.
+/// 상단바의 **[환자 정보 | 이송]**(2026-10-27)으로 화면을 바꾼다:
+///  · [환자 정보] = 왼쪽 통화 요약·구조화 + 추가 정보, 오른쪽 **외상 부위 그림**(BodyInjuryCard)
+///  · [이송] = 왼쪽 병원 리스트(n×1), 병원을 누르면 오른쪽에 그 병원 배후역량표(TransportScreen)
+/// 자동 전환: 음성 요약이 처음 도착하면 [환자 정보]로, 이송이 확정되면(hub 응답) [이송]으로(AppModel.requestScreen).
 /// 상단바의 [정보 생존 모델]은 같은 화면 위에 전체 화면으로 덮는다.
-enum Screen: String { case ambulance, hospitals, board }
+enum Screen: String { case patient, transport }
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var board: BoardModel
-    @AppStorage("screen") private var screenRaw = Screen.board.rawValue
+    @AppStorage("screen") private var screenRaw = Screen.patient.rawValue
     @State private var showSettings = false
     @State private var showSurvival = false
-    private var screen: Screen { Screen(rawValue: screenRaw) ?? .ambulance }
-
-    /// 배후역량 비교표에 올릴 후보(2026-10-27) — hub 순서 그대로, 수용 불가·제외된 병원만 뺀다
-    private var candidates: [HospitalMatch] {
-        (model.result?.hospitals ?? []).filter { $0.status != "rejected" && $0.excluded != true && $0.unavailableReason == nil }
-    }
-    /// 병원 리스트 화면과 같은 규칙 — 지금 이송 승인을 누를 수 있는 첫 병원
-    private var recommendedId: String? { candidates.first { HospitalRules.canTransportNow($0) }?.hospitalId }
+    private var screen: Screen { Screen(rawValue: screenRaw) ?? .patient }
 
     var body: some View {
         ZStack(alignment: .top) {
             AD.bg.ignoresSafeArea()
             VStack(spacing: 8) {
                 TopBar(showSurvival: $showSurvival, showSettings: $showSettings, screenRaw: $screenRaw)
-                if screen == .board {
-                    SituationBoardView()
-                } else if screen == .hospitals {
-                    callBanner
-                    HospitalListScreen()
-                } else {
                 callBanner
-                // 병원 후보는 [병원 리스트] 화면으로 옮겼고(2026-10-16), 오른쪽 지도 자리는 추가 정보 입력칸이다(2026-10-26)
-                GeometryReader { g in
-                    HStack(alignment: .top, spacing: 14) {
-                        // 카드 간격·카드 안 여백은 [병원 리스트] 화면과 같게(2026-10-27) — 간격 8, 카드 추가 여백 없음.
-                        // 왼쪽 열(2026-10-27): 통화 요약(위, 내용 높이 — 열의 55%까지) → 추가 정보(나머지).
-                        // 현장 상태 카드는 삭제했고 목적지는 오른쪽으로 옮겼다
-                        VStack(spacing: 8) {
-                            if model.hasIncident {
-                                CallSummaryCard(fitMax: g.size.height * 0.55)
-                                ExtraInfoCard()
-                            } else {
-                                Spacer(minLength: 0)
-                            }
-                        }
-                        .frame(width: g.size.width >= 1000 ? 360 : 320, height: g.size.height)
-                        // 오른쪽 열(2026-10-27): 병원 응답 단계엔 추천 병원들의 배후역량 비교표,
-                        // 이송이 확정되면 목적지 카드(위) + 그 목적지의 배후역량표(아래)
-                        if model.hasIncident, let c = model.confirmed {
+                if screen == .transport {
+                    TransportScreen()
+                } else {
+                    // [환자 정보] — 왼쪽은 예전과 같은 통화 요약·구조화(+추가 정보), 오른쪽은 외상 부위 그림
+                    GeometryReader { g in
+                        HStack(alignment: .top, spacing: 14) {
+                            // 통화 요약 칸은 사건이 없어도 자리에 둔다(2026-10-27) — 통화가 시작되면 바로 채워진다.
+                            // 인계확인서는 사건이 생긴 뒤에만(채울 값이 없으면 빈 서식만 남는다)
                             VStack(spacing: 8) {
-                                DestinationCard(h: c)
-                                BackupDetailCard(h: c)
+                                CallSummaryCard(fill: !model.hasIncident,
+                                                fitMax: model.hasIncident ? g.size.height * 0.45 : nil)
+                                if model.hasIncident { HandoverCard() }
                             }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        } else {
-                            BackupCompareCard(hospitals: candidates, recommendedId: recommendedId)
+                            .frame(width: g.size.width >= 1000 ? 360 : 320, height: g.size.height)
+                            BodyInjuryCard()
                         }
                     }
-                }
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -75,12 +51,11 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: model.notice)
-        .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model).environmentObject(board) }
+        .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model) }
         .fullScreenCover(isPresented: $showSurvival) { SurvivalModelScreen(isPresented: $showSurvival).environmentObject(model) }
-        // 앱을 켜면 상황판부터(2026-10-16) — 현장 도착·음성 요약이 오면 병원 리스트, 이송이 확정되면 구급차 지도로 자동으로 넘어간다
-        .onAppear { screenRaw = Screen.board.rawValue; model.start(); board.start() }
-        .onChange(of: screenRaw) { _, v in if v == Screen.board.rawValue { board.start() } }
-        // 자동 전환(2026-10-16): 상황판(기본) → 음성 요약 첫 도착 → 병원 리스트 → 이송 확정 → 구급차 지도. 언제든 상단바로 직접 바꿀 수 있다
+        // 앱을 켜면 [환자 정보]부터 — 이송이 확정되면 [이송]으로 자동으로 넘어간다
+        .onAppear { screenRaw = Screen.patient.rawValue; model.start() }
+        // 자동 전환: 음성 요약 첫 도착 → 환자 정보 → 이송 확정 → 이송. 언제든 상단바로 직접 바꿀 수 있다
         .onReceive(NotificationCenter.default.publisher(for: .switchScreen)) { n in
             guard let raw = n.userInfo?["screen"] as? String else { return }
             withAnimation(.easeInOut(duration: 0.25)) { screenRaw = raw }
@@ -101,34 +76,26 @@ struct RootView: View {
 /// 상단바 — 로고 · 버전 · 구급대 이름 | 정보 생존 모델 · 이송 상태 · 연결 · 경과 · 설정 (웹 AmbulanceTopBar)
 struct TopBar: View {
     @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var board: BoardModel
     @Binding var showSurvival: Bool
     @Binding var showSettings: Bool
     @Binding var screenRaw: String
-    private var isBoard: Bool { screenRaw == Screen.board.rawValue }
 
     var body: some View {
         HStack(spacing: 14) {
             HStack(spacing: 10) {
                 (Text("골든").foregroundStyle(AD.navy) + Text("링크").foregroundStyle(AD.blue))
                     .font(.system(size: 20, weight: .black)).fixedSize()
-                if isBoard { Pill(text: "상황판 · 전체 사건", bg: AD.navy, fg: .white, bold: true) }
-                else { Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true) }
+                Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true)
             }
-            // 상황판(전체 사건, 기본) · 병원 리스트 · 구급차(지도) — 진행 순서대로
+            // 환자 정보 · 이송 — 진행 순서대로
             screenSwitch
             Spacer(minLength: 8)
-            if isBoard {
-                let n = board.rows.count
-                HStack(spacing: 6) { Dot(color: n > 0 ? AD.orange : AD.gray); Text(n > 0 ? "진행 중 \(n)건" : "진행 중 사건 없음").font(.system(size: 12, weight: .bold)).foregroundStyle(n > 0 ? AD.orange : AD.gray) }
-            } else {
-                statusView
-            }
             connectionView
-            if !isBoard, let at = model.receivedAt {
+            if let at = model.receivedAt {
                 (Text("수신 후 ") + Text(Labels.elapsed(model.now.timeIntervalSince(at))).bold().foregroundColor(AD.navy) + Text(" 경과"))
                     .font(.system(size: 12)).foregroundStyle(AD.sub)
             }
+            statusView          // 이송 상태는 [정보 생존 모델] 바로 왼쪽(2026-10-27)
             Button { showSurvival = true } label: {
                 Text("정보 생존 모델").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
                     .padding(.horizontal, 16).frame(minHeight: 36).background(AD.blue).clipShape(Capsule())
@@ -147,12 +114,11 @@ struct TopBar: View {
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
     }
 
-    /// 세 칸 전환 — 병원 리스트 칸엔 병원 응답 배지(승인 수, 없으면 후보 수)를 붙여 구급차 화면에서도 응답이 온 걸 안다
+    /// 두 칸 전환 — [이송] 칸엔 병원 응답 배지(승인 수, 없으면 후보 수)를 붙여 환자 정보 화면에서도 응답이 온 걸 안다
     private var screenSwitch: some View {
         HStack(spacing: 2) {
-            seg("상황판", .board, badge: nil)
-            seg("병원 리스트", .hospitals, badge: listBadge)
-            seg("구급차", .ambulance, badge: nil)
+            seg("환자 정보", .patient, badge: nil)
+            seg("이송", .transport, badge: listBadge)
         }
         .padding(3).background(AD.chip).clipShape(Capsule())
     }
@@ -192,25 +158,27 @@ struct TopBar: View {
             if model.hasIncident { return ("병원 선택 대기", AD.orange) }
             return ("출동 대기", AD.gray)
         }()
-        // 상태 문구는 길어지면 말줄임 — 화면 전환 칸이 줄바꿈되지 않게(2026-10-16)
+        // 상태 문구는 길어지면 말줄임(화면 전환 칸이 줄바꿈되지 않게). 폭을 고정하지 않는다(2026-10-28) —
+        // 260pt 상자에 왼쪽 정렬로 넣었더니 [정보 생존 모델] 버튼과 한참 떨어져 보였다
         return HStack(spacing: 6) { Dot(color: color); Text(label).font(.system(size: 12, weight: .bold)).foregroundStyle(color).lineLimit(1).truncationMode(.tail) }
-            .frame(maxWidth: 260, alignment: .leading)
+            .frame(maxWidth: 260, alignment: .trailing).fixedSize(horizontal: true, vertical: false)
     }
 
     private var connectionView: some View {
         let (label, color): (String, Color) = {
-            switch isBoard ? board.connection : model.connection {
-            case .live: return ("실시간 연동", AD.green)
+            switch model.connection {
+            case .live: return ("", AD.green)
             case .connecting: return ("hub 연결 중…", AD.orange)
             case .reconnecting: return ("hub 재연결 중…", AD.red)
             case .closed: return ("hub 주소 없음", AD.red)
             }
         }()
-        return HStack(spacing: 6) { Dot(color: color); Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(color) }
+        // 연결이 정상일 땐 아무것도 보이지 않는다 — 문제가 있을 때만 알린다
+        return HStack(spacing: 6) { if !label.isEmpty { Dot(color: color); Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(color) } }
     }
 }
 
-/// (2026-10-26 구급차 화면에서 빼둠 — 그 자리는 ExtraInfoCard. 상황판 지도는 SituationBoardView가 따로 띄운다)
+/// (2026-10-26 구급차 화면에서 빼둠 — 지금 그 자리는 외상 부위 그림·인계확인서)
 /// 오른쪽 지도 — spider 거미줄 3D(이 구급차의 사건만). 계산·데이터는 전부 서버 쪽이라 앱은 주소만 가리킨다.
 struct MapCard: View {
     @EnvironmentObject private var model: AppModel
