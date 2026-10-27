@@ -41,7 +41,7 @@ struct CallSummaryCard: View {
                 }
                 Spacer()
                 // 구급대원 확인·수정(2026-10-27) — 누르면 칸을 고쳐 hub로 보낸다(보낸 칸만 바뀜)
-                if let p = model.result?.patientInfo {
+                if model.result?.patientInfo != nil {
                     Button { showEdit = true } label: {
                         Label("수정", systemImage: "square.and.pencil")
                             .font(.system(size: 13, weight: .bold)).foregroundStyle(AD.blue)
@@ -87,6 +87,14 @@ struct CallSummaryCard: View {
                 if showTranscript { transcriptBox }
             } else if calling || !model.transcript.isEmpty {
                 transcriptBox
+            }
+            if model.result?.patientInfo == nil, !calling, model.transcript.isEmpty {
+                // 통화 전 — 칸만 두고 무엇이 채워질지 알려 준다
+                Text(model.hasIncident ? "통화가 시작되면 인식한 말과 구조화된 항목이 여기에 채워집니다"
+                                       : "사고가 발생해 통화가 연결되면 예상 병명·증상·중증도·활력징후가 여기에 채워집니다")
+                    .font(.system(size: 13)).foregroundStyle(AD.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
             }
             if model.result?.patientInfo != nil && !model.transcript.isEmpty {
                 Divider().overlay(AD.line)
@@ -153,90 +161,6 @@ struct FlowLayout: Layout {
             s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sz))
             x += sz.width + spacing; rowH = max(rowH, sz.height)
         }
-    }
-}
-
-/// 오른쪽 — 추가 정보(2026-10-26). 통화 요약(AI 구조화)에 없는 것을 구급대원이 직접 적어 그 사건의 후보 병원들에
-/// 보낸다. hub `patient_override`의 extraNote 칸으로 가고, 쌓인 목록은 hub가 되돌려주는 `patientInfo.extraNotes`
-/// 그대로다(앱이 따로 기억하지 않는다 — 재연결·탭 전환에도 같은 목록이 보인다).
-struct ExtraInfoCard: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var draft = ""
-    @FocusState private var editing: Bool
-
-    private var notes: [ExtraNote] { model.result?.patientInfo?.extraNotes ?? [] }
-    private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (model.result?.caseId ?? model.caseId) != nil && !model.paused
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("추가 정보").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-                Spacer()
-                if !notes.isEmpty { Pill(text: "전달 \(notes.count)건", bg: AD.greenSoft, fg: AD.green, bold: true) }
-            }
-            // 입력칸 — 여러 줄, 보내면 비운다
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $draft)
-                    .focused($editing)
-                    .font(.system(size: 15))
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .frame(height: 112)
-                    .background(AD.chip)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                if draft.isEmpty && !editing {
-                    Text("투약 · 현장 처치 · 보호자 진술 · 상태 변화")
-                        .font(.system(size: 14)).foregroundStyle(AD.muted)
-                        .padding(.horizontal, 13).padding(.vertical, 16).allowsHitTesting(false)
-                }
-            }
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                if !draft.isEmpty {
-                    Button { draft = ""; editing = false } label: {
-                        Text("지우기").font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.ink3)
-                            .padding(.horizontal, 14).frame(minHeight: 36)
-                            .background(AD.chip).clipShape(Capsule())
-                    }
-                }
-                Button {
-                    if model.sendExtraNote(draft) { draft = ""; editing = false }
-                } label: {
-                    Label("병원에 전달", systemImage: "paperplane.fill")
-                        .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
-                        .padding(.horizontal, 16).frame(minHeight: 36)
-                        .background(canSend ? AD.blue : AD.gray).clipShape(Capsule())
-                }
-                .disabled(!canSend)
-            }
-            Divider().overlay(AD.line)
-            if notes.isEmpty {
-                Spacer(minLength: 0)
-                Text("전달한 추가 정보가 없습니다").font(.system(size: 13)).foregroundStyle(AD.muted)
-                    .frame(maxWidth: .infinity)
-                Spacer(minLength: 0)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(notes.reversed()) { n in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(Labels.clock(n.at)).font(.system(size: 11, design: .monospaced)).foregroundStyle(AD.muted)
-                                Text(n.text).font(.system(size: 14)).foregroundStyle(AD.ink)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .card()
     }
 }
 

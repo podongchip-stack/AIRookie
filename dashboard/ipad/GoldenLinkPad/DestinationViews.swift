@@ -352,22 +352,23 @@ struct BackupCompareCard: View {
     private func onOff(_ v: Bool?) -> String { v == nil ? "—" : (v! ? "O" : "X") }
 }
 
-/// 이송 확정 뒤 — 목적지 한 곳의 배후역량표(목적지 카드 아래).
+/// 병원 한 곳의 배후역량표([이송] 탭 오른쪽 · 목적지 카드 아래). 매칭 전 현장 후보에도 쓰므로 id·이름만 받는다.
 struct BackupDetailCard: View {
-    let h: HospitalMatch
+    let hospitalId: String
+    let name: String
     @State private var backup: HospitalBackup?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("배후역량").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-                Text(h.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.sub).lineLimit(1)
+                Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.sub).lineLimit(1)
                 Spacer(minLength: 0)
             }
             ScrollView { BackupTables(backup: backup, showNote: false) }.scrollIndicators(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .card()
-        .task(id: h.hospitalId) { backup = await HospitalBackup.fetch(h.hospitalId) }
+        .task(id: hospitalId) { backup = await HospitalBackup.fetch(hospitalId) }
     }
 }
