@@ -370,6 +370,16 @@ class OverrideRecord(BaseModel):
     at: str
 
 
+class ExtraNote(BaseModel):
+    """구급대원이 통화 요약 밖에서 직접 적어 보낸 추가 정보 한 줄(2026-10-26, 아이패드 구급차 화면).
+
+    통화에서 뽑히지 않는 것(투약·현장 처치·보호자 진술·이송 중 상태 변화 등)을 이송 중에도 계속 덧붙일 수
+    있어 덮어쓰지 않고 쌓는다. 순위에는 쓰지 않는 표시용 — 후보 병원 화면에 시각순으로 그대로 보인다."""
+
+    text: str
+    at: str
+
+
 class PatientInfo(BaseModel):
     injuryStatus: list[str]
     expectedDiagnosis: str
@@ -394,6 +404,9 @@ class PatientInfo(BaseModel):
     confirmedBy: Literal["ai", "paramedic"] = "ai"
     confirmedAt: Optional[str] = None
     overrides: list[OverrideRecord] = Field(default_factory=list)
+    # 구급대원이 직접 적어 보낸 추가 정보(2026-10-26, patient_override의 extraNote). 보낸 순서대로 쌓인다 —
+    # 새 통화 회차가 와도 지워지지 않는다(통화 요약이 아니라 구급대원이 적은 사실이므로).
+    extraNotes: list[ExtraNote] = Field(default_factory=list)
 
 
 class SpecialtyMatch(BaseModel):
@@ -626,6 +639,9 @@ class PatientOverride(BaseModel):
     ktasLevel: Optional[int] = Field(default=None, ge=1, le=5)
     requiredDepartment: Optional[str] = None
     chiefComplaint: Optional[str] = None
+    # 추가 정보 한 줄(2026-10-26) — 다른 칸과 달리 덮어쓰지 않고 `PatientInfo.extraNotes`에 쌓인다.
+    # 순위 칸이 아니라 재매칭을 일으키지 않고, 환자 정보만 갈아 끼워 후보 병원들에 다시 나간다.
+    extraNote: Optional[str] = Field(default=None, max_length=500)
     timestamp: Optional[str] = None
 
 

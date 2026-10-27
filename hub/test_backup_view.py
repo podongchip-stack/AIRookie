@@ -31,7 +31,8 @@ def _hospital(hpid: str, backup: bool) -> HospitalInfo:
         bedsByType={"ER_ADULT": 5, "OR": 3, "ICU": 2}, bedCapacityByType={"ER_ADULT": 20, "OR": 16, "ICU": 65},
         equipmentOperating={"ECMO": "Y", "ANGIO": "Y", "CT": "N1"},
         backupCapacity=BackupCapacity(
-            equipment={"ECMO": 2, "CT": 5, "혈액투석을위한인공신장기": 49}, operatingRooms=16, icuTotal=80, nicu=26,
+            equipment={"ECMO": 2, "CT": 5, "혈액투석을위한인공신장기": 49, "분만감시기": 18, "골밀도검사기": 2},
+            operatingRooms=16, icuTotal=80, nicu=26,
             generalWard=646, nursingGrade="1", collectedAt="2026-10-07T16:02:34+00:00",
         ) if backup else None,
     )
@@ -58,6 +59,8 @@ def main() -> None:
     assert (equipment["ECMO"]["hiraCount"], equipment["ECMO"]["egenOperating"]) == (2, "Y")
     assert equipment["ANGIO"]["hiraCount"] is None and equipment["ANGIO"]["note"], "혈관조영은 심평원 항목 없음을 밝힌다"
     assert equipment["HD"]["hiraCount"] == 49 and equipment["CT"]["egenOperating"] == "N1"
+    assert equipment["FETAL_MONITOR"]["hiraCount"] == 18 and equipment["FETAL_MONITOR"]["egenOperating"] is None
+    assert all(row["label"] != "골밀도검사기" for row in body["equipment"]), "배후진료와 무관한 심평원 장비는 싣지 않는다"
     assert all("available" not in row for row in body["equipment"]), "장비엔 지금 남은 대수 칸이 없다(공개 정보 없음)"
     assert [s["department"] for s in body["specialties"]] == ["심장혈관흉부외과"], "전문의 0명인 과는 뺀다"
     assert body["nursingGrade"] == "1" and body["hiraCollectedAt"] and body["source"] == "rule"

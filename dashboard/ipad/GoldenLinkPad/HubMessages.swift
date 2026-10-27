@@ -143,6 +143,15 @@ struct PatientInfo: Codable {
     var previousCalls: [PatientUpdate]?
     var confirmedBy: String?
     var confirmedAt: String?
+    /// 구급대원이 직접 적어 보낸 추가 정보(2026-10-26) — 보낸 순서대로 쌓인다
+    var extraNotes: [ExtraNote]?
+}
+
+/// 추가 정보 한 줄(2026-10-26) — hub PatientInfo.extraNotes
+struct ExtraNote: Codable, Identifiable {
+    var text: String
+    var at: String
+    var id: String { at + text }
 }
 
 struct HubMatchResult: Codable {
@@ -263,6 +272,28 @@ struct ApprovalAction: Encodable {
     var action = "final_approval"
     var hospital_id: String
     var actor = "paramedic"
+    var timestamp: String
+}
+
+/// 통화 요약 확인·수정 전송(2026-10-27) — hub patient_override. **보낸 칸만** 바뀌므로 바뀐 칸만 채운다(nil은 JSON에서 빠진다).
+/// 칸을 하나도 안 채우면 "수정 없이 확인"이고, 순위 칸(예상 병명·KTAS·필요 진료과)이 바뀌면 hub가 다시 매칭해
+/// 후보 병원 탭·관제 지도·시연 콘솔까지 갱신본이 나간다
+struct PatientOverrideMessage: Encodable {
+    var type = "patient_override"
+    var caseId: String
+    var expectedDiagnosis: String?
+    var injuryStatus: [String]?
+    var ktasLevel: Int?
+    var requiredDepartment: String?
+    var chiefComplaint: String?
+    var timestamp: String
+}
+
+/// 추가 정보 전송(2026-10-26) — hub patient_override의 extraNote 칸만 쓴다(요약 칸은 안 보내므로 "확인 도장"도 안 찍힌다)
+struct ExtraNoteMessage: Encodable {
+    var type = "patient_override"
+    var caseId: String
+    var extraNote: String
     var timestamp: String
 }
 
