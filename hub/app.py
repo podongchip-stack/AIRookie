@@ -603,6 +603,38 @@ def get_geocode():
     return response, status
 
 
+@app.get("/geocode/reverse")
+def get_geocode_reverse():
+    """좌표 → 주소(2026-10-27). 아이패드 인계확인서의 "출발지 주소"가 좌표 대신 실제 주소를 적으려고 부른다.
+    /geocode와 같은 이유로 hub가 대신 부르고(카카오 키를 화면에 노출하지 않는다) 같은 분당 한도를 쓴다.
+    좌표는 저장·로그하지 않는다(사고 현장 위치)."""
+    body: dict = {"address": None, "source": "rule"}
+    status = 200
+    try:
+        lat, lng = float(request.args.get("lat", "")), float(request.args.get("lng", ""))
+    except ValueError:
+        body["error"] = "lat·lng 쿼리 파라미터가 필요하다"
+        status = 400
+    else:
+        if router is None:
+            body["error"] = "주소 변환을 쓸 수 없습니다(KAKAO_REST_API_KEY 없음)"
+        else:
+            now = time.time()
+            with _geocode_lock:
+                _geocode_calls[:] = [t for t in _geocode_calls if now - t < 60]
+                limited = len(_geocode_calls) >= GEOCODE_PER_MIN
+                if not limited:
+                    _geocode_calls.append(now)
+            if limited:
+                body["error"] = "요청이 너무 잦습니다 — 잠시 뒤 다시 시도"
+                status = 429
+            else:
+                body["address"] = router.reverse_geocode(GpsPoint(lat=lat, lng=lng))
+    response = jsonify(body)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
+
+
 @app.get("/identity")
 def get_identity():
     """dashboard 랜딩 페이지(코드 입력 화면)가 `/hospital`, `/ambulance`로

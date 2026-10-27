@@ -50,6 +50,13 @@ final class AppModel: ObservableObject {
     @Published var pendingConfirmId: String?
     @Published var notice: String?
     @Published var receivedAt: Date?
+    /// 사고 현장 주소(인계확인서 "출발지 주소") — hub가 좌표를 주소로 바꿔 준다. 못 구하면 nil이고 그때만 좌표를 적는다
+    @Published var incidentAddress: String?
+    /// 인계확인서(출동 및 처치 기록지)의 시각 칸 — 출동 단계가 바뀐 **그 순간**을 적어 둔다.
+    /// hub는 단계만 보내고 시각은 안 보내므로 앱이 기억한다. 사건이 바뀌면 지운다
+    @Published var phaseTimes: [String: Date] = [:]
+    /// 구급차 소켓을 붙인 시각 — 연결 직후 오는 **따라잡기**(진행 중이던 사건)는 화면을 자동으로 바꾸지 않는다(README의 규칙)
+    private var connectedAt: Date?
     @Published var responseLog: [ResponseEvent] = []
 
     // 공통
@@ -122,13 +129,14 @@ final class AppModel: ObservableObject {
         clearCase()
         ambulanceName = nil
         guard let next, !next.isEmpty else { return }
+        connectedAt = Date()
         ambulance = HubSocket(role: "ambulance", id: next,
                               onMessage: { [weak self] t, d in self?.handleAmbulance(t, d) },
                               onState: { [weak self] s in self?.connection = s })
     }
 
     private func clearCase() {
-        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil
+        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil; phaseTimes = [:]; incidentAddress = nil
     }
 
     // ── 자동 따라가기(monitor 소켓) ──
@@ -164,8 +172,9 @@ final class AppModel: ObservableObject {
                 let wasConfirmed = confirmed != nil
                 logResponses(old: firstForCase ? nil : result, new: m)
                 result = m
-                if firstForCase, (m.patientInfo?.callRound ?? 1) <= 1 { requestScreen(.hospitals) }
-                if !wasConfirmed, confirmed != nil { requestScreen(.ambulance) }
+                let catchup = Date().timeIntervalSince(connectedAt ?? .distantPast) < 3
+                if firstForCase, !catchup, (m.patientInfo?.callRound ?? 1) <= 1 { requestScreen(.patient) }
+                if !wasConfirmed, confirmed != nil { requestScreen(.transport) }
                 receivedAt = Date()
                 if m.ambulanceName != nil { ambulanceName = m.ambulanceName }
                 if let p = pendingConfirmId, m.hospitals.contains(where: { $0.hospitalId == p && $0.status == "confirmed" }) { pendingConfirmId = nil }
@@ -178,12 +187,22 @@ final class AppModel: ObservableObject {
         case "ambulance_phase", "ambulance_position":
             if let m = try? dec.decode(AmbulanceSimState.self, from: data), m.apid == apid {
                 let previousCase = sim?.caseId
+                let previousPhase = sim?.phase
+                let previousIncident = sim?.incident
                 sim = m
-                // 새 출동(다른 caseId)이 시작되면 지난 사건 화면을 비운다
+                // 새 출동(다른 caseId)이 시작되면 지난 사건 화면을 비운다 — 시각 칸을 먼저 비우고 나서
+                // 이번 단계를 적는다(순서가 반대면 방금 적은 출동·현장도착 시각이 지워진다)
                 if let c = m.caseId, c != previousCase {
                     if result?.caseId != c { result = nil }
                     if scene?.caseId != c { scene = nil }
                     transcript = []
+                    phaseTimes = ["requestedAt": Date()]      // 새 사건 — 시각 칸을 새로 적는다
+                    incidentAddress = nil
+                }
+                if m.phase != previousPhase || m.caseId != previousCase { recordPhaseTime(m.phase) }
+                if m.incident?.lat != previousIncident?.lat || m.incident?.lng != previousIncident?.lng {
+                    incidentAddress = nil
+                    if let p = m.incident { fetchIncidentAddress(p) }
                 }
                 // 사건이 끝나 기지로(복귀·대기) — 결과를 접는다
                 if m.caseId == nil, ["idle", "returning"].contains(m.phase) { result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = [] }
@@ -223,6 +242,39 @@ final class AppModel: ObservableObject {
         if !ambulance.send(ApprovalAction(caseId: caseId, hospital_id: hospitalId, timestamp: ISO.now())) {
             pendingConfirmId = nil
             show("hub에 연결되지 않아 보내지 못했습니다.")
+        }
+    }
+
+    /// 출동 단계 → 인계확인서 시각 칸(이미 적힌 칸은 덮지 않는다 — 처음 그 단계에 들어간 때가 맞다)
+    private func recordPhaseTime(_ phase: String) {
+        let key: String?
+        switch phase {
+        case "dispatching": key = "dispatchedAt"
+        case "on_scene": key = "sceneArrivedAt"
+        case "transporting": key = "transportStartedAt"
+        case "at_hospital": key = "transportEndedAt"
+        default: key = nil
+        }
+        // 출동 단계 전환을 못 본 채(앱을 늦게 켜거나 재연결) 진행 중인 사건을 받았으면, 적어도 '출동 일시'는
+        // 이 사건을 처음 본 때로 적어 둔다 — 서식의 필수 칸이고 비워 두면 사람이 되짚어 적어야 한다
+        if ["on_scene", "transporting", "at_hospital", "rerouting"].contains(phase), phaseTimes["dispatchedAt"] == nil {
+            phaseTimes["dispatchedAt"] = Date()
+        }
+        guard let key, phaseTimes[key] == nil else { return }
+        phaseTimes[key] = Date()
+        if phaseTimes["requestedAt"] == nil { phaseTimes["requestedAt"] = Date() }
+    }
+
+    /// 사고 현장 좌표 → 주소(hub 대리 호출). 실패하면 조용히 둔다 — 인계확인서가 좌표를 그대로 적는다
+    private func fetchIncidentAddress(_ point: GpsPoint) {
+        guard let url = Settings.reverseGeocodeURL(point) else { return }
+        Task { @MainActor in
+            guard let (data, resp) = try? await URLSession.shared.data(from: url),
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let body = try? JSONDecoder().decode([String: String?].self, from: data),
+                  let address = body["address"] ?? nil, !address.isEmpty else { return }
+            // 늦게 온 응답이 다른 사건을 덮지 않게 — 지금 사건의 좌표일 때만
+            if sim?.incident?.lat == point.lat, sim?.incident?.lng == point.lng { incidentAddress = address }
         }
     }
 

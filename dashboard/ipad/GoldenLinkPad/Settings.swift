@@ -49,7 +49,7 @@ enum Settings {
     }
 
     /// 거미줄 3D 실시간 화면(패널 없이 지도만). apid를 주면 그 구급차의 사건만 그린다.
-    /// screen: 지도 보기(확대·위치)를 화면별로 따로 저장하는 키 — 구급차 화면은 auto 출동 전에도 apid 없이 열려 상황판과 섞였다
+    /// screen: 지도 보기(확대·위치)를 화면별로 따로 저장하는 키
     static func spiderURL(apid: String?, screen: String) -> URL? {
         var s = effectiveSpiderBase + "/spider/?mode=live&embed=1&screen=" + screen
         if let apid, !apid.isEmpty { s += "&apid=" + (apid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? apid) }
@@ -63,6 +63,13 @@ enum Settings {
     static func backupURL(_ hospitalId: String) -> URL? {
         guard let base = httpBase, var c = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
         c.path = "/hospital-backup"; c.queryItems = [URLQueryItem(name: "id", value: hospitalId)]
+        return c.url
+    }
+    /// 좌표 → 주소(2026-10-27) — 인계확인서 "출발지 주소". hub가 카카오를 대신 부른다(키를 앱에 두지 않는다)
+    static func reverseGeocodeURL(_ p: GpsPoint) -> URL? {
+        guard let base = httpBase, var c = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        c.path = "/geocode/reverse"
+        c.queryItems = [URLQueryItem(name: "lat", value: String(p.lat)), URLQueryItem(name: "lng", value: String(p.lng))]
         return c.url
     }
     static func identityURL(role: String, id: String) -> URL? {
