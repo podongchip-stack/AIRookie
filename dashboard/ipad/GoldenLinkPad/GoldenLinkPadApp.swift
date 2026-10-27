@@ -7,13 +7,18 @@ import SwiftUI
 @main
 struct GoldenLinkPadApp: App {
     @StateObject private var model = AppModel()
-    @StateObject private var board = BoardModel()   // 상황판(전체 사건) — 상황판을 처음 열 때 연결한다
+
+    init() {
+        #if DEBUG
+        InjuryMapper.selfCheck()   // 외상 부위 규칙 — 틀리면 DEBUG 빌드에서 바로 멈춘다
+        InjuryRisk.selfCheck()     // 외상 위험도 규칙(초안)
+        #endif
+    }
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(model)
-                .environmentObject(board)
                 .preferredColorScheme(.light)
         }
     }
