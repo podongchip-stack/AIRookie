@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 병원 리스트 화면(2026-10-16) — 상단바 [구급차 | 병원 리스트 | 상황판]의 가운데. 지도 없이 왼쪽 현장 상태·통화 요약, 오른쪽 병원 후보.
+/// 병원 리스트 화면(2026-10-16) — 상단바 [구급차 | 병원 리스트 | 상황판]의 가운데. 지도 없이 왼쪽 통화 요약, 오른쪽 병원 후보.
 /// 예전엔 구급차 화면 아래 가로 스크롤 띠였는데, 음성 요약 뒤 나오는 병원 리스트를 따로 크게 보려고 화면으로 뺐다.
 /// 음성 요약이 처음 도착하면 이 화면으로 자동 전환되고, 이송이 확정되면(hub 응답) 구급차 지도로 돌아간다(AppModel.requestScreen).
 struct HospitalListScreen: View {
@@ -11,11 +11,10 @@ struct HospitalListScreen: View {
             // 왼쪽 열은 화면 높이에 고정(2026-10-16) — 열 전체가 밀려 스크롤되던 것을, 병원 응답 현황(응답 기록)과 통화 요약이 남는 높이를
             // 나눠 갖고 각자 안에서 스크롤되게. 현장 상태·선택 비교는 내용 높이 그대로
             VStack(spacing: 8) {
-                SceneStatusCard().fixedSize(horizontal: false, vertical: true)
-                // 순서(2026-10-16): 현장 상태 → 통화 요약 → 선택 비교(수용 승인 2곳 이상) → 병원 응답 현황(남는 높이, 기록은 카드 안 스크롤)
-                // 응답 현황·선택 비교는 이송 확정 전까지. 응답 현황이 있을 땐 통화 요약을 230pt로 묶는다(넘치면 카드 안 스크롤)
+                // 순서(2026-10-27, 현장 상태 카드 삭제): 통화 요약 → 선택 비교(수용 승인 2곳 이상) → 병원 응답 현황(남는 높이,
+                // 기록은 카드 안 스크롤). 응답 현황이 있을 땐 통화 요약을 340pt로 묶는다 — 현장 상태가 있던 만큼 길어졌다
                 let r = model.confirmed == nil ? model.result : nil
-                if model.hasIncident { CallSummaryCard(fill: true).frame(minHeight: 90, maxHeight: r != nil ? 230 : .infinity) }
+                if model.hasIncident { CallSummaryCard(fill: true).frame(minHeight: 90, maxHeight: r != nil ? 340 : .infinity) }
                 if let r {
                     let approved = r.hospitals.filter { $0.status == "approved" && $0.excluded != true }
                     if approved.count >= 2 {

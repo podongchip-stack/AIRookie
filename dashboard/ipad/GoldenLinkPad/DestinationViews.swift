@@ -7,7 +7,6 @@ struct DestinationCard: View {
     @EnvironmentObject private var model: AppModel
     let h: HospitalMatch
     @State private var backup: HospitalBackup?
-    @State private var showBackup = false
 
     private var live: BedReliability.Live? { h.bedReliability.map { BedReliability.live($0, now: model.now) } }
     private var emDoctors: Int? { backup?.specialties.first { $0.department == "응급의학과" }?.doctorCount }
@@ -30,7 +29,6 @@ struct DestinationCard: View {
             .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
             .card()
             .task(id: h.hospitalId) { backup = await HospitalBackup.fetch(h.hospitalId) }
-            .sheet(isPresented: $showBackup) { BackupSheet(name: h.name, backup: backup, hospitalId: h.hospitalId) }
     }
 
     private func inner(expand: Bool, compact: Bool = false) -> some View {
@@ -43,31 +41,19 @@ struct DestinationCard: View {
             HStack(spacing: 6) {
                 Text(h.name).font(.system(size: 15, weight: .heavy)).foregroundStyle(AD.navy).lineLimit(1)
                 if let lv = h.emergencyLevel, lv.hasSuffix("센터") { Pill(text: lv.hasPrefix("권역") ? "권역센터" : "지역센터", bg: AD.blueSoft, fg: AD.blue) }
-                if compact {
-                    Spacer(minLength: 4)
-                    Button { showBackup = true } label: {
-                        Label("배후역량", systemImage: "cross.case").font(.system(size: 12, weight: .bold)).foregroundStyle(AD.blue)
-                            .padding(.horizontal, 10).padding(.vertical, 5).background(AD.blueSoft).clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
             }
-            if compact { arrivalHeroCompact } else { arrivalHero(expand: expand) }
-            HStack(spacing: 8) {
-                bedBox
-                StatBox(label: "응급의학 전문의", value: emDoctors.map { "\($0)명" } ?? "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
+            // AI 확률은 가로 절반, 오른쪽 절반에 응급실 병상·응급의학 전문의를 두 줄로(2026-10-27) — 카드가 낮아진
+            // 만큼 아래 배후역량표가 길어진다. [배후역량] 버튼은 그 표가 대신해 없앴다
+            HStack(alignment: .top, spacing: 8) {
+                Group { if compact { arrivalHeroCompact } else { arrivalHero(expand: expand) } }
+                    .frame(maxWidth: .infinity)
+                VStack(spacing: 8) {
+                    bedBox
+                    StatBox(label: "응급의학 전문의", value: emDoctors.map { "\($0)명" } ?? "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
+                }
+                .frame(maxWidth: .infinity)
             }
             notices
-            if !compact { Button { showBackup = true } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "cross.case").font(.system(size: 13, weight: .semibold))
-                    Text("배후역량 — 수술실·중환자실·장비").font(.system(size: 13, weight: .bold))
-                }
-                .foregroundStyle(AD.blue)
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .background(AD.blueSoft).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(.plain) }
         }
     }
 
@@ -152,7 +138,7 @@ struct DestinationCard: View {
                             .foregroundStyle(severe ? AD.red : AD.ink3).lineLimit(2)
                     }
                 }
-                if msgs.count > 2 { Text("병원 공지 \(msgs.count - 2)건 더 — [배후역량]에서").font(.system(size: 11)).foregroundStyle(AD.muted) }
+                if msgs.count > 2 { Text("병원 공지 \(msgs.count - 2)건 더 — 아래 배후역량표에서").font(.system(size: 11)).foregroundStyle(AD.muted) }
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -183,6 +169,83 @@ struct HospitalBackup: Codable {
     }
 }
 
+/// 배후역량 표(2026-10-27) — 시트와 구급차 화면 카드가 같이 쓴다. 안내 한 줄 + 병상·장비·전문의·공지 표.
+struct BackupTables: View {
+    let backup: HospitalBackup?
+    /// 카드에서는 안내 문구를 접는다(자리가 좁다 — 시트에서만 보인다)
+    var showNote = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if showNote {
+                Text("보유는 최대치입니다. 지금 쓸 수 있는지는 E-Gen 가용과 병원 수용 승인으로 판단합니다. 장비의 지금 남은 대수는 공개 정보가 없습니다.")
+                    .font(.system(size: 12)).foregroundStyle(AD.sub)
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            if let b = backup {
+                BackupSection(title: "병상") {
+                    BackupRow(cells: ["", "보유(심평원)", "정원(E-Gen)", "지금 가용", "AI 유효"], header: true)
+                    ForEach(b.beds, id: \.key) { r in
+                        BackupRow(cells: [r.label, num(r.hiraCapacity), num(r.egenCapacity), num(r.available),
+                                          r.authority.map(BedReliability.pct) ?? "—"])
+                    }
+                }
+                BackupSection(title: "장비") {
+                    BackupRow(cells: ["", "보유 대수", "운영(E-Gen)"], header: true)
+                    ForEach(b.equipment, id: \.key) { r in
+                        BackupRow(cells: [r.label, num(r.hiraCount), r.egenOperating.map { $0 == "Y" ? "운영" : "중단" } ?? "—"])
+                    }
+                }
+                if !b.specialties.isEmpty {
+                    BackupSection(title: "전문의(심평원)\(b.nursingGrade.map { " · 간호등급 \($0)" } ?? "")") {
+                        let docs = b.specialties.sorted { ($0.department == "응급의학과" ? 1 : 0, $0.doctorCount) > ($1.department == "응급의학과" ? 1 : 0, $1.doctorCount) }
+                        Text(docs.prefix(12).map { "\($0.department) \($0.doctorCount)" }.joined(separator: " · "))
+                            .font(.system(size: 13)).foregroundStyle(AD.ink)
+                    }
+                }
+                if !b.acceptanceMessages.isEmpty {
+                    BackupSection(title: "병원 공지(E-Gen 수용 제한)") {
+                        ForEach(Array(b.acceptanceMessages.enumerated()), id: \.offset) { _, m in
+                            Text("• \(m.diseaseName ?? m.department ?? "") \(m.message ?? "")").font(.system(size: 12.5))
+                                .foregroundStyle(m.kind == "severe" ? AD.red : AD.ink3)
+                        }
+                    }
+                }
+            } else {
+                ProgressView("배후역량을 불러오는 중…").frame(maxWidth: .infinity).padding(.top, 30)
+            }
+        }
+    }
+
+    private func num(_ v: Int?) -> String { v.map(String.init) ?? "—" }
+}
+
+struct BackupSection<C: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> C
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy)
+            content()
+        }
+    }
+}
+
+struct BackupRow: View {
+    let cells: [String]
+    var header = false
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { i, c in
+                Text(c).font(.system(size: header ? 11 : 12.5, weight: i == 0 || header ? .semibold : .regular))
+                    .foregroundStyle(header ? AD.muted : i == 0 ? AD.navy : AD.ink)
+                    .frame(maxWidth: .infinity, alignment: i == 0 ? .leading : .trailing)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+}
+
 struct BackupSheet: View {
     @Environment(\.dismiss) private var dismiss
     let name: String
@@ -192,43 +255,8 @@ struct BackupSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("보유는 최대치입니다. 지금 쓸 수 있는지는 E-Gen 가용과 병원 수용 승인으로 판단합니다. 장비의 지금 남은 대수는 공개 정보가 없습니다.")
-                        .font(.system(size: 12)).foregroundStyle(AD.sub)
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 10))
-                    if let b = backup {
-                        section("병상") {
-                            row(["", "보유(심평원)", "정원(E-Gen)", "지금 가용", "AI 유효"], header: true)
-                            ForEach(b.beds, id: \.key) { r in
-                                row([r.label, num(r.hiraCapacity), num(r.egenCapacity), num(r.available), r.authority.map(BedReliability.pct) ?? "—"])
-                            }
-                        }
-                        section("장비") {
-                            row(["", "보유 대수", "운영(E-Gen)"], header: true)
-                            ForEach(b.equipment, id: \.key) { r in
-                                row([r.label, num(r.hiraCount), r.egenOperating.map { $0 == "Y" ? "운영" : "중단" } ?? "—"])
-                            }
-                        }
-                        if !b.specialties.isEmpty {
-                            section("전문의(심평원)\(b.nursingGrade.map { " · 간호등급 \($0)" } ?? "")") {
-                                let docs = b.specialties.sorted { ($0.department == "응급의학과" ? 1 : 0, $0.doctorCount) > ($1.department == "응급의학과" ? 1 : 0, $1.doctorCount) }
-                                Text(docs.prefix(12).map { "\($0.department) \($0.doctorCount)" }.joined(separator: " · "))
-                                    .font(.system(size: 13)).foregroundStyle(AD.ink)
-                            }
-                        }
-                        if !b.acceptanceMessages.isEmpty {
-                            section("병원 공지(E-Gen 수용 제한)") {
-                                ForEach(Array(b.acceptanceMessages.enumerated()), id: \.offset) { _, m in
-                                    Text("• \(m.diseaseName ?? m.department ?? "") \(m.message ?? "")").font(.system(size: 12.5))
-                                        .foregroundStyle(m.kind == "severe" ? AD.red : AD.ink3)
-                                }
-                            }
-                        }
-                    } else {
-                        ProgressView("배후역량을 불러오는 중…").frame(maxWidth: .infinity).padding(.top, 30)
-                    }
-                }
-                .padding(18)
+                BackupTables(backup: backup)
+                    .padding(18)
             }
             .navigationTitle("\(name) · 배후역량")
             .navigationBarTitleDisplayMode(.inline)
@@ -237,21 +265,109 @@ struct BackupSheet: View {
         }
     }
 
-    private func num(_ v: Int?) -> String { v.map(String.init) ?? "—" }
-    private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy)
-            content()
-        }
-    }
-    private func row(_ cells: [String], header: Bool = false) -> some View {
-        HStack(spacing: 6) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { i, c in
-                Text(c).font(.system(size: header ? 11 : 12.5, weight: i == 0 || header ? .semibold : .regular))
-                    .foregroundStyle(header ? AD.muted : i == 0 ? AD.navy : AD.ink)
-                    .frame(maxWidth: .infinity, alignment: i == 0 ? .leading : .trailing)
+}
+
+// ── 배후역량표 카드(2026-10-27) — 구급차 화면 오른쪽. 병원 응답 단계엔 추천 병원들을 나란히, 이송이 확정되면 목적지 한 곳을 자세히 ──
+
+/// 이송 확정 전 — 추천 병원들의 배후역량을 한 표로 비교(hub GET /hospital-backup, 병원마다 한 번).
+/// 순위는 hub가 보낸 순서 그대로이고, 이 표는 "그 병원이 뒤를 받칠 수 있나"를 보여주는 열람용이다.
+struct BackupCompareCard: View {
+    let hospitals: [HospitalMatch]
+    let recommendedId: String?
+    @State private var backups: [String: HospitalBackup] = [:]
+    @State private var detail: HospitalMatch?
+
+    /// 병원 리스트 탭과 같은 후보 전부(2026-10-27 — 예전엔 앞 5곳만 보여 리스트와 개수가 달랐다). 넘치면 카드 안에서 스크롤
+    private var shown: [HospitalMatch] { hospitals }
+    private var signature: String { shown.map(\.hospitalId).joined(separator: ",") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("추천 병원 배후역량").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
+                Spacer()
+                if !shown.isEmpty { Pill(text: "\(shown.count)곳", bg: AD.chip, fg: AD.ink3) }
+            }
+            if shown.isEmpty {
+                Spacer(minLength: 0)
+                Text("병원 후보가 오면 배후역량을 비교해 보여줍니다").font(.system(size: 13)).foregroundStyle(AD.muted)
+                    .frame(maxWidth: .infinity)
+                Spacer(minLength: 0)
+            } else {
+                BackupRow(cells: ["", "응급실", "수술실", "중환자실", "응급의학", "CT·조영"], header: true)
+                Divider().overlay(AD.line)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(shown) { h in
+                            Button { detail = h } label: { row(h) }.buttonStyle(.plain)
+                            Divider().overlay(AD.line)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
             }
         }
-        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .card()
+        .task(id: signature) {
+            for h in shown where backups[h.hospitalId] == nil {
+                if let b = await HospitalBackup.fetch(h.hospitalId) { backups[h.hospitalId] = b }
+            }
+        }
+        .sheet(item: $detail) { h in BackupSheet(name: h.name, backup: backups[h.hospitalId], hospitalId: h.hospitalId) }
+    }
+
+    private func row(_ h: HospitalMatch) -> some View {
+        let b = backups[h.hospitalId]
+        let bed = { (key: String) -> HospitalBackup.BedRow? in b?.beds.first { $0.key == key } }
+        let er = bed("ER_ADULT"), or = bed("OR"), icu = bed("ICU")
+        let em = b?.specialties.first { $0.department == "응급의학과" }?.doctorCount
+        let equip = { (key: String) -> Bool? in b?.equipment.first { $0.key == key }?.egenOperating.map { $0 == "Y" } }
+        let ct = equip("CT"), angio = equip("ANGIO")
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(h.name).font(.system(size: 13.5, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
+                if h.hospitalId == recommendedId { Pill(text: "추천", bg: AD.greenSoft, fg: AD.green, bold: true) }
+                if h.status == "approved" { Pill(text: "수용 승인", bg: AD.greenSoft, fg: AD.green) }
+                Spacer(minLength: 0)
+                if b == nil { ProgressView().controlSize(.mini) }
+            }
+            BackupRow(cells: ["", slash(er?.available, er?.egenCapacity), slash(or?.available, or?.egenCapacity ?? or?.hiraCapacity),
+                              slash(icu?.available, icu?.egenCapacity ?? icu?.hiraCapacity), em.map { "\($0)명" } ?? "—",
+                              onOff(ct) + "·" + onOff(angio)])
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+    }
+
+    /// "가용/정원" — 가용을 모르면 정원만, 둘 다 모르면 —
+    private func slash(_ available: Int?, _ capacity: Int?) -> String {
+        switch (available, capacity) {
+        case let (a?, c?): return "\(a)/\(c)"
+        case let (a?, nil): return "\(a)"
+        case let (nil, c?): return "—/\(c)"
+        default: return "—"
+        }
+    }
+    private func onOff(_ v: Bool?) -> String { v == nil ? "—" : (v! ? "O" : "X") }
+}
+
+/// 이송 확정 뒤 — 목적지 한 곳의 배후역량표(목적지 카드 아래).
+struct BackupDetailCard: View {
+    let h: HospitalMatch
+    @State private var backup: HospitalBackup?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("배후역량").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
+                Text(h.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.sub).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            ScrollView { BackupTables(backup: backup, showNote: false) }.scrollIndicators(.hidden)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .card()
+        .task(id: h.hospitalId) { backup = await HospitalBackup.fetch(h.hospitalId) }
     }
 }

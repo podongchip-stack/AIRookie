@@ -42,6 +42,30 @@ export function ConfirmationChip({ patientInfo }: { patientInfo: PatientInfo | n
   );
 }
 
+/** 구급대원이 보낸 추가 정보(2026-10-26) — 통화 요약에 없는 것. 시각순으로 전부 보여준다. 없으면 null. */
+export function ExtraNotesBox({ patientInfo }: { patientInfo: PatientInfo | null | undefined }) {
+  const notes = patientInfo?.extraNotes ?? [];
+  if (notes.length === 0) return null;
+  return (
+    <div
+      style={{
+        display: "flex", flexDirection: "column", gap: 3, borderRadius: 10, padding: "8px 12px", whiteSpace: "normal",
+        background: "#FFF8E6", border: "1px solid #EBD9A6",
+      }}
+    >
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: "#8A5A00" }}>
+        🖊 구급대원 추가 정보 {notes.length}건
+      </span>
+      {notes.map((n, i) => (
+        <span key={`${n.at}-${i}`} style={{ fontSize: 12, color: "#4A5565" }}>
+          <span style={{ color: "#7A8594", fontVariantNumeric: "tabular-nums" }}>{hhmm(n.at)}</span>{" "}
+          <b style={{ color: "#14213D", fontWeight: 600 }}>{n.text}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** 구급대원이 고친 칸이 있으면 "환자 정보 변경" 상자(AI 값 → 구급대원 값). 없으면 null. */
 export function OverrideChangesBox({ patientInfo }: { patientInfo: PatientInfo | null | undefined }) {
   const records = patientInfo?.overrides ?? [];

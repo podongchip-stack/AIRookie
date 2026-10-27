@@ -15,12 +15,18 @@ struct RootView: View {
     @State private var showSurvival = false
     private var screen: Screen { Screen(rawValue: screenRaw) ?? .ambulance }
 
+    /// 배후역량 비교표에 올릴 후보(2026-10-27) — hub 순서 그대로, 수용 불가·제외된 병원만 뺀다
+    private var candidates: [HospitalMatch] {
+        (model.result?.hospitals ?? []).filter { $0.status != "rejected" && $0.excluded != true && $0.unavailableReason == nil }
+    }
+    /// 병원 리스트 화면과 같은 규칙 — 지금 이송 승인을 누를 수 있는 첫 병원
+    private var recommendedId: String? { candidates.first { HospitalRules.canTransportNow($0) }?.hospitalId }
+
     var body: some View {
         ZStack(alignment: .top) {
             AD.bg.ignoresSafeArea()
             VStack(spacing: 8) {
                 TopBar(showSurvival: $showSurvival, showSettings: $showSettings, screenRaw: $screenRaw)
-                Legend()
                 if screen == .board {
                     SituationBoardView()
                 } else if screen == .hospitals {
@@ -28,31 +34,32 @@ struct RootView: View {
                     HospitalListScreen()
                 } else {
                 callBanner
-                // 병원 후보는 [병원 리스트] 화면으로 옮겼다(2026-10-16) — 지도가 아래까지
+                // 병원 후보는 [병원 리스트] 화면으로 옮겼고(2026-10-16), 오른쪽 지도 자리는 추가 정보 입력칸이다(2026-10-26)
                 GeometryReader { g in
                     HStack(alignment: .top, spacing: 14) {
-                        // 왼쪽 열은 지도와 같은 높이(2026-10-16) — 이송 확정 전엔 통화 요약이 남는 높이를 다 채우고,
-                        // 확정 뒤엔 통화 요약은 내용 높이, 목적지가 나머지(각자 넘치면 카드 안에서 스크롤)
-                        // 카드 사이 간격 0(카드끼리 붙임), 대신 카드마다 위아래 여백을 5씩 더 준다(2026-10-16)
-                        VStack(spacing: 0) {
-                            SceneStatusCard(extraV: 5)
-                            // 목적지 카드(2026-10-16) — 이송 확정 뒤 ~ 도착, 구급차 화면에서만(병원 리스트 화면엔 없음)
-                            if model.hasIncident, let c = model.confirmed {
-                                // 통화 요약은 내용 높이 그대로(스크롤 없이, 단 왼쪽 열의 55%까지), 목적지가 나머지를 채운다
-                                GeometryReader { g2 in
-                                    VStack(spacing: 0) {
-                                        CallSummaryCard(fitMax: g2.size.height * 0.55, extraV: 5)
-                                        DestinationCard(h: c, fill: true)
-                                    }
-                                }
-                            } else if model.hasIncident {
-                                CallSummaryCard(fill: true, extraV: 5)
+                        // 카드 간격·카드 안 여백은 [병원 리스트] 화면과 같게(2026-10-27) — 간격 8, 카드 추가 여백 없음.
+                        // 왼쪽 열(2026-10-27): 통화 요약(위, 내용 높이 — 열의 55%까지) → 추가 정보(나머지).
+                        // 현장 상태 카드는 삭제했고 목적지는 오른쪽으로 옮겼다
+                        VStack(spacing: 8) {
+                            if model.hasIncident {
+                                CallSummaryCard(fitMax: g.size.height * 0.55)
+                                ExtraInfoCard()
                             } else {
                                 Spacer(minLength: 0)
                             }
                         }
                         .frame(width: g.size.width >= 1000 ? 360 : 320, height: g.size.height)
-                        MapCard()
+                        // 오른쪽 열(2026-10-27): 병원 응답 단계엔 추천 병원들의 배후역량 비교표,
+                        // 이송이 확정되면 목적지 카드(위) + 그 목적지의 배후역량표(아래)
+                        if model.hasIncident, let c = model.confirmed {
+                            VStack(spacing: 8) {
+                                DestinationCard(h: c)
+                                BackupDetailCard(h: c)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        } else {
+                            BackupCompareCard(hospitals: candidates, recommendedId: recommendedId)
+                        }
                     }
                 }
                 }
@@ -105,7 +112,6 @@ struct TopBar: View {
             HStack(spacing: 10) {
                 (Text("골든").foregroundStyle(AD.navy) + Text("링크").foregroundStyle(AD.blue))
                     .font(.system(size: 20, weight: .black)).fixedSize()
-                Pill(text: "v2.0", bg: AD.blueSoft, fg: AD.blue, bold: true)
                 if isBoard { Pill(text: "상황판 · 전체 사건", bg: AD.navy, fg: .white, bold: true) }
                 else { Pill(text: ambulanceLabel, bg: AD.chip, fg: AD.ink3, bold: true) }
             }
@@ -204,24 +210,7 @@ struct TopBar: View {
     }
 }
 
-/// 범례 + AI 안내 한 줄 — AI 처리 / 규칙 기반 / 의료진 판단 영역을 색으로 구분(웹 AmbulanceLegend, CLAUDE.md 출처 표시 원칙)
-struct Legend: View {
-    var body: some View {
-        HStack(spacing: 18) {
-            item(AD.blue, "AI 처리")
-            item(AD.gray, "규칙 기반 · 센서 · API")
-            item(AD.orange, "의료진 판단 영역")
-            Spacer()
-            Text("AI는 환자 정보 구조화와 기록 자동화만 수행합니다. 이송 최종 승인은 구급대원의 판단입니다.")
-                .font(.system(size: 11.5)).foregroundStyle(AD.sub).lineLimit(1).minimumScaleFactor(0.8)
-        }
-        .padding(.horizontal, 6)
-    }
-    private func item(_ c: Color, _ t: String) -> some View {
-        HStack(spacing: 6) { Dot(color: c, size: 9); Text(t).font(.system(size: 11.5)).foregroundStyle(AD.ink3) }
-    }
-}
-
+/// (2026-10-26 구급차 화면에서 빼둠 — 그 자리는 ExtraInfoCard. 상황판 지도는 SituationBoardView가 따로 띄운다)
 /// 오른쪽 지도 — spider 거미줄 3D(이 구급차의 사건만). 계산·데이터는 전부 서버 쪽이라 앱은 주소만 가리킨다.
 struct MapCard: View {
     @EnvironmentObject private var model: AppModel
@@ -233,10 +222,7 @@ struct MapCard: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text("거미줄 분배 · 실시간").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
-                Text("내 구급차 기준 · 이송 경로").font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 Spacer()
-                Pill(text: "초록 노드 = 요청 병원 · 초록 줄 = 승인 중 최적", bg: AD.greenSoft, fg: AD.green)
-                Pill(text: "민트 = 거미줄 제안", bg: Color(hex: 0xE6FBF4), fg: Color(hex: 0x0F7B5F))
                 // 지도를 손으로 옮기면 내 구급차 따라가기가 멈춘다 — 다시 켜는 버튼. auto에서 아직 따라갈 구급대가 없으면(출동 전·사건 종료 뒤)
                 // 지도엔 '내 구급차'가 없으니 같은 자리에서 전체 보기로 동작한다(spider followMine이 알아서 바꾼다)
                 Button { NotificationCenter.default.post(name: .spiderEval, object: nil, userInfo: ["js": "followMine()"]) } label: {
