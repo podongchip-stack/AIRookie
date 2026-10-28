@@ -55,6 +55,9 @@ final class AppModel: ObservableObject {
     /// 인계확인서(출동 및 처치 기록지)의 시각 칸 — 출동 단계가 바뀐 **그 순간**을 적어 둔다.
     /// hub는 단계만 보내고 시각은 안 보내므로 앱이 기억한다. 사건이 바뀌면 지운다
     @Published var phaseTimes: [String: Date] = [:]
+    /// 외상 도해에서 구급대원이 **탭으로 고친 것**(2026-10-28) — 부위 추가·제외와 부위별 처치.
+    /// hub로는 `patient_override.injuryStatus`로, 인계확인서로는 처치 칸으로 흘러간다. 사건이 바뀌면 비운다
+    @Published var bodyEdits = BodyEdits()
     /// 구급차 소켓을 붙인 시각 — 연결 직후 오는 **따라잡기**(진행 중이던 사건)는 화면을 자동으로 바꾸지 않는다(README의 규칙)
     private var connectedAt: Date?
     @Published var responseLog: [ResponseEvent] = []
@@ -136,7 +139,7 @@ final class AppModel: ObservableObject {
     }
 
     private func clearCase() {
-        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil; phaseTimes = [:]; incidentAddress = nil
+        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil; phaseTimes = [:]; incidentAddress = nil; bodyEdits = BodyEdits()
     }
 
     // ── 자동 따라가기(monitor 소켓) ──
@@ -198,6 +201,7 @@ final class AppModel: ObservableObject {
                     transcript = []
                     phaseTimes = ["requestedAt": Date()]      // 새 사건 — 시각 칸을 새로 적는다
                     incidentAddress = nil
+                    bodyEdits = BodyEdits()
                 }
                 if m.phase != previousPhase || m.caseId != previousCase { recordPhaseTime(m.phase) }
                 if m.incident?.lat != previousIncident?.lat || m.incident?.lng != previousIncident?.lng {

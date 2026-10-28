@@ -75,7 +75,7 @@ enum Handover {
         .init(id: "care2", label: "이송/도착시 처치상태", section: 4, kind: .multiline, required: true),
         .init(id: "notes2", label: "기타 소견 및 처치(이송 중)", section: 4, kind: .multiline),
         // 5. 이송차량 및 이송자
-        .init(id: "agency", label: "소속기관명", section: 5, required: true, summary: true),
+        .init(id: "agency", label: "소속기관명", section: 5, required: true),
         .init(id: "vehicleKind", label: "이송차량", section: 5, kind: .choice(["특수구급차", "일반구급차", "헬기", "기타"]), required: true),
         .init(id: "vehicleNo", label: "번호(등록·자격·면허)", section: 5, required: true),
         .init(id: "crewName", label: "이송자 성명", section: 5, required: true),
@@ -84,12 +84,16 @@ enum Handover {
     ]
 
     static func field(_ id: String) -> Field? { fields.first { $0.id == id } }
+    /// 처치 칸들(기도·호흡·순환·약품·고정·기타) — 카드에서 "처치" 한 줄로 묶어 보여 준다
+    static let careFieldIds = ["careAirway", "careBreathing", "careCirculation", "careDrug", "careFix", "careEtc"]
 
     // ── 자동 채움 ────────────────────────────────────────────────────────────
     /// 통화 요약(AI)·출동 상태·확정 병원에서 채울 수 있는 칸만 채운다. 나머지는 사람이 적는다.
     /// `times`는 앱이 기억해 둔 단계별 시각(출동·현장 도착·이송 시작·병원 도착)이다.
+    /// `bodyCare`는 외상 도해에서 부위를 눌러 적은 처치("좌 다리 부목")다 — 통화 요약의 처치와 같은 줄에 섞는다
     static func auto(patient: PatientInfo?, confirmed: HospitalMatch?, ambulanceName: String?, apid: String?,
-                     times: [String: Date], incident: GpsPoint?, incidentAddress: String?) -> [String: String] {
+                     times: [String: Date], incident: GpsPoint?, incidentAddress: String?,
+                     bodyCare: [String] = []) -> [String: String] {
         var v: [String: String] = [:]
         v["transportKind"] = "현장 이송"
         v["selector"] = "구급대(이송자)"
@@ -127,9 +131,10 @@ enum Handover {
             v["vitals2"] = m.text          // 측정이 2회 이상이면 마지막 것을 이송 중 칸에도 적어 둔다(고칠 수 있다)
             v["avpu2"] = v["avpu"] ?? ""
         }
-        for (key, value) in care(p.treatment ?? []) { v[key] = value }
+        for (key, value) in care((p.treatment ?? []) + bodyCare) { v[key] = value }
         let symptoms = (p.injuryStatus ?? []).joined(separator: ", ")
-        let extra = (p.extraNotes ?? []).map(\.text).joined(separator: " / ")
+        // "[처치] …"는 외상 도해에서 보낸 것이라 이미 처치 칸에 들어가 있다 — 기타 소견에 또 적지 않는다
+        let extra = (p.extraNotes ?? []).map(\.text).filter { !$0.hasPrefix("[처치]") }.joined(separator: " / ")
         v["notes"] = [symptoms.isEmpty ? nil : "증상: " + symptoms,
                       p.onset.map { "발생: \($0)" },
                       extra.isEmpty ? nil : "추가: " + extra].compactMap { $0 }.joined(separator: "\n")
