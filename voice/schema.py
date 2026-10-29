@@ -28,10 +28,11 @@ class Transcript(BaseModel):
 
 
 class Summary(BaseModel):
-    """MF_BERT 활력징후판(2026-10-20) 출력 + 환자별 Pre-KTAS 추정.
+    """MF_BERT 처치판(2026-10-29) 출력 + 환자별 Pre-KTAS 추정.
 
     patients[]의 항목: gender · age_group · cc_major · cc_minor · avpu (AI, 선택지) / sbp · dbp · hr · rr · spo2 ·
-    temp · glucose · gcs (AI 구간 → 규칙 숫자 읽기, 말하지 않았으면 null) / pre_ktas (규칙, pre_ktas.py —
+    temp · glucose · gcs (AI 구간 → 규칙 숫자 읽기, 말하지 않았으면 null) / treat_categories (AI, 처치 범주 28개 중
+    고른 키 목록, 없으면 [] — MF_BERT/treatments.py의 CATEGORIES) / pre_ktas (규칙, pre_ktas.py —
     {"level": 1~5 | null, "basis": [{"rule", "level", "text"}], "source": "rule"}).
     환자 항목은 모델 출력을 그대로 두고 여기서는 검증하지 않는다 — hub 담당자가 필요한 필드부터 타입을 좁힌다.
     """

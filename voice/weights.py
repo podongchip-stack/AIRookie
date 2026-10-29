@@ -16,10 +16,10 @@ ASR_ADAPTER_REPO_ID = "Playedwell03/qwen3-asr-0.6b-119ko-tiny"
 MF_BERT_REPO_ID = "podongchip/MF_BERT"
 # 받을 MF_BERT 버전(태그·브랜치·커밋). "main"을 받으면 Hub에 구조가 바뀐 가중치가 올라올 때 MF_BERT/ 코드와
 # 안 맞아 서버가 아예 뜨지 않는다(2026-10-03 10-02 가중치로 실제로 겪음). 그래서 MF_BERT/ 코드와 대조를 마친 커밋
-# 해시로 고정한다 — 2026-10-20 활력징후판 4비트 ONNX(v3-2026-10-20-rtn과 가중치가 같고 모델 카드만 고친 커밋).
-# 새 가중치를 들여올 때는 MF_BERT/ 코드를 맞춘 뒤 이 값(또는 MF_BERT_REVISION 환경변수)을 바꾼다. 이전 PyTorch
-# 모델(v2-2026-10-02·v1-2026-09-30 태그)은 출력 형식·파일 구성이 달라 이 코드로 읽지 못한다.
-MF_BERT_REVISION = os.environ.get("MF_BERT_REVISION", "1d7e43e19891e567db6778196ca1cac14ad60c5b")
+# 해시로 고정한다 — 2026-10-29 처치판 4비트 ONNX(HQQ, 태그 v4-2026-10-29-hqq와 같은 커밋).
+# 새 가중치를 들여올 때는 MF_BERT/ 코드를 맞춘 뒤 이 값(또는 MF_BERT_REVISION 환경변수)을 바꾼다. 이전 모델
+# (v3-2026-10-20-rtn 이하)은 처치 출력이 없어 이 코드로 읽지 못한다(MfBertExtractor가 catalog를 대조해 멈춘다).
+MF_BERT_REVISION = os.environ.get("MF_BERT_REVISION", "5dd20eb8b75723f98d69e39f83a58989989577b5")
 
 
 def resolve_asr_adapter_dir() -> Path:

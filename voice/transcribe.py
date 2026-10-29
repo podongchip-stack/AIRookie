@@ -1,7 +1,7 @@
 """통화 음성 -> STT(Qwen3-ASR) -> 구조화(MF_BERT) -> feature/hub 전달용 JSON. 파이프라인 본체이자 배치 CLI.
 
     ASR       Qwen3-ASR-0.6B + LoRA (asr.py)                  음성 -> 발화 구간 텍스트          (AI 처리)
-    MF_BERT   KLUE RoBERTa-large + 결정 디코더 (MF_BERT/)     텍스트 -> 환자 수·환자별 13개 항목 (AI 처리)
+    MF_BERT   KLUE RoBERTa-large + 결정 디코더 (MF_BERT/)     텍스트 -> 환자 수·환자별 14개 항목 (AI 처리)
               + 활력징후 구간 숫자 읽기 (MF_BERT/vitals.py)                                      (규칙 기반)
     Pre-KTAS  주증상·의식·활력징후 -> 추정 단계 (pre_ktas.py) -> summary.patients[].pre_ktas     (규칙 기반)
 

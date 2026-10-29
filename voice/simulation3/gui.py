@@ -1,12 +1,12 @@
 r"""Qwen3-ASR -> MF_BERT 실험용 데스크톱 시뮬레이터 (tkinter).
 
-장비 마이크로 말하면 발화 단위로 인식하고, 환자별 13개 항목·Pre-KTAS 추정·hub로 갈 JSON을 보여준다.
+장비 마이크로 말하면 발화 단위로 인식하고, 환자별 14개 항목·Pre-KTAS 추정·hub로 갈 JSON을 보여준다.
 실운영 경로가 아니다. 처리는 전부 voice/의 실운영 모듈을 import해서 쓴다 — 마이크(MicRecorder)·무음 감지
 (LiveTranscriber)·ASR·MF_BERT·JSON 조립까지 app.py와 같은 코드라, 여기서 맞춘 무음 기준을 환경변수로 그대로
 옮기면 된다. 사본이 없으니 화면 결과와 실제 hub 전송값이 달라질 일도 없다.
 
     마이크 -> MicRecorder -> LiveTranscriber (발화 단위 ASR)
-                               -> 발화가 늘 때마다 MfBertExtractor.extract() -> 환자 수·환자별 13개 항목
+                               -> 발화가 늘 때마다 MfBertExtractor.extract() -> 환자 수·환자별 14개 항목
                                -> build_call_summary_message() -> Pre-KTAS 추정 + hub JSON (전송·저장은 안 함)
 
     conda activate AIRookieProject
@@ -53,6 +53,7 @@ FIELD_SOURCES = [
     ("temp", "체온", VITAL_SOURCE),
     ("glucose", "혈당", VITAL_SOURCE),
     ("gcs", "GCS", VITAL_SOURCE),
+    ("treat_categories", "처치 범주", "AI (28개 범주 중 확률 0.5 초과)"),
     ("pre_ktas", "Pre-KTAS 추정", "규칙 (pre_ktas.py)"),
 ]
 
@@ -65,6 +66,8 @@ def show(value) -> str:
         return "—"
     if isinstance(value, str):
         return value
+    if isinstance(value, list):  # 처치 범주
+        return " / ".join(value) or "없음"
     return json.dumps(value, ensure_ascii=False)
 
 
