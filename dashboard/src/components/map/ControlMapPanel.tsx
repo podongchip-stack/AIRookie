@@ -42,6 +42,7 @@ export function ControlMapPanel({
   hoverHospital,
   hoverAmb,
   ambInTab,
+  alertCaseIds,
   onHoverHospital,
   onHoverAmb,
   onSelectCase,
@@ -56,6 +57,8 @@ export function ControlMapPanel({
   hoverAmb: string;
   // 하단 구급차 패널의 탭에 해당하지 않는 구급차는 지도에서 옅게
   ambInTab: (apid: string) => boolean;
+  // 확인하지 않은 알림이 걸린 사건 — 그 구급차를 붉은 파동으로 강조(알림 표시는 아이콘 없이 색·파동·글자만)
+  alertCaseIds?: ReadonlySet<string>;
   onHoverHospital: (id: string) => void;
   onHoverAmb: (apid: string) => void;
   onSelectCase: (caseId: string) => void;
@@ -73,6 +76,15 @@ export function ControlMapPanel({
   useEffect(() => {
     cbRef.current = { onHoverHospital, onHoverAmb, onSelectCase };
   }, [onHoverHospital, onHoverAmb, onSelectCase]);
+
+  // 상단 경보 띠가 나타나거나 창 크기가 바뀌어 지도 칸 크기가 달라지면 카카오 지도를 다시 맞춘다(안 하면 회색 빈틈이 생김)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => mapRef.current?.relayout());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   function ensureMap(): kakao.maps.Map | null {
     if (mapRef.current) return mapRef.current;
@@ -254,7 +266,8 @@ export function ControlMapPanel({
       const filled = st.key !== "b";
       const col = st.key === "t" ? "#168A55" : C.orange;
       const dim = !isInc && !ambInTab(a.apid) && !on;
-      const key = `${st.key}|${st.text}|${inc?.num ?? ""}|${isSel}|${on}|${dim}`;
+      const alerting = !!inc && !!alertCaseIds?.has(inc.caseId);
+      const key = `${st.key}|${st.text}|${inc?.num ?? ""}|${isSel}|${on}|${dim}|${alerting}`;
       let layer = ambsRef.current.get(a.apid);
       if (!layer) {
         const root = document.createElement("div");
@@ -270,11 +283,14 @@ export function ControlMapPanel({
       if (layer.key !== key) {
         layer.key = key;
         const plus = Math.round(size * 0.55);
+        const alertRing = alerting
+          ? `<div style="position:absolute;left:-30px;top:-30px;width:60px;height:60px;box-sizing:border-box;border-radius:50%;border:4px solid #D93025;animation:ctlring 1.3s ease-out infinite;pointer-events:none"></div>`
+          : "";
         const pulse = isSel && st.key === "s"
           ? `<div style="position:absolute;left:-10px;top:-10px;width:20px;height:20px;border-radius:50%;background:${C.orange};animation:ctlring 2.2s ease-out infinite;pointer-events:none"></div>`
           : "";
         const badge = isInc
-          ? `<div style="position:absolute;left:${size / 2 - 5}px;top:${-size / 2 - 8}px;min-width:15px;height:15px;box-sizing:border-box;border-radius:8px;background:${C.navy};border:1.5px solid #fff;color:#fff;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;pointer-events:none">${inc!.num}</div>`
+          ? `<div style="position:absolute;left:${size / 2 - 5}px;top:${-size / 2 - 8}px;min-width:15px;height:15px;box-sizing:border-box;border-radius:8px;background:${alerting ? "#D93025" : C.navy};border:1.5px solid #fff;color:#fff;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;pointer-events:none">${inc!.num}</div>`
           : "";
         const label = isSel || on
           ? `<div style="position:absolute;left:${size / 2 + 6}px;top:-10px;height:20px;display:flex;align-items:center;white-space:nowrap;font-size:11px;font-weight:700;background:#fff;border:1px solid #F2B48F;border-radius:5px;padding:0 8px;color:${C.ink};box-shadow:0 1px 4px rgba(20,30,50,.18)">${escapeHtml(shortAmb(a.name))} <span style="font-weight:500;color:#C7511A;margin-left:4px">· ${escapeHtml(st.text)}</span></div>`
@@ -282,6 +298,7 @@ export function ControlMapPanel({
         layer.root.style.cssText = `position:relative;width:0;height:0;opacity:${dim ? 0.22 : 1}`;
         layer.root.title = `${a.name} · ${st.text}${isInc ? ` · 사건 ${inc!.num}` : ""} (시뮬레이션 위치)`;
         layer.root.innerHTML =
+          alertRing +
           pulse +
           `<div data-amb style="position:absolute;left:${-size / 2}px;top:${-size / 2}px;width:${size}px;height:${size}px;box-sizing:border-box;` +
           `border-radius:${isInc ? 6 : 4}px;background:${filled ? col : "#fff"};border:${isInc ? 2 : 1.5}px solid ${filled ? "#fff" : col};` +
@@ -290,7 +307,7 @@ export function ControlMapPanel({
           badge + label;
         const box = layer.root.querySelector<HTMLDivElement>("[data-amb]");
         if (box && inc) box.onclick = () => cbRef.current.onSelectCase(inc.caseId);
-        layer.overlay.setZIndex(isSel ? 45 : isInc ? 40 : on ? 55 : 14);
+        layer.overlay.setZIndex(alerting ? 60 : isSel ? 45 : isInc ? 40 : on ? 55 : 14);
       }
 
       // 이동 경로: 사건 구급차가 움직이는 구간만
@@ -318,7 +335,7 @@ export function ControlMapPanel({
       pathsRef.current.delete(apid);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, overview?.ambulances, ambulanceSim, incidents, selected?.caseId, hoverAmb, ambInTab]);
+  }, [ready, overview?.ambulances, ambulanceSim, incidents, selected?.caseId, hoverAmb, ambInTab, alertCaseIds]);
 
   // ── 선택한 사건의 요청 범위 ──
   useEffect(() => {

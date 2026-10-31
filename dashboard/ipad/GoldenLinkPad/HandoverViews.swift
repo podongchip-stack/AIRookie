@@ -3,7 +3,7 @@ import SwiftUI
 /// [환자 정보] 탭 왼쪽 아래 — **인계확인서**(출동 및 처치 기록지, 별지 제16호서식).
 /// 서식 전체를 카드에 펼치지 않고 **중요한 칸만 간략히** 보여 주고, [인계확인서 수정]으로 전체를 고친다.
 /// 통화 요약(AI)·출동 상태·확정 병원에서 채울 수 있는 칸은 미리 채워 두고, 고친 칸은 기기에 사건별로 남는다(`Handover`).
-/// [병원에 전달]은 적힌 칸을 한 덩이 글로 만들어 기존 '추가 정보' 통로(hub `patient_override.extraNote`)로 보낸다 —
+/// 전달은 수정 화면의 [저장 · 병원에 전달] 하나로 일어난다(2026-10-28) — 적힌 칸을 한 덩이 글로 만들어 기존 '추가 정보' 통로(hub `patient_override.extraNote`)로 보낸다 —
 /// hub·병원 화면 계약을 바꾸지 않고 바로 쓰려는 선택이고, 서식 그대로의 전송·출력은 hub에 칸을 만들 때 붙인다.
 struct HandoverCard: View {
     @EnvironmentObject private var model: AppModel
@@ -14,13 +14,25 @@ struct HandoverCard: View {
     private var auto: [String: String] {
         Handover.auto(patient: patient, confirmed: model.confirmed, ambulanceName: model.ambulanceName,
                       apid: model.apid, times: model.phaseTimes, incident: model.sim?.incident,
-                      incidentAddress: model.incidentAddress)
+                      incidentAddress: model.incidentAddress, bodyCare: model.bodyEdits.careLines)
     }
     private var values: [String: String] {
         auto.merging(edits) { _, edited in edited }
     }
     private func value(_ id: String) -> String {
         (values[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    /// 처치 여섯 칸을 모아 **한 줄에 하나씩** — 한 칸에 여러 건이면(", "로 이어 적힌다) 그것도 줄을 나눈다
+    /// ("고정 좌 다리 부목 고정, 우 팔 부목" → "고정 좌 다리 부목 고정" / "고정 우 팔 부목")
+    private var careText: String {
+        Handover.careFieldIds.flatMap { id -> [String] in
+            let v = value(id)
+            guard !v.isEmpty, let label = Handover.field(id)?.label else { return [] }
+            return v.components(separatedBy: ", ")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .map { label + " " + $0 }
+        }.joined(separator: "\n")
     }
     private var sentCount: Int { (patient?.extraNotes ?? []).filter { $0.text.hasPrefix("[인계확인서]") }.count }
 
@@ -43,18 +55,14 @@ struct HandoverCard: View {
                 }
             }
             if model.hasIncident {
-                summary
-                Spacer(minLength: 0)
+                // summary의 각 줄이 fixedSize(vertical: true)라 안 눌린다 — 내용이 길면 카드가 끝없이 커져
+                // 위 통화 요약 칸까지 밀어 올리고 상단바를 침범했다. ScrollView로 감싸 카드 자체 높이 안에서만 스크롤되게 한다
+                ScrollView { summary }.scrollIndicators(.hidden)
+                // 전달은 [인계확인서 수정] 안에서 저장과 함께 일어난다(2026-10-28) — 카드엔 전달 이력만 남긴다
                 HStack(spacing: 8) {
-                    if sentCount > 0 { Pill(text: "전달 \(sentCount)회", bg: AD.greenSoft, fg: AD.green, bold: true) }
+                    if sentCount > 0 { Pill(text: "병원에 전달 \(sentCount)회", bg: AD.greenSoft, fg: AD.green, bold: true) }
+                    else { Text("고친 내용은 [인계확인서 수정]에서 저장하면 병원에 함께 전달됩니다").font(.system(size: 11.5)).foregroundStyle(AD.muted) }
                     Spacer(minLength: 0)
-                    Button { _ = model.sendExtraNote(Handover.message(values)) } label: {
-                        Label("병원에 전달", systemImage: "paperplane.fill")
-                            .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
-                            .padding(.horizontal, 16).frame(minHeight: 38)
-                            .background(model.paused ? AD.gray : AD.blue).clipShape(Capsule())
-                    }
-                    .disabled(model.paused)
                 }
             } else {
                 Spacer(minLength: 0)
@@ -69,7 +77,7 @@ struct HandoverCard: View {
         .onChange(of: model.caseId) { _, id in edits = Handover.loadEdits(id) }
         // 서식을 넓게 보려고 전체 화면으로 띄운다(기본 시트는 아이패드에서 좁은 세로 칸이라 종이 서식처럼 안 보인다)
         .fullScreenCover(isPresented: $showSheet) {
-            HandoverSheet(auto: auto, edits: $edits, caseId: model.caseId)
+            HandoverSheet(auto: auto, edits: $edits, caseId: model.caseId).environmentObject(model)
         }
     }
 
@@ -77,19 +85,36 @@ struct HandoverCard: View {
     private var summary: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Handover.fields.filter(\.summary)) { f in
-                HStack(alignment: .top, spacing: 8) {
-                    Text(f.label).font(.system(size: 11.5)).foregroundStyle(AD.sub)
-                        .frame(width: 92, alignment: .leading)
-                    let v = value(f.id)
-                    Text(v.isEmpty ? "미입력" : v)
-                        .font(.system(size: 13, weight: v.isEmpty ? .regular : .semibold))
-                        .foregroundStyle(v.isEmpty ? AD.muted : AD.ink)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    if edits[f.id] != nil { Pill(text: "수정", bg: AD.orangeSoft, fg: AD.orange) }
-                    else if !v.isEmpty { Pill(text: "자동", bg: AD.blueSoft, fg: AD.blue) }
+                // 처치 줄은 "기타 소견" 바로 위, 즉 카드 **맨 아래 두 줄**이다(2026-10-28) — 둘이 떨어져 있으면 뭐가 뭔지 헷갈린다.
+                // 서식에서 여섯 칸(기도·호흡·순환·약품·고정·기타)으로 나뉜 처치를 카드에서는 한 줄로 묶고,
+                // 외상 도해에서 [적용]한 처치가 전달 전에도 바로 여기 보인다
+                if f.id == "notes", !careText.isEmpty {
+                    row("처치", careText, lines: 8, pill: ("자동", AD.blueSoft, AD.blue))
                 }
+                let v = value(f.id)
+                row(cardLabel(f), v.isEmpty ? "미입력" : v, empty: v.isEmpty,
+                    pill: edits[f.id] != nil ? ("수정", AD.orangeSoft, AD.orange)
+                        : (v.isEmpty ? nil : ("자동", AD.blueSoft, AD.blue)))
             }
+        }
+    }
+
+    /// 카드에서만 쓰는 짧은 이름 — 서식 자체의 칸 이름(법정 서식)은 그대로 둔다
+    private func cardLabel(_ f: Handover.Field) -> String {
+        f.id == "notes" ? "기타 소견(증상·발생)" : f.label
+    }
+
+    private func row(_ label: String, _ text: String, empty: Bool = false, lines: Int = 4,
+                     pill: (String, Color, Color)? = nil) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label).font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                .frame(width: 92, alignment: .leading)
+            Text(text)
+                .font(.system(size: 13, weight: empty ? .regular : .semibold))
+                .foregroundStyle(empty ? AD.muted : AD.ink)
+                .lineLimit(lines).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if let p = pill { Pill(text: p.0, bg: p.1, fg: p.2) }
         }
     }
 }
@@ -98,6 +123,7 @@ struct HandoverCard: View {
 /// 한 줄에 두 칸씩 들어간다(긴 칸은 한 줄 전체). 자동으로 채운 칸에는 "자동", 고친 칸에는 "수정" 표시가 붙는다.
 struct HandoverSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     let auto: [String: String]
     @Binding var edits: [String: String]
     let caseId: String?
@@ -114,7 +140,7 @@ struct HandoverSheet: View {
             bar
             ScrollView {
                 VStack(spacing: 18) {
-                    Text("통화 요약(AI)·출동 상태에서 채울 수 있는 칸은 미리 채워 두었습니다. 사실과 다르면 고치세요 — 고친 칸은 그대로 남고, 새 통화가 와도 덮어쓰지 않습니다. 서명·면허번호처럼 앱이 알 수 없는 칸은 비어 있습니다.")
+                    Text("통화 요약(AI)·출동 상태에서 채울 수 있는 칸은 미리 채워 두었습니다. 사실과 다르면 고치세요 — 고친 칸은 그대로 남고, 새 통화가 와도 덮어쓰지 않습니다. 서명·면허번호처럼 앱이 알 수 없는 칸은 비어 있습니다. [저장 · 병원에 전달]을 누르면 적은 내용이 이 기기에 저장되고 같은 내용이 수용 병원에도 전달됩니다.")
                         .font(.system(size: 12.5)).foregroundStyle(AD.sub)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 10))
@@ -161,10 +187,14 @@ struct HandoverSheet: View {
                 Text("취소").font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.ink3)
                     .padding(.horizontal, 16).frame(minHeight: 36).background(AD.chip).clipShape(Capsule())
             }
-            Button { save(); dismiss() } label: {
-                Text("저장").font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
-                    .padding(.horizontal, 20).frame(minHeight: 36).background(AD.blue).clipShape(Capsule())
+            // 저장과 전달을 한 버튼으로(2026-10-28) — 적은 내용은 기기에 남고 같은 동작으로 병원에도 간다
+            Button { save(); _ = model.sendExtraNote(Handover.message(draft)); dismiss() } label: {
+                Label("저장 · 병원에 전달", systemImage: "paperplane.fill")
+                    .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                    .padding(.horizontal, 20).frame(minHeight: 36)
+                .background(model.paused ? AD.gray : AD.blue).clipShape(Capsule())
             }
+            .disabled(model.paused)
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
         .background(AD.card)
