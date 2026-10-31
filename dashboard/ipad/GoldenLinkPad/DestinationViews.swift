@@ -176,13 +176,29 @@ struct BackupTables: View {
     var showNote = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        // 어차피 스크롤은 남는다 — 줄여 붙이지 않고 칸 사이를 넉넉히 벌린다(2026-10-28)
+        VStack(alignment: .leading, spacing: 22) {
             if showNote {
                 Text("보유는 최대치입니다. 지금 쓸 수 있는지는 E-Gen 가용과 병원 수용 승인으로 판단합니다. 장비의 지금 남은 대수는 공개 정보가 없습니다.")
                     .font(.system(size: 12)).foregroundStyle(AD.sub)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 10))
             }
             if let b = backup {
+                if !b.acceptanceMessages.isEmpty {
+                    BackupSection(title: "병원 공지(E-Gen 수용 제한)") {
+                        ForEach(Array(b.acceptanceMessages.enumerated()), id: \.offset) { _, m in
+                            Text("• \(m.diseaseName ?? m.department ?? "") \(m.message ?? "")").font(.system(size: 12.5))
+                                .foregroundStyle(m.kind == "severe" ? AD.red : AD.ink3)
+                        }
+                    }
+                }
+                if !b.specialties.isEmpty {
+                    BackupSection(title: "전문의(심평원)\(b.nursingGrade.map { " · 간호등급 \($0)" } ?? "")") {
+                        let docs = b.specialties.sorted { ($0.department == "응급의학과" ? 1 : 0, $0.doctorCount) > ($1.department == "응급의학과" ? 1 : 0, $1.doctorCount) }
+                        Text(docs.prefix(12).map { "\($0.department) \($0.doctorCount)" }.joined(separator: " · "))
+                            .font(.system(size: 13)).foregroundStyle(AD.ink)
+                    }
+                }
                 BackupSection(title: "병상") {
                     BackupRow(cells: ["", "보유(심평원)", "정원(E-Gen)", "지금 가용", "AI 유효"], header: true)
                     ForEach(b.beds, id: \.key) { r in
@@ -194,21 +210,6 @@ struct BackupTables: View {
                     BackupRow(cells: ["", "보유 대수", "운영(E-Gen)"], header: true)
                     ForEach(b.equipment, id: \.key) { r in
                         BackupRow(cells: [r.label, num(r.hiraCount), r.egenOperating.map { $0 == "Y" ? "운영" : "중단" } ?? "—"])
-                    }
-                }
-                if !b.specialties.isEmpty {
-                    BackupSection(title: "전문의(심평원)\(b.nursingGrade.map { " · 간호등급 \($0)" } ?? "")") {
-                        let docs = b.specialties.sorted { ($0.department == "응급의학과" ? 1 : 0, $0.doctorCount) > ($1.department == "응급의학과" ? 1 : 0, $1.doctorCount) }
-                        Text(docs.prefix(12).map { "\($0.department) \($0.doctorCount)" }.joined(separator: " · "))
-                            .font(.system(size: 13)).foregroundStyle(AD.ink)
-                    }
-                }
-                if !b.acceptanceMessages.isEmpty {
-                    BackupSection(title: "병원 공지(E-Gen 수용 제한)") {
-                        ForEach(Array(b.acceptanceMessages.enumerated()), id: \.offset) { _, m in
-                            Text("• \(m.diseaseName ?? m.department ?? "") \(m.message ?? "")").font(.system(size: 12.5))
-                                .foregroundStyle(m.kind == "severe" ? AD.red : AD.ink3)
-                        }
                     }
                 }
             } else {
@@ -224,8 +225,9 @@ struct BackupSection<C: View>: View {
     let title: String
     @ViewBuilder let content: () -> C
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy)
+        VStack(alignment: .leading, spacing: 10) {
+            // 칸 제목은 본문보다 분명히 보이게(2026-10-28) — 조금 크게·조금 더 굵게
+            Text(title).font(.system(size: 15.5, weight: .heavy)).foregroundStyle(AD.navy)
             content()
         }
     }
@@ -242,7 +244,7 @@ struct BackupRow: View {
                     .frame(maxWidth: .infinity, alignment: i == 0 ? .leading : .trailing)
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 6)
     }
 }
 
@@ -365,6 +367,7 @@ struct BackupDetailCard: View {
                 Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.sub).lineLimit(1)
                 Spacer(minLength: 0)
             }
+            Divider().overlay(AD.line)
             ScrollView { BackupTables(backup: backup, showNote: false) }.scrollIndicators(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

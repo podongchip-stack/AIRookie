@@ -12,6 +12,7 @@ struct GoldenLinkPadApp: App {
         #if DEBUG
         InjuryMapper.selfCheck()   // 외상 부위 규칙 — 틀리면 DEBUG 빌드에서 바로 멈춘다
         InjuryRisk.selfCheck()     // 외상 위험도 규칙(초안)
+        BodyShape.selfCheck()      // 그림 탭 → 부위 · 탭으로 적은 것의 전달 줄
         #endif
     }
 

@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { rejectionReasonLabel, unavailableReasonLabel } from "@/lib/rejection";
 import type {
   AmbulancePhase,
   AmbulanceSimState,
@@ -82,6 +83,10 @@ export function ambState(sim: AmbulanceSimState | undefined): { key: AmbKey; tex
   return { key: AMB_KEY[phase], text: AMB_TEXT[phase] };
 }
 
+// 관제 지도 왼쪽 패널(사건 목록·선택한 사건) 폭과 지도와의 간격 — 알림 카드가 지도 왼쪽 끝에 맞추는 데도 쓴다
+export const SIDEBAR_W = 440;
+export const SIDEBAR_GAP = 16;
+
 // ── 사건 ─────────────────────────────────────────────────────────────────────
 export interface IncHospital {
   hospitalId: string;
@@ -94,6 +99,8 @@ export interface IncHospital {
   km: number;
   zone: number;
   respondedAt: string | null;
+  // 수용 불가 사유(병원이 고른 것 또는 E-Gen 병상 없음) — 없으면 null
+  reason?: string | null;
 }
 
 export interface Incident {
@@ -182,6 +189,7 @@ export function buildIncidents(input: {
         km: h.distanceKm,
         zone: h.zone,
         respondedAt: h.respondedAt ?? null,
+        reason: h.status === "rejected" ? unavailableReasonLabel(h.unavailableReason) ?? rejectionReasonLabel(h.rejectReason) : null,
       })),
       zone: Math.max(1, ...mc.zoneActive),
       zoneStart: Math.min(...(mc.zoneActive.length ? mc.zoneActive : [1])),
@@ -255,6 +263,10 @@ export function fmtClock(ts: string | number): string {
 export function fmtHm(ts: string | number): string {
   const d = new Date(ts);
   return `${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+export function fmtMd(ts: string | number): string {
+  const d = new Date(ts);
+  return `${two(d.getMonth() + 1)}/${two(d.getDate())}`;
 }
 
 // 진행 과정 이벤트 색(시안)
