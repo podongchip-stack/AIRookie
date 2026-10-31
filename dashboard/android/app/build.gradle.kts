@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -16,6 +18,10 @@ android {
         versionCode = 1
         versionName = "2.0"
         ndk { abiFilters += listOf("arm64-v8a") }  // 갤럭시는 arm64. x86 에뮬레이터 라이브러리를 빼 APK를 줄인다
+        // 카카오맵 네이티브 앱 키 — 저장소에 올리지 않는 local.properties(KAKAO_NATIVE_APP_KEY) 또는 같은 이름의 환경변수에서 읽는다. 없으면 지도 자리에 안내가 뜬다
+        val local = rootProject.file("local.properties").takeIf { it.isFile }?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+        val kakaoKey = local?.getProperty("KAKAO_NATIVE_APP_KEY") ?: System.getenv("KAKAO_NATIVE_APP_KEY") ?: ""
+        buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"$kakaoKey\"")
     }
 
     buildTypes {
@@ -29,7 +35,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 
@@ -39,6 +45,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.kakao.maps.open:android:2.12.19")  // 카카오맵 SDK v2 — 통화 화면의 후보 병원 지도
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")

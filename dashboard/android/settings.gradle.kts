@@ -12,6 +12,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven("https://devrepo.kakao.com/nexus/repository/kakaomap-releases/")  // 카카오맵 SDK
     }
 }
 rootProject.name = "GoldenLinkAndroid"

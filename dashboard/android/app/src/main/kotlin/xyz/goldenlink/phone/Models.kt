@@ -1,9 +1,6 @@
 package xyz.goldenlink.phone
 
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import xyz.goldenlink.core.AsrRunner
 import xyz.goldenlink.core.MfBertRunner
 import xyz.goldenlink.core.RecognizedSegment
@@ -52,10 +49,4 @@ class ModelStore(val dir: File) {
 
     fun transcribe(audio: FloatArray): List<RecognizedSegment> = asr?.transcribe(audio) ?: emptyList()
     fun extract(text: String): JsonObject = (mfBert ?: error("MF_BERT 미탑재")).extract(text)
-
-    /** 화면·요약에 쓰는 모델 정보(변환한 가중치의 출처) */
-    fun describe(): String = runCatching {
-        val meta = Json.parseToJsonElement(File(dir, "mf_bert_meta.json").readText()).jsonObject
-        "MF_BERT ${meta["revision"]!!.jsonPrimitive.content.take(7)} · fp32"
-    }.getOrDefault("")
 }

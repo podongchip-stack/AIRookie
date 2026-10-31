@@ -37,6 +37,13 @@ data class CallSignalMessage(
 @Serializable
 data class GPS(val lat: Double, val lng: Double)
 
+/** map_overview의 병원 한 곳 — 현장 후보(scene_candidates)에는 좌표가 없어, 지도 핀은 이 목록의 좌표를 hospitalId로 찾아 쓴다 */
+@Serializable
+data class MapHospitalPos(val hospitalId: String, val gps: GPS)
+
+@Serializable
+data class MapOverview(val hospitals: List<MapHospitalPos> = emptyList())
+
 @Serializable
 data class IdentityInfo(val name: String? = null, val known: Boolean = false, val simDispatch: Boolean? = null, val gps: GPS? = null)
 
@@ -62,6 +69,8 @@ data class AmbulanceSim(
     val pauseReason: String? = null,
     /** 이송 중·도착한 병원(이송 확정 병원) */
     val hospitalId: String? = null,
+    /** 사고 현장 좌표 — 인계확인서 출발지 주소 */
+    val incident: GPS? = null,
 ) {
     val phaseEnum: AmbulancePhase get() = AmbulancePhase.of(phase)
 }
@@ -72,6 +81,12 @@ data class BedReliability(
     val authority: Double? = null,
     /** 도착 시점에도 유효할 확률(AI) */
     val rArrive: Double? = null,
+    /** 아래는 곡선 파라미터 — 오면 BedLive.of()가 초 단위로 감쇠시킨다. 없으면 위 값 그대로(정지값) */
+    val horizonSec: Double = 0.0,
+    val predictedSurvivalSec: Double? = null,
+    val bornAt: String? = null,
+    val sigma: Double? = null,
+    val confirmedAgeSec: Double? = null,
 )
 
 @Serializable
@@ -119,11 +134,74 @@ data class CallStatus(
 data class CallTranscriptLine(val caseId: String? = null, val start: Double = 0.0, val end: Double = 0.0, val text: String = "")
 
 @Serializable
-data class MatchHospital(val hospitalId: String, val name: String, val status: String = "pending")
+data class SpecialtyMatch(val department: String? = null, val score: Double? = null, val basis: String? = null, val doctorCount: Int? = null)
 
-/** match_result(또는 type 없음) — 종료 화면의 "후보 병원 N곳에 전달"과, 이송 중 통화할 목적지(확정 병원)에 쓴다 */
+/** 매칭 결과의 병원 하나 — 아이패드 HospitalMatch 중 폰 화면(이송 탭)이 쓰는 칸 */
 @Serializable
-data class MatchResult(val caseId: String, val hospitals: List<MatchHospital> = emptyList())
+data class MatchHospital(
+    val hospitalId: String,
+    val name: String,
+    val status: String = "pending",  // pending | approved | rejected | confirmed
+    val distanceKm: Double = 0.0,
+    val roadDistanceKm: Double? = null,
+    val etaMin: Double? = null,
+    val travelMin: Double? = null,
+    val specialtyMatch: SpecialtyMatch? = null,
+    val availableBedCount: Int? = null,
+    val bedCountUnknown: Boolean? = null,
+    val bedDataStale: Boolean? = null,
+    val erBedCapacity: Int? = null,
+    val erOccupancyPct: Int? = null,
+    val bedReliability: BedReliability? = null,
+    val rejectReason: String? = null,
+    val unavailableReason: String? = null,
+    val demoteReasons: List<String>? = null,
+    val excluded: Boolean? = null,
+    val emergencyLevel: String? = null,
+    val inFlightCount: Int? = null,
+    val loadPenaltyMin: Double? = null,
+)
+
+/** match_result(또는 type 없음) — 종료 화면의 "후보 병원 N곳에 전달"과, 이송 중 통화할 목적지(확정 병원)·환자 정보 탭에 쓴다 */
+@Serializable
+data class MatchResult(
+    val caseId: String,
+    val hospitals: List<MatchHospital> = emptyList(),
+    val patientInfo: PatientInfo? = null,
+    val apid: String? = null,
+)
+
+/** 구급대원 이송 승인 — 웹 handleApprove와 같은 형식. 병원이 승인한 병원에만 보낸다 */
+@Serializable
+data class ApprovalAction(
+    val caseId: String,
+    val hospital_id: String,
+    val timestamp: String,
+    val action: String = "final_approval",
+    val actor: String = "paramedic",
+)
+
+/** 통화 요약 확인·수정 — hub patient_override. 보낸 칸만 바뀐다(null은 JSON에서 빠진다). 칸이 하나도 없으면 "수정 없이 확인" */
+@Serializable
+data class PatientOverrideMessage(
+    val caseId: String,
+    val timestamp: String,
+    val expectedDiagnosis: String? = null,
+    val injuryStatus: List<String>? = null,
+    val ktasLevel: Int? = null,
+    val requiredDepartment: String? = null,
+    val chiefComplaint: String? = null,
+    val type: String = "patient_override",
+)
+
+/** 추가 정보 전송 — patient_override의 extraNote 칸만 쓴다(요약 칸은 안 보내므로 "확인 도장"도 안 찍힌다) */
+@Serializable
+data class ExtraNoteMessage(
+    val caseId: String,
+    val extraNote: String,
+    val timestamp: String,
+    val type: String = "patient_override",
+)
 
 /** 조작 거부(2026-10-05) — reason "paused"면 시연 일시정지 중 */
 @Serializable

@@ -50,6 +50,21 @@ WebSocket(`type: "voice_summary"`)으로 보낸다. 그래서 공개 도메인�
 | `app/.../PhoneModel.kt`, `CallSession.kt` | `PhoneModel.swift`, `CallSession.swift` |
 | `app/.../Platform.kt` | `HubSocket.swift`, `MicCapture.swift`, `Settings.swift` |
 | `app/.../ui/Screens.kt` | `Views.swift`(같은 색·카드·화면 순서) |
+| `app/.../ui/PatientTab.kt` | 아이패드 `AmbulanceViews.swift`(통화 요약·수정)·`HandoverViews.swift`(인계확인서). [환자 정보] 탭은 가로로 밀어 넘기는 3페이지(통화 요약+추가 정보 · 외상 · 인계확인서) |
+| `app/.../ui/BodyTab.kt` | 아이패드 `BodyInjuryView.swift`의 `BodyInjuryCard`(외상 도해 — 부위는 탭으로만 고른다, 드래그는 페이지 넘김과 겹친다) |
+| `core/.../BodyInjury.kt`, `BodyShapeData.kt` | 아이패드 `BodyInjuryView.swift`의 `BodyEdits`·`InjuryRisk`·`InjuryMapper`·`BodyShape` 확장, `BodyShape.swift`(윤곽 좌표). 검사 `BodyInjuryTest` |
+| `app/.../ui/TransportTab.kt` | 아이패드 `HospitalViews.swift`(병원 후보 카드·이송 승인) |
+| `core/.../PatientInfo.kt`, `Handover.kt` | 아이패드 `HubMessages.swift`(PatientInfo·Labels), `BedReliability.swift`, `Handover.swift` |
+
+### 아래 탭 [통화 | 환자 정보 | 이송] (2026-10-29)
+
+예전엔 전화만 했지만 아이패드 구급차 앱의 환자 정보·이송 화면을 폰으로도 쓸 수 있게 탭을 붙였다. **[통화] 탭과 통화 흐름(병원 선택 → 통화 중 → 전송)은 그대로**고,
+통화가 진행 중이거나 끝난 직후엔 탭 없이 통화 화면만 보인다.
+
+- **[환자 정보]**: 통화 요약·구조화(KTAS·활력징후, [수정] → `patient_override`, [맞습니다 · 확인]), 추가 정보 전송, 인계확인서(별지 제16호서식, 고친 칸은 사건별로 기기에 저장, [저장·전달]은 병원에도 보냄).
+- **[이송]**: hub가 정한 순서 그대로 병원 후보 카드(병상·AI 유효 확률·전문의·칩), 병원이 수용 승인한 병원에 [이송 승인]. 이송 중에도 새로 승인한 병원이 있으면 다시 고를 수 있다.
+- 자동 전환: 통화 요약이 처음 오면 [환자 정보]로, 이송이 확정되면 [이송]으로(연결 직후 따라잡기는 전환하지 않음). 언제든 탭으로 직접 바꾼다.
+- 이송 승인(`final_approval`)은 이제 폰에서도 보낸다 — 승인은 병원이 `approved`한 병원에만 열리고 hub가 그 규칙을 한 번 더 검사한다.
 
 ---
 
@@ -138,3 +153,13 @@ Android Studio를 쓰고 싶으면 이 폴더(`dashboard/android`)를 그대로 
 - 화자 분리가 없다.
 - WebSocket 인증이 없다(현재 시스템과 같다).
 - 모델 4.6GB를 fp32로 쓰므로 8GB 미만 기기는 대상이 아니다.
+
+## 기록 탭과 기록 동기화 계약
+
+[기록] 탭(`RecordsTab.kt`, 하단 탭 [이송] 옆)은 지난 사건을 날짜별로 보여 준다. 날짜 선택 → 사건 목록 → 사건을 누르면 이송 확정·수용 승인(미선택)·거부(사유)·무응답 병원 → 병원을 누르면 그 병원 응답과 사건 인계확인서 전체(읽기 전용).
+
+- **저장**: 지금은 이 기기 안(`files/records/yyyy-MM-dd.json`, `Records.kt`)에만 쌓인다. 매칭 결과가 올 때, 출동 단계가 바뀔 때, 인계확인서를 저장할 때 `PhoneModel.snapshotCase`가 사건 기록을 갱신하고 사건이 닫히면 `closed`로 표시한다. 날짜는 사건 시작 시각의 KST 날짜다.
+- **동기화(미구현, hub 작업)**: 한 구급차의 여러 기기가 같은 기록을 가지려면 hub가 구급차(apid)별 날짜 보관소를 가져야 한다. 필요한 것:
+  1. 쓰기 — 폰이 사건 기록(`CaseRecord`, core `CaseRecord.kt`와 같은 JSON)을 올린다. 같은 `caseId`는 `updatedAt`이 큰 쪽이 이긴다(인계확인서 칸은 칸 단위 병합이 필요하면 hub와 정한다).
+  2. 읽기 — apid별로 기록이 있는 날짜 목록과 날짜별 사건 목록을 돌려준다. 폰은 연결할 때와 [기록] 탭을 열 때 받아 로컬 기록과 병합한다.
+  3. 현재 hub `case_history`는 오늘 종료 사건만, 병원 거부 사유·환자 요약·인계확인서 값이 없어서 그대로는 쓸 수 없다.

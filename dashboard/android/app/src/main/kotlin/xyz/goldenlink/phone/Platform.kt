@@ -18,6 +18,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -65,6 +67,17 @@ class Settings(context: Context) {
     var holdSec: Float
         get() = p.getFloat("holdSec", 0.4f)
         set(v) = p.edit().putFloat("holdSec", v).apply()
+
+    /** 인계확인서에서 구급대원이 고친 칸만 사건별로 기기에 저장한다 — 자동값은 매번 다시 만들어 새 통화 회차가 와도 고친 칸이 유지된다 */
+    fun handoverEdits(caseId: String?): Map<String, String> {
+        val raw = caseId?.let { p.getString("handover-$it", null) } ?: return emptyMap()
+        return runCatching { hubJson.decodeFromString(MapSerializer(String.serializer(), String.serializer()), raw) }.getOrDefault(emptyMap())
+    }
+
+    fun saveHandoverEdits(caseId: String?, edits: Map<String, String>) {
+        if (caseId == null) return
+        p.edit().putString("handover-$caseId", hubJson.encodeToString(MapSerializer(String.serializer(), String.serializer()), edits)).apply()
+    }
 
     val httpBase: String get() = hubBase.trim().trimEnd('/')
 
