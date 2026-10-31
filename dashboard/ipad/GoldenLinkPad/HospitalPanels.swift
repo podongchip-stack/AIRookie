@@ -10,7 +10,9 @@ struct CompareCard: View {
     private struct Row { let h: HospitalMatch; let beds: Int?; let valid: Double?; let eta: Double?; let docs: Int?; let ok: Bool }
 
     var body: some View {
-        let rows = hospitals.map { h in
+        // 승인 병원이 많아도 **상위 3곳만**(2026-10-28, hub 순위 그대로) — 표가 길어지면 비교가 아니라 또 하나의 목록이 된다.
+        // 전체 목록은 아래 병원 리스트가 보여 준다
+        let rows = hospitals.prefix(3).map { h in
             Row(h: h, beds: h.bedCountUnknown == true ? nil : h.availableBedCount,
                 valid: h.bedReliability.map { BedReliability.live($0, now: model.now).rArrive },
                 eta: h.etaMin.map(Double.init) ?? h.travelMin, docs: h.specialtyMatch?.doctorCount, ok: HospitalRules.canTransportNow(h))
@@ -21,12 +23,11 @@ struct CompareCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("선택 비교").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-                Text("수용 승인 \(hospitals.count)곳").font(.system(size: 11.5)).foregroundStyle(AD.muted)
+                Text(hospitals.count > 3 ? "수용 승인 \(hospitals.count)곳 중 상위 3곳" : "수용 승인 \(hospitals.count)곳")
+                    .font(.system(size: 11.5)).foregroundStyle(AD.muted)
                 Spacer()
             }
             cells(["", "병상", "유효", "도착", "전문의"], header: true)
-            // 승인 병원이 많으면 표 줄만 카드 안에서 스크롤(2026-10-16) — 높이는 줄 수만큼, 최대 약 5줄
-            ScrollView {
             VStack(spacing: 4) {
             ForEach(rows, id: \.h.hospitalId) { r in
                 HStack(spacing: 4) {
@@ -47,9 +48,6 @@ struct CompareCard: View {
                 .opacity(r.ok ? 1 : 0.5)
             }
             }
-            }
-            .scrollIndicators(.visible)
-            .frame(height: min(CGFloat(rows.count) * 36, 150))
             Text("유효 = 도착 때 병상 숫자가 맞을 확률(AI) · 초록 굵게 = 그 칸 최고 · 결정은 아래 병원 카드의 [이송 승인]")
                 .font(.system(size: 11)).foregroundStyle(AD.muted).fixedSize(horizontal: false, vertical: true)
         }

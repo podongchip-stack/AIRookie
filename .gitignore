@@ -16,6 +16,7 @@ ehthumbs.db
 .env
 .env.local
 .env.*.local
+TEAM-HANDOFF-SECRETS.md
 
 # Logs
 *.log

@@ -5,12 +5,20 @@ import Link from "next/link";
 import { ControlMapPanel } from "@/components/map/ControlMapPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
-  AMB_CHIP, AMB_RANK, C, EVENT_TONE, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL, ST_TEXT, reqLabel,
-  ambState, buildIncidents, counts, fmtClock, fmtElapsed, fmtHm, haversineKm, pastResult, sevOf, shortAmb, shortHospital,
+  AMB_CHIP, AMB_RANK, SIDEBAR_W, C, EVENT_TONE, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL, ST_TEXT, reqLabel,
+  ambState, buildIncidents, counts, fmtClock, fmtElapsed, fmtHm, fmtMd, haversineKm, pastResult, sevOf, shortAmb, shortHospital,
   stageOf, zoneText,
   type AmbKey, type Incident, type St,
 } from "@/lib/control-map";
 import type { CaseHistoryItem } from "@/types/dashboard";
+import { useCaseArchive } from "@/hooks/use-case-archive";
+import { useControlAlerts } from "@/hooks/use-control-alerts";
+import { isTransportStalled } from "@/lib/control-alerts";
+import { CaseTimeline } from "@/components/map/CaseTimeline";
+import { CaseStatusSummary } from "@/components/map/CaseStatusSummary";
+import { HandlingActions } from "@/components/map/HandlingActions";
+import { AlertSoundButton, AlertStack, topAlertOf, useAlertTabTitle } from "@/components/map/ControlAlerts";
+import { ARCHIVE_MOCK, daysAgo, type ArchiveResult } from "@/lib/case-archive";
 import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 import { useAutoDemo } from "@/lib/auto-demo";
 
@@ -22,6 +30,11 @@ import { useAutoDemo } from "@/lib/auto-demo";
 // 오른쪽: 지도(선택한 사건의 병원 응답 상태·요청 범위, 전체 구급차) + 하단 구급차 패널(선택한 사건 기준 가까운 순)
 // 위치·존·상태는 전부 규칙 기반이고, 구급차 위치는 시연용 시뮬레이션이다.
 
+// 3D 거미줄(spider/serve.py, 포트 2700) 실시간 화면. 배포 도메인에선 같은 호스트의 /spider/ 아래로 열려 있고,
+// 로컬 개발(3000)에선 NEXT_PUBLIC_SPIDER_URL(예: http://localhost:2700/spider/)로 덮어쓴다.
+const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? "/spider/"}?mode=live&embed=1`;
+
+type MapView = "2d" | "3d";
 type Tab = "all" | St;
 type AmbTab = "all" | "sd" | "t" | "b";
 
@@ -40,8 +53,8 @@ export default function MonitorMapPage() {
   const [ambTab, setAmbTab] = useState<AmbTab>("all");
   const [hoverHospital, setHoverHospital] = useState("");
   const [hoverAmb, setHoverAmb] = useState("");
+  const [view, setView] = useState<MapView>("2d");
   const [showPast, setShowPast] = useState(false);
-  const [pastSel, setPastSel] = useState("");
   // 사건별로 마지막으로 본 시각 — 그 뒤의 병원 응답이 "새 N"
   const [seenAt, setSeenAt] = useState<Record<string, number>>({});
   const [mountedAt] = useState(() => Date.now());
@@ -144,6 +157,22 @@ export default function MonitorMapPage() {
 
   const past = state.caseHistory;
   const live = connectionMode === "live";
+  const alertView = useControlAlerts(incidents, live);
+  useAlertTabTitle(new Set(alertView.alerts.map((a) => a.caseId ?? a.key)).size);
+  // 알림이 걸린 사건은 목록 맨 위에 고정하고 지도 마커를 강조한다. 알림은 오른쪽 위 카드로 쌓이고 색으로 등급을 나눈다(빨강 긴급·새 사건 / 주황 주의 / 회색 시스템).
+  const alertCaseIds = useMemo(() => new Set(alertView.alerts.flatMap((a) => (a.caseId ? [a.caseId] : []))), [alertView.alerts]);
+  const listIncidents = useMemo(
+    () => [...incidents].sort((p, q) => Number(alertCaseIds.has(q.caseId)) - Number(alertCaseIds.has(p.caseId))),
+    [incidents, alertCaseIds],
+  );
+  // 실제 사건에 새 긴급 알림이 생기면 그 사건으로 지도·목록을 바로 옮긴다(사람이 놓치지 않게)
+  const prevUrgentRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const now = new Set(alertView.alerts.filter((a) => a.level === "urgent" && !a.fake && a.caseId).map((a) => a.key));
+    const fresh = alertView.alerts.find((a) => a.level === "urgent" && !a.fake && a.caseId && !prevUrgentRef.current.has(a.key));
+    prevUrgentRef.current = now;
+    if (fresh?.caseId) selectCase(fresh.caseId);
+  }, [alertView.alerts, selectCase]);
 
   return (
     <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: C.bg, color: C.ink, whiteSpace: "nowrap" }}>
@@ -156,6 +185,25 @@ export default function MonitorMapPage() {
             <Link href="/" style={{ fontSize: 19, fontWeight: 900, letterSpacing: "-0.02em", color: C.navy }}>골든링크</Link>
             <div style={{ width: 1, height: 16, background: "#CDD3DA" }} />
             <div style={{ fontSize: 13, color: C.ink3 }}>관제 지도 · 병원·구급차 실시간 위치</div>
+            <div style={{ flex: "1 1 0" }} />
+            <AlertSoundButton soundOn={alertView.soundOn} count={alertView.alerts.length} onToggle={alertView.toggleSound} />
+            <div role="tablist" aria-label="지도 보기" style={{ display: "flex", gap: 4 }}>
+              {([["2d", "2D 지도"], ["3d", "3D 거미줄"]] as [MapView, string][]).map(([key, label]) => {
+                const on = view === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setView(key)}
+                    style={{ ...tab2Style, ...(on ? { background: C.navy, color: "#fff" } : { background: C.bg, color: C.ink2 }) }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 12.5, color: C.ink2, flexWrap: "wrap", rowGap: 6 }}>
             {LEGEND_LEVELS.map(([color, label]) => (
@@ -191,34 +239,41 @@ export default function MonitorMapPage() {
             </span>
           </div>
         </header>
-        <style>{"@keyframes ctlbl{0%,100%{opacity:1}50%{opacity:.3}}.ctl-live{animation:ctlbl 1.6s infinite}.ctl-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C5CCD6 transparent}.ctl-scroll::-webkit-scrollbar{width:6px}.ctl-scroll::-webkit-scrollbar-thumb{background:#C5CCD6;border-radius:3px}"}</style>
+        {/* 관제 알림 카드 — 헤더 바로 아래 기준점에서 아래로 쌓인다(높이 0) */}
+        <div style={{ position: "relative", flex: "none", height: 0, marginTop: -14, zIndex: 250 }}>
+          <AlertStack alerts={alertView.alerts} incidents={incidents} onAck={alertView.ack} onAckAll={alertView.ackAll} onOpen={selectCase} onHandle={(caseId, keys) => { alertView.startHandling(caseId, keys); selectCase(caseId); }} />
+        </div>
+        <style>{"@keyframes ctlbl{0%,100%{opacity:1}50%{opacity:.3}}.ctl-live{animation:ctlbl 1.6s infinite}@keyframes ctlnew{0%,100%{background:#fff}50%{background:#FFD9D5}}.ctl-new{animation:ctlnew 1s ease-in-out 10;border-color:#D93025!important}.ctl-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C5CCD6 transparent}.ctl-scroll::-webkit-scrollbar{width:6px}.ctl-scroll::-webkit-scrollbar-thumb{background:#C5CCD6;border-radius:3px}"}</style>
 
         <div style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 16 }}>
           {/* 왼쪽: 진행 중인 사건 · 지난 사건 · 선택한 사건의 병원 */}
-          <aside style={{ flex: "none", width: 336, display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+          <aside style={{ flex: "none", width: SIDEBAR_W, display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
             <div style={{ ...cardStyle, flex: "1 1 0", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>진행 중인 사건 {incidents.length}건</div>
                 <div style={{ fontSize: 11.5, color: C.sub }}>중증 {sevCount.중증} · 중등증 {sevCount.중등증} · 경증 {sevCount.경증}</div>
               </div>
 
-              <div style={{ position: "relative", flex: "none", height: 277 }}>
+              <div style={{ position: "relative", flex: "none", height: 160 }}>
                 <div className="ctl-scroll" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", gap: 5, paddingRight: 6, scrollSnapType: "y mandatory" }}>
                   {incidents.length === 0 && (
                     <div style={{ padding: "40px 12px", textAlign: "center", fontSize: 12.5, color: C.muted, whiteSpace: "normal" }}>
                       진행 중인 사건이 없습니다. 신고가 접수되면(구급대 출동) 여기에 뜹니다.
                     </div>
                   )}
-                  {incidents.map((inc) => {
+                  {listIncidents.map((inc) => {
                     const on = inc.caseId === selected?.caseId;
                     const c = counts(inc);
                     const stage = stageOf(inc);
+                    const alert = topAlertOf(alertView.alerts, inc.caseId);
+                    const alertRed = alert?.level === "urgent" || alert?.level === "info";
                     const unseen = unseenOf(inc);
                     return (
                       <button
                         key={inc.caseId}
                         type="button"
                         aria-pressed={on}
+                        className={alertView.freshIds.has(inc.caseId) ? "ctl-new" : undefined}
                         onClick={() => selectCase(inc.caseId)}
                         style={{
                           ...irowStyle,
@@ -229,13 +284,16 @@ export default function MonitorMapPage() {
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <NumBadge n={inc.num} />
+                          {alertView.freshIds.has(inc.caseId) && (
+                            <span style={{ flex: "none", fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#D93025", borderRadius: 5, padding: "0 5px", lineHeight: "15px" }}>NEW</span>
+                          )}
                           {inc.sev && <SevChip sev={inc.sev} />}
                           <span title={inc.name} style={{ flex: "none", fontSize: 13, fontWeight: 700, color: C.navy, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(inc.name)}</span>
                           <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden" }}>{inc.sym && <SymChip text={inc.sym} />}</span>
                           <span style={{ flex: "none", fontSize: 12, color: C.sub, fontVariantNumeric: "tabular-nums" }}>{fmtElapsed(now - inc.startedAt)}</span>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>
-                          <span style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, color: stage.color, overflow: "hidden", textOverflow: "ellipsis" }}>{stage.text}</span>
+                          <span style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, color: alertView.handling.has(inc.caseId) ? "#1F4E9C" : alert ? (alertRed ? "#D93025" : "#C75B00") : stage.color, overflow: "hidden", textOverflow: "ellipsis" }}>{alertView.handling.has(inc.caseId) ? `처리 중${alert ? ` · ${alert.title}` : ""}` : alert ? `${alert.title}${alert.detail ? ` · ${alert.detail}` : ""}` : stage.text}</span>
                           {unseen > 0 && (
                             <span style={{ flex: "none", fontSize: 10, fontWeight: 700, color: "#fff", background: C.blue, borderRadius: 8, padding: "0 6px", lineHeight: "15px" }}>새 {unseen}</span>
                           )}
@@ -259,10 +317,7 @@ export default function MonitorMapPage() {
                 <button
                   type="button"
                   aria-label="지난 사건 보기"
-                  onClick={() => {
-                    setShowPast(true);
-                    setPastSel((cur) => cur || past[0]?.caseId || "");
-                  }}
+                  onClick={() => setShowPast(true)}
                   style={pastBtnStyle}
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -285,22 +340,28 @@ export default function MonitorMapPage() {
                         <NumBadge n={selected.num} />
                         <span title={selected.name} style={{ flex: "0 1 auto", minWidth: 0, fontSize: 14, fontWeight: 700, color: C.navy, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(selected.name)}</span>
                         {selected.sev && <SevChip sev={selected.sev} />}
+                        {alertView.handling.has(selected.caseId) && (
+                          <button
+                            type="button"
+                            onClick={() => alertView.finishHandling(selected.caseId)}
+                            title="이 화면 안에서만 표시됩니다(다른 관제 화면과 공유되지 않음)"
+                            style={{ marginLeft: "auto", flex: "none", height: 22, padding: "0 10px", border: "1px solid #1F4E9C", borderRadius: 11, background: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, color: "#1F4E9C", cursor: "pointer" }}
+                          >
+                            처리 중 · 완료로 표시
+                          </button>
+                        )}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, fontSize: 11.5, color: C.sub }}>
                         {selected.sym && <span style={{ flex: "0 1 auto", minWidth: 0, display: "flex" }}><SymChip text={selected.sym} /></span>}
                         <span style={{ flex: "none" }}>
                           {selected.matched ? `요청 ${selected.hospitals.length}곳 · ${zoneText(selected.zone)}` : "요청 전"}
-                          {selected.zoneExpandAt != null && (
-                            <span style={{ color: "#C75B00", fontWeight: 700 }}>
-                              {" "}· 확장 {Math.max(0, Math.ceil((selected.zoneExpandAt - now) / 1000))}초
-                            </span>
-                          )}
-                          {selected.zoneExpandAt == null && selected.zonePausedLeft != null && (
-                            <span style={{ color: C.muted, fontWeight: 700 }}> · 확장 ⏸ {selected.zonePausedLeft}초</span>
-                          )}
                         </span>
                       </div>
                     </div>
+
+                    <CaseStatusSummary inc={selected} now={now} />
+
+                    {isTransportStalled(selected, now) && <HandlingActions />}
 
                     <div role="tablist" style={{ display: "flex", gap: 4, width: "100%" }}>
                       {tabDefs.map(([key, label, count]) => {
@@ -322,8 +383,8 @@ export default function MonitorMapPage() {
                       })}
                     </div>
 
-                    <div style={{ position: "relative", flex: "1 1 0", minHeight: 0 }}>
-                      <div className="ctl-scroll" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", paddingRight: 2 }}>
+                    <div style={{ flex: "0 1 auto", minHeight: 0, maxHeight: "55%", display: "flex", flexDirection: "column" }}>
+                      <div className="ctl-scroll" style={{ minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", paddingRight: 2 }}>
                         {rows.map((h) => {
                           const on = hoverHospital === h.hospitalId;
                           const at = h.respondedAt ? Date.parse(h.respondedAt) : null;
@@ -340,8 +401,11 @@ export default function MonitorMapPage() {
                                 background: flash ? "#FFF1B8" : on ? "#E8EEF8" : h.st === "r" ? "#FEF3F1" : h.st === "a" || h.st === "t" ? "#F1F8E9" : undefined,
                               }}
                             >
-                              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontWeight: 500 }} title={`${h.name} · H-${h.hospitalId}`}>{shortHospital(h.name)}</span>
-                              <span style={{ flex: "none", width: 72, textAlign: "right", fontSize: 11.5, color: C.sub }}>{h.km.toFixed(2)}km·존{h.zone}</span>
+                              <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }} title={`${h.name} · H-${h.hospitalId}`}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", fontWeight: 500 }}>{shortHospital(h.name)}</span>
+                                {h.reason && <span style={{ overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: "#D93025" }}>사유 · {h.reason}</span>}
+                              </span>
+                              <span style={{ flex: "none", width: selected.zone > 1 ? 72 : 48, textAlign: "right", fontSize: 11.5, color: C.sub }}>{h.km.toFixed(1)}km{selected.zone > 1 ? `·존${h.zone}` : ""}</span>
                               <span style={{ flex: "none", width: 62, display: "flex", alignItems: "center", gap: 4, fontWeight: 700, color: ST_TEXT[h.st] }}>
                                 <StatusIcon st={h.st} color={ST_TEXT[h.st]} />
                                 {text}
@@ -356,8 +420,8 @@ export default function MonitorMapPage() {
                           <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 12.5, color: C.muted, whiteSpace: "normal" }}>{emptyText[activeTab]}</div>
                         )}
                       </div>
-                      <div style={{ position: "absolute", left: 0, right: 8, bottom: 0, height: 20, pointerEvents: "none", background: "linear-gradient(to bottom,rgba(255,255,255,0),#fff)" }} />
                     </div>
+                    <CaseTimeline inc={selected} now={now} />
                   </>
                 ) : (
                   <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 12.5, color: C.muted, whiteSpace: "normal" }}>
@@ -368,7 +432,15 @@ export default function MonitorMapPage() {
             </div>
           </aside>
 
-          {/* 오른쪽: 지도 + 하단 구급차 패널 */}
+          {/* 오른쪽: 지도 + 하단 구급차 패널. 3D 보기 중에도 2D 지도는 숨기기만 해서 다시 켜도 지도가 초기화되지 않는다 */}
+          {view === "3d" && (
+            <iframe
+              title="3D 거미줄"
+              src={SPIDER_URL}
+              style={{ flex: "1 1 0", minWidth: 0, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff" }}
+            />
+          )}
+          <div style={{ display: view === "2d" ? "contents" : "none" }}>
           <ControlMapPanel
             overview={overview}
             incidents={incidents}
@@ -378,6 +450,7 @@ export default function MonitorMapPage() {
             hoverHospital={hoverHospital}
             hoverAmb={hoverAmb}
             ambInTab={ambInTab}
+            alertCaseIds={alertCaseIds}
             onHoverHospital={setHoverHospital}
             onHoverAmb={setHoverAmb}
             onSelectCase={selectCase}
@@ -426,16 +499,12 @@ export default function MonitorMapPage() {
               </div>
             </div>
           </ControlMapPanel>
+          </div>
         </div>
       </div>
 
       {showPast && (
-        <PastModal
-          past={past}
-          selId={pastSel || past[0]?.caseId || ""}
-          onPick={setPastSel}
-          onClose={() => setShowPast(false)}
-        />
+        <PastModal today={past} onClose={() => setShowPast(false)} />
       )}
     </div>
   );
@@ -443,10 +512,10 @@ export default function MonitorMapPage() {
 
 // ── 지난 사건 모달 ──────────────────────────────────────────────────────────
 
-function PastModal({ past, selId, onPick, onClose }: {
-  past: CaseHistoryItem[];
-  selId: string;
-  onPick: (id: string) => void;
+const RANGES: [string, string, number][] = [["today", "오늘", 0], ["7d", "최근 7일", 6], ["30d", "최근 30일", 29]];
+
+function PastModal({ today, onClose }: {
+  today: CaseHistoryItem[];
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -454,12 +523,18 @@ function PastModal({ past, selId, onPick, onClose }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  const sel = past.find((p) => p.caseId === selId) ?? past[0] ?? null;
-  const n = past.length;
+  const [from, setFrom] = useState(() => daysAgo(0));
+  const [to, setTo] = useState(() => daysAgo(0));
+  const [text, setText] = useState("");
+  const [result, setResult] = useState<ArchiveResult>("all");
+  const [pickId, setPickId] = useState("");
+  const { cases: past, total, stats, loading, error } = useCaseArchive({ from, to, q: text, result }, today);
+  const sel = past.find((p) => p.caseId === pickId) ?? past[0] ?? null;
+  const n = stats.total;
+  const onPick = setPickId;
+  const multiDay = from !== to;
   const durMs = (p: CaseHistoryItem) => Date.parse(p.endedAt) - Date.parse(p.startedAt);
-  const avgMs = n ? past.reduce((a, p) => a + durMs(p), 0) / n : 0;
-  const avgRej = n ? (past.reduce((a, p) => a + p.rejected, 0) / n).toFixed(1) : "0";
-  const expandCnt = past.filter((p) => p.zone >= 2).length;
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
   const selSev = sel ? sevOf(sel.severity) : null;
   const selRes = sel ? pastResult(sel) : null;
 
@@ -469,16 +544,49 @@ function PastModal({ past, selId, onPick, onClose }: {
       <div style={{ position: "relative", width: 940, height: 660, maxWidth: "calc(100% - 48px)", maxHeight: "calc(100% - 48px)", background: "#fff", borderRadius: 16, boxShadow: "0 20px 60px rgba(20,33,61,.35)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 12, padding: "16px 22px", borderBottom: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>지난 사건</div>
-          <div style={{ fontSize: 12.5, color: C.sub }}>오늘 종료된 사건 {n}건 · 최근 종료 순</div>
+          <div style={{ fontSize: 12.5, color: C.sub }}>
+            {multiDay ? `${from} ~ ${to}` : from === daysAgo(0) ? "오늘" : from} 종료된 사건 {n}건 · 최근 종료 순
+          </div>
+          {ARCHIVE_MOCK && <span style={{ fontSize: 11, fontWeight: 700, color: "#C75B00", background: "#FFF1E0", borderRadius: 9, padding: "0 8px", lineHeight: "18px" }}>가짜 데이터 (설계 확인용)</span>}
           <div style={{ flex: "1 1 0" }} />
           <button type="button" onClick={onClose} style={{ fontFamily: "inherit", fontSize: 13, color: C.ink3, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>닫기 ✕</button>
         </div>
 
-        <div style={{ flex: "none", display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, padding: "14px 22px 4px" }}>
-          <Stat label="종료된 사건" value={`${n}건`} />
-          <Stat label="평균 소요 시간" value={fmtElapsed(avgMs)} />
-          <Stat label="평균 수용 불가 병원" value={`${avgRej}곳`} color="#D93025" />
-          <Stat label="범위 확장(존 2 이상) 사건" value={`${expandCnt}건`} color="#C75B00" />
+        {/* 조회 조건 — 기간(빠른 선택·직접 지정)·검색(증상·구급차·병원)·결과 */}
+        <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 8, padding: "10px 22px 0", flexWrap: "wrap", rowGap: 6 }}>
+          {RANGES.map(([key, label, back]) => {
+            const on = from === daysAgo(back) && to === daysAgo(0);
+            return (
+              <button key={key} type="button" aria-pressed={on} onClick={() => { setFrom(daysAgo(back)); setTo(daysAgo(0)); }}
+                style={{ ...tab2Style, ...(on ? { background: C.navy, color: "#fff" } : { background: C.bg, color: C.ink2 }) }}>
+                {label}
+              </button>
+            );
+          })}
+          <input type="date" aria-label="시작일" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} style={dateInputStyle} />
+          <span style={{ color: C.muted, fontSize: 12 }}>~</span>
+          <input type="date" aria-label="종료일" value={to} min={from} max={daysAgo(0)} onChange={(e) => e.target.value && setTo(e.target.value)} style={dateInputStyle} />
+          <input type="search" aria-label="사건 검색" placeholder="증상·구급차·병원 검색" value={text} onChange={(e) => setText(e.target.value)}
+            style={{ ...dateInputStyle, width: 190 }} />
+          <div role="group" aria-label="결과" style={{ display: "flex", gap: 4 }}>
+            {([["all", "전체"], ["done", "이송 완료"], ["cancel", "취소"]] as [ArchiveResult, string][]).map(([key, label]) => {
+              const on = result === key;
+              return (
+                <button key={key} type="button" aria-pressed={on} onClick={() => setResult(key)}
+                  style={{ ...tab2Style, ...(on ? { background: C.navy, color: "#fff" } : { background: C.bg, color: C.ink2 }) }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {loading && <span style={{ fontSize: 12, color: C.muted }}>불러오는 중…</span>}
+        </div>
+
+        <div style={{ flex: "none", display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, padding: "12px 22px 4px" }}>
+          <Stat label="종료된 사건" value={`${n}건`} sub={`이송 완료 ${stats.done} · 취소 ${stats.cancel}`} />
+          <Stat label="평균 소요 시간" value={fmtElapsed(stats.avgDurationSec * 1000)} />
+          <Stat label="수용 불가율" value={pct(stats.rejectRate)} color="#D93025" sub={`사건당 평균 ${stats.avgRejected.toFixed(1)}곳`} />
+          <Stat label="범위 확장(존 2 이상) 사건" value={`${stats.zoneExpanded}건`} color="#C75B00" sub={n ? `전체의 ${pct(stats.zoneExpanded / n)}` : undefined} />
         </div>
 
         <div style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 14, padding: "10px 22px 20px" }}>
@@ -504,13 +612,15 @@ function PastModal({ past, selId, onPick, onClose }: {
                       <span style={{ flex: "none", fontSize: 12, color: C.sub, fontVariantNumeric: "tabular-nums" }}>소요 {fmtElapsed(durMs(p))}</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11.5 }}>
-                      <span style={{ flex: "none", color: C.muted, fontVariantNumeric: "tabular-nums" }}>{fmtHm(p.startedAt)} ~ {fmtHm(p.endedAt)}</span>
+                      <span style={{ flex: "none", color: C.muted, fontVariantNumeric: "tabular-nums" }}>{multiDay ? `${fmtMd(p.endedAt)} ` : ""}{fmtHm(p.startedAt)} ~ {fmtHm(p.endedAt)}</span>
                       <span style={{ flex: "none", fontWeight: 700, padding: "0 8px", borderRadius: 9, lineHeight: "17px", maxWidth: 210, overflow: "hidden", textOverflow: "ellipsis", ...res.style }}>{res.text}</span>
                     </div>
                   </button>
                 );
               })}
-              {n === 0 && <div style={{ padding: "40px 12px", textAlign: "center", fontSize: 12.5, color: C.muted }}>아직 종료된 사건이 없습니다.</div>}
+              {error && <div style={{ padding: "40px 12px", textAlign: "center", fontSize: 12.5, color: "#D93025", whiteSpace: "normal" }}>{error}</div>}
+              {!error && !loading && past.length === 0 && <div style={{ padding: "40px 12px", textAlign: "center", fontSize: 12.5, color: C.muted }}>조건에 맞는 사건이 없습니다.</div>}
+              {total > past.length && <div style={{ padding: "8px 12px", textAlign: "center", fontSize: 11.5, color: C.muted }}>최근 {past.length}건만 표시 (전체 {total}건) — 통계는 전체 기준</div>}
             </div>
           </div>
 
@@ -623,11 +733,12 @@ function StatusIcon({ st, color }: { st: St; color: string }) {
   );
 }
 
-function Stat({ label, value, color = C.navy }: { label: string; value: string; color?: string }) {
+function Stat({ label, value, color = C.navy, sub }: { label: string; value: string; color?: string; sub?: string }) {
   return (
     <div style={{ border: `1px solid ${C.line2}`, borderRadius: 10, padding: "8px 12px" }}>
       <div style={{ fontSize: 11.5, color: C.sub }}>{label}</div>
       <div style={{ fontSize: 19, fontWeight: 900, color, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontSize: 11, color: C.muted, minHeight: 14 }}>{sub}</div>
     </div>
   );
 }
@@ -653,7 +764,7 @@ const irowStyle: React.CSSProperties = {
   fontFamily: "inherit", textAlign: "left", cursor: "pointer", scrollSnapAlign: "start", transition: "background .6s",
 };
 const srowStyle: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: 5, flex: "none", height: 24, padding: "0 6px", borderRadius: 4, fontSize: 12,
+  display: "flex", alignItems: "center", gap: 5, flex: "none", minHeight: 24, padding: "1px 6px", borderRadius: 4, fontSize: 12,
   fontVariantNumeric: "tabular-nums", cursor: "default", transition: "background .6s",
 };
 const tabStyle: React.CSSProperties = {
@@ -668,6 +779,10 @@ const tab2Style: React.CSSProperties = {
 const acellStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 10px", border: `1px solid ${C.line2}`, borderRadius: 8,
   fontSize: 12.5, fontVariantNumeric: "tabular-nums", cursor: "default", boxSizing: "border-box", scrollSnapAlign: "start",
+};
+const dateInputStyle: React.CSSProperties = {
+  boxSizing: "border-box", height: 26, padding: "0 8px", border: `1px solid ${C.line}`, borderRadius: 8,
+  fontFamily: "inherit", fontSize: 12, color: C.ink2, background: "#fff",
 };
 const pastBtnStyle: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", border: "1px solid #CDD3DA",

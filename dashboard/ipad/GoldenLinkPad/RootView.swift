@@ -21,8 +21,15 @@ struct RootView: View {
             VStack(spacing: 8) {
                 TopBar(showSurvival: $showSurvival, showSettings: $showSettings, screenRaw: $screenRaw)
                 callBanner
-                if screen == .transport {
+                if !model.hasIncident {
+                    // 출동도 사건도 전혀 없는 평상시(2026-10-29) — 탭을 골라도 보여줄 게 없으니 대기 화면 하나로 통일
+                    IdleWaitingCard()
+                } else if screen == .transport {
                     TransportScreen()
+                } else if let hold = stageHold {
+                    // 현장으로 가는 중·현장 확인 중엔 아직 채울 환자 정보가 없다(2026-10-28) —
+                    // 빈 서식을 보여주지 않고 지금 뭘 하는 단계인지만 크게 띄운다
+                    StageHoldCard(hold: hold)
                 } else {
                     // [환자 정보] — 왼쪽은 예전과 같은 통화 요약·구조화(+추가 정보), 오른쪽은 외상 부위 그림
                     GeometryReader { g in
@@ -62,6 +69,21 @@ struct RootView: View {
         }
     }
 
+    /// 환자 정보를 보여줄 수 없는 단계 — (제목, 설명, 아이콘, 색)
+    private var stageHold: (String, String, String, Color)? {
+        guard let phase = model.sim?.phase, model.result == nil else { return nil }
+        switch phase {
+        case "dispatching":
+            return ("현장으로 이송 중", "사고 현장으로 이동하고 있습니다. 현장에 도착하면 상황 판단으로 넘어갑니다.", "arrow.triangle.turn.up.right.diamond.fill", AD.blue)
+        case "on_scene":
+            let calling = model.callStatus?.state == "calling"
+            return ("상황 판단 중",
+                    calling ? "통화 내용을 받아 환자 정보를 구조화하고 있습니다." : "현장 확인 중입니다. 통화가 요약되면 환자 정보가 올라옵니다.",
+                    "stethoscope", AD.orange)
+        default: return nil
+        }
+    }
+
     @ViewBuilder private var callBanner: some View {
         if let call = model.callStatus, call.state == "calling" {
             Text("휴대폰으로 \(call.hospitalName ?? "병원")과 통화 중 — 통화가 끝나면 환자 정보가 후보 병원에 동시에 전달됩니다")
@@ -70,6 +92,39 @@ struct RootView: View {
                 .padding(.horizontal, 16).padding(.vertical, 8)
                 .background(AD.greenSoft).clipShape(RoundedRectangle(cornerRadius: 12))
         }
+    }
+}
+
+/// 사건·출동이 전혀 없는 평상시 대기 화면(2026-10-29) — StageHoldCard와 같은 모양
+struct IdleWaitingCard: View {
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "cross.case.fill").font(.system(size: 54, weight: .semibold)).foregroundStyle(AD.muted)
+            Text("출동 대기 중").font(.system(size: 30, weight: .black)).foregroundStyle(AD.navy)
+            Text("새 사건이 들어오면 자동으로 환자 정보 화면으로 넘어갑니다.").font(.system(size: 15)).foregroundStyle(AD.sub)
+                .multilineTextAlignment(.center)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
+    }
+}
+
+/// 환자 정보 자리에 들어가는 단계 안내 — 출동 중 / 상황 판단 중
+struct StageHoldCard: View {
+    let hold: (String, String, String, Color)
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: hold.2).font(.system(size: 54, weight: .semibold)).foregroundStyle(hold.3)
+            Text(hold.0).font(.system(size: 30, weight: .black)).foregroundStyle(AD.navy)
+            Text(hold.1).font(.system(size: 15)).foregroundStyle(AD.sub).multilineTextAlignment(.center)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AD.card).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))
     }
 }
 
@@ -121,6 +176,13 @@ struct TopBar: View {
             seg("이송", .transport, badge: listBadge)
         }
         .padding(3).background(AD.chip).clipShape(Capsule())
+        // 칸 어디를 눌러도 반대쪽 화면으로 넘어간다(2026-10-28) — 두 칸뿐이라 결과가 같고 과녁이 두 배다
+        .contentShape(Capsule())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                screenRaw = screenRaw == Screen.patient.rawValue ? Screen.transport.rawValue : Screen.patient.rawValue
+            }
+        }
     }
     private var listBadge: (String, Color)? {
         guard let r = model.result else { return model.scene.map { ("\($0.hospitals.count)", AD.gray) } }
@@ -130,8 +192,7 @@ struct TopBar: View {
     }
     private func seg(_ title: String, _ s: Screen, badge: (String, Color)?) -> some View {
         let on = screenRaw == s.rawValue
-        return Button { withAnimation(.easeInOut(duration: 0.2)) { screenRaw = s.rawValue } } label: {
-            HStack(spacing: 5) {
+        return HStack(spacing: 5) {
                 Text(title).font(.system(size: 13, weight: on ? .bold : .medium)).foregroundStyle(on ? AD.navy : AD.ink3)
                     .lineLimit(1).fixedSize()
                 if let b = badge {
@@ -139,11 +200,9 @@ struct TopBar: View {
                         .padding(.horizontal, 6).frame(minHeight: 17).background(b.1).clipShape(Capsule())
                 }
             }
-            .padding(.horizontal, 14).frame(minHeight: 32)
-            .background(on ? AD.card : .clear).clipShape(Capsule())
-            .shadow(color: on ? .black.opacity(0.08) : .clear, radius: 2, y: 1)
-        }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 14).frame(minHeight: 32)
+        .background(on ? AD.card : .clear).clipShape(Capsule())
+        .shadow(color: on ? .black.opacity(0.08) : .clear, radius: 2, y: 1)
     }
 
     private var ambulanceLabel: String {

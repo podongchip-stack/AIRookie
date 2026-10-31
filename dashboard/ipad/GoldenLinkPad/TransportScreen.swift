@@ -51,7 +51,6 @@ struct TransportScreen: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("병원 리스트").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
-                if let r = model.result { responseCounts(r) }
                 Spacer(minLength: 0)
                 if let c = model.confirmed {
                     Pill(text: "이송 확정 · \(c.name)", bg: AD.greenSoft, fg: AD.green, bold: true)
@@ -61,6 +60,8 @@ struct TransportScreen: View {
                     Pill(text: "통화 전 · \(s.hospitals.count)곳", bg: AD.chip, fg: AD.ink3)
                 }
             }
+            // 제목 줄과 분리된 자기 줄(2026-10-28) — 400pt 고정 폭에서 제목·요청 수와 같은 줄에 두면 넘쳐서 줄바꿈됐다
+            if let r = model.result { responseCounts(r) }
             if let r = model.result {
                 HStack(spacing: 6) {
                     Text("병원을 누르면 오른쪽에 배후역량표").font(.system(size: 11.5)).foregroundStyle(AD.muted)
