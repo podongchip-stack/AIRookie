@@ -926,7 +926,8 @@ struct BodyInjuryCard: View {
         }
         guard model.sendPatientOverride(expectedDiagnosis: nil, injuryStatus: kept + e.addedLines,
                                         ktasLevel: nil, requiredDepartment: nil, chiefComplaint: nil) else { return }
-        if !e.careLines.isEmpty { _ = model.sendExtraNote("[처치] " + e.careLines.joined(separator: " · ")) }
+        // 처치 전송이 실패하면 "보냄"으로 표시하지 않는다 — 다시 누르면 둘 다 다시 간다
+        if !e.careLines.isEmpty, !model.sendExtraNote("[처치] " + e.careLines.joined(separator: " · ")) { return }
         sentSignature = e.signature
     }
 

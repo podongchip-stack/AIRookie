@@ -6,7 +6,7 @@ import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { escapeHtml } from "@/lib/kakao-map-markers";
 import { centerInView, focusInView } from "@/lib/map-view";
 import {
-  C, LEVEL_DEFAULT, LEVEL_DOT, ST_DOT, ST_PILL, ambState, reqLabel, shortAmb, shortHospital, zoneText, type Incident, type St,
+  C, LEVEL_DEFAULT, LEVEL_DOT, ST_DOT, ST_PILL, ambState, reqLabel, shortAmb, shortHospital, zoneText, type IncHospital, type Incident, type St,
 } from "@/lib/control-map";
 import type { AmbulanceSimState, MapOverview } from "@/types/dashboard";
 
@@ -33,6 +33,16 @@ function arcPath(a: { lat: number; lng: number }, b: { lat: number; lng: number 
   });
 }
 const MOVING = new Set(["dispatching", "transporting", "returning"]);
+
+// 통화 요약 분배 연출(2026-11-02) — 요약이 후보 병원들에 전달되는 순간 현장에서 병원마다 점이 호를 따라 날아가고,
+// 도착하면 그 병원에 "요약 전달됨" 표시가 남는다. 이송 확정 병원이 정해지면 호와 표시를 전부 걷는다.
+const PACKET_MS = 1500;
+const PACKET_STAGGER_MS = 90;
+const TRAIL_PTS = 14;   // 꼬리 길이(호 위 점 개수)
+// 날아가는 응급 신호(주황 원 + 흰 십자 — 구급차 마커와 같은 언어) / 도착 뒤 고정 배지(남색 원 + 심전도 선)
+const CARD_SVG = `<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.5" fill="#F26B1D" stroke="#fff" stroke-width="2"/><path d="M12 6.5v11M6.5 12h11" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/></svg>`;
+const BADGE_SVG = `<svg width="13" height="13" viewBox="0 0 13 13"><path d="M.8 7h2.6l1.6-4.4 2.6 8L9.4 7h2.8" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+type Packet = { overlay: kakao.maps.CustomOverlay; trail: kakao.maps.Polyline; raf: number; timer: number };
 
 type HospitalLayer = { overlay: kakao.maps.CustomOverlay; dot: HTMLDivElement; pill: HTMLDivElement; key: string };
 type AmbLayer = { overlay: kakao.maps.CustomOverlay; root: HTMLDivElement; key: string };
@@ -85,6 +95,13 @@ export function ControlMapPanel({
   const ambsRef = useRef(new Map<string, AmbLayer>());
   const pathsRef = useRef(new Map<string, { line: kakao.maps.Polyline; key: string }>());
   const linksRef = useRef(new Map<string, { line: kakao.maps.Polyline; key: string }>());
+  const packetsRef = useRef(new Map<string, Packet>());
+  const badgesRef = useRef(new Map<string, kakao.maps.CustomOverlay>());
+  // 사건별로 요약을 이미 보낸 병원 — 새로 들어온 병원(존 확장 등)에만 연출을 다시 한다
+  const deliveredRef = useRef(new Map<string, Set<string>>());
+  // 매칭 전(현장 통화 전)에 본 사건 — 이 화면이 사건 도중에 열려 처음부터 매칭된 사건은 연출 없이 고정 표시만 한다
+  const unmatchedSeenRef = useRef(new Set<string>());
+  const originRef = useRef<{ overlay: kakao.maps.CustomOverlay; timer: number } | null>(null);
   const ringRef = useRef<{ outer: kakao.maps.Circle; inner: kakao.maps.Circle | null; label: kakao.maps.CustomOverlay; key: string } | null>(null);
   // 카카오·DOM 이벤트 핸들러는 한 번 걸어 두고 최신 콜백은 ref로 읽는다
   const cbRef = useRef({ onHoverHospital, onHoverAmb, onSelectCase });
@@ -412,8 +429,9 @@ export function ControlMapPanel({
     // 이송이 시작되면(이송 중·병원 도착) 요청 곡선은 걷고 구급차 이동 경로만 남긴다
     const tPhase = selected?.apid ? ambulanceSim[selected.apid]?.phase : undefined;
     const transporting = tPhase === "transporting" || tPhase === "at_hospital";
-    const center = selected && selected.matched && !transporting ? selected.center : null;
     const anyConfirmed = !!selected?.hospitals.some((h) => h.st === "t");
+    // 이송 확정 병원이 정해지면 요청 곡선은 걷는다(구급차 이동 경로만 남김)
+    const center = selected && selected.matched && !transporting && !anyConfirmed ? selected.center : null;
     const gpsById = new Map(overview.hospitals.map((h) => [h.hospitalId, h.gps]));
     const wanted = new Set<string>();
     if (selected && center) {
@@ -422,7 +440,7 @@ export function ControlMapPanel({
         if (!to) continue;
         wanted.add(h.hospitalId);
         const on = hoverHospital === h.hospitalId;
-        const dim = anyConfirmed && h.st !== "t";
+        const dim = false;
         const key = `${selected.caseId}|${h.st}|${on}|${dim}|${center.lat},${center.lng}`;
         const old = links.get(h.hospitalId);
         if (old?.key === key) continue;
@@ -446,6 +464,163 @@ export function ControlMapPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, overview?.hospitals, selected, hoverHospital, ambulanceSim]);
 
+  // ── 통화 요약 분배 연출 + 전달됨 표시 ──
+  function stopPacket(id: string) {
+    const p = packetsRef.current.get(id);
+    if (!p) return;
+    cancelAnimationFrame(p.raf);
+    clearTimeout(p.timer);
+    p.overlay.setMap(null);
+    p.trail.setMap(null);
+    packetsRef.current.delete(id);
+  }
+  function clearOrigin() {
+    if (!originRef.current) return;
+    clearTimeout(originRef.current.timer);
+    originRef.current.overlay.setMap(null);
+    originRef.current = null;
+  }
+  // 현장에서 퍼져 나가는 파동 + "통화 요약 전달 · N곳" 칩 — 잠깐 보였다 사라진다
+  function showOrigin(center: { lat: number; lng: number }, count: number) {
+    const map = mapRef.current;
+    if (!map) return;
+    clearOrigin();
+    const { kakao } = window;
+    const el = document.createElement("div");
+    el.style.cssText = "position:relative;width:0;height:0;pointer-events:none";
+    el.innerHTML =
+      [0, 0.45].map((d) =>
+        `<div style="position:absolute;left:-28px;top:-28px;width:56px;height:56px;box-sizing:border-box;border-radius:50%;` +
+        `border:3px solid ${C.orange};animation:ctlring 1.6s ease-out ${d}s 2;opacity:0"></div>`).join("") +
+      `<div style="position:absolute;left:-6px;top:-6px;width:12px;height:12px;border-radius:50%;background:${C.orange};border:2px solid #fff;` +
+      `box-shadow:0 0 0 4px rgba(242,107,29,.28)"></div>` +
+      `<div style="position:absolute;left:14px;top:-34px;height:22px;display:flex;align-items:center;gap:5px;padding:0 10px 0 7px;white-space:nowrap;` +
+      `font-size:11px;font-weight:700;color:#fff;background:${C.orange};border:1.5px solid #fff;border-radius:11px;box-shadow:0 2px 8px rgba(242,107,29,.45);` +
+      `animation:ctlpop .35s ease-out both">통화 요약 전달 · ${count}곳</div>`;
+    const overlay = new kakao.maps.CustomOverlay({ position: new kakao.maps.LatLng(center.lat, center.lng), content: el, xAnchor: 0, yAnchor: 0, zIndex: 31 });
+    overlay.setMap(map);
+    originRef.current = { overlay, timer: window.setTimeout(clearOrigin, 3600) };
+  }
+  // 도착 뒤 병원 옆에 남는 고정 배지 — 파란 원 + 봉투. animate면 도착 순간 튀어 오르며 파동이 한 번 퍼진다
+  function addBadge(id: string, gps: { lat: number; lng: number }, animate = false) {
+    const map = mapRef.current;
+    if (!map || badgesRef.current.has(id)) return;
+    const { kakao } = window;
+    const root = document.createElement("div");
+    root.style.cssText = "position:relative;width:0;height:0;pointer-events:none";
+    root.innerHTML =
+      (animate
+        ? `<div style="position:absolute;left:-17px;top:-17px;width:34px;height:34px;box-sizing:border-box;border-radius:50%;border:3px solid ${C.orange};animation:ctlring .9s ease-out;opacity:0"></div>`
+        : "") +
+      `<div title="통화 요약 전달됨" style="position:absolute;left:6px;top:-24px;width:20px;height:20px;box-sizing:border-box;` +
+      `border-radius:50%;background:${C.navy};border:2px solid #fff;display:flex;align-items:center;justify-content:center;` +
+      `box-shadow:0 2px 6px rgba(20,33,61,.45);${animate ? "animation:ctlpop .4s cubic-bezier(.2,1.6,.4,1) both;" : ""}">${BADGE_SVG}</div>`;
+    const overlay = new kakao.maps.CustomOverlay({ position: new kakao.maps.LatLng(gps.lat, gps.lng), content: root, xAnchor: 0, yAnchor: 0, zIndex: 20 });
+    overlay.setMap(map);
+    badgesRef.current.set(id, overlay);
+  }
+  function startPacket(id: string, from: { lat: number; lng: number }, to: { lat: number; lng: number }, delay: number) {
+    const map = mapRef.current;
+    if (!map) return;
+    const { kakao } = window;
+    const path = arcPath(from, to, 40);
+    const ll = (p: { lat: number; lng: number }) => new kakao.maps.LatLng(p.lat, p.lng);
+    const el = document.createElement("div");
+    el.style.cssText = "position:relative;width:0;height:0;pointer-events:none";
+    el.innerHTML =
+      `<div data-card style="position:absolute;left:-12px;top:-12px;width:24px;height:24px;filter:drop-shadow(0 0 6px rgba(242,107,29,.8)) drop-shadow(0 2px 3px rgba(20,30,50,.35))">${CARD_SVG}</div>`;
+    const overlay = new kakao.maps.CustomOverlay({ position: ll(from), content: el, xAnchor: 0, yAnchor: 0, zIndex: 30 });
+    // 꼬리 — 카드 뒤를 따라가는 파란 선(혜성처럼)
+    const trail = new kakao.maps.Polyline({ path: [ll(from), ll(from)], strokeColor: C.orange, strokeWeight: 5, strokeOpacity: 0.6, strokeStyle: "solid" });
+    const packet: Packet = { overlay, trail, raf: 0, timer: 0 };
+    packetsRef.current.set(id, packet);
+    packet.timer = window.setTimeout(() => {
+      overlay.setMap(map);
+      trail.setMap(map);
+      const card = el.querySelector<HTMLDivElement>("[data-card]");
+      const t0 = performance.now();
+      const step = (now: number) => {
+        const t = Math.min(1, (now - t0) / PACKET_MS);
+        const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;   // 출발·도착은 천천히
+        const i = Math.min(path.length - 1, Math.round(e * (path.length - 1)));
+        overlay.setPosition(ll(path[i]));
+        trail.setPath(path.slice(Math.max(0, i - TRAIL_PTS), i + 1).map(ll));
+        if (card) {
+          // 맥박처럼 커졌다 작아지고, 도착 직전엔 줄어들며 배지로 이어진다
+          const beat = 1 + 0.14 * Math.sin(t * Math.PI * 6);
+          const scale = (t > 0.8 ? 1 - (t - 0.8) * 2.5 : 1) * beat;
+          card.style.transform = `scale(${scale})`;
+        }
+        if (t < 1) { packet.raf = requestAnimationFrame(step); return; }
+        stopPacket(id);
+        addBadge(id, to, true);
+      };
+      packet.raf = requestAnimationFrame(step);
+    }, delay);
+  }
+
+  useEffect(() => {
+    const map = ensureMap();
+    if (!map || !overview) return;
+    const gpsById = new Map(overview.hospitals.map((h) => [h.hospitalId, h.gps]));
+    const phase = selected?.apid ? ambulanceSim[selected.apid]?.phase : undefined;
+    const active =
+      !!selected && selected.matched && !!selected.center && !selected.hospitals.some((h) => h.st === "t") &&
+      phase !== "transporting" && phase !== "at_hospital";
+    // 사건별 전달 기록 갱신 — 새로 들어온 병원만 모은다(사건이 닫히면 기록도 지운다)
+    const fresh: IncHospital[] = [];
+    const open = new Set(incidents.map((i) => i.caseId));
+    deliveredRef.current.forEach((_, id) => { if (!open.has(id)) deliveredRef.current.delete(id); });
+    for (const inc of incidents) {
+      if (!inc.matched) { unmatchedSeenRef.current.add(inc.caseId); continue; }
+      let done = deliveredRef.current.get(inc.caseId);
+      const live = !!done || unmatchedSeenRef.current.has(inc.caseId);
+      if (!done) { done = new Set(); deliveredRef.current.set(inc.caseId, done); }
+      for (const h of inc.hospitals) {
+        if (done.has(h.hospitalId)) continue;
+        done.add(h.hospitalId);
+        if (live && selected?.caseId === inc.caseId) fresh.push(h);
+      }
+    }
+    if (!active || !selected?.center) {
+      // 확정 병원이 정해졌거나 사건이 바뀌었다 — 연출과 표시를 전부 걷는다
+      [...packetsRef.current.keys()].forEach(stopPacket);
+      badgesRef.current.forEach((o) => o.setMap(null));
+      badgesRef.current.clear();
+      clearOrigin();
+      return;
+    }
+    const wanted = new Set(selected.hospitals.filter((h) => deliveredRef.current.get(selected.caseId)?.has(h.hospitalId)).map((h) => h.hospitalId));
+    const freshIds = new Set(fresh.map((h) => h.hospitalId));
+    [...packetsRef.current.keys()].forEach((id) => { if (!wanted.has(id)) stopPacket(id); });
+    badgesRef.current.forEach((o, id) => { if (!wanted.has(id)) { o.setMap(null); badgesRef.current.delete(id); } });
+    if (fresh.length > 0) showOrigin(selected.center, fresh.length);
+    fresh.forEach((h, i) => {
+      const to = gpsById.get(h.hospitalId);
+      if (to) startPacket(h.hospitalId, selected.center!, to, i * PACKET_STAGGER_MS);
+    });
+    // 연출 중이 아닌 전달 병원은 바로 고정 표시(사건을 다시 고르거나 재진입했을 때)
+    wanted.forEach((id) => {
+      if (freshIds.has(id) || packetsRef.current.has(id)) return;
+      const gps = gpsById.get(id);
+      if (gps) addBadge(id, gps);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, overview?.hospitals, incidents, selected, ambulanceSim]);
+
+  // 화면을 떠나면 연출·표시를 정리한다
+  useEffect(() => {
+    const packets = packetsRef.current;
+    const badges = badgesRef.current;
+    return () => {
+      [...packets.keys()].forEach(stopPacket);
+      badges.forEach((o) => o.setMap(null));
+      badges.clear();
+      clearOrigin();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <section
       className={css({
@@ -456,7 +631,7 @@ export function ControlMapPanel({
         backgroundColor: "#F4F1EA",
       })}
     >
-      <style>{"@keyframes ctlring{0%{transform:scale(.6);opacity:.55}100%{transform:scale(2.4);opacity:0}}"}</style>
+      <style>{"@keyframes ctlring{0%{transform:scale(.6);opacity:.55}100%{transform:scale(2.4);opacity:0}}@keyframes ctlpop{0%{transform:scale(.3);opacity:0}100%{transform:scale(1);opacity:1}}"}</style>
       <div
         ref={containerRef}
         role="img"
