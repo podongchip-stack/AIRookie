@@ -1131,7 +1131,9 @@ class HubEngine:
             # - 이송 승인은 병원이 이 사건에 승인(approved)한 병원에만 — "병원의 승인은 후보
             #   등록, 구급대원의 이송 승인이 최종 확정"(CLAUDE.md) 순서를 지킨다
             refuse_reason = None
-            if action.actor != _ACTION_ACTOR[action.action]:
+            # 관제 대행(2026-11-01): 이송 승인은 관제(dispatcher)도 보낼 수 있다. 소켓이 관제인지는 app이 확인한다.
+            if action.actor != _ACTION_ACTOR[action.action] and not (
+                    action.action == "final_approval" and action.actor == "dispatcher"):
                 refuse_reason = f"actor mismatch: {action.action} requires {_ACTION_ACTOR[action.action]}"
             elif action.action in ("hospital_approve", "hospital_reject", "final_approval") and (
                 (result := self._case_results.get(action.caseId)) is not None

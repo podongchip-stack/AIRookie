@@ -24,22 +24,32 @@ const OK_COL = [94, 227, 127], SUG_COL = [127, 255, 212], GRAY = [124, 123, 116]
 let EMBED_FOCUS = null, embedResizeT = null;
 // 지도 오른쪽을 가리는 앱 패널 폭(px) — 아이패드 상황판의 '병원별 분산' 떠 있는 카드(2026-10-15). 맞출 때 가운데를 그만큼
 // 왼쪽(보이는 쪽)으로 옮긴다. 줌 계산은 지도 폭과 무관해서, 카드가 가린 나머지 폭에서 예전(지도가 가운데 칸이던 때)과 같게 보인다
-let PAD_RIGHT = 0;
+let PAD_RIGHT = 0, PAD_LEFT = 0, PAD_TOP = 0, PAD_BOTTOM = 0;
 window.setViewPadding = px => {
   const v = Math.max(0, Math.round(+px || 0)); if (v === PAD_RIGHT) return;
   PAD_RIGHT = v;
   if (!EMBED_USER) scheduleFitAll();   // 사람이 맞춰 둔 보기는 건드리지 않는다 — [전체 보기]부터 적용
 };
-function embedFocus(points) {
+// 관제 화면(/map, 2026-11-01): 지도가 화면 전체 배경이고 패널이 위·양옆에 떠 있다 — 네 방향 가려진 폭(px)을 한 번에 알려 준다.
+// 목표가 가려지지 않은 영역의 가운데에 오도록 embedFocus가 이 값을 쓴다(setViewPadding은 아이패드 앱용으로 그대로).
+window.setViewInsets = ({ left = 0, right = 0, top = 0, bottom = 0 } = {}) => {
+  const n = v => Math.max(0, Math.round(+v || 0));
+  if (n(left) === PAD_LEFT && n(right) === PAD_RIGHT && n(top) === PAD_TOP && n(bottom) === PAD_BOTTOM) return;
+  PAD_LEFT = n(left); PAD_RIGHT = n(right); PAD_TOP = n(top); PAD_BOTTOM = n(bottom);
+  if (!EMBED_USER) scheduleFitAll();
+};
+function embedFocus(points, zoomOverride) {
   if (!document.body.classList.contains('embed') || !points.length) return;
   const lngs = points.map(p => p.lng), lats = points.map(p => p.lat);
   const span = Math.max((Math.max(...lngs) - Math.min(...lngs)) * 0.79, Math.max(...lats) - Math.min(...lats));
-  const zoom = points.length > 1 ? Math.min(13.2, Math.max(10.5, Math.log2(0.6 / Math.max(span, 0.01)) + 9.0)) : 12.6;
+  const zoom = zoomOverride ?? (points.length > 1 ? Math.min(13.2, Math.max(10.5, Math.log2(0.6 / Math.max(span, 0.01)) + 9.0)) : 12.6);
   let lng = (Math.min(...lngs) + Math.max(...lngs)) / 2, lat = (Math.min(...lats) + Math.max(...lats)) / 2;
   const w = window.innerWidth, h = window.innerHeight;
-  if (PAD_RIGHT > 0 && w > PAD_RIGHT + 200) {
-    // 화면 가운데에서 오른쪽으로 패널 폭의 절반 떨어진 점을 새 가운데로 → 목표가 가려지지 않은 부분의 가운데에 온다(기울기·방향 반영)
-    try { [lng, lat] = new deck.WebMercatorViewport({ width: w, height: h, longitude: lng, latitude: lat, zoom, pitch: 55, bearing: -18 }).unproject([w / 2 + PAD_RIGHT / 2, h / 2]); }
+  if ((PAD_RIGHT > 0 || PAD_LEFT > 0 || PAD_TOP > 0 || PAD_BOTTOM > 0) && w > PAD_LEFT + PAD_RIGHT + 200 && h > PAD_TOP + PAD_BOTTOM + 120) {
+    // 가려지지 않은 영역의 가운데(fx, fy)에 목표가 오게 한다. 목표를 화면 가운데에 둔 보기에서 (w-fx, h-fy) 지점을 새 가운데로 삼으면 된다
+    // (오른쪽 여백만 있을 땐 w/2 + PAD_RIGHT/2로 예전 식과 같다). 기울기·방향 반영.
+    const fx = (PAD_LEFT + (w - PAD_RIGHT)) / 2, fy = (PAD_TOP + (h - PAD_BOTTOM)) / 2;
+    try { [lng, lat] = new deck.WebMercatorViewport({ width: w, height: h, longitude: lng, latitude: lat, zoom, pitch: 55, bearing: -18 }).unproject([w - fx, h - fy]); }
     catch (e) { /* 계산 실패면 가운데 그대로 */ }
   }
   EMBED_FOCUS = { longitude: lng, latitude: lat, zoom, pitch: 55, bearing: -18 };
@@ -53,6 +63,21 @@ let EMBED_USER = false;   // 사람이 지도를 한 번이라도 만졌으면 �
 ['pointerdown', 'touchstart', 'wheel'].forEach(t => document.getElementById('map').addEventListener(t, () => { EMBED_FOCUS = null; EMBED_USER = true; }, { passive: true }));
 // 앱이 부르는 함수 — 상황판 사건 목록을 누르면 그 현장으로(아이패드 SpiderWebView의 spiderFocus)
 window.focusPoint = (lat, lng) => embedFocus([{ lat, lng }]);
+// 관제 화면(2026-11-01): 점들이 가려지지 않은 영역에 꼭 맞게 확대한다 — 이동 경로가 짧으면 더 가까이, 길면 더 멀리.
+// (embedFocus의 예전 식은 아이패드 화면 크기에 맞춘 고정 범위 10.5~13.2라 짧은 경로가 작게 보였다.)
+// 가려지지 않은 영역의 폭·높이에 점들의 경도·위도 폭이 70% 안에 들어오는 가장 큰 줌을 고른다(위도는 메르카토르 보정, 기울기 55°는 세로를 넉넉히 잡는다).
+window.focusPoints = points => {
+  if (!points || !points.length) return;
+  const w = window.innerWidth, h = window.innerHeight;
+  const fw = Math.max(200, w - PAD_LEFT - PAD_RIGHT), fh = Math.max(160, h - PAD_TOP - PAD_BOTTOM);
+  const lngs = points.map(p => p.lng), lats = points.map(p => p.lat);
+  const spanLng = Math.max(...lngs) - Math.min(...lngs), spanLat = Math.max(...lats) - Math.min(...lats);
+  const cosLat = Math.cos(((Math.max(...lats) + Math.min(...lats)) / 2) * Math.PI / 180);
+  let zoom = points.length > 1 ? 15.2 : 14.2;   // 점이 하나면 현장 주변 골목이 보이는 크기, 짧은 경로는 경로가 화면에 꽉 차게(위 상한은 아래 clamp와 같다)
+  const fit = (px, span, k) => (span > 1e-5 ? Math.log2(0.7 * px * 360 * k / (512 * span)) : 99);
+  zoom = Math.min(zoom, fit(fw, spanLng, 1), fit(fh * 1.3, spanLat, cosLat));
+  embedFocus(points, Math.max(9.5, Math.min(15.2, zoom)));
+};
 
 // ── 보기 유지(2026-10-15): 앱에서 구급차 화면 ↔ 상황판을 오가면 지도가 새로 열려 처음 보기로 돌아갔다. 줌·기울기·방향(상황판은 중심까지)을
 // 이 기기에 저장해 다시 열 때 그대로 띄운다. 구급차 화면은 중심을 내 구급차로 두고 줌·기울기만 이어 간다.

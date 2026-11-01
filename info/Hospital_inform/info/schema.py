@@ -298,6 +298,10 @@ class HospitalInfo(Strict):
         description="E-Gen 응급의료기관 등급(dutyEmclsName): 권역응급의료센터/지역응급의료센터/"
         "지역응급의료기관/응급실운영신고기관. hub가 중증 환자 가산에 쓴다(2026-10-01)",
     )
+    erPhone: Optional[str] = Field(
+        default=None,
+        description="응급실 전화번호(E-Gen dutyTel3, 없으면 대표 dutyTel1). 관제의 '전화 확인'용(2026-11-01)",
+    )
     bedsByType: Optional[dict[str, int]] = Field(
         default=None,
         description="병상 종류별 가용 수. 성인/소아 분기의 핵심. 미상인 종류는 키를 넣지 않는다",

@@ -72,6 +72,36 @@ def rejection_summary():
     return R.summarize(R.load_all()), 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
+@rejection_bp.get("/hub/rejection/stats")
+def rejection_stats():
+    """관제 화면용 JSON 집계(2026-11-01). 사유·축별 건수와 거절이 잦은 병원. ?days=N(기본 30)으로 최근 N일만."""
+    from collections import Counter
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        days = max(1, min(int(request.args.get("days", 30)), 365))
+    except ValueError:
+        days = 30
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    # 데모 표식 로그는 제외 — 실제 운영 통계처럼 보이면 안 된다. 테스트가 섞인 기록은 걸러지지 않으므로 화면에 건수를 함께 보인다.
+    records = [r for r in R.load_all() if not r.get("demo") and not (r.get("extra") or {}).get("demo")
+               and str(r.get("timestamp", "")) >= since]
+    # 무응답은 수용 능력이 아니라 '채널'의 정보라 거절 사유와 섞지 않고 따로 센다(CLAUDE.md 무응답 소비 지침)
+    no_response = sum(1 for r in records if r.get("reasonCode") == "NO_RESPONSE")
+    records = [r for r in records if r.get("reasonCode") != "NO_RESPONSE"]
+    by_reason = Counter(r.get("reasonCode", "UNSPECIFIED") for r in records)
+    by_hospital = Counter(r.get("hospitalId") for r in records if r.get("hospitalId"))
+    return jsonify({
+        "days": days,
+        "total": len(records),
+        "noResponse": no_response,
+        "byAxis": dict(Counter(r.get("axis", "unknown") for r in records)),
+        "byReason": [{"code": c, "axis": R.REASON_AXIS.get(c, ("unknown", ""))[0], "desc": R.REASON_AXIS.get(c, ("", ""))[1], "count": n}
+                     for c, n in by_reason.most_common()],
+        "topHospitals": [{"hospitalId": h, "count": n} for h, n in by_hospital.most_common(5)],
+    })
+
+
 #: 시연용 재생 로그를 이 주기로 다시 만든다 — 그 사이 쌓인 스냅샷이 반영된다(생성 수 초)
 REPLAY_REFRESH_SEC = 3600
 _replay_lock = threading.Lock()

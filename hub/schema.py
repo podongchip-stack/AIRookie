@@ -270,6 +270,8 @@ class HospitalInfo(BaseModel):
     # E-Gen 응급의료기관 등급(dutyEmclsName, 2026-10-01): 권역응급의료센터/지역응급의료센터/
     # 지역응급의료기관/응급실운영신고기관. 중증 환자 가산(scoring.LEVEL_BONUS_MIN)에 쓴다.
     emergencyLevel: Optional[str] = None
+    # 응급실 전화번호(2026-11-01) — 관제 '전화 확인'용. 순위·매칭에는 안 쓴다.
+    erPhone: Optional[str] = None
     # feature/info는 병상 수가 미상일 때 availableBedCount에 0을 넣되, bedsByType에
     # 해당 코드(ER_ADULT 등) 키를 넣지 않는 것으로 "미상"과 "확인된 만실"을 구분한다
     # (info/Hospital_inform/info/egen/mapper.py의 build_beds_by_type 참고).
@@ -658,7 +660,8 @@ ApprovalActionType = Literal[
     "hospital_approve", "hospital_reject", "final_approval", "arrival_accepted", "arrival_refused",
     "transport_withdraw",
 ]
-Actor = Literal["hospital", "paramedic"]
+# dispatcher(2026-11-01): 관제가 구급대원 대신 보내는 이송 승인(final_approval)만 — 관제(monitor) 소켓에서만 받는다
+Actor = Literal["hospital", "paramedic", "dispatcher"]
 
 
 class ApprovalAction(BaseModel):
@@ -813,6 +816,7 @@ class MapHospital(BaseModel):
     name: str
     gps: GpsPoint
     emergencyLevel: Optional[str] = None
+    erPhone: Optional[str] = None
     # 이 병원으로 지금 이송 중(확정, TTL 오버레이)인 건수(2026-10-03) — 관제 지도가
     # "이 병원에 N건 몰리는 중"을 보여주는 재료. 확정·도착 결과 때마다 overview가 다시 간다.
     inFlightCount: int = 0

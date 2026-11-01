@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -36,7 +36,7 @@ from routing import KakaoRouting
 from geo import ZONE_BAND_KM, haversine_km, zone_of
 from scoring import DEFAULT_MIN_PER_KM
 from hub_engine import HubEngine, _is_bed_count_unknown
-from case_history import CaseTracker
+from case_history import CaseTracker, query_archive
 from record_archive import RecordArchive
 from schema import (
     AmbulanceInfo,
@@ -571,6 +571,39 @@ def get_verification():
     return response, status
 
 
+@app.get("/case-archive")
+def get_case_archive():
+    """관제 '지난 사건' 모달의 날짜·검색 조회(2026-11-01). 계약은 dashboard/src/lib/case-archive.ts 머리말."""
+    today = datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+    except ValueError:
+        limit = 200
+    body = query_archive(case_tracker._archive_path, request.args.get("from") or today, request.args.get("to") or today,
+                         request.args.get("q", ""), request.args.get("result", "all"), limit)
+    response = jsonify(body)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+
+@app.get("/rejection-stats")
+def get_rejection_stats():
+    """관제 화면용 거절 사유 집계(2026-11-01). info 거절 로그 수신구(5003)의 JSON을 그대로 중계하고, 병원 이름만 붙인다."""
+    url = HUB_REJECTION_URL.rsplit("/hub/rejection", 1)[0] + "/hub/rejection/stats"
+    try:
+        upstream = requests.get(url, params={"days": request.args.get("days", "30")}, timeout=10)
+        upstream.raise_for_status()
+        body = upstream.json()
+        for item in body.get("topHospitals", []):
+            info = engine.get_hospital(item["hospitalId"])
+            item["name"] = info.name if info else item["hospitalId"]
+        response, status = jsonify(body), 200
+    except (requests.RequestException, ValueError) as e:
+        response, status = jsonify({"error": f"거절 집계를 가져오지 못했습니다(거절 로그 수신구 5003): {e}"}), 503
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response, status
+
+
 @app.get("/verification/live")
 def get_verification_live():
     """라이브 채점 보드(2026-10-03). info 수신구(5003)의 reliability.live_board가 실제 서빙
@@ -891,7 +924,7 @@ def _build_map_overview() -> dict:
         ambulances.append(MapAmbulance(apid=info.apid, name=info.name, gps=gps, base=info.gps))
     return MapOverview(
         hospitals=[
-            MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel,
+            MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel, erPhone=h.erPhone,
                         inFlightCount=engine.in_flight_count(h.hospitalId),
                         availableBedCount=engine.effective_bed_count(h),
                         bedCountUnknown=_is_bed_count_unknown(h))
@@ -1581,6 +1614,21 @@ def _send_selection_released(case_id: str, result, timestamp: str) -> None:
     })
 
 
+def _send_dispatcher_notice(case_id: str, kind: str, hospital, timestamp: str) -> int:
+    """관제가 구급대원 대신 한 일을 그 사건의 구급차 화면에 알린다(2026-11-01). 전달한 소켓 수를 돌려준다.
+    메시지: dispatcher_notice {caseId, kind, hospitalId, hospitalName, timestamp} — kind는 지금 "transport_confirmed"뿐,
+    구급 앱이 모르는 type은 버리므로 먼저 보내도 안전하다. 구급 화면이 안 떠 있으면 0(로그에 남아 나중에 셀 수 있다)."""
+    apid = engine.get_case_apid(case_id)
+    payload = {"type": "dispatcher_notice", "caseId": case_id, "kind": kind, "hospitalId": hospital.hospitalId,
+               "hospitalName": hospital.name, "timestamp": timestamp}
+    with _sockets_lock:
+        targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and apid and id_ == apid]
+    for ws in targets:
+        _send_to_socket(ws, payload, "관제 알림")
+    decision_log.log_decision("dispatcher_notice", {**payload, "apid": apid, "delivered": len(targets)})
+    return len(targets)
+
+
 def _rejection_payload(case_id: str, hospital_id: str, timestamp: str, reason_code: str) -> dict:
     """feature/info 거절 로그 수신구가 받는 형태로 조립한다. 필수는 hospitalId
     하나뿐이고(수신구가 관대하게 받는다), 나머지는 사건 캐시에서 best-effort로
@@ -1760,6 +1808,12 @@ def _notify_refused(ws, case_id: str | None, reason: str) -> None:
         _send_to_socket(ws, {"type": "action_refused", "caseId": case_id, "reason": reason}, "조작 거부")
 
 
+def _notify_result(ws, case_id: str | None, action: str, ok: bool, reason: str | None = None) -> None:
+    """관제 개입의 결과를 누른 소켓에만 알린다(2026-11-01) — 요청이 받아들여졌는지 화면에서 알 수 있게."""
+    if ws is not None:
+        _send_to_socket(ws, {"type": "action_result", "caseId": case_id, "action": action, "ok": ok, "reason": reason}, "조작 결과")
+
+
 def _handle_dashboard_action(payload: dict, ws=None) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
     구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
@@ -1777,6 +1831,12 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
     if _case_paused(action.caseId):
         decision_log.log_decision("approval_action_refused", {"action": action.model_dump(), "reason": "paused"})
         _notify_refused(ws, action.caseId, "paused")
+        return
+
+    # dispatcher는 관제(monitor) 소켓만 쓸 수 있다 — 아무 탭이나 actor만 바꿔 관제를 사칭하지 못하게(인증이 생기기 전 최소 방어)
+    if action.actor == "dispatcher" and ws is not None and _socket_identity.get(ws, (None, None))[0] != "monitor":
+        decision_log.log_decision("approval_action_refused", {"action": action.model_dump(), "reason": "dispatcher requires monitor socket"})
+        _notify_refused(ws, action.caseId, "not_dispatcher")
         return
 
     # 승인 액션도 사건의 "활동"이다 — 미결 sweep의 유휴 판정 기준을 갱신한다.
@@ -1829,6 +1889,8 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
     applied = engine.apply_approval_action(action)
     if applied:
         _archive_call("action", action.model_dump(), engine.get_case_apid(action.caseId))
+    if action.actor == "dispatcher":
+        _notify_result(ws, action.caseId, action.action, bool(applied), None if applied else "refused")
     # spider 매칭 규칙(2026-10-15): 승인·확정·도착 결과로 부하·줄 길이가 바뀌면 다른 사건의 순위·τ 창 표시를 다시 맞춘다
     if applied:
         _match_executor.submit(_refresh_active_cases)
@@ -1864,6 +1926,11 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
         # 이송이 확정됐으면 승인했지만 선택되지 않은 병원들에 즉시 알린다(2026-10-22, 임상 자문 요구).
         if action.action == "final_approval" and applied:
             _send_selection_released(action.caseId, updated_result, action.timestamp)
+            if action.actor == "dispatcher":
+                confirmed = next((h for h in updated_result.hospitals if h.status == "confirmed"), None)
+                if confirmed is not None:
+                    delivered = _send_dispatcher_notice(action.caseId, "transport_confirmed", confirmed, action.timestamp)
+                    _notify_result(ws, action.caseId, "dispatcher_notice", delivered > 0, None if delivered else "no_ambulance_screen")
     if action.action == "arrival_accepted" and applied:
         # 환자 수용으로 이송이 끝났다 — 두 대시보드에서 이 사건(병원 후보·수용 요청·통화 요약)을 지운다
         # (2026-10-01). 엔진에는 기록·병상 차감 때문에 확정 60분 동안 남지만, 따라잡기에서도 빠진다.
@@ -2319,8 +2386,9 @@ def dashboard_socket(ws):
                     continue
                 if _case_paused(expand.caseId):
                     _notify_refused(ws, expand.caseId, "paused")
+                    _notify_result(ws, expand.caseId, "zone_expand_now", False, "paused")
                     continue
-                _match_executor.submit(_expand_case_zone, expand.caseId, "manual")
+                _match_executor.submit(_expand_and_report, expand.caseId, ws)
             elif "action" in payload:
                 _handle_dashboard_action(payload, ws)
     finally:
@@ -2469,7 +2537,8 @@ def _handle_sim_command(payload: dict) -> None:
 
 #: 관제 지도용 사건 기록(2026-10-04) — 사건 번호·시작 시각·증상·병원별 응답 시각·진행 과정·오늘 종료 사건.
 #: 매칭 결과가 나갈 때마다(_send_to_dashboard) 직전과 비교해 이벤트를 만든다(case_history.py).
-case_tracker = CaseTracker()
+case_tracker = CaseTracker(archive_path=Path(os.environ.get("HUB_CASE_ARCHIVE_PATH")
+                                              or Path(__file__).resolve().parent / "data" / "logs" / "case_archive.jsonl"))
 
 
 # ── 시간 기반 존 확장(2026-10-04) ─────────────────────────────────────────────
@@ -2618,11 +2687,11 @@ def _pause_zone_timers(apid: str, pausing: bool) -> None:
             _send_to_dashboard(result.model_dump())
 
 
-def _expand_case_zone(case_id: str, cause: str) -> None:
+def _expand_case_zone(case_id: str, cause: str) -> str:
     """존을 한 단계 넓혀 같은 환자 정보로 다시 요청한다. cause: "timeout"(ZONE_EXPAND_SEC, 기본 60초) | "manual"(건너뛰기)."""
     result = engine.get_case_result(case_id)
     if result is None or not _zone_waiting(result.model_dump()):
-        return
+        return "not_waiting"
     label = f"{int(ZONE_EXPAND_SEC)}초 동안 수용 병원 없음" if cause == "timeout" else "관제 건너뛰기"
     case_tracker.note_expand_cause(case_id, label)
     gps, _ = _resolve_ambulance_gps(case_id)
@@ -2637,8 +2706,15 @@ def _expand_case_zone(case_id: str, cause: str) -> None:
         case_tracker.note_expand_cause(case_id, "")
         _send_to_dashboard(result.model_dump())
         print(f"  [존 확장] case={case_id} 더 넓힐 수 없음 — 시간 확장 멈춤")
-        return
+        return "max_zone"
     _send_to_dashboard(expanded.model_dump())
+    return "expanded"
+
+
+def _expand_and_report(case_id: str, ws) -> None:
+    """관제의 [존 확장 즉시 실행] — 넓혔는지, 못 넓혔다면 왜인지를 누른 소켓에 알린다."""
+    outcome = _expand_case_zone(case_id, "manual")
+    _notify_result(ws, case_id, "zone_expand_now", outcome == "expanded", outcome)
 
 
 def _zone_timer_loop() -> None:

@@ -116,6 +116,8 @@ if(new URLSearchParams(location.search).get('embed')==='1') document.body.classL
 </script>
 <script src="vendor/maplibre-gl.js"></script>
 <script src="vendor/deck.gl.min.js"></script>
-<script src="app.js"></script>
-<script src="live.js"></script>
+<!-- 공개 도메인(Cloudflare)이 .js를 브라우저에 4시간 캐시하게 덮어써서, 고쳐도 바로 안 바뀐다(서버는 no-cache인데도). 파일을 고치면 아래 v=를 올리고
+     관제 화면(dashboard/src/app/map/page.tsx)의 SPIDER_BUILD도 같은 값으로 올린다 — 주소가 바뀌어야 새 파일을 받는다(2026-11-01). -->
+<script src="app.js?v=20261101c"></script>
+<script src="live.js?v=20261101c"></script>
 </body></html>

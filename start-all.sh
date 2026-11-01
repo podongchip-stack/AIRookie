@@ -3,7 +3,7 @@
 #
 # 도메인 하나(rookie-goldenlink.xyz)를 Cloudflare named 터널 하나로 나눠 쓴다:
 #
-#   https://app.rookie-goldenlink.xyz     /ws/dashboard, /identity, /route, /geocode, /verification, /hospital-backup → hub (127.0.0.1:5001)
+#   https://app.rookie-goldenlink.xyz     /ws/dashboard, /identity, /route, /geocode, /verification, /rejection-stats, /case-archive, /hospital-backup → hub (127.0.0.1:5001)
 #                                         /spider/*                  → spider 거미줄 3D (127.0.0.1:2700, spider/ 폴더가 있을 때만)
 #                                         그 밖의 모든 경로           → dashboard (127.0.0.1:3000)
 #   https://lidar.rookie-goldenlink.xyz   전체                        → lidar3d   (127.0.0.1:8000)
@@ -354,7 +354,7 @@ if [ "$MODE" = public ]; then
     echo "# start-all.sh가 실행할 때마다 새로 쓴다 — 직접 고치지 말고 스크립트를 고칠 것"
     echo "ingress:"
     echo "  - hostname: $APP_HOST"
-    echo "    path: ^/(ws/dashboard|identity|route|geocode|verification|hospital-backup)"
+    echo "    path: ^/(ws/dashboard|identity|route|geocode|verification|rejection-stats|case-archive|hospital-backup)"
     echo "    service: http://127.0.0.1:$HUB_PORT"
     if [ "$RUN_SPIDER" = 1 ]; then
       echo "  - hostname: $APP_HOST"

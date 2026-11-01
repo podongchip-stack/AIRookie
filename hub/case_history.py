@@ -11,8 +11,10 @@
 """
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Optional
 
 KST = timezone(timedelta(hours=9))
@@ -43,8 +45,10 @@ def _iso(at: datetime) -> str:
 
 
 class CaseTracker:
-    def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
+    def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+                 archive_path: Optional[Path] = None) -> None:
         self._clock = clock
+        self._archive_path = archive_path  # 종료 사건을 날짜 제한 없이 쌓는 JSONL — None이면 안 쌓는다(테스트 기본)
         self._lock = threading.Lock()
         self._meta: dict[str, dict] = {}          # caseId -> {num, startedAt, symptom, severity, apid, ambulanceName}
         self._events: dict[str, list[dict]] = {}  # caseId -> [{t, kind, text}]
@@ -192,12 +196,24 @@ class CaseTracker:
                 "events": events,
             }
             self._history.insert(0, item)
+            self._archive(item)
             today = now.astimezone(KST).date()
             self._history = [
                 h for h in self._history
                 if datetime.fromisoformat(h["endedAt"]).astimezone(KST).date() == today
             ][:HISTORY_LIMIT]
             return dict(item)
+
+    def _archive(self, item: dict) -> None:
+        """종료 사건 한 건을 영구 기록에 덧붙인다(2026-11-01). 실패해도 사건 종료는 막지 않는다."""
+        if self._archive_path is None:
+            return
+        try:
+            self._archive_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._archive_path.open("a", encoding="utf-8") as fp:
+                fp.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            print(f"  [사건 이력] 영구 기록 실패: {exc}")
 
     def history(self) -> list[dict]:
         """오늘(KST) 종료된 사건, 최근 종료 순."""
@@ -220,6 +236,41 @@ class CaseTracker:
             self._num = int(state.get("num") or 0)
             self._meta = dict(state.get("meta") or {})
             self._events = {k: list(v) for k, v in (state.get("events") or {}).items()}
+
+
+def query_archive(path: Path, start: str, end: str, q: str = "", result: str = "all", limit: int = 200) -> dict:
+    """영구 기록에서 종료일(KST, 양끝 포함)·검색어·결과로 걸러 최근 종료 순으로 돌려준다.
+    stats는 limit과 무관하게 조건 전체 기준 — 대시보드 lib/case-archive.ts의 computeStats와 같은 식."""
+    items: list[dict] = []
+    if path.exists():
+        for line in path.open(encoding="utf-8"):
+            try:
+                items.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    q = q.strip().lower()
+    hit = []
+    for c in items:
+        day = datetime.fromisoformat(c["endedAt"]).astimezone(KST).date().isoformat()
+        if not (start <= day <= end) or (result != "all" and c.get("result") != result):
+            continue
+        if q and not any(q in str(c.get(k) or "").lower() for k in ("symptom", "ambulanceName", "hospital")):
+            continue
+        hit.append(c)
+    hit.sort(key=lambda c: c["endedAt"], reverse=True)
+    n = len(hit)
+    requested = sum(c["requested"] for c in hit)
+    dur = sum((datetime.fromisoformat(c["endedAt"]) - datetime.fromisoformat(c["startedAt"])).total_seconds() for c in hit)
+    stats = {
+        "total": n,
+        "done": sum(1 for c in hit if c.get("result") == "done"),
+        "cancel": sum(1 for c in hit if c.get("result") == "cancel"),
+        "avgDurationSec": dur / n if n else 0,
+        "avgRejected": sum(c["rejected"] for c in hit) / n if n else 0,
+        "rejectRate": sum(c["rejected"] for c in hit) / requested if requested else 0,
+        "zoneExpanded": sum(1 for c in hit if c.get("zone", 0) >= 2),
+    }
+    return {"cases": hit[:limit], "total": n, "stats": stats}
 
 
 def _selftest() -> None:
@@ -254,6 +305,16 @@ def _selftest() -> None:
     assert tracker.meta("c1") is None
     tracker.start("c2")
     assert tracker.meta("c2")["num"] == 2
+    import tempfile
+    arch = Path(tempfile.mkdtemp()) / "a.jsonl"
+    t2 = CaseTracker(clock=lambda: t[0], archive_path=arch)
+    t2.start("c9", "SEL0001", "역삼 구급 1", "high", "흉통")
+    t2.close("c9", "arrival_accepted")
+    day = t[0].astimezone(KST).date().isoformat()
+    r = query_archive(arch, day, day)
+    assert r["total"] == 1 and r["stats"]["done"] == 1 and r["cases"][0]["caseId"] == "c9", r
+    assert query_archive(arch, day, day, q="없는말")["total"] == 0
+    assert query_archive(arch, "2000-01-01", "2000-01-02")["total"] == 0
     print("case_history 자체 검사 통과:", " → ".join(e["text"] for e in item["events"]))
 
 

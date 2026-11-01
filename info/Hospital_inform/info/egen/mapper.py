@@ -432,6 +432,8 @@ def map_hospital(
         nightDutyAvailable=bool(capabilities),
         specialties=build_specialties(capabilities, hira_rows),
         emergencyLevel=(location_row.get("dutyEmclsName") or "").strip() or None,
+        erPhone=next((v for k in ("dutyTel3", "dutyTel1") for r in (bed_row, location_row)
+                      if (v := (r.get(k) or "").strip())), None),
         updatedAt=parse_hvidate(bed_row.get("hvidate")) or fallback_ts,
         bedsByType=beds_by_type or None,
         bedCapacityByType=build_bed_capacity(bed_row) or None,
