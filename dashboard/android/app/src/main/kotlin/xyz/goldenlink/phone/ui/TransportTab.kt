@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -27,6 +28,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,6 +42,10 @@ import kotlin.math.roundToInt
 // 순위는 hub가 정한 순서 그대로다(앱이 다시 정렬하지 않는다). 병원이 수용 승인한 병원에만 [이송 승인]이 열린다 — 최종 결정은 구급대원이다.
 
 private val approveColor = Color(0xFFB45309)
+
+/** 목록과 배지는 같은 승인 상태를 센다. 이송 확정 병원도 수용 승인한 병원에 포함한다. */
+private fun xyz.goldenlink.core.MatchResult.acceptedHospitals(): List<MatchHospital> =
+    hospitals.filter { it.status == "approved" || it.status == "confirmed" }
 
 /** 지금 이 환자를 실제로 보낼 수 있는 승인 병원인가 — 아이패드 HospitalRules.canTransportNow와 같은 규칙 */
 fun canTransportNow(h: MatchHospital): Boolean {
@@ -59,20 +65,26 @@ fun TransportTab(m: PhoneModel) {
     }
     val now = nowEverySecond()
     val confirmed = m.confirmed
+    val candidates = r.acceptedHospitals()
+    if (candidates.isEmpty()) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentAlignment = Alignment.Center) {
+            Text("수용 승인한 병원이 아직 없습니다. 병원 응답을 기다리고 있습니다.", fontSize = 14.sp, color = AD.sub, textAlign = TextAlign.Center)
+        }
+        return
+    }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("후보 병원", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = AD.navy)
-                    val ok = r.hospitals.count { canTransportNow(it) }
-                    Text(if (confirmed != null) "이송 확정 · ${confirmed.name}" else "${r.hospitals.size}곳 · 승인 ${ok}곳", fontSize = 12.sp,
+                    Text(if (confirmed != null) "이송 확정 · ${confirmed.name}" else "수용 승인 ${candidates.size}곳", fontSize = 12.sp,
                         color = if (confirmed != null) AD.green else AD.ink3, fontWeight = if (confirmed != null) FontWeight.Bold else FontWeight.Normal)
                 }
                 Text(if (m.inTransport) "이송 중에도 새로 승인한 병원이 있으면 다시 고를 수 있습니다." else "병원이 수용을 승인하면 [이송 승인]이 열립니다. 순서는 hub가 정한 그대로입니다.",
                     fontSize = 11.5.sp, color = AD.sub)
             }
         }
-        items(r.hospitals, key = { it.hospitalId }) { h ->
+        items(candidates, key = { it.hospitalId }) { h ->
             CandidateCard(m, h, recommended = confirmed == null && h.hospitalId == r.hospitals.firstOrNull { canTransportNow(it) }?.hospitalId, now = now)
         }
         item { Spacer(Modifier.height(8.dp)) }
@@ -236,15 +248,11 @@ private fun ActionButton(m: PhoneModel, h: MatchHospital, confirmedHere: Boolean
     }
 }
 
-/** 아래 탭 — [통화 | 환자 정보 | 이송]. 이송 칸엔 병원 응답 배지(승인 수, 없으면 후보 수)를 붙여 다른 탭에서도 응답이 온 걸 안다 */
+/** 아래 탭 — 이송 목록에 표시되는 수용 승인 병원 수만 배지로 표시한다. 승인 전에는 숨긴다. */
 @Composable
 fun TabBar(m: PhoneModel) {
-    val r = m.result
-    val badge: Pair<String, Color>? = when {
-        r == null -> m.scene?.let { it.hospitals.size.toString() to AD.gray }
-        m.confirmed != null -> "확정" to AD.green
-        else -> r.hospitals.count { canTransportNow(it) }.let { ok -> if (ok > 0) "승인 $ok" to AD.green else r.hospitals.size.toString() to AD.orange }
-    }
+    val ok = m.result?.acceptedHospitals()?.size ?: 0
+    val badge: Pair<String, Color>? = if (ok > 0) "승인 $ok" to AD.green else null
     Row(Modifier.fillMaxWidth().clip(CircleShape).background(AD.chip).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         for ((tab, title) in listOf(PhoneModel.Tab.CALL to "통화", PhoneModel.Tab.PATIENT to "환자 정보", PhoneModel.Tab.TRANSPORT to "이송", PhoneModel.Tab.RECORDS to "기록")) {
             val on = m.tab == tab

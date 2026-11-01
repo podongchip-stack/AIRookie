@@ -48,11 +48,23 @@ class PatientTest {
         assertEquals("확인불가(62세)", v["patientBirth"])
         assertEquals("응급", v["severity"])
         assertEquals("P", v["avpu"])
-        assertEquals("산소투여", v["careBreathing"])
-        assertEquals("모니터링", v["careCirculation"])
+        assertEquals("산소 투여", v["careBreathing"])
+        assertEquals("ECG", v["careCirculation"])
         assertEquals("위도 37.50000, 경도 127.00000", v["originAddress"])
         // "[처치]"로 시작하는 추가 정보는 기타 소견에 또 적지 않는다
         assertEquals("증상: 흉통\n발생: 30분 전부터\n추가: 보호자 동승", v["notes"])
+    }
+
+    @Test
+    fun treatmentsFillHandoverWithoutLosingStatus() {
+        val p = PatientInfo(treatment = listOf("산소투여(비관)", "CPR", "AED", "정맥로 확보", "수액공급", "지혈", "아스피린 투여", "척추 고정", "부목 고정", "상처처치 거부"))
+        val v = Handover.auto(p, null, null, null, emptyMap(), null, null)
+        assertEquals("산소투여(비관)", v["careBreathing"])
+        assertTrue(v["careCirculation"]!!.contains("CPR"))
+        assertTrue(v["careCirculation"]!!.contains("지혈"))
+        assertEquals("아스피린 투여", v["careDrug"])
+        assertTrue(v["careFix"]!!.contains("부목 고정"))
+        assertTrue(v["careEtc"]!!.contains("거부"))
     }
 
     @Test

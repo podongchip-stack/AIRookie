@@ -39,7 +39,13 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /** 앱 설정(설정 화면에서 바꾼다). 기기에만 저장된다 — 아이폰 Settings.swift와 같은 항목·기본값 */
-class Settings(context: Context) {
+/** 이 기기에만 보관하는 문자열 저장소 — 기기 간 수정 동기화처럼 저장이 필요한 클래스가 PC 단위 테스트에서 가짜로 바꿔 쓸 수 있게 둔 얇은 틈 */
+interface KeyValueStore {
+    fun getString(key: String): String?
+    fun putString(key: String, value: String): Boolean
+}
+
+class Settings(context: Context) : KeyValueStore {
     private val p: SharedPreferences = context.getSharedPreferences("goldenlink", Context.MODE_PRIVATE)
 
     /** hub 주소. 로컬 모드 `http://<PC IP>:5001`, 공개 모드 `https://app.rookie-goldenlink.xyz` */
@@ -78,6 +84,10 @@ class Settings(context: Context) {
         if (caseId == null) return
         p.edit().putString("handover-$caseId", hubJson.encodeToString(MapSerializer(String.serializer(), String.serializer()), edits)).apply()
     }
+
+    /** 이 기기에만 보관하는 문자열 값(동기화 키·기기 간 수정 대기열 등 다른 클래스가 쓰는 자리) */
+    override fun getString(key: String): String? = p.getString(key, null)
+    override fun putString(key: String, value: String): Boolean = p.edit().putString(key, value).commit()
 
     val httpBase: String get() = hubBase.trim().trimEnd('/')
 

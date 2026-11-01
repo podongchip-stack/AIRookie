@@ -272,6 +272,7 @@ private fun BodyEditDialog(m: PhoneModel, mark: BodyMark, v: BodyView, onClose: 
     val fromCall = mark in v.callMarks
     var on by remember { mutableStateOf(v.tiers.containsKey(mark)) }
     val cares = remember { mutableStateListOf<String>().apply { addAll(m.bodyEdits.cares[mark] ?: emptyList()) } }
+    val sharedBase = remember { m.caseEdits.fields }  // 연 시점의 공유 값 — 다른 기기가 그사이 같은 부위를 고쳤는지 비교하는 기준
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.safeDrawingPadding().padding(12.dp).clip(cardShape).background(AD.white).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -299,7 +300,7 @@ private fun BodyEditDialog(m: PhoneModel, mark: BodyMark, v: BodyView, onClose: 
                 }
             }
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(AD.blue)
-                .clickable { m.bodyEdits = m.bodyEdits.applied(mark, on, cares.toList(), fromCall); onClose() },
+                .clickable { m.bodyEdits = m.bodyEdits.applied(mark, on, cares.toList(), fromCall); m.shareBody(mark, sharedBase); onClose() },
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Text("적용", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }

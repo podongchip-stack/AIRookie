@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.GraphicEq
@@ -49,9 +51,11 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -64,6 +68,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,12 +76,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -87,8 +95,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import xyz.goldenlink.core.AmbulancePhase
+import xyz.goldenlink.core.RoadRoute
+import xyz.goldenlink.core.GPS
 import xyz.goldenlink.core.SceneCandidate
 import xyz.goldenlink.phone.CallSession
+import xyz.goldenlink.phone.CaseEditSync
 import xyz.goldenlink.phone.HubSocket
 import xyz.goldenlink.phone.PhoneModel
 import kotlin.math.PI
@@ -198,6 +209,7 @@ fun PhoneApp(m: PhoneModel) {
             Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp).padding(top = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Header(m) { showSettings = true }
+                CaseEditStatusView(m.caseEdits, onlyPending = true)
                 // 통화가 진행 중이거나 끝난 직후엔 탭과 상관없이 통화 화면(예전 그대로) — 통화 중에 화면이 바뀌면 안 된다
                 val inCallFlow = m.call != null
                 Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -224,6 +236,21 @@ fun PhoneApp(m: PhoneModel) {
         m.error?.let { e ->
             AlertDialog(onDismissRequest = { m.error = null }, confirmButton = { TextButton({ m.error = null }) { Text("확인") } },
                 title = { Text("알림") }, text = { Text(e) })
+        }
+    }
+}
+
+/** 기기 간 수정 동기화 상태 — onlyPending이면 보낼 수정이 남았거나 충돌일 때만 보인다 */
+@Composable
+fun CaseEditStatusView(sync: CaseEditSync, onlyPending: Boolean = false) {
+    if (onlyPending && sync.pendingCount == 0 && sync.conflicts.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(sync.status, fontSize = 12.sp, color = if (sync.conflicts.isEmpty()) AD.sub else AD.orange)
+        if (sync.conflicts.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("서버 값 사용", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AD.blue, modifier = Modifier.clickable { sync.resolve(false) })
+                Text("내 수정으로 다시 저장", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AD.blue, modifier = Modifier.clickable { sync.resolve(true) })
+            }
         }
     }
 }
@@ -255,11 +282,10 @@ private fun Content(m: PhoneModel) {
     val status = m.status
     when {
         call != null && call.phase != PhoneModel.LocalCall.Phase.ENDED -> InCallView(m, call)
-        call?.phase == PhoneModel.LocalCall.Phase.ENDED -> if (m.delivered) CallMapScreen(m, delivered = true) else EndedView(m)
+        call?.phase == PhoneModel.LocalCall.Phase.ENDED -> EndedView(m)
         status != null && status.state == "calling" -> StatusPanel(Icons.Filled.Phone, AD.green,
             "${if (status.device == "phone") "다른 휴대폰" else "구급차 대시보드"}에서 통화 중",
             "${status.hospitalName ?: "병원"}과 통화하고 있습니다. 통화가 끝나면 다시 걸 수 있습니다.")
-        m.inTransport -> TransportCallView(m)
         else -> Waiting(m)
     }
 }
@@ -277,20 +303,23 @@ private fun Waiting(m: PhoneModel) {
 
 // ── 지도 화면 (통화 탭 기본) ──
 
-/** 지도가 배경. 출동 중엔 현장까지 선과 ETA, 현장에선 Pre-KTAS → 사건 현장에서 가장 가까운 병원 → 전화, 통화가 전달되면 후보 병원으로 날아가는 애니메이션 */
+/** 지도가 배경. 출동 중엔 현장까지 선과 ETA, 현장에선 Pre-KTAS → hub가 추천한 KTAS 적합 병원 목록 → 전화, 병원 응답 중엔 활성 존 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CallMapScreen(m: PhoneModel, delivered: Boolean = false) {
+private fun CallMapScreen(m: PhoneModel) {
     val sim = m.mySim
     val ambulanceGps = sim?.gps ?: return
     val phase = m.phase
-    val sentMode = delivered || (m.onScene && m.sent && !m.wantsExtraCall)
+    val sentMode = m.onScene && m.sent && !m.wantsExtraCall
     val scene = m.scene?.hospitals ?: emptyList()
     // 현장 후보는 hub 도착 시간순 — 전달된 뒤에는 실제로 정보가 간 병원(매칭 결과)을 쓴다
     val ordered = scene.filter { it.firstCallRecommended == true } + scene.filter { it.firstCallRecommended != true }
     var tappedId by remember(m.caseId) { mutableStateOf<String?>(null) }
-    // Pre-KTAS를 고르면 사건 현장에서 가장 가까운 병원(도로 거리, 없으면 직선)을 띄운다 — Pre-KTAS별 기준 차이는 아직 없다
-    val nearest = if (m.preKtas != null) ordered.minByOrNull { it.roadDistanceKm ?: it.distanceKm } else null
-    val target = ordered.firstOrNull { it.hospitalId == tappedId } ?: nearest
+    var showList by remember(m.caseId) { mutableStateOf(false) }
+    // KTAS 적합 여부는 hub 규칙(목록이 고른 Pre-KTAS 기준일 때만) — 그 안에서 hub가 추천한 병원이 첫 연락 대상
+    val eligible = if (m.preKtas != null && m.scene?.preKtas == m.preKtas) scene else emptyList()
+    val nearest = eligible.firstOrNull { it.firstCallRecommended == true }
+    val target = eligible.firstOrNull { it.hospitalId == tappedId } ?: nearest
 
     val hospitals: List<Pair<String, String>> =
         if (sentMode) m.result?.hospitals?.map { it.hospitalId to it.name } ?: emptyList() else if (m.onScene) ordered.map { it.hospitalId to it.name } else emptyList()
@@ -298,6 +327,10 @@ private fun CallMapScreen(m: PhoneModel, delivered: Boolean = false) {
         add(MapPin("ambulance", m.identity?.name ?: sim.apid, ambulanceGps, MapPin.Kind.AMBULANCE))
         // 사건 현장 글자는 출동 중에만 — 도착하면 뗀다
         sim.incident?.let { add(MapPin("incident", if (phase == AmbulancePhase.dispatching) "사건 현장" else "", it, MapPin.Kind.INCIDENT)) }
+        // 센터(출동 출발지·복귀 목적지) — 출동 중과 복귀 중에만
+        if (phase == AmbulancePhase.dispatching || phase == AmbulancePhase.returning) sim.base?.let { add(MapPin("base", "센터", it, MapPin.Kind.BASE)) }
+        // 이송 중엔 목적지(확정) 병원만 — 이름 칩과 함께
+        if (m.inTransport) m.destination?.let { d -> m.hospitalGps[d.hospitalId]?.let { add(MapPin(d.hospitalId, d.name, it, MapPin.Kind.SELECTED)) } }
         for ((id, name) in hospitals) {
             val gps = m.hospitalGps[id] ?: continue
             add(MapPin(id, name, gps, when {
@@ -308,34 +341,96 @@ private fun CallMapScreen(m: PhoneModel, delivered: Boolean = false) {
         }
     }
 
+    // 도로 경로 — hub 카카오 길찾기에서 남은 구간만. 경로가 없으면 출동 중에 한해 직선으로 대신한다
+    val route: List<GPS> = run {
+        val path = sim.path
+        val rest = if (path != null) RoadRoute.remaining(path, ambulanceGps.lat, ambulanceGps.lng).map { GPS(it[0], it[1]) } else emptyList()
+        if (rest.size >= 2) rest else sim.incident?.takeIf { phase == AmbulancePhase.dispatching }?.let { listOf(ambulanceGps, it) } ?: emptyList()
+    }
+    // 활성 존 — 병원 응답 단계(매칭 결과가 있을 때)에서만, 구급차 중심 5km 폭 단위
+    val zoneKm: Double? = if (m.onScene) 5.0 * m.activeZone else null
+    var recenter by remember { mutableIntStateOf(0) }
+    var overlayPx by remember { mutableIntStateOf(0) }
+    // 카메라를 다시 맞추는 때(아이폰과 같다): 출동·이송·복귀 중엔 사건·병원·도로 경로가 바뀔 때, 현장에선 응답 존이 생기거나 넓어질 때,
+    // 그 뒤엔 전화할 병원을 바꿀 때
+    val moving = phase == AmbulancePhase.dispatching || phase == AmbulancePhase.transporting || phase == AmbulancePhase.returning
+    val routeKey: Any? = if (moving) listOf(phase, sim.caseId, sim.hospitalId, sim.path?.size, sim.path?.lastOrNull()) else null
+    val zoneFitKey: Any? = if (zoneKm != null) listOf(m.caseId, zoneKm) else null
+    val sceneKey: Any? = if (m.onScene && !sentMode && target != null) listOf(m.caseId, m.preKtas, target.hospitalId) else null
+
     Box(Modifier.fillMaxSize().clip(cardShape)) {
-        CallMap(pins, route = phase == AmbulancePhase.dispatching, burstKey = if (delivered) 1 else 0,
-            onPin = { id -> if (m.onScene && !sentMode && scene.any { it.hospitalId == id }) tappedId = id }, modifier = Modifier.fillMaxSize())
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(10.dp).clip(cardShape).background(AD.white.copy(alpha = 0.96f))
+        CallMap(pins, route = route, zoneKm = zoneKm, recenter = recenter,
+            routeKey = routeKey, zoneFitKey = zoneFitKey, sceneKey = sceneKey, bottomOverlayPx = overlayPx,
+            onPin = { id -> if (m.onScene && !sentMode && eligible.any { it.hospitalId == id }) tappedId = id }, modifier = Modifier.fillMaxSize())
+        Icon(Icons.Filled.MyLocation, "내 위치", tint = AD.navy, modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(44.dp).clip(CircleShape)
+            .background(AD.white.copy(alpha = 0.96f)).border(1.dp, AD.line, CircleShape).clickable { recenter++ }.padding(10.dp))
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { overlayPx = it.height }.padding(10.dp).clip(cardShape).background(AD.white.copy(alpha = 0.96f))
             .border(1.dp, AD.line, cardShape).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if ((phase == AmbulancePhase.dispatching || phase == AmbulancePhase.transporting || phase == AmbulancePhase.returning) && (sim.path?.size ?: 0) <= 2) {
+                Text("도로 경로를 받지 못했습니다. hub의 경로 API 연결을 확인해 주세요.", fontSize = 11.sp, color = AD.orange)
+            }
             when {
+                m.inTransport -> TransportPanel(m)
                 sentMode -> {
                     val n = m.caseId?.let { m.sentCount[it] } ?: hospitals.size
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Icon(Icons.Filled.CheckCircle, null, tint = AD.green, modifier = Modifier.size(26.dp))
                         Text("후보 병원 ${n}곳에 전달됐습니다", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
                     }
-                    if (delivered) BigButton("확인", AD.blue) { m.dismissEnded() }
-                    else BigButton("추가 통화", AD.blue, Icons.Filled.AddIcCall) { m.wantsExtraCall = true }
+                    BigButton("추가 통화", AD.blue, Icons.Filled.AddIcCall) { m.wantsExtraCall = true }
                 }
                 m.onScene -> {
-                    PreKtasRow(m)
+                    PreKtasRow(m, onSelect = { tappedId = null; m.requestFirstCall(); showList = true })
                     target?.let { Text("${it.name} · ${distanceText(it)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AD.navy, maxLines = 1) }
                     if (m.wantsExtraCall) Text("추가 통화 닫기", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AD.ink3,
                         modifier = Modifier.clickable { m.wantsExtraCall = false })
-                    val enabled = target != null && !m.sceneCallBlocked
-                    BigButton("전화 걸기", if (enabled) AD.blue else AD.control, Icons.Filled.Call, enabled) { target?.let { m.dial(it) } }
                 }
                 else -> {
                     val eta = sim.etaSec?.let { max(1, ceil(it / 60).toInt()) }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Pill(phase.label, phaseColor(phase), phaseColor(phase).copy(alpha = 0.12f), bold = true)
                         if (phase == AmbulancePhase.dispatching && eta != null) Text("현장까지 약 ${eta}분", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showList) {
+        ModalBottomSheet(onDismissRequest = { showList = false }, containerColor = AD.white) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("병원 리스트", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = AD.navy)
+                Text("Pre-KTAS", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AD.navy, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                PreKtasRow(m, onSelect = { m.requestFirstCall() }, showsLabel = false)
+                Text("hub 추천순 · 다른 사건의 연락·이송을 반영합니다", fontSize = 12.sp, color = AD.sub)
+                when {
+                    m.scene?.preKtas != m.preKtas -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(color = AD.blue, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                            Text("KTAS 적합 병원을 확인하고 있습니다", fontSize = 13.sp, color = AD.sub)
+                        }
+                    }
+                    scene.isEmpty() -> Text("현재 탐색 범위에 KTAS 적합 병원이 없습니다", fontSize = 14.sp, color = AD.sub,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), textAlign = TextAlign.Center)
+                    else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(scene, key = { it.hospitalId }) { h ->
+                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AD.bg).padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text((if (h.firstCallRecommended == true) "추천 · " else "") + h.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
+                                    Text(distanceText(h), fontSize = 14.sp, color = AD.ink)
+                                    Text(h.firstCallReason ?: "선택한 KTAS 적합 후보", fontSize = 12.sp, color = AD.sub)
+                                    if (m.scene?.callAttempts?.contains(h.hospitalId) == true) Text("전화 미응답 이력", fontSize = 12.sp, color = AD.orange)
+                                }
+                                val enabled = !m.sceneCallBlocked && !m.paused && m.call == null
+                                Row(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(12.dp)).background(if (enabled) AD.blue else AD.control)
+                                    .clickable(enabled = enabled) { showList = false; m.dial(h) }.padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Icon(Icons.Filled.Call, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Text("전화", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -358,16 +453,16 @@ private fun distanceText(h: SceneCandidate): String {
     return h.etaMin?.let { "$dist · ETA ${it.roundToInt()}분" } ?: dist
 }
 
-/** 현장에서 구급대원이 먼저 매기는 Pre-KTAS(1~5) 선택 — 지금은 화면에만 두고 hub로는 보내지 않는다(전송 방식은 hub와 정한 뒤) */
+/** 현장에서 구급대원이 먼저 매기는 Pre-KTAS(1~5) 선택 — 고르면(같은 등급을 다시 눌러도) hub에 알려 KTAS 적합 병원 목록을 연다 */
 @Composable
-private fun PreKtasRow(m: PhoneModel) {
+private fun PreKtasRow(m: PhoneModel, onSelect: () -> Unit = {}, showsLabel: Boolean = true) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Pre-KTAS", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AD.navy, modifier = Modifier.padding(end = 4.dp))
+        if (showsLabel) Text("Pre-KTAS", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AD.navy, modifier = Modifier.padding(end = 4.dp))
         for (k in 1..5) {
             val on = m.preKtas == k
             Text("$k", fontSize = 16.sp, fontWeight = FontWeight.Black, color = if (on) Color.White else ktasColor(k), textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (on) ktasColor(k) else ktasSoft(k))
-                    .clickable { m.preKtas = if (on) null else k }.padding(vertical = 11.dp))
+                    .clickable { m.preKtas = k; onSelect() }.padding(vertical = 11.dp))
         }
     }
 }
@@ -390,7 +485,7 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
                 Text(call.hospitalName, fontSize = 22.sp, fontWeight = FontWeight.Black, color = AD.navy, textAlign = TextAlign.Center)
                 // 이송 중 추가 통화 — 통화 내용을 듣고 정보가 반영될 때까지 이동이 잠시 멈춘다
                 if (m.transportHeld) Pill("이송 잠시 멈춤 · 통화 내용 반영 뒤 다시 출발", AD.blue, AD.blueSoft, bold = true)
-                Text(if (connecting) "응급실 연결 중" else mmss((now - call.startedAt) / 1000), fontSize = 30.sp, fontWeight = FontWeight.Bold,
+                Text(if (connecting) "전화 응답 대기" else mmss((now - call.startedAt) / 1000), fontSize = 30.sp, fontWeight = FontWeight.Bold,
                     color = if (connecting) AD.muted else AD.ink)
                 LevelMeter(m.session?.level ?: 0f, active = !connecting)
             }
@@ -406,7 +501,7 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
             val state = rememberLazyListState()
             LaunchedEffect(lines.size) { if (lines.isNotEmpty()) state.animateScrollToItem(lines.size - 1) }
             if (lines.isEmpty()) {
-                Text(if (connecting) "곧 연결됩니다." else "말이 끊길 때마다 인식된 문장이 여기에 뜹니다.", fontSize = 13.sp, color = AD.muted)
+                Text(if (connecting) "병원 응답 대기 중입니다. 연결 후 녹음이 시작됩니다." else "말이 끊길 때마다 인식된 문장이 여기에 뜹니다.", fontSize = 13.sp, color = AD.muted)
             }
             LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 itemsIndexed(lines) { _, line ->
@@ -415,6 +510,8 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
                 }
             }
         }
+        if (connecting) Text("미응답 · 다음 병원", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.orange, textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().clickable { m.noAnswerNext() }.padding(vertical = 4.dp))
         // [취소]는 아무것도 보내지 않고, [전송]을 눌러야만 음성을 처리해 병원에 보낸다
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.weight(1f).height(72.dp).clip(cardShape).background(AD.redSoft).border(2.dp, AD.red, cardShape)
@@ -541,11 +638,11 @@ private fun StepRow(title: String, source: String, state: Step) {
 }
 
 @Composable
-private fun TransportCallView(m: PhoneModel) {
+private fun TransportPanel(m: PhoneModel) {
     val rerouting = m.phase == AmbulancePhase.rerouting
     val dest = m.destination
     val eta = m.mySim?.etaSec?.let { max(1, ceil(it / 60).toInt()) }
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxWidth()) {
         Card(border = if (rerouting) AD.red else AD.line, borderWidth = if (rerouting) 2.dp else 1.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -633,6 +730,7 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
     val s = m.settings
     var hub by remember { mutableStateOf(s.hubBase) }
     var apid by remember { mutableStateOf(s.apid) }
+    var recordToken by remember { mutableStateOf(m.recordAccess.token(s.apid.trim().uppercase().ifEmpty { "auto" })) }
     var onDevice by remember { mutableStateOf(s.onDevice) }
     var rms by remember { mutableStateOf(s.silenceRms) }
     var hold by remember { mutableStateOf(s.holdSec) }
@@ -646,6 +744,7 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
                 Text("적용", color = AD.blue, fontWeight = FontWeight.Bold, modifier = Modifier.clickable {
                     s.hubBase = hub
                     s.apid = apid.trim().ifEmpty { "auto" }
+                    if (!m.recordAccess.save(recordToken, s.apid.trim().uppercase())) return@clickable
                     s.onDevice = onDevice
                     s.silenceRms = rms
                     s.holdSec = hold
@@ -661,6 +760,11 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
                 OutlinedTextField(apid, { apid = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     label = { Text("구급차 ID (SEL0001 또는 auto)") },
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters))
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(recordToken, { recordToken = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("기록 동기화 키 (운영자 발급)") }, visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                Text("과거 기록은 같은 구급차 ID와 동기화 키가 있어야 내려받습니다. auto 모드 대신 소속 구급차 ID를 지정해 주세요.", fontSize = 11.sp, color = AD.sub)
             }
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {

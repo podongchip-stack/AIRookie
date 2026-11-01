@@ -46,7 +46,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -99,7 +102,9 @@ fun PatientTab(m: PhoneModel) {
     // 가운데(통화 요약)가 기본 — 왼쪽에 외상, 오른쪽에 인계확인서
     val pager = rememberPagerState(initialPage = 1) { PAGES.size }
     val scope = rememberCoroutineScope()
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val focus = LocalFocusManager.current
+    // 입력창·버튼의 탭은 그대로 두고, 그 밖을 누를 때만 키보드를 닫는다(아이폰 KeyboardDismissArea와 같다)
+    Column(Modifier.pointerInput(Unit) { detectTapGestures { focus.clearFocus() } }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         PageBar(pager.currentPage) { scope.launch { pager.animateScrollToPage(it) } }
         HorizontalPager(pager, Modifier.weight(1f), pageSpacing = 12.dp, verticalAlignment = Alignment.Top) { page ->
             when (page) {
@@ -145,13 +150,7 @@ private fun SummaryCard(m: PhoneModel, p: PatientInfo) {
     var showTranscript by remember { mutableStateOf(false) }
     Card {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text("통화 요약 · 구조화", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
-                }
-                Text("수정", color = AD.blue, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clip(CircleShape).background(AD.blueSoft).clickable { showEdit = true }.padding(horizontal = 14.dp, vertical = 7.dp))
-            }
+            Text("통화 요약 · 구조화", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Pill("AI 처리", AD.blue, AD.blueSoft, bold = true)
                 if (p.confirmedBy == "paramedic") Pill("구급대원 확인", AD.green, AD.greenSoft, bold = true)
@@ -200,13 +199,9 @@ private fun SummaryCard(m: PhoneModel, p: PatientInfo) {
                     }
                 }
             }
-            // 맞으면 한 번에 확인 — 수정 없이 hub에 "구급대원 확인"만 알린다
-            if (p.confirmedBy != "paramedic") {
-                Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(AD.green)
-                    .clickable { m.sendPatientOverride(null, null, null, null, null) },
-                    horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Text("맞습니다 · 확인", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                }
+            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(AD.blueSoft).clickable { showEdit = true },
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                Text("수정", color = AD.blue, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -280,7 +275,7 @@ private fun SummaryEditDialog(m: PhoneModel, p: PatientInfo, onClose: () -> Unit
 /** 통화 요약에 없는 것(보호자 동승·복용약·특이사항)을 구급대원이 적어 후보 병원들에 보낸다 */
 @Composable
 private fun ExtraNoteCard(m: PhoneModel, p: PatientInfo) {
-    var text by remember { mutableStateOf("") }
+    val text = m.extraNoteDraft
     // 인계확인서·외상 도해 처치는 각자 자리에서 따로 보이므로 여기서는 직접 적은 것만 센다
     val mine = (p.extraNotes ?: emptyList()).filter { !it.text.startsWith("[인계확인서]") && !it.text.startsWith("[처치]") }
     Card {
@@ -289,11 +284,11 @@ private fun ExtraNoteCard(m: PhoneModel, p: PatientInfo) {
                 Text("추가 정보", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
             }
             mine.takeLast(3).forEach { Text("· ${it.text}", fontSize = 12.sp, color = AD.ink3) }
-            OutlinedTextField(text, { text = it }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 4,
+            OutlinedTextField(text, { m.extraNoteDraft = it }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 4,
                 placeholder = { Text("예: 보호자 동승, 와파린 복용 중") })
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp))
                 .background(if (text.isBlank() || m.paused) AD.control else AD.blue)
-                .clickable(enabled = text.isNotBlank()) { if (m.sendExtraNote(text)) text = "" },
+                .clickable(enabled = text.isNotBlank()) { if (m.sendExtraNote(text)) m.extraNoteDraft = "" },
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.AutoMirrored.Filled.Send, null, tint = Color.White, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
@@ -309,6 +304,8 @@ private fun ExtraNoteCard(m: PhoneModel, p: PatientInfo) {
 private fun HandoverCard(m: PhoneModel, p: PatientInfo) {
     val caseId = m.caseId
     var edits by remember(caseId) { mutableStateOf(m.settings.handoverEdits(caseId)) }
+    // 다른 기기의 수정·서버 기록이 반영되면 기기에 저장된 수정 칸을 다시 읽는다
+    LaunchedEffect(caseId, m.recordsRev) { edits = m.settings.handoverEdits(caseId) }
     var showSheet by remember { mutableStateOf(false) }
     val auto = Handover.auto(p, m.confirmed, m.identity?.name, m.apid, m.phaseTimes.toMap(), m.mySim?.incident, m.incidentAddress, m.bodyEdits.careLines)
     val values = auto + edits
@@ -318,7 +315,7 @@ private fun HandoverCard(m: PhoneModel, p: PatientInfo) {
     val careText = Handover.careFieldIds.flatMap { id ->
         val v = value(id)
         val label = Handover.field(id)?.label
-        if (v.isEmpty() || label == null) emptyList() else v.split(", ").map { it.trim() }.filter { it.isNotEmpty() }.map { "$label $it" }
+        if (v.isEmpty() || label == null) emptyList() else v.split(",").map { it.trim() }.filter { it.isNotEmpty() }.map { "$label $it" }
     }.joinToString("\n")
     val sentCount = (p.extraNotes ?: emptyList()).count { it.text.startsWith("[인계확인서]") }
 
@@ -335,6 +332,7 @@ private fun HandoverCard(m: PhoneModel, p: PatientInfo) {
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                CaseEditStatusView(m.caseEdits)
                 for (f in Handover.fields.filter { it.summary }) {
                     // 처치 줄은 "기타 소견" 바로 위에 둔다
                     if (f.id == "notes" && careText.isNotEmpty()) SummaryRow("처치", careText, tag = "자동")
@@ -368,8 +366,18 @@ private fun HandoverSheet(m: PhoneModel, auto: Map<String, String>, edits: Map<S
     val draft = remember { mutableStateMapOf<String, String>().apply { putAll(auto); putAll(edits) } }
     // 서식을 연 뒤 사람이 손댄 칸 — 열어 둔 채 새 통화·출동 소식이 와도 이 칸은 덮지 않는다
     val touched = remember { mutableStateListOf<String>() }
+    // 서식을 연 시점의 공유 값 — 저장할 때 다른 기기가 그사이 같은 칸을 고쳤는지 hub가 이 기준과 비교한다
+    val sharedBase = remember { mutableStateMapOf<String, String>().apply { putAll(m.caseEdits.fields) } }
     LaunchedEffect(auto) {
-        for ((id, v) in auto) if (id !in touched && id !in edits) draft[id] = v
+        for ((id, v) in auto) if (id !in touched && id !in edits) draft[id] = m.caseEdits.fields["h:$id"] ?: v
+    }
+    // 다른 기기에서 고친 칸이 도착하면 아직 손대지 않은 칸에 바로 반영한다
+    LaunchedEffect(m.caseEdits.fields) {
+        for (f in Handover.fields) if (f.id !in touched) {
+            val shared = m.caseEdits.fields["h:${f.id}"]
+            draft[f.id] = shared ?: auto[f.id] ?: ""
+            if (shared == null) sharedBase.remove("h:${f.id}") else sharedBase["h:${f.id}"] = shared
+        }
     }
     fun set(id: String, v: String) { draft[id] = v; if (id !in touched) touched += id }
 
@@ -382,17 +390,14 @@ private fun HandoverSheet(m: PhoneModel, auto: Map<String, String>, edits: Map<S
                     Text("출동 및 처치 기록지", fontSize = 15.sp, fontWeight = FontWeight.Black, color = AD.navy)
                 }
                 Text("자동값", color = AD.ink3, fontSize = 13.sp, modifier = Modifier.clickable {
-                    draft.clear(); draft.putAll(auto); touched.clear()
+                    draft.clear(); draft.putAll(auto); touched.clear(); touched.addAll(edits.keys + m.caseEdits.handover.keys)
                 })
                 Text("저장·전달", color = if (m.paused) AD.gray else AD.blue, fontWeight = FontWeight.Bold, modifier = Modifier.clickable(enabled = !m.paused) {
-                    // 자동값과 다른 칸만 저장해야 통화가 갱신될 때 안 고친 칸이 따라 바뀐다
-                    val out = Handover.fields.mapNotNull { f ->
-                        val v = (draft[f.id] ?: "").trim()
-                        if (v != (auto[f.id] ?: "").trim()) f.id to v else null
-                    }.toMap()
-                    m.settings.saveHandoverEdits(caseId, out)
-                    caseId?.let { m.snapshotCase(it) }
-                    onSaved(out)
+                    // 자동값과 다른 칸만 공유·저장해야 통화가 갱신될 때 안 고친 칸이 따라 바뀐다
+                    if (caseId == null || caseId != m.caseId) { m.show("사건이 변경되어 저장하지 못했습니다."); return@clickable }
+                    m.shareHandover(caseId, draft.toMap(), auto, touched.toSet(), sharedBase.toMap())
+                    m.snapshotCase(caseId)
+                    onSaved(m.caseEdits.handover)
                     m.sendExtraNote(Handover.message(draft))
                     onClose()
                 })

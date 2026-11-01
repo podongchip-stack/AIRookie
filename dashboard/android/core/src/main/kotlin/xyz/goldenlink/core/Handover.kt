@@ -160,11 +160,12 @@ object Handover {
         fun add(key: String, text: String) { out[key] = out[key]?.let { "$it, $text" } ?: text }
         for (t in treatments) {
             when {
-                t.contains("기관내삽관") || t.contains("삽관") -> add("careAirway", "기관내삽관")
+                t.contains("CPR") || t.contains("AED") || t.contains("지혈") || t.contains("순환보조") -> add("careCirculation", t)
+                t.contains("기관내삽관") || t.contains("삽관") -> add("careAirway", t)
                 t.contains("기도") -> add("careAirway", t)
-                t.contains("산소") -> add("careBreathing", "산소투여")
+                t.contains("산소") -> add("careBreathing", t)
                 t.contains("BVM") || t.contains("인공호흡") -> add("careBreathing", t)
-                t.contains("ECG") || t.contains("심전도") || t.contains("모니터") -> add("careCirculation", "모니터링")
+                t.contains("ECG") || t.contains("심전도") || t.contains("모니터") -> add("careCirculation", t)
                 t.contains("정맥로") || t.contains("수액") || t.contains("IV") -> add("careCirculation", t)
                 t.contains("투여") || t.contains("약") -> add("careDrug", t)
                 t.contains("부목") || t.contains("고정") || t.contains("경추") || t.contains("척추") -> add("careFix", t)

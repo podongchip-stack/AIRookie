@@ -32,6 +32,27 @@ data class CallSignalMessage(
     val type: String = "call_signal",
 )
 
+/** 전화 연결 요청(2026-10-05 hub 중재) — request는 병원 쪽(관제)이 받아 응답할 때까지 "연결 중", 응답하면 hub가 call_started를 중계한다.
+ *  operation: "request" | "cancel" | "no_answer" */
+@Serializable
+data class CallConnectionMessage(
+    val operation: String,
+    val caseId: String,
+    val hospitalId: String,
+    val requestId: String,
+    val timestamp: String = isoNow(),
+    val type: String = "call_connection",
+)
+
+/** 현장 Pre-KTAS를 고르면 hub가 KTAS 적합 후보를 추천순으로 다시 보낸다(scene_candidates). noAnswerHospitalId는 미응답 이력 */
+@Serializable
+data class FirstCallRequest(
+    val caseId: String,
+    val ktas: Int,
+    val noAnswerHospitalId: String? = null,
+    val type: String = "first_call_request",
+)
+
 // ── hub -> 앱 ──
 
 @Serializable
@@ -71,6 +92,12 @@ data class AmbulanceSim(
     val hospitalId: String? = null,
     /** 사고 현장 좌표 — 인계확인서 출발지 주소 */
     val incident: GPS? = null,
+    /** 도로 ETA를 시연 화면 시간으로 환산한 배속(hub의 경로 이동과 같은 값) */
+    val speedup: Double? = null,
+    /** hub 카카오 도로 경로 [[lat, lng], ...] — ambulance_position은 생략하므로 앱이 이전 경로를 유지한다 */
+    val path: List<List<Double>>? = null,
+    /** 구급대 센터(출동 출발지) — 이동 위치와 별도로 보존된다 */
+    val base: GPS? = null,
 ) {
     val phaseEnum: AmbulancePhase get() = AmbulancePhase.of(phase)
 }
@@ -103,6 +130,8 @@ data class SceneCandidate(
     val bedCountUnknown: Boolean = false,
     val bedReliability: BedReliability? = null,
     val firstCallRecommended: Boolean? = null,
+    val supportedKtas: List<Int>? = null,
+    val firstCallReason: String? = null,
     val emergencyLevel: String? = null,
     val specialties: List<Specialty>? = null,
 )
@@ -113,6 +142,11 @@ data class SceneCandidates(
     val apid: String,
     /** 도착 시간순(hub가 정한 순서 그대로 쓴다) */
     val hospitals: List<SceneCandidate> = emptyList(),
+    /** 이 후보 목록이 어느 Pre-KTAS 기준인지 — 앱이 고른 값과 다르면 아직 hub 응답을 기다리는 중 */
+    val preKtas: Int? = null,
+    /** 전화가 안 받아 다음 병원으로 넘어간 병원들 */
+    val callAttempts: List<String>? = null,
+    val firstCallExhausted: Boolean? = null,
     val reportedSymptom: String? = null,
 )
 
@@ -123,7 +157,9 @@ data class CallStatus(
     val hospitalId: String? = null,
     val hospitalName: String? = null,
     val device: String? = null,
-    val state: String = "ended",  // "calling" | "ended"
+    /** 앱이 보낸 call_connection request의 requestId — 내 요청에 대한 상태인지 가린다 */
+    val requestId: String? = null,
+    val state: String = "ended",  // "ringing" | "calling" | "ended" | "no_answer" | "cancelled"
     val startedAt: String? = null,
     /** 2026-10-05: 같은 사건의 추가 통화인지 · 취소된 통화인지(전달 안 됨) */
     val followup: Boolean? = null,
@@ -169,6 +205,8 @@ data class MatchResult(
     val hospitals: List<MatchHospital> = emptyList(),
     val patientInfo: PatientInfo? = null,
     val apid: String? = null,
+    /** hub 규칙 기반 활성 존(1 = 0~5km, 2 = 5~10km …). 예전 메시지엔 없다 → 1 */
+    val zoneActive: List<Int>? = null,
 )
 
 /** 구급대원 이송 승인 — 웹 handleApprove와 같은 형식. 병원이 승인한 병원에만 보낸다 */
