@@ -3,3 +3,4 @@ GoldenLinkPad.xcodeproj/
 DerivedData/
 xcuserdata/
 .build/
+Config/Kakao.local.xcconfig

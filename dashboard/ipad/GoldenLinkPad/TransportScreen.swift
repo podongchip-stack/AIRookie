@@ -32,6 +32,7 @@ struct TransportScreen: View {
         HStack(alignment: .top, spacing: 14) {
             // 병원 응답 현황 카드는 없앴다(2026-10-27) — 집계는 아래 리스트 머리에 숫자로 들어가고, 그만큼 리스트가 길어진다
             VStack(spacing: 8) {
+                if model.sim?.phase == "rerouting" { ReselectBanner() }
                 if let r = model.result, model.confirmed == nil {
                     let approved = r.hospitals.filter { $0.status == "approved" && $0.excluded != true }
                     if approved.count >= 2 { CompareCard(hospitals: approved, recommendedId: recommendedId) }
@@ -241,5 +242,57 @@ struct TransportScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+}
+
+
+/// 재선택(2026-11-02, 안드로이드 재선택 화면과 같다) — 목적지 병원이 수용할 수 없게 됐을 때. 승인한(지금 보낼 수 있는) 병원이 있으면 바로 이송 승인하게 하고,
+/// 없으면 수용 불가·제외 병원을 뺀 후보의 응답을 기다린다. 이송 승인을 보낸 뒤 hub가 확정할 때까지는 "확정하고 있습니다"로 붙잡는다.
+struct ReselectBanner: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var hospitals: [HospitalMatch] { model.result?.hospitals ?? [] }
+    private var ready: [HospitalMatch] { hospitals.filter { HospitalRules.canTransportNow($0) } }
+    private var deciding: HospitalMatch? { model.confirmed ?? hospitals.first { $0.hospitalId == model.pendingConfirmId } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Pill(text: "재선택 대기", bg: AD.redSoft, fg: AD.red, bold: true)
+                Text("목적지 병원이 수용할 수 없게 됐습니다").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
+            }
+            if let d = deciding {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("\(d.name)(으)로 이송을 확정하고 있습니다").font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy)
+                }
+            } else if !ready.isEmpty {
+                Text("승인한 병원이 있습니다 — 바로 이송 승인하세요").font(.system(size: 12.5)).foregroundStyle(AD.ink3)
+                ForEach(ready.prefix(4)) { h in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(h.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(AD.navy).lineLimit(1)
+                            Text(h.etaMin.map { "도착 \($0)분" } ?? "\(String(format: "%.1f", h.roadDistanceKm ?? h.distanceKm))km")
+                                .font(.system(size: 12)).foregroundStyle(AD.ink3)
+                        }
+                        Spacer()
+                        Button { model.approve(h.hospitalId) } label: {
+                            Text("이송 승인").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 14).frame(minHeight: 34).background(AD.green).clipShape(Capsule())
+                        }.buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(AD.greenSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            } else {
+                Text("승인한 병원이 없습니다. 수용 불가 병원은 빼고 후보 병원의 응답을 기다리는 중입니다 — 범위가 필요하면 자동으로 넓혀 다시 요청합니다.")
+                    .font(.system(size: 12.5)).foregroundStyle(AD.orange).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(AD.card)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.red, lineWidth: 2))
     }
 }

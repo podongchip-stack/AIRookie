@@ -197,6 +197,7 @@ struct SceneCandidates: Codable {
     var hospitals: [SceneCandidate]
     var reportedSymptom: String?
     var reportedSeverity: String?
+    var preKtas: Int?
 }
 
 struct AmbulanceSimState: Codable {
@@ -210,6 +211,8 @@ struct AmbulanceSimState: Codable {
     var hospitalId: String?
     var paused: Bool?
     var pauseReason: String?
+    /// hub 카카오 길찾기 도로 경로 [[lat, lng]] — 지도에 그리고 남은 구간만 쓴다
+    var path: [[Double]]?
 }
 
 struct CallStatus: Codable {

@@ -6,6 +6,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("hubBase") private var hubBase = Settings.defaultHub
     @AppStorage("spiderBase") private var spiderBase = ""
+    @State private var recordToken = RecordAccess.token(Settings.apid)
+    @State private var kakaoKey = Settings.kakaoNativeAppKey
     @State private var lanIP = "192.168.0.10"
     @State private var checkResult = ""
     @State private var checking = false
@@ -29,6 +31,23 @@ struct SettingsView: View {
                         .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                     Text("WebSocket: \(Settings.wsURL?.absoluteString ?? "—")").font(.footnote).foregroundStyle(.secondary)
                 }
+                Section("카카오맵") {
+                    SecureField("카카오맵 네이티브 앱 키", text: $kakaoKey)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .onSubmit { Settings.kakaoNativeAppKey = kakaoKey }
+                    Button("키 저장") { Settings.kakaoNativeAppKey = kakaoKey; model.show("카카오맵 키를 저장했습니다. 지도 화면을 다시 열면 적용됩니다.") }
+                    Text("카카오 디벨로퍼스에 번들 ID(com.goldenlink.pad)를 iOS 플랫폼으로 등록한 키입니다. 비우면 Config/Kakao.local.xcconfig 값을 씁니다.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+
+                Section("기록 동기화") {
+                    SecureField("기록 동기화 키 (운영자 발급)", text: $recordToken)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .onSubmit { RecordAccess.save(recordToken, apid: Settings.apid); model.syncRecords() }
+                    Button("키 저장 후 동기화") { RecordAccess.save(recordToken, apid: Settings.apid); model.syncRecords() }
+                    Text("구급차별로 보관됩니다. 있어야 [기록] 화면이 서버와 동기화됩니다.").font(.footnote).foregroundStyle(.secondary)
+                }
+
                 Section("spider(거미줄 지도) 주소") {
                     TextField("비우면 자동: \(Settings.autoSpiderBase(for: hubBase))", text: $spiderBase)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)

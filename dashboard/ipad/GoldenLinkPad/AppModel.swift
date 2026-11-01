@@ -37,7 +37,10 @@ final class AppModel: ObservableObject {
 
     // 연결
     @Published var connection: HubSocket.State = .connecting {
-        didSet { if connection == .live, oldValue != .live { liveSince = Date() } }
+        didSet {
+            if connection == .live, oldValue != .live { liveSince = Date(); recordRequest = nil; syncRecords() }
+            else if connection != .live { recordSyncStatus = "오프라인 · 기기 기록 표시 중" }
+        }
     }
     /// 소켓이 막 연결된 직후엔 따라잡기(지난 결과 재전송)가 쏟아진다 — 그건 "음성 도착"이 아니라 자동 전환하지 않는다
     private var liveSince: Date?
@@ -65,6 +68,18 @@ final class AppModel: ObservableObject {
     /// 구급차 소켓을 붙인 시각 — 연결 직후 오는 **따라잡기**(진행 중이던 사건)는 화면을 자동으로 바꾸지 않는다(README의 규칙)
     private var connectedAt: Date?
     @Published var responseLog: [ResponseEvent] = []
+    /// 현장 Pre-KTAS(1~5) — 현장에 도착하면 1이 미리 골라져 있고, 바꾸면 hub가 첫 연락 추천 순서로 후보를 다시 보낸다(현장 화면)
+    @Published var preKtas: Int?
+    /// 통화 요약이 후보 병원들에 전달되는 연출(현장 지도 위, SceneScreen) — 끝나면 환자 정보로 넘어간다
+    @Published var deliveryShow: DeliveryShow?
+
+    /// 지난 사건 기록([기록] 화면) — 날짜별로 기기에 쌓고 hub 보관소와 동기화한다(RecordSync.swift). 바뀔 때마다 recordsRev가 올라 화면이 다시 읽는다
+    let records = RecordStore()
+    @Published var recordsRev = 0
+    @Published var recordSyncStatus = "구급차를 선택하면 기록을 동기화합니다."
+    @Published var handoverConflict: CaseRecord?
+    var recordRequest: (id: String, at: Date)?
+    private var recordSyncTask: Task<Void, Never>?
 
     // 공통
     @Published var now = Date()
@@ -74,7 +89,7 @@ final class AppModel: ObservableObject {
     @Published var liveBoardFetchedAt: Date?
 
     private var monitor: HubSocket?
-    private var ambulance: HubSocket?
+    var ambulance: HubSocket?
     private var monitorSims: [String: AmbulanceSimState] = [:]
     private var clock: Timer?
     private var started = false
@@ -106,6 +121,13 @@ final class AppModel: ObservableObject {
             }
         }
         fetchLiveBoard()
+        recordSyncTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                self?.syncRecords()
+                if let self, self.sim?.phase == "on_scene", self.result == nil, self.preKtas != nil { self.requestFirstCall() }
+            }
+        }
     }
 
     /// 설정이 바뀌었을 때 — 소켓을 새 주소·새 구급차로 다시 붙이고 보드를 다시 받는다
@@ -125,6 +147,8 @@ final class AppModel: ObservableObject {
         monitor?.close(); monitor = nil
         ambulance?.close(); ambulance = nil
         clock?.invalidate(); clock = nil
+        recordSyncTask?.cancel(); recordSyncTask = nil
+        records.configure(apid: nil); recordsRev += 1
         noticeTask?.cancel(); noticeTask = nil
         started = false
         apid = nil; ambulanceName = nil
@@ -151,6 +175,9 @@ final class AppModel: ObservableObject {
         apid = next
         clearCase()
         ambulanceName = nil
+        records.configure(apid: (next?.isEmpty ?? true) ? nil : next)
+        recordRequest = nil; handoverConflict = nil; recordsRev += 1
+        recordSyncStatus = "기록 연결 대기 중"
         guard let next, !next.isEmpty else { return }
         connectedAt = Date()
         ambulance = HubSocket(role: "ambulance", id: next,
@@ -159,7 +186,7 @@ final class AppModel: ObservableObject {
     }
 
     private func clearCase() {
-        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil; phaseTimes = [:]; incidentAddress = nil; bodyEdits = BodyEdits()
+        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil; phaseTimes = [:]; incidentAddress = nil; bodyEdits = BodyEdits(); preKtas = nil; deliveryShow = nil
     }
 
     // ── 자동 따라가기(monitor 소켓) ──
@@ -195,14 +222,12 @@ final class AppModel: ObservableObject {
                 // 출동 시뮬레이션이 다른 사건을 들고 있으면 지난 사건의 따라잡기는 무시
                 if let c = sim?.caseId, c != m.caseId { return }
                 // 자동 전환(2026-10-16): 이 사건의 매칭 결과가 처음 오면(=음성 요약 도착, 추가 통화 회차 제외) 병원 리스트로,
-                // 이송 확정이 처음 보이면(hub 응답) 구급차 지도로
                 let firstForCase = result?.caseId != m.caseId
-                let wasConfirmed = confirmed != nil
                 logResponses(old: firstForCase ? nil : result, new: m)
                 result = m
+                snapshotCase(m.caseId)
                 let catchup = Date().timeIntervalSince(connectedAt ?? .distantPast) < 3
-                if firstForCase, !catchup, (m.patientInfo?.callRound ?? 1) <= 1 { requestScreen(.patient) }
-                if !wasConfirmed, confirmed != nil { requestScreen(.transport) }
+                if firstForCase, !catchup, (m.patientInfo?.callRound ?? 1) <= 1 { startDeliveryShow(m) }
                 receivedAt = Date()
                 if m.ambulanceName != nil { ambulanceName = m.ambulanceName }
                 if let p = pendingConfirmId, m.hospitals.contains(where: { $0.hospitalId == p && $0.status == "confirmed" }) { pendingConfirmId = nil }
@@ -211,6 +236,7 @@ final class AppModel: ObservableObject {
             if let m = try? dec.decode(SceneCandidates.self, from: data) {
                 if let c = sim?.caseId, c != m.caseId { return }
                 scene = m
+                if preKtas == nil, let k = m.preKtas { preKtas = k }
             }
         case "ambulance_phase", "ambulance_position":
             if let m = try? dec.decode(AmbulanceSimState.self, from: data), m.apid == apid {
@@ -227,8 +253,11 @@ final class AppModel: ObservableObject {
                     phaseTimes = ["requestedAt": Date()]      // 새 사건 — 시각 칸을 새로 적는다
                     incidentAddress = nil
                     bodyEdits = BodyEdits()
+                    preKtas = nil; deliveryShow = nil
+                    requestScreen(.map)      // 새 출동은 지도에서 시작한다(안드로이드와 같은 흐름)
                 }
-                if m.phase != previousPhase || m.caseId != previousCase { recordPhaseTime(m.phase) }
+                if m.phase == "on_scene", m.phase != previousPhase || m.caseId != previousCase, preKtas == nil, result == nil { preKtas = 1; requestFirstCall() }
+                if m.phase != previousPhase || m.caseId != previousCase { recordPhaseTime(m.phase); if let c = m.caseId { snapshotCase(c) } }
                 if m.incident?.lat != previousIncident?.lat || m.incident?.lng != previousIncident?.lng {
                     incidentAddress = nil
                     if let p = m.incident { fetchIncidentAddress(p) }
@@ -245,14 +274,19 @@ final class AppModel: ObservableObject {
             }
         case "case_closed":
             if let m = try? dec.decode(CaseClosed.self, from: data), m.caseId == result?.caseId || m.caseId == scene?.caseId {
+                closeRecord(m.caseId)
                 result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []
             }
         case "case_sync":
             if let m = try? dec.decode(CaseSync.self, from: data) {
                 let keep = Set(m.caseIds)
-                if let c = result?.caseId, !keep.contains(c) { result = nil }
+                if let c = result?.caseId, !keep.contains(c) { closeRecord(c); result = nil }
                 if let c = scene?.caseId, !keep.contains(c), sim?.caseId != c { scene = nil }
             }
+        case "records_changed":
+            syncRecords()
+        case "record_sync_result", "record_import_result", "record_handover_result", "record_error":
+            handleRecordReply(type, data)
         case "action_refused":
             if let m = try? dec.decode(ActionRefused.self, from: data) {
                 pendingConfirmId = nil
@@ -370,7 +404,7 @@ final class AppModel: ObservableObject {
         if !added.isEmpty { responseLog = Array((added + responseLog).prefix(20)) }
     }
 
-    private func requestScreen(_ s: Screen) {
+    func requestScreen(_ s: Screen) {
         guard let t = liveSince, Date().timeIntervalSince(t) > 3 else { return }
         NotificationCenter.default.post(name: .switchScreen, object: nil, userInfo: ["screen": s.rawValue])
     }
@@ -393,6 +427,40 @@ final class AppModel: ObservableObject {
             }
             .sorted { $0.rArrive > $1.rArrive }
             .prefix(2).map { $0 }
+    }
+
+    // ── 현장 Pre-KTAS · 요약 전달 연출 ──
+    func setPreKtas(_ k: Int) { preKtas = k; requestFirstCall() }
+
+    /// hub에 첫 연락 추천 순서를 다시 요청한다 — hub가 scene_candidates를 그 Pre-KTAS 기준으로 다시 보낸다
+    func requestFirstCall() {
+        guard let caseId, let k = preKtas else { return }
+        let body: [String: Any] = ["type": "first_call_request", "caseId": caseId, "ktas": k]
+        guard let data = try? JSONSerialization.data(withJSONObject: body), ambulance?.sendJSON(data) == true else {
+            show("hub 연결을 확인해 주세요. 추천 요청을 보내지 못했습니다."); return
+        }
+    }
+
+    /// 요약이 반영되면 환자 정보로 바로 넘기지 않고, 현장 지도에서 병원들로 전달되는 연출을 먼저 보여 준다.
+    /// 현장이 아니거나 지도에 찍을 병원 좌표가 없으면 연출 없이 바로 넘어간다
+    private func startDeliveryShow(_ m: HubMatchResult) {
+        let anyTarget = m.hospitals.contains { $0.gps != nil } || (scene?.hospitals.contains { $0.gps != nil } ?? false)
+        guard sim?.phase == "on_scene", sim?.gps != nil || sim?.incident != nil, anyTarget else { requestScreen(.patient); return }
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let show = DeliveryShow(caseId: m.caseId, durationMs: reduce ? 1200 : 2600, reduceMotion: reduce)
+        deliveryShow = show
+        requestScreen(.map)
+        // 연출이 멈춰도 여기서 반드시 끝낸다
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(show.durationMs) + 5000))
+            if self?.deliveryShow?.caseId == show.caseId { self?.finishDelivery() }
+        }
+    }
+
+    func finishDelivery() {
+        guard deliveryShow != nil else { return }
+        deliveryShow = nil
+        requestScreen(.patient)      // 연출이 끝났거나 눌러서 건너뛰었다 — 환자 정보로
     }
 
     func show(_ text: String) {

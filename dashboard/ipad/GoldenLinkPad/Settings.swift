@@ -10,6 +10,17 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "hubBase") }
     }
 
+    /// 카카오맵 네이티브 앱 키 — 앱 설정에 넣은 값이 우선, 없으면 Config/Kakao.local.xcconfig(Info.plist)의 값. 자리표시자면 비어 있는 것으로 본다
+    static var kakaoNativeAppKey: String {
+        get {
+            let local = (UserDefaults.standard.string(forKey: "kakaoNativeAppKey") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = local.isEmpty ? (Bundle.main.object(forInfoDictionaryKey: "KAKAO_NATIVE_APP_KEY") as? String ?? "") : local
+            let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return key.contains("$(") || key == "YOUR_NATIVE_APP_KEY" ? "" : key
+        }
+        set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "kakaoNativeAppKey") }
+    }
+
     static var accessCode: String {
         get { UserDefaults.standard.string(forKey: "accessCode") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "accessCode") }

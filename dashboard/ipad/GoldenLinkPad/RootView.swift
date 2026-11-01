@@ -4,16 +4,16 @@ import SwiftUI
 /// 상단바의 **[환자 정보 | 이송]**(2026-10-27)으로 화면을 바꾼다:
 ///  · [환자 정보] = 왼쪽 통화 요약·구조화 + 추가 정보, 오른쪽 **외상 부위 그림**(BodyInjuryCard)
 ///  · [이송] = 왼쪽 병원 리스트(n×1), 병원을 누르면 오른쪽에 그 병원 배후역량표(TransportScreen)
-/// 자동 전환: 음성 요약이 처음 도착하면 [환자 정보]로, 이송이 확정되면(hub 응답) [이송]으로(AppModel.requestScreen).
+/// 자동 전환: 음성 요약이 처음 도착하면 [환자 정보]로, 이송 확정 때는 자동 전환 없음(상단바로 직접)(AppModel.requestScreen).
 /// 상단바의 [정보 생존 모델]은 같은 화면 위에 전체 화면으로 덮는다.
-enum Screen: String { case patient, transport }
+enum Screen: String { case map, patient, transport, records }
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
-    @AppStorage("screen") private var screenRaw = Screen.patient.rawValue
+    @AppStorage("screen") private var screenRaw = Screen.map.rawValue
     @State private var showSettings = false
     @State private var showSurvival = false
-    private var screen: Screen { Screen(rawValue: screenRaw) ?? .patient }
+    private var screen: Screen { Screen(rawValue: screenRaw) ?? .map }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -22,7 +22,13 @@ struct RootView: View {
                 TopBar(showSurvival: $showSurvival, showSettings: $showSettings, screenRaw: $screenRaw)
                 CaseEditStatusView(sync: model.caseEdits, onlyPending: true)
                 callBanner
-                if !model.hasIncident {
+                if screen == .records {
+                    // [기록] — 사건이 없어도 지난 사건 기록은 본다(2026-11-02)
+                    RecordsView()
+                } else if screen == .map {
+                    // [지도](2026-11-02) — 안드로이드 [통화] 탭과 같은 흐름: 출동 경로 → 현장 Pre-KTAS·후보 → 요약 전달 연출 → 응답·이송. 통화만 없다
+                    if model.hasIncident { SceneScreen() } else { IdleWaitingCard() }
+                } else if !model.hasIncident {
                     // 출동도 사건도 전혀 없는 평상시(2026-10-29) — 탭을 골라도 보여줄 게 없으니 대기 화면 하나로 통일
                     IdleWaitingCard()
                 } else if screen == .transport {
@@ -61,8 +67,7 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.2), value: model.notice)
         .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model) }
         .fullScreenCover(isPresented: $showSurvival) { SurvivalModelScreen(isPresented: $showSurvival).environmentObject(model) }
-        // 앱을 켜면 [환자 정보]부터 — 이송이 확정되면 [이송]으로 자동으로 넘어간다
-        .onAppear { screenRaw = Screen.patient.rawValue; model.start() }
+        // 앱을 켜면 [지도]부터        .onAppear { screenRaw = Screen.map.rawValue; model.start() }
         // 자동 전환: 음성 요약 첫 도착 → 환자 정보 → 이송 확정 → 이송. 언제든 상단바로 직접 바꿀 수 있다
         .onReceive(NotificationCenter.default.publisher(for: .switchScreen)) { n in
             guard let raw = n.userInfo?["screen"] as? String else { return }
@@ -173,17 +178,12 @@ struct TopBar: View {
     /// 두 칸 전환 — [이송] 칸엔 병원 응답 배지(승인 수, 없으면 후보 수)를 붙여 환자 정보 화면에서도 응답이 온 걸 안다
     private var screenSwitch: some View {
         HStack(spacing: 2) {
+            seg("지도", .map, badge: nil)
             seg("환자 정보", .patient, badge: nil)
             seg("이송", .transport, badge: listBadge)
+            seg("기록", .records, badge: nil)
         }
         .padding(3).background(AD.chip).clipShape(Capsule())
-        // 칸 어디를 눌러도 반대쪽 화면으로 넘어간다(2026-10-28) — 두 칸뿐이라 결과가 같고 과녁이 두 배다
-        .contentShape(Capsule())
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                screenRaw = screenRaw == Screen.patient.rawValue ? Screen.transport.rawValue : Screen.patient.rawValue
-            }
-        }
     }
     private var listBadge: (String, Color)? {
         guard let r = model.result else { return model.scene.map { ("\($0.hospitals.count)", AD.gray) } }
@@ -204,6 +204,8 @@ struct TopBar: View {
         .padding(.horizontal, 14).frame(minHeight: 32)
         .background(on ? AD.card : .clear).clipShape(Capsule())
         .shadow(color: on ? .black.opacity(0.08) : .clear, radius: 2, y: 1)
+        .contentShape(Capsule())
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { screenRaw = s.rawValue } }
     }
 
     private var ambulanceLabel: String {
