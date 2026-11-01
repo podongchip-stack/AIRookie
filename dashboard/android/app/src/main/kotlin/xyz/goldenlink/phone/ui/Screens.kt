@@ -110,10 +110,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import xyz.goldenlink.core.AmbulancePhase
 import xyz.goldenlink.core.RoadRoute
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.Straight
+import androidx.compose.material.icons.filled.TurnLeft
+import androidx.compose.material.icons.filled.TurnRight
 import xyz.goldenlink.core.GPS
 import xyz.goldenlink.core.SceneCandidate
 import xyz.goldenlink.phone.CallSession
 import xyz.goldenlink.phone.CaseEditSync
+import androidx.compose.ui.graphics.graphicsLayer
 import xyz.goldenlink.phone.HubSocket
 import xyz.goldenlink.phone.PhoneModel
 import kotlin.math.PI
@@ -156,10 +162,10 @@ internal val cardShape = RoundedCornerShape(18.dp)
 // ── 공용 조각 ──
 
 @Composable
-fun Pill(text: String, fg: Color = AD.ink3, bg: Color = AD.chip, bold: Boolean = false) {
+fun Pill(text: String, fg: Color = AD.ink3, bg: Color = AD.chip, bold: Boolean = false, modifier: Modifier = Modifier) {
     Text(text, color = fg, fontSize = 11.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.clip(CircleShape).background(bg).padding(horizontal = 9.dp, vertical = 3.dp))
+        modifier = modifier.clip(CircleShape).background(bg).padding(horizontal = 9.dp, vertical = 3.dp))
 }
 
 @Composable
@@ -234,7 +240,8 @@ fun PhoneApp(m: PhoneModel) {
                     // 통화 종료 화면(전달됨 · 확인)에서 나갈 때는 서서히 지우지 않고 바로 바꾼다 — 통화가 지워지는 순간 그 화면이
                     // "정리하는 중"으로 되돌아간 채 220ms 동안 남아 깜빡이고, 지도의 전달 애니메이션이 가려졌다
                     val lastTop = remember { arrayOfNulls<String>(1) }
-                    val fade = if (lastTop[0] == "ended") snap<Float>() else tween(220)
+                    // 지도에서 다른 화면으로 나갈 때도 바로 바꾼다 — 서서히 나타나면 아래 지도가 비쳐 보였다가 화면이 바뀐다
+                    val fade = if (lastTop[0] == "ended" || lastTop[0] == null || top == null) snap<Float>() else tween(220)
                     SideEffect { lastTop[0] = top }
                     Crossfade(top, animationSpec = fade, label = "screen") { key ->
                         if (key != null) Box(Modifier.fillMaxSize().background(AD.bg)
@@ -285,7 +292,7 @@ private fun Header(m: PhoneModel, onSettings: () -> Unit) {
                 withStyle(SpanStyle(color = AD.navy)) { append("골든") }
                 withStyle(SpanStyle(color = AD.blue)) { append("링크") }
             }, fontSize = 19.sp, fontWeight = FontWeight.Black)
-            Pill(m.identity?.name ?: m.apid ?: (if (m.autoFollow) "자동 전환 대기" else "구급대 미지정"), AD.ink3, AD.white, bold = true)
+            Pill(m.identity?.name ?: m.apid ?: (if (m.autoFollow) "자동 전환 대기" else "구급대 미지정"), AD.ink3, AD.white, bold = true, modifier = Modifier.weight(1f, fill = false))
             Spacer(Modifier.weight(1f))
             ConnectionDot(m.connection)
             val inCall = m.call != null && m.call?.phase != PhoneModel.LocalCall.Phase.ENDED
@@ -330,9 +337,17 @@ private fun ScreenLayer(m: PhoneModel, key: String) {
 
 @Composable
 private fun Waiting(m: PhoneModel, mapVisible: Boolean) {
+    // 연결·신원 확인·첫 위치가 오기 전에는 "출동 대기 중 → 위치 받는 중 → 지도"처럼 패널이 연달아 바뀌지 않게 조용한 로딩 하나로 둔다
+    // 한 번 준비된 뒤에는 잠깐 재연결돼도 지도를 지우지 않는다
+    var ready by remember { mutableStateOf(false) }
+    val booting = !ready && (m.connection != HubSocket.State.LIVE || (m.apid != null && (m.identity == null || (m.simOn && m.mySim == null))))
+    LaunchedEffect(booting) { if (!booting) ready = true }
     when {
+        booting -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = AD.blue, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
+        }
         m.apid == null -> StatusPanel(Icons.Filled.Phone, AD.blue, "출동 대기 중", "상황이 발생하면 출동하는 구급대의 전화 앱으로 자동 전환됩니다.")
-        m.identity != null && !m.simOn -> StatusPanel(Icons.Filled.DirectionsCar, AD.gray, "출동 시뮬레이션이 꺼져 있습니다",
+        !m.simOn -> StatusPanel(Icons.Filled.DirectionsCar, AD.gray, "출동 시뮬레이션이 꺼져 있습니다",
             "휴대폰 전화 앱은 출동 시뮬레이션에서만 씁니다.")
         m.mySim?.gps == null -> StatusPanel(Icons.Filled.DirectionsCar, AD.gray, m.phase.label, "구급차 위치를 받는 중입니다.", pulse = true)
         else -> CallMapScreen(m, mapVisible)
@@ -392,15 +407,28 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean) {
     // 그 뒤엔 전화할 병원을 바꿀 때
     val moving = phase == AmbulancePhase.dispatching || phase == AmbulancePhase.transporting || phase == AmbulancePhase.returning
     val routeKey: Any? = if (moving) listOf(phase, sim.caseId, sim.hospitalId, sim.path?.size, sim.path?.lastOrNull()) else null
+    // 내비게이션 시점 — 출동·이송·복귀 중 도로 경로가 있으면 기본으로 켠다. [경로 전체] 버튼으로 일반 지도와 오간다(단계가 바뀌면 다시 내비 시점)
+    val restPoints = route.map { listOf(it.lat, it.lng) }
+    val navAvailable = moving && route.size >= 2 && (sim.path?.size ?: 0) > 2
+    var navMode by remember(phase) { mutableStateOf(true) }
+    val navigate = navAvailable && navMode
+    // 위치 변화로 속도를 재기 전에도 배율을 맞추도록, hub가 준 도로 ETA와 시연 배속으로 처음 속도를 추정한다(남은 길이 ÷ 시연 화면 시간)
+    val navSpeedHint = if (navigate) sim.etaSec?.let { eta -> sim.speedup?.let { up -> if (eta > 0 && up > 0) RoadRoute.lengthM(restPoints) / (eta / up) else null } } else null
+    var navLoading by remember { mutableStateOf(false) }
+    val navTurn = if (navigate) RoadRoute.nextTurn(restPoints) else null
+    val navRemainM = if (navigate) RoadRoute.lengthM(restPoints) else 0.0
     val zoneFitKey: Any? = if (zoneKm != null) listOf(m.caseId, zoneKm) else null
     val sceneKey: Any? = if (m.onScene && !sentMode && target != null) listOf(m.caseId, m.preKtas, target.hospitalId) else null
 
     // 현장(전달 전)에는 Pre-KTAS 시트가 항상 떠 있다 — 접힌 채로는 Pre-KTAS 줄만 보이고, 위로 끌거나 숫자를 누르면 병원 목록이 펼쳐진다
     val sheetMode = m.onScene && !sentMode
+    // 이송 중에는 목적지 병원 카드를 지도 위 고정 카드가 아니라 위로 끌어올리는 시트로 둔다 — 접어 두면 지도가 넓게 보인다
+    val transportSheet = m.inTransport
+    val anySheet = sheetMode || transportSheet
     // 요약이 병원들에 전달되는 연출 — 병원이 많으면 앞의 8곳만 날리고, 숫자는 전체를 센다
     val show = m.deliveryShow?.takeIf { it.caseId == m.caseId && sentMode }
     val deliveryTargets = if (show != null) (m.result?.hospitals ?: emptyList()).mapNotNull { h -> m.hospitalGps[h.hospitalId]?.let { DeliveryTarget(h.name, it) } }.take(DeliveryTimeline.MAX_TARGETS) else emptyList()
-    val peek = 108.dp
+    val peek = if (transportSheet) 124.dp else 108.dp
     // 통화가 취소·미응답으로 끝나 지도로 돌아오면 병원 리스트 시트를 펼친다(지도는 계속 떠 있으므로 상태 변화로 처리)
     val sheetState = rememberBottomSheetScaffoldState(rememberStandardBottomSheetState(skipHiddenState = true))
     val listState = rememberLazyListState()
@@ -409,23 +437,38 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean) {
         if (m.reopenList && visible) { if (sheetMode) runCatching { listState.scrollToItem(0); sheetState.bottomSheetState.expand() }; m.reopenList = false }
     }
     val peekPx = with(LocalDensity.current) { peek.roundToPx() }
+    // 목적지 병원이 수용할 수 없게 되면(재선택 대기) 다시 고를 병원 목록이 바로 보이게 시트를 펼친다
+    LaunchedEffect(transportSheet, m.phase) { if (transportSheet && m.phase == AmbulancePhase.rerouting) runCatching { sheetState.bottomSheetState.expand() } }
     val mapArea: @Composable () -> Unit = {
         Box(Modifier.fillMaxSize()) {
             CallMap(pins, route = route, zoneKm = zoneKm, recenter = recenter,
-                routeKey = routeKey, zoneFitKey = zoneFitKey, sceneKey = sceneKey, bottomOverlayPx = if (sheetMode) peekPx else overlayPx,
-                active = visible,
+                routeKey = routeKey, zoneFitKey = zoneFitKey, sceneKey = sceneKey, bottomOverlayPx = if (anySheet) peekPx else overlayPx,
+                active = visible, navigate = navigate, navSession = listOf(phase, sim.caseId), navSpeedHintMps = navSpeedHint, onNavLoading = { navLoading = it },
                 deliveryFit = if (show != null && deliveryTargets.isNotEmpty()) listOf(ambulanceGps) + deliveryTargets.map { it.gps } else null,
                 overlay = if (show != null && deliveryTargets.isNotEmpty()) { project -> DeliveryOverlay(show, ambulanceGps, deliveryTargets, project) { m.finishDelivery() } } else null,
                 onPin = { id -> if (m.onScene && !sentMode && eligible.any { it.hospitalId == id }) tappedId = id }, modifier = Modifier.fillMaxSize())
-            Icon(Icons.Filled.MyLocation, "내 위치", tint = AD.navy, modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(44.dp).clip(CircleShape)
-                .background(AD.white.copy(alpha = 0.96f)).border(1.dp, AD.line, CircleShape).clickable { recenter++ }.padding(10.dp))
-            if (!sheetMode) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().animateContentSize().onSizeChanged { overlayPx = it.height }.padding(10.dp).clip(cardShape).background(AD.white.copy(alpha = 0.96f))
+            // 내비 시점이 가능하면 [경로 전체 보기] ↔ [내비 시점] 전환, 아니면 [내 위치]
+            val toggle = navAvailable
+            Icon(if (!toggle) Icons.Filled.MyLocation else if (navigate) Icons.Filled.Map else Icons.Filled.Navigation,
+                if (!toggle) "내 위치" else if (navigate) "경로 전체 보기" else "내비 시점", tint = AD.navy,
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(44.dp).clip(CircleShape)
+                    .background(AD.white.copy(alpha = 0.96f)).border(1.dp, AD.line, CircleShape)
+                    .clickable { if (toggle) navMode = !navMode else recenter++ }.padding(10.dp))
+            // 내비 시점이 준비되는 동안은 로딩만 — 지도가 구급차 위치로 옮겨 가는 장면을 보이지 않는다
+            AnimatedVisibility(navigate && navLoading, Modifier.fillMaxSize(), enter = fadeIn(), exit = fadeOut(tween(350))) {
+                Column(Modifier.fillMaxSize().background(AD.bg), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = AD.blue, strokeWidth = 3.dp, modifier = Modifier.size(34.dp))
+                    Spacer(Modifier.height(14.dp))
+                    Text("현재 위치를 불러오는 중…", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy)
+                }
+            }
+            if (navigate && !navLoading) NavBanner(navTurn, navRemainM, Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 10.dp, end = 64.dp))
+            if (!anySheet) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().animateContentSize().onSizeChanged { overlayPx = it.height }.padding(10.dp).clip(cardShape).background(AD.white.copy(alpha = 0.96f))
                 .border(1.dp, AD.line, cardShape).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if ((phase == AmbulancePhase.dispatching || phase == AmbulancePhase.transporting || phase == AmbulancePhase.returning) && (sim.path?.size ?: 0) <= 2) {
                     Text("도로 경로를 받지 못했습니다. hub의 경로 API 연결을 확인해 주세요.", fontSize = 11.sp, color = AD.orange)
                 }
                 when {
-                    m.inTransport -> TransportPanel(m)
                     show != null -> DeliveryCard(show, deliveryTargets.size, m.caseId?.let { m.sentCount[it] } ?: hospitals.size)
                     sentMode -> {
                         val n = m.caseId?.let { m.sentCount[it] } ?: hospitals.size
@@ -441,23 +484,25 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean) {
                             Pill(phase.label, phaseColor(phase), phaseColor(phase).copy(alpha = 0.12f), bold = true)
                             if (phase == AmbulancePhase.dispatching && eta != null) Text("현장까지 약 ${eta}분", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy)
                         }
+                        if (navigate) Text("남은 ${distanceLabel(navRemainM)}" + (sim.etaSec?.let { " · 도착 ${arrivalClock(it)}" } ?: ""), fontSize = 13.sp, color = AD.sub)
                     }
                 }
             }
         }
     }
 
-    Box(Modifier.fillMaxSize().clip(cardShape)) {
+    // 다른 화면이 덮는 동안은 지도 위 시트·카드도 함께 투명하게 — 덮는 화면의 첫 프레임 전에 아래 패널이 비치지 않게(지도·시트 상태는 그대로 둔다)
+    Box(Modifier.fillMaxSize().clip(cardShape).graphicsLayer { alpha = if (visible) 1f else 0f }) {
         // 지도는 시트가 있든 없든 항상 이 자리에 둔다 — 현장 → 전달로 시트가 사라질 때 지도를 다른 자리로 옮기면
         // 지도가 지워졌다 새로 만들어져 기본 위치에서 다시 뜬 뒤에야 구급차로 맞춰진다(상황 전파 때 시선이 튀던 원인)
         run {
             val scope = rememberCoroutineScope()
             val listMax = (LocalConfiguration.current.screenHeightDp * 0.5f).dp
             BottomSheetScaffold(
-                scaffoldState = sheetState, sheetPeekHeight = if (sheetMode) peek else 0.dp, containerColor = Color.Transparent,
-                sheetContainerColor = if (sheetMode) AD.white else Color.Transparent, sheetShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
-                sheetShadowElevation = if (sheetMode) 8.dp else 0.dp, sheetTonalElevation = 0.dp, sheetSwipeEnabled = sheetMode,
-                sheetDragHandle = { if (sheetMode) Box(Modifier.padding(top = 8.dp, bottom = 4.dp).size(36.dp, 4.dp).clip(CircleShape).background(AD.control)) },
+                scaffoldState = sheetState, sheetPeekHeight = if (anySheet) peek else 0.dp, containerColor = Color.Transparent,
+                sheetContainerColor = if (anySheet) AD.white else Color.Transparent, sheetShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                sheetShadowElevation = if (anySheet) 8.dp else 0.dp, sheetTonalElevation = 0.dp, sheetSwipeEnabled = anySheet,
+                sheetDragHandle = { if (anySheet) Box(Modifier.padding(top = 8.dp, bottom = 4.dp).size(36.dp, 4.dp).clip(CircleShape).background(AD.control)) },
                 sheetContent = {
                     if (sheetMode) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Pre-KTAS", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AD.navy, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
@@ -496,12 +541,49 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean) {
                                 }
                             }
                         }
-                    }
+                    } else if (transportSheet) TransportSheet(m, listMax)
                 },
             ) { mapArea() }
         }
     }
 }
+
+/** 내비게이션 상단 안내 — 다음 회전까지 거리·방향, 회전이 없으면 직진 거리 */
+@Composable
+private fun NavBanner(turn: RoadRoute.Turn?, remainM: Double, modifier: Modifier = Modifier) {
+    val angle = turn?.angleDeg ?: 0.0
+    val icon = when {
+        turn == null || Math.abs(angle) < 35 -> Icons.Filled.Straight
+        angle > 0 -> Icons.Filled.TurnRight
+        else -> Icons.Filled.TurnLeft
+    }
+    val side = if (angle > 0) "우" else "좌"
+    val what = when {
+        turn == null -> "직진"
+        Math.abs(angle) >= 135 -> "${side}측 유턴"
+        Math.abs(angle) >= 60 -> "${side}회전"
+        else -> "${side}측 방향"
+    }
+    Row(modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(AD.navy).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(34.dp))
+        Column {
+            Text(if (turn == null) "$what · ${distanceLabel(remainM)}" else "${distanceLabel(turn.distanceM)} 앞 $what",
+                color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            if (turn != null) Text("목적지까지 ${distanceLabel(remainM)}", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+        }
+    }
+}
+
+/** 100m 아래는 10m 단위, 1km 아래는 50m 단위, 그 위는 소수 한 자리 km */
+private fun distanceLabel(m: Double): String = when {
+    m < 100 -> "${(Math.round(m / 10.0) * 10).coerceAtLeast(10)}m"
+    m < 1000 -> "${Math.round(m / 50.0) * 50}m"
+    else -> "%.1fkm".format(m / 1000.0)
+}
+
+private fun arrivalClock(etaSec: Double): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.KOREA).format(java.util.Date(System.currentTimeMillis() + (etaSec * 1000).toLong()))
 
 @Composable
 private fun BigButton(text: String, color: Color, icon: ImageVector? = null, enabled: Boolean = true, onClick: () -> Unit) {
@@ -702,54 +784,54 @@ private fun StepRow(title: String, source: String, state: Step) {
     }
 }
 
+/** 이송 중 시트 — 접으면 목적지 병원 이름과 [통화] 버튼만, 위로 끌어올리면 안내가 보인다. 재선택 대기에는 다시 고를 병원 목록 */
 @Composable
-private fun TransportPanel(m: PhoneModel) {
+private fun TransportSheet(m: PhoneModel, listMax: Dp) {
     val rerouting = m.phase == AmbulancePhase.rerouting
     val dest = m.destination
     val eta = m.mySim?.etaSec?.let { max(1, ceil(it / 60).toInt()) }
-    Column(Modifier.fillMaxWidth()) {
-        Card(border = if (rerouting) AD.red else AD.line, borderWidth = if (rerouting) 2.dp else 1.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Pill(if (rerouting) "재선택 대기" else "병원 이송 중", if (rerouting) AD.red else AD.blue, if (rerouting) AD.redSoft else AD.blueSoft, bold = true)
-                    when {
-                        m.transportHeld -> Text("통화 내용 반영 중 — 이송 잠시 멈춤", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AD.blue)
-                        !rerouting && eta != null -> Text("도착까지 약 ${eta}분", fontSize = 12.sp, color = AD.sub)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill(if (rerouting) "재선택 대기" else "병원 이송 중", if (rerouting) AD.red else AD.blue, if (rerouting) AD.redSoft else AD.blueSoft, bold = true)
+            when {
+                m.transportHeld -> Text("통화 내용 반영 중 — 이송 잠시 멈춤", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AD.blue)
+                !rerouting && eta != null -> Text("도착까지 약 ${eta}분", fontSize = 12.sp, color = AD.sub)
+            }
+        }
+        if (rerouting) {
+            Text("목적지 병원이 수용할 수 없게 됐습니다", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AD.navy)
+            Column(Modifier.heightIn(max = listMax).verticalScroll(rememberScrollState())) { ReselectList(m) }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("목적지 병원", fontSize = 11.5.sp, color = AD.sub)
+                    Text(dest?.name ?: "확정 병원", fontSize = 20.sp, fontWeight = FontWeight.Black, color = AD.navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (dest != null) {
+                    Row(Modifier.height(46.dp).clip(RoundedCornerShape(14.dp)).background(if (m.paused) AD.control else AD.green)
+                        .alpha(if (m.transportCallBlocked) 0.45f else 1f)
+                        .clickable(enabled = !m.transportCallBlocked) { m.dial(dest.hospitalId, dest.name) }.padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Call, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("통화", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                if (rerouting) {
-                    Text("목적지 병원이 수용할 수 없게 됐습니다", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AD.navy)
-                    ReselectList(m)
-                } else {
-                    Column {
-                        Text("목적지 병원", fontSize = 11.5.sp, color = AD.sub)
-                        Text(dest?.name ?: "확정 병원", fontSize = 20.sp, fontWeight = FontWeight.Black, color = AD.navy)
-                    }
-                    Text("이송 중 환자 상태가 바뀌면 목적지 병원과 통화하세요. 통화 내용은 환자 정보에 덧붙어 병원 화면에 바로 반영됩니다.",
-                        fontSize = 12.5.sp, color = AD.ink3)
-                    if (m.transportCallBlocked) {
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AD.orangeSoft).padding(horizontal = 12.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Filled.Lock, null, tint = AD.orange, modifier = Modifier.size(18.dp))
-                            Text(buildAnnotatedString {
-                                append("시연 콘솔이 ")
-                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("정해진 상황 선택") }
-                                append(" 중이라 전화를 걸 수 없습니다. 콘솔에서 ")
-                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("음성으로 통화") }
-                                append("를 고르면 전화할 수 있습니다.")
-                            }, fontSize = 13.sp, color = AD.navy, modifier = Modifier.weight(1f))
-                        }
-                    }
-                    if (dest != null) {
-                        Row(Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(14.dp)).background(if (m.paused) AD.control else AD.green)
-                            .alpha(if (m.transportCallBlocked) 0.45f else 1f)
-                            .clickable(enabled = !m.transportCallBlocked) { m.dial(dest.hospitalId, dest.name) }, horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Call, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("목적지 병원과 통화", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
+            }
+            // 아래는 위로 끌어올렸을 때만 보인다
+            Text("이송 중 환자 상태가 바뀌면 목적지 병원과 통화하세요. 통화 내용은 환자 정보에 덧붙어 병원 화면에 바로 반영됩니다.",
+                fontSize = 12.5.sp, color = AD.ink3)
+            if (m.transportCallBlocked) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AD.orangeSoft).padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Lock, null, tint = AD.orange, modifier = Modifier.size(18.dp))
+                    Text(buildAnnotatedString {
+                        append("시연 콘솔이 ")
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("정해진 상황 선택") }
+                        append(" 중이라 전화를 걸 수 없습니다. 콘솔에서 ")
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("음성으로 통화") }
+                        append("를 고르면 전화할 수 있습니다.")
+                    }, fontSize = 13.sp, color = AD.navy, modifier = Modifier.weight(1f))
                 }
             }
         }
