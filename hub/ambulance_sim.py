@@ -12,9 +12,9 @@
 
 - 환자 발생 위치: 기지에서 자동차로 5~12분 걸리는 지점 30~50곳을 처음 한 번 카카오 다중 목적지
   ETA로 골라 파일로 저장한다(이후 호출 0회). 키가 없으면 반경 3.5km 직선 지점으로 대신한다.
-- 이동: 구간마다 도로 경로를 1번 받아 그 선을 따라 보간한다. 화면 이동 시간은 모든 구간(출동·이송·
-  복귀)이 거리와 무관하게 TRIP_SEC(기본 5초) 고정이다(2026-10-03 — 시연에서 이동을 기다릴 이유가
-  없다). 먼 곳일수록 배속이 올라가고, 남은 ETA는 실제 도로 기준 값으로 보여준다(빨리 가는 건 연출일 뿐).
+- 이동: 구간마다 도로 경로를 1번 받아 그 선을 따라 보간한다. 화면 이동 시간은 출동 TRIP_SEC(기본 5초),
+  병원 이송 TRANSPORT_SEC(30초), 기지 복귀 RETURN_SEC(30초)로 거리와 무관하게 고정한다.
+  먼 곳일수록 배속이 올라가고, 남은 ETA는 실제 도로 기준 값으로 보여준다(빨리 가는 건 연출일 뿐).
   예전엔 기본 5배속에 출동·이송 90초·복귀 30초 상한이었다.
 - 정지·재개(2026-10-03): 출동 중·현장·이송 중에 [정지]하면 위치·남은 시간·진행이 그대로 멈추고,
   재개하면 멈춘 자리에서 이어 간다. 정지 중 이송 확정이 들어오면 경로만 잡아 두고 재개 때 출발한다.
@@ -52,11 +52,13 @@ FALLBACK_SPEED_KMH = 30.0     # 도로 경로가 없을 때 직선 이동 속도
 
 #: 경로 길이를 알 수 없을 때(소요 시간 0)만 쓰는 배속.
 SPEEDUP = float(os.environ.get("HUB_SIM_SPEEDUP", "5"))
-#: 구급차 화면 이동 시간(초, 2026-10-03). 출동·이송·복귀 모든 구간에 같은 고정값 — 가까워도 멀어도 이 시간에 도착한다.
+#: 현장 출동 화면 이동 시간(초). 가까워도 멀어도 이 시간에 도착한다.
 TRIP_SEC = float(os.environ.get("HUB_SIM_TRIP_SEC", "5"))
 #: 병원으로 이송하는 구간만 따로(2026-10-04) — 이송 중 환자 상태 변화(활력징후 시나리오)를 고를 시간이 필요해 30초.
 #: [빨리감기]를 누르면 남은 이동을 FAST_FORWARD_SEC 안에 마친다.
 TRANSPORT_SEC = float(os.environ.get("HUB_SIM_TRANSPORT_SEC", "30"))
+#: 복귀도 경로 이동을 볼 수 있게 30초. 현장 종료·환자 수용 완료 모두 같은 값을 쓴다.
+RETURN_SEC = float(os.environ.get("HUB_SIM_RETURN_SEC", "30"))
 FAST_FORWARD_SEC = float(os.environ.get("HUB_SIM_FAST_FORWARD_SEC", "3"))
 #: 정지할 수 있는 단계(2026-10-03) — 현장으로 출동 중 · 현장 도착 · 병원으로 이송 중
 PAUSABLE_PHASES = ("dispatching", "on_scene", "transporting")
@@ -381,12 +383,18 @@ class DispatchSim:
             if unit is None or unit.phase not in ("on_scene", "rerouting") or unit.case_id != case_id:
                 return False
             origin, base = unit.gps or unit.base, unit.base
-        trip = plan_trip(self._router, origin, base, self._clock())
+        trip = self._plan_return(origin, base)
         with self._lock:
             unit = self._units[apid]
             unit.phase, unit.trip, unit.case_id, unit.incident = "returning", trip, None, None
             unit.paused = False
         return True
+
+    def _plan_return(self, origin: GpsPoint, base: GpsPoint) -> Trip:
+        trip = plan_trip(self._router, origin, base, self._clock(), display_sec=RETURN_SEC)
+        # 경로 조회에 걸린 시간이 복귀 시간을 소모하지 않게, 조회 완료 후 출발한다.
+        trip.started_at = self._clock()
+        return trip
 
     def on_confirmed(self, apid: str, case_id: str, hospital_id: str, hospital_gps: GpsPoint) -> bool:
         """이송 확정(재선택 포함): 그 순간 위치에서 확정 병원으로 간다."""
@@ -506,7 +514,7 @@ class DispatchSim:
                 elif unit.phase == "at_hospital" and unit.dwell_until is not None and now >= unit.dwell_until:
                     to_plan_return.append(unit)
         for unit in to_plan_return:  # 락 밖에서 경로 조회
-            trip = plan_trip(self._router, unit.gps or unit.base, unit.base, now)
+            trip = self._plan_return(unit.gps or unit.base, unit.base)
             with self._lock:
                 unit.phase, unit.trip, unit.case_id, unit.incident = "returning", trip, None, None
                 unit.dwell_until = None
@@ -607,7 +615,7 @@ def _selftest() -> None:
         assert sim.pause("A1")[0]
         assert sim.scene_end("A1", "c3") and sim.phase_of("A1") == "returning", "[현장 종료] → 바로 복귀"
         back = sim._units["A1"].trip
-        assert abs(back.duration_sec / back.speedup - TRIP_SEC) < 1e-6, "현장 종료 뒤 복귀도 5초 고정"
+        assert abs(back.duration_sec / back.speedup - RETURN_SEC) < 1e-6, "현장 종료 뒤 복귀는 별도 복귀 시간"
         assert not sim.state("A1")["paused"], "정지 중 현장 종료하면 정지도 풀린다"
         assert sim.pause("A1")[0] is False, "복귀 중엔 정지 대상이 아니다"
         clock.t += 3600

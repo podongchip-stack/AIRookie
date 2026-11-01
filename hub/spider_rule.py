@@ -13,7 +13,8 @@ spider/voice_to_patient.py(질환군 규칙)이고, 값은 map.html 화면의 �
     τ 창      = 도착 시각이 τ(10분) 안에 겹치는 다른 사건. **표시만 한다 — 순위에 넣지 않는다**(2026-10-22)
 
 숫자는 전부 spider 쪽 표기 그대로 "전문의 검토 전 초안"이다. 진료과 임베딩 점수는 이 모델에 없어 순위에 쓰지 않는다
-(설명용으로만 남는다). 줄이 없는 병원(벽·모자람)도 후보에서 빼지 않고 뒤로 보낸다(spider의 "제외하지 않는 원칙").
+(설명용으로만 남는다). 줄이 없는 병원(벽·모자람)도 계산·감사용 후보에는 남긴다. 실제 대시보드 전달에서는
+hospital_dispatch.py가 이를 거른다(2026-11-01). 임상 검증 전 시연 기준이라는 점은 같다.
 
 ⚠ **τ 창 충돌·양보를 순위에서 뺐다(2026-10-22).** 예전엔 같은 창에 우선하는 사건의 줄이 한도(2)만큼 차 있으면
 그 병원을 건너뛰고(점수 띠를 한 단계 내림) 밀린 사건이 다음 병원으로 줄을 옮겼다(spider의 "양보"). 근거 둘이
@@ -117,6 +118,19 @@ def line(k: int, cond: str, info, travel_min: float, load_min: float, inflight_s
     else:
         gain = -NU[k] * (-gap)
     return {"len": travel_min - gain + load_min, "gap": gap, "gain_min": gain, "parts": parts, "blocked": None}
+
+
+def ktas_suitability(k: int, cond: str, info, hour: float) -> dict:
+    """병원별 KTAS 전달 근거. 기존 spider의 벽·허용 역량 차이를 그대로 쓴다.
+
+    supportedKtas는 이 질환군·시각에 대한 모형상의 값이며 실제 수용 보장이 아니다.
+    """
+    g, z, _ = hospital_z(info, hour)
+    supported = [level for level, need in KTAS_Z.items() if wall_ok(info, g, cond) and z - need >= GAP_FLOOR]
+    return {"source": "rule", "rule": "spider_ktas_v1", "clinicallyValidated": False,
+            "patientKtas": k, "condition": cond, "requiredCapacity": KTAS_Z[k],
+            "effectiveCapacity": round(z, 2), "minimumGap": GAP_FLOOR,
+            "supportedKtas": supported, "eligible": k in supported}
 
 
 def gain_reasons(sp: dict, k: int) -> list[str]:

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import bed_reliability
 import decision_log
 import spider_rule
+from hospital_dispatch import can_receive
 from disease_group import match_group
 from geo import active_zones, haversine_km, should_expand_zone, zone_of
 from schema import (
@@ -509,6 +510,8 @@ def _display_signature(result: HubMatchResult | None) -> tuple | None:
                 h.availableBedCount,
                 h.bedCountUnknown,
                 h.bedDataStale,
+                h.spiderBlocked,
+                h.ktasSuitability,
                 h.etaMin,
                 tuple(h.demoteReasons),
                 len(h.acceptanceMessages or ()),
@@ -528,7 +531,7 @@ def _decision_signature(result: HubMatchResult | None) -> tuple | None:
     return (
         tuple(result.zoneActive),
         tuple(
-            (h.hospitalId, h.status, h.availableBedCount, h.bedCountUnknown, tuple(h.demoteReasons))
+            (h.hospitalId, h.status, h.availableBedCount, h.bedCountUnknown, tuple(h.demoteReasons), h.spiderBlocked)
             for h in result.hospitals
         ),
     )
@@ -883,7 +886,7 @@ class HubEngine:
             return [
                 result
                 for cid, result in self._case_results.items()
-                if cid not in self._case_arrival and any(h.hospitalId == hospital_id for h in result.hospitals)
+                if cid not in self._case_arrival and any(h.hospitalId == hospital_id and can_receive(h) for h in result.hospitals)
             ]
 
     def get_cases_for_apid(self, apid: str) -> list[HubMatchResult]:
@@ -1130,6 +1133,11 @@ class HubEngine:
             refuse_reason = None
             if action.actor != _ACTION_ACTOR[action.action]:
                 refuse_reason = f"actor mismatch: {action.action} requires {_ACTION_ACTOR[action.action]}"
+            elif action.action in ("hospital_approve", "hospital_reject", "final_approval") and (
+                (result := self._case_results.get(action.caseId)) is not None
+                and not any(h.hospitalId == action.hospital_id and can_receive(h) for h in result.hospitals)
+            ):
+                refuse_reason = "hospital is not a KTAS-compatible dispatch target"
             elif action.action == "final_approval" and current != "approved":
                 refuse_reason = f"final_approval requires hospital approval (current: {current})"
             elif action.action == "hospital_approve" and self._is_confirmed_full(action.hospital_id):
@@ -1296,14 +1304,14 @@ class HubEngine:
     # ── 존 · 후보 ─────────────────────────────────────────────────────────────
 
     def reject_ratio(self, case_id: str, ambulance_gps: GpsPoint, max_zone: int) -> float:
-        """현재 존(1~max_zone) 안 **후보 병원 전체** 대비 명시적으로 거절(rejected)한 병원의 비율.
+        """현재 존(1~max_zone) 안 **KTAS 전달 대상 전체** 대비 명시적으로 거절(rejected)한 병원의 비율.
         시간 기반이 아닌 거절 비율 기반 존 확장 판단에 쓴다. 후보가 없으면 0.0(빈 존은 따로 넓힌다).
 
         2026-10-01: 분모를 "응답한 병원"에서 "존 안 후보 전체"로 바꿨다. 예전엔 첫 응답이 거절이면 1/1 = 100%라
         후보가 10곳이어도 한 곳의 거절로 바로 넓어졌다. 지금은 10곳 중 4곳(40%)이 거절해야 넓어진다.
         """
         with self._lock:
-            candidates = self._candidates_in_zone(ambulance_gps, max_zone)
+            candidates = self._dispatch_candidates(case_id, ambulance_gps, max_zone)
             statuses = [self._approval_status.get((case_id, info.hospitalId), "pending") for info, _ in candidates]
         if not statuses:
             return 0.0
@@ -1319,6 +1327,31 @@ class HubEngine:
                 if zone_of(distance) <= max_zone:
                     candidates.append((info, distance))
             return candidates
+
+    def _dispatch_candidates(self, case_id: str, ambulance_gps: GpsPoint, max_zone: int,
+                             voice: VoiceCallSummaryMessage | None = None) -> list[tuple[HospitalInfo, float]]:
+        """첫 매칭·재계산·존 확장에 같은 KTAS/질환군 규칙을 쓴다. 병원의 명시적 승인이 우선이다."""
+        with self._lock:
+            voice = voice or self._case_voice.get(case_id)
+            candidates = self._candidates_in_zone(ambulance_gps, max_zone)
+            if voice is None:
+                return candidates  # 통화 전에는 KTAS가 없어 지리 후보를 유지한다.
+            k, cond = spider_rule.patient_of(voice.summary.ktas_level, voice.summary.severity_tag,
+                                           voice.summary.mechanism, voice.summary.trauma)
+            hour = spider_rule.local_hour(_utcnow())
+            return [(info, distance) for info, distance in candidates
+                    if self._approval_status.get((case_id, info.hospitalId)) in ("approved", "confirmed")
+                    or spider_rule.ktas_suitability(k, cond, info, hour)["eligible"]]
+
+    def _dispatch_zone(self, voice: VoiceCallSummaryMessage, gps: GpsPoint, start: int, cap: int = 10) -> int:
+        """현재 존에 맞는 병원이 없으면 최대 50km까지 검색. 부적합 병원으로 우회 전달하지 않는다."""
+        candidates = self._dispatch_candidates(voice.caseId, gps, max(start, cap), voice)
+        needed = min((zone_of(distance) for _, distance in candidates), default=max(start, cap))
+        zone = max(start, needed)
+        if zone > start:
+            decision_log.log_decision("zone_expanded", {"caseId": voice.caseId, "from": start, "to": zone,
+                                                       "cause": "ktas_no_eligible", "source": "rule"})
+        return zone
 
     def build_zone_candidates(
         self, ambulance_gps: GpsPoint, max_zone: int = 1, reported_severity: str | None = None
@@ -1389,6 +1422,10 @@ class HubEngine:
                     "bedCountUnknown": unknown,
                     "bedReliability": rel.model_dump() if rel is not None else None,
                     "firstCallRecommended": False,
+                    # 통화 전에는 질환군 미확정: 일반 조건의 KTAS 적합도만 전달한다.
+                    "supportedKtas": spider_rule.ktas_suitability(3, "general", info, spider_rule.local_hour(now))["supportedKtas"],
+                    "ktasSource": "rule",
+                    "ktasClinicallyValidated": False,
                     # 구급대가 전화 상대를 고를 때 바로 보는 정보(2026-10-04) — 등급·진료과
                     "emergencyLevel": info.emergencyLevel,
                     "specialties": [
@@ -1533,6 +1570,7 @@ class HubEngine:
                         spiderLen=round(sp["len"], 1) if sp["len"] is not None else None,
                         spiderGap=round(sp["gap"], 2),
                         spiderBlocked=sp["blocked"],
+                        ktasSuitability=spider_rule.ktas_suitability(sp_k, sp_cond, info, sp_hour),
                         spiderWindow=sp_window or None,
                         emergencyLevel=info.emergencyLevel,
                         travelBonusMin=round(bonus_min, 1),
@@ -1886,6 +1924,7 @@ class HubEngine:
         `declared_no`·확인된 만실 병원은 그 앞으로 내린다. finalScore 값 자체는 안 바뀌고
         후보에서 제거하지도 않는다.
         """
+        max_zone = self._dispatch_zone(voice, ambulance_gps, max_zone)
         with self._lock:
             self._prune_old_cases()
             self._case_voice[voice.caseId] = voice
@@ -1928,12 +1967,14 @@ class HubEngine:
         if confirmed:
             return None
 
+        max_zone = self._dispatch_zone(voice, ambulance_gps, max_zone)
         result, group = self._compute_result(voice, ambulance_gps, max_zone, gps_fallback)
 
         with self._lock:
             if case_id not in self._case_voice:
                 return None  # 계산하는 사이 정리됨
             self._case_results[case_id] = result
+            self._case_max_zone[case_id] = max_zone
             self._case_group[case_id] = group
             self._dirty = True
 
@@ -1972,13 +2013,18 @@ class HubEngine:
         with self._lock:
             return self._case_max_zone.get(case_id, 1)
 
-    def next_zone_with_new(self, ambulance_gps: GpsPoint, current: int, cap: int = 10) -> int | None:
+    def next_zone_with_new(self, ambulance_gps: GpsPoint, current: int, cap: int = 10,
+                           case_id: str | None = None) -> int | None:
         """current 바깥에서 새 병원이 처음 들어오는 존(2026-10-04, 시간 기반 확장). 없으면 None —
         _expand_until_nonempty는 "후보가 하나라도 있으면"이라 이미 있는 병원만으로도 멈춰, 시간 확장이
         병원 없는 빈 존으로 계속 넓어졌다."""
-        known = len(self._candidates_in_zone(ambulance_gps, current))
+        def candidates(zone: int) -> list[tuple[HospitalInfo, float]]:
+            if case_id:
+                return self._dispatch_candidates(case_id, ambulance_gps, zone)
+            return self._candidates_in_zone(ambulance_gps, zone)
+        known = len(candidates(current))
         for zone in range(current + 1, cap + 1):
-            if len(self._candidates_in_zone(ambulance_gps, zone)) > known:
+            if len(candidates(zone)) > known:
                 return zone
         return None
 

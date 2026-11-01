@@ -6,7 +6,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("hubBase") private var hubBase = Settings.defaultHub
     @AppStorage("spiderBase") private var spiderBase = ""
-    @AppStorage("apid") private var apid = "auto"
     @State private var lanIP = "192.168.0.10"
     @State private var checkResult = ""
     @State private var checking = false
@@ -15,14 +14,13 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("auto 또는 SEL0001", text: $apid)
-                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                    HStack {
-                        Button("auto (출동 구급대 자동)") { apid = "auto" }
-                        Spacer()
-                        Button("SEL0001") { apid = "SEL0001" }
+                    LabeledContent("접근 코드", value: Settings.accessCode)
+                    Text(model.ambulanceName ?? Settings.apid).font(.headline)
+                    Button("접근 코드 변경") {
+                        dismiss()
+                        model.changeAccessCode()
                     }
-                    Text("auto: 상황이 발생해 어떤 구급대든 출동하면 그 구급대 화면으로 자동 전환(웹 /ambulance?id=auto와 같음). 실제 차량에 고정하려면 구급차 ID(SEL0001~SEL0162)를 넣는다.")
+                    Text("입력한 구급대에 고정 연결됩니다. 다른 구급대로 바꾸려면 접근 코드를 다시 입력하세요.")
                         .font(.footnote).foregroundStyle(.secondary)
                 } header: { Text("이 아이패드의 구급차") }
 
@@ -72,7 +70,7 @@ struct SettingsView: View {
         checking = true
         defer { checking = false }
         var lines: [String] = []
-        let id = apid.trimmingCharacters(in: .whitespaces)
+        let id = Settings.apid.trimmingCharacters(in: .whitespaces)
         if id.lowercased() == "auto" {
             if let u = Settings.identityURL(role: "hospital", id: "_") { lines.append("hub: " + (await status(u))) }
             lines.append("구급차: auto — 출동하는 구급대를 따라감")
@@ -95,5 +93,72 @@ struct SettingsView: View {
             let (_, r) = try await URLSession.shared.data(for: req)
             return (r as? HTTPURLResponse)?.statusCode == 200 ? "✅ 응답" : "⚠️ 상태 \((r as? HTTPURLResponse)?.statusCode ?? 0)"
         } catch { return "❌ \(error.localizedDescription)" }
+    }
+}
+
+
+/// 아이패드 네이티브 앱의 구급대 접근 코드 입장 화면.
+struct PadAccessCodeEntry: View {
+    let onEnter: () -> Void
+    @State private var code = ""
+    @State private var hub = Settings.hubBase
+    @State private var checking = false
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("골든링크").font(.system(size: 28, weight: .black)).foregroundStyle(AD.navy)
+                Text("구급대 접근 코드").font(.title3.bold())
+                Text("소속 구급대 코드를 입력하면 해당 구급대의 사건과 이송 정보를 확인합니다.")
+                    .font(.subheadline).foregroundStyle(AD.sub)
+                TextField("예: A-SEL0111", text: $code)
+                    .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder).accessibilityLabel("접근 코드")
+                    .onSubmit { Task { await enter() } }
+                if let error { Text(error).font(.footnote).foregroundStyle(AD.red) }
+                Button { Task { await enter() } } label: {
+                    Text(checking ? "구급대 확인 중…" : "입장")
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
+                        .foregroundStyle(.white).background(AD.blue, in: RoundedRectangle(cornerRadius: 12))
+                }.disabled(checking || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Text("시연: 역삼119안전센터 구급 1\n아이패드 A-SEL0111 · 아이폰 P-SEL0111")
+                    .font(.footnote).foregroundStyle(AD.sub)
+                DisclosureGroup("서버 연결 설정") {
+                    TextField("hub 주소", text: $hub)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder).padding(.top, 8)
+                }.font(.subheadline)
+            }.padding(24).frame(maxWidth: 480).frame(maxWidth: .infinity).padding(.top, 64)
+        }.background(AD.bg.ignoresSafeArea())
+    }
+
+    @MainActor private func enter() async {
+        guard !checking else { return }
+        guard let id = Settings.ambulanceID(from: code) else {
+            error = "A-SEL0111 형식의 구급대 접근 코드를 입력하세요."
+            return
+        }
+        guard let base = URL(string: hub.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(base.scheme?.lowercased() ?? ""), base.host != nil,
+              var url = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            error = "서버 주소를 확인하세요."; return
+        }
+        url.path = "/identity"
+        url.queryItems = [URLQueryItem(name: "role", value: "ambulance"), URLQueryItem(name: "id", value: id)]
+        guard let endpoint = url.url else { return }
+        checking = true; error = nil
+        defer { checking = false }
+        do {
+            var request = URLRequest(url: endpoint); request.timeoutInterval = 10
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "서버에서 구급대를 확인하지 못했습니다."; return }
+            struct IdentityCheck: Decodable { let known: Bool; let id: String }
+            let identity = try JSONDecoder().decode(IdentityCheck.self, from: data)
+            guard identity.known, identity.id == id else { error = "등록되지 않은 구급대 코드입니다."; return }
+            Settings.hubBase = hub.trimmingCharacters(in: .whitespacesAndNewlines)
+            Settings.apid = id; Settings.accessCode = "A-" + id
+            onEnter()
+        } catch { self.error = "서버에 연결하지 못했습니다. 네트워크와 서버 주소를 확인한 뒤 다시 시도하세요." }
     }
 }

@@ -2,9 +2,8 @@ import SwiftUI
 
 /// [환자 정보] 탭 왼쪽 아래 — **인계확인서**(출동 및 처치 기록지, 별지 제16호서식).
 /// 서식 전체를 카드에 펼치지 않고 **중요한 칸만 간략히** 보여 주고, [인계확인서 수정]으로 전체를 고친다.
-/// 통화 요약(AI)·출동 상태·확정 병원에서 채울 수 있는 칸은 미리 채워 두고, 고친 칸은 기기에 사건별로 남는다(`Handover`).
-/// 전달은 수정 화면의 [저장 · 병원에 전달] 하나로 일어난다(2026-10-28) — 적힌 칸을 한 덩이 글로 만들어 기존 '추가 정보' 통로(hub `patient_override.extraNote`)로 보낸다 —
-/// hub·병원 화면 계약을 바꾸지 않고 바로 쓰려는 선택이고, 서식 그대로의 전송·출력은 hub에 칸을 만들 때 붙인다.
+/// 자동값 위에 수동 수정 칸을 합친다. 저장 시 hub에 칸별 변경을 보내 같은 구급대의 아이폰·아이패드에 공유한다.
+/// 병원에는 기존 추가 정보 통로로 서식 요약도 전달한다. 오프라인 수정은 기기 대기열에 보존한다.
 struct HandoverCard: View {
     @EnvironmentObject private var model: AppModel
     @State private var edits: [String: String] = [:]
@@ -59,6 +58,7 @@ struct HandoverCard: View {
                 // 위 통화 요약 칸까지 밀어 올리고 상단바를 침범했다. ScrollView로 감싸 카드 자체 높이 안에서만 스크롤되게 한다
                 ScrollView { summary }.scrollIndicators(.hidden)
                 // 전달은 [인계확인서 수정] 안에서 저장과 함께 일어난다(2026-10-28) — 카드엔 전달 이력만 남긴다
+                CaseEditStatusView(sync: model.caseEdits)
                 HStack(spacing: 8) {
                     if sentCount > 0 { Pill(text: "병원에 전달 \(sentCount)회", bg: AD.greenSoft, fg: AD.green, bold: true) }
                     else { Text("고친 내용은 [인계확인서 수정]에서 저장하면 병원에 함께 전달됩니다").font(.system(size: 11.5)).foregroundStyle(AD.muted) }
@@ -75,6 +75,7 @@ struct HandoverCard: View {
         .card()
         .onAppear { edits = Handover.loadEdits(model.caseId) }
         .onChange(of: model.caseId) { _, id in edits = Handover.loadEdits(id) }
+        .onChange(of: model.handoverVersion) { _, _ in edits = Handover.loadEdits(model.caseId) }
         // 서식을 넓게 보려고 전체 화면으로 띄운다(기본 시트는 아이패드에서 좁은 세로 칸이라 종이 서식처럼 안 보인다)
         .fullScreenCover(isPresented: $showSheet) {
             HandoverSheet(auto: auto, edits: $edits, caseId: model.caseId).environmentObject(model)
@@ -130,6 +131,7 @@ struct HandoverSheet: View {
     @State private var draft: [String: String] = [:]
     /// 이 화면을 연 뒤 사람이 손댄 칸 — 서식을 열어 둔 채 새 통화·출동 소식이 와도 이 칸은 덮지 않는다
     @State private var touched: Set<String> = []
+    @State private var sharedBase: [String: String] = [:]
 
     private func binding(_ id: String) -> Binding<String> {
         Binding(get: { draft[id] ?? "" }, set: { draft[id] = $0; touched.insert(id) })
@@ -140,7 +142,7 @@ struct HandoverSheet: View {
             bar
             ScrollView {
                 VStack(spacing: 18) {
-                    Text("통화 요약(AI)·출동 상태에서 채울 수 있는 칸은 미리 채워 두었습니다. 사실과 다르면 고치세요 — 고친 칸은 그대로 남고, 새 통화가 와도 덮어쓰지 않습니다. 서명·면허번호처럼 앱이 알 수 없는 칸은 비어 있습니다. [저장 · 병원에 전달]을 누르면 적은 내용이 이 기기에 저장되고 같은 내용이 수용 병원에도 전달됩니다.")
+                    Text("통화 요약(AI)·출동 상태에서 채울 수 있는 칸은 미리 채워 두었습니다. 사실과 다르면 고치세요 — 고친 칸은 그대로 남고, 새 통화가 와도 덮어쓰지 않습니다. 서명·면허번호처럼 앱이 알 수 없는 칸은 비어 있습니다. [저장 · 병원에 전달]을 누르면 수정 칸이 아이폰·아이패드에 동기화되고 같은 내용이 수용 병원에도 전달됩니다.")
                         .font(.system(size: 12.5)).foregroundStyle(AD.sub)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12).background(AD.chip).clipShape(RoundedRectangle(cornerRadius: 10))
@@ -161,7 +163,13 @@ struct HandoverSheet: View {
             }
             .background(AD.bg)
         }
-        .onAppear { draft = auto.merging(edits) { _, edited in edited } }
+        .onAppear { draft = auto.merging(edits) { _, edited in edited }; sharedBase = model.caseEdits.fields }
+        .onReceive(model.caseEdits.$fields) { fields in
+            for f in Handover.fields where !touched.contains(f.id) {
+                draft[f.id] = fields["h:" + f.id] ?? auto[f.id] ?? ""
+                sharedBase["h:" + f.id] = fields["h:" + f.id]
+            }
+        }
         // 서식을 열어 둔 채 통화 요약·출동 상태가 갱신되면, 손대지 않은 칸만 새 자동값으로 따라 채운다
         .onChange(of: auto) { _, fresh in
             for (id, value) in fresh where !touched.contains(id) && edits[id] == nil {
@@ -179,7 +187,7 @@ struct HandoverSheet: View {
                     .font(.system(size: 11.5)).foregroundStyle(AD.sub)
             }
             Spacer(minLength: 8)
-            Button { draft = auto; touched = [] } label: {
+            Button { draft = auto; touched = Set(edits.keys).union(model.caseEdits.handover.keys) } label: {
                 Text("자동값으로 되돌리기").font(.system(size: 13, weight: .semibold)).foregroundStyle(AD.ink3)
                     .padding(.horizontal, 14).frame(minHeight: 36).background(AD.chip).clipShape(Capsule())
             }
@@ -188,7 +196,7 @@ struct HandoverSheet: View {
                     .padding(.horizontal, 16).frame(minHeight: 36).background(AD.chip).clipShape(Capsule())
             }
             // 저장과 전달을 한 버튼으로(2026-10-28) — 적은 내용은 기기에 남고 같은 동작으로 병원에도 간다
-            Button { save(); _ = model.sendExtraNote(Handover.message(draft)); dismiss() } label: {
+            Button { if save() { _ = model.sendExtraNote(Handover.message(draft)); dismiss() } } label: {
                 Label("저장 · 병원에 전달", systemImage: "paperplane.fill")
                     .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
                     .padding(.horizontal, 20).frame(minHeight: 36)
@@ -281,13 +289,10 @@ struct HandoverSheet: View {
     }
 
     /// 자동값과 **다른 칸만** 저장한다 — 그래야 통화가 갱신될 때 안 고친 칸이 따라 바뀐다
-    private func save() {
-        var out: [String: String] = [:]
-        for f in Handover.fields {
-            let v = (draft[f.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if v != (auto[f.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) { out[f.id] = v }
-        }
-        edits = out
-        Handover.saveEdits(caseId, out)
+    private func save() -> Bool {
+        guard let caseId, caseId == model.caseId else { model.show("사건이 변경되어 저장하지 못했습니다."); return false }
+        model.shareHandover(caseId: caseId, draft: draft, auto: auto, touched: touched, base: sharedBase)
+        edits = model.caseEdits.handover
+        return true
     }
 }

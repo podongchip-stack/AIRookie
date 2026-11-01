@@ -10,6 +10,20 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "hubBase") }
     }
 
+    static var accessCode: String {
+        get { UserDefaults.standard.string(forKey: "accessCode") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "accessCode") }
+    }
+
+    /// 네이티브 아이패드는 A-<구급대 ID> 코드로만 입장한다.
+    static func ambulanceID(from code: String) -> String? {
+        let value = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard value.hasPrefix("A-") else { return nil }
+        let id = String(value.dropFirst(2))
+        guard !id.isEmpty, id != "AUTO", id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
+        return id
+    }
+
     /// 이 아이패드가 실린 구급차 ID(SEL0001~) 또는 "auto" — 출동하는 구급차를 자동으로 따라간다(웹 /ambulance?id=auto와 같음)
     static var apid: String {
         get { UserDefaults.standard.string(forKey: "apid") ?? "auto" }

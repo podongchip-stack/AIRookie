@@ -8,6 +8,9 @@ options:
   createIntermediateGroups: true
 
 packages:
+  KakaoMapsSDK:
+    url: https://github.com/kakao-mapsSDK/KakaoMapsSDK-SPM.git
+    exactVersion: 2.12.19
   GoldenLinkCore:
     path: GoldenLinkCore
   speech-swift:
@@ -18,13 +21,19 @@ targets:
     type: application
     platform: iOS
     sources:
+      - path: ../shared/CaseEditSync.swift
       - path: GoldenLinkPhone
       # 모델(convert/ 스크립트 출력, git 제외)은 Models/ 폴더째 번들에 넣는다. 파일을 하나씩 등록하면 없는 모델 때문에
       # 빌드가 깨지므로 폴더 참조로 둔다 — 빈 폴더여도 빌드되고(그때는 서버 STT 모드), .mlpackage는 앱이 첫 실행 때 컴파일한다.
       - path: Models
         type: folder
         buildPhase: resources
+    configFiles:
+      Debug: Config/Kakao.xcconfig
+      Release: Config/Kakao.xcconfig
     dependencies:
+      - package: KakaoMapsSDK
+        product: KakaoMapsSDK-SPM
       - package: GoldenLinkCore
       - package: speech-swift
         product: Qwen3ASR

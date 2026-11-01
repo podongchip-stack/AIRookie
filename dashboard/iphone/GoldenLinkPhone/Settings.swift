@@ -2,11 +2,35 @@ import Foundation
 
 /// 앱 설정(설정 화면에서 바꾼다). 기기에만 저장된다.
 enum Settings {
-    /// hub 주소. 로컬 모드 `http://<맥 IP>:5001`, 공개 모드 `https://app.rookie-goldenlink.xyz`
+    /// hub 주소. 로컬 모드 `http://<맥 IP>:5001`, 공개 모드 `https://app.rookie-goldenlink.xyz`(기본값 — 안드로이드와 동일)
     /// 공개 도메인도 된다 — 온디바이스 요약은 WebSocket(/ws/dashboard)으로 보낸다(2026-10-05, 예전 /voice/* HTTP는 터널이 막아 404)
     static var hubBase: String {
-        get { UserDefaults.standard.string(forKey: "hubBase") ?? "http://192.168.0.10:5001" }
+        get { UserDefaults.standard.string(forKey: "hubBase") ?? "https://app.rookie-goldenlink.xyz" }
         set { UserDefaults.standard.set(newValue, forKey: "hubBase") }
+    }
+
+    static var kakaoNativeAppKey: String {
+        get {
+            let local = (UserDefaults.standard.string(forKey: "kakaoNativeAppKey") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = local.isEmpty ? (Bundle.main.object(forInfoDictionaryKey: "KAKAO_NATIVE_APP_KEY") as? String ?? "") : local
+            let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return key.contains("$(") || key == "YOUR_NATIVE_APP_KEY" ? "" : key
+        }
+        set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "kakaoNativeAppKey") }
+    }
+
+    static var accessCode: String {
+        get { UserDefaults.standard.string(forKey: "accessCode") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "accessCode") }
+    }
+
+    /// 아이폰/아이패드 접근 코드는 같은 구급대 ID로 연결한다.
+    static func ambulanceID(from code: String) -> String? {
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalized.hasPrefix("P-") || normalized.hasPrefix("A-") else { return nil }
+        let id = String(normalized.dropFirst(2))
+        guard !id.isEmpty, id != "AUTO", id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
+        return id
     }
 
     /// 구급차 ID(SEL0001~) 또는 "auto"(출동하는 구급차를 자동으로 따라감 — 웹 P-AUTO)

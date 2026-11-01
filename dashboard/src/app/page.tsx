@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { DEMO_UNIT } from "@/lib/demo-unit";
 import { css } from "styled-system/css";
 import { inputStyle, primaryButtonStyle, secondaryButtonStyle } from "@/components/ui/button-styles";
 
@@ -52,7 +53,7 @@ export default function Home() {
       window.location.assign("/phone?id=auto");
       return;
     }
-    const id = rawId;
+    const id = rawId.trim().toUpperCase();
     const role = page === "hospital" ? "hospital" : "ambulance"; // 전화 앱도 구급차 코드로 확인한다
 
     setChecking(true);
@@ -89,6 +90,11 @@ export default function Home() {
         </p>
       </div>
 
+      <div style={{ maxWidth: 360, textAlign: "center", fontSize: 14, color: "#4A5565", lineHeight: 1.8 }}>
+        <strong>{DEMO_UNIT.name} 시연</strong><br />
+        아이패드: <b>{DEMO_UNIT.tabletCode}</b> · 아이폰: <b>{DEMO_UNIT.phoneCode}</b><br />
+        두 기기에서 각자의 코드를 입력하면 같은 구급대 사건을 봅니다.
+      </div>
       <form
         onSubmit={handleSubmit}
         className={css({ display: "flex", flexDirection: "column", gap: "3", width: "280px", color: "ink" })}
@@ -99,6 +105,9 @@ export default function Home() {
             setCode(event.target.value);
             setError(null);
           }}
+          aria-label="접근 코드"
+          autoCapitalize="characters"
+          autoCorrect="off"
           placeholder="코드 입력 (예: H-A1100009, A-A0000001, P-A0000001)"
           className={inputStyle}
         />

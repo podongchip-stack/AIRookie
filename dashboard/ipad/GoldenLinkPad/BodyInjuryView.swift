@@ -608,6 +608,7 @@ struct BodyInjuryCard: View {
     @State private var tapped: BodyMark?
     @State private var draftOn = true
     @State private var draftCares: [String] = []
+    @State private var sharedBase: [String: String] = [:]
 
     private var patient: PatientInfo? { model.result?.patientInfo }
     private var injuries: [MappedInjury] { InjuryMapper.parse(patient) }
@@ -797,6 +798,7 @@ struct BodyInjuryCard: View {
                         guard let m = BodyShape.hit(v.location, CGSize(width: figW, height: figH), back: back) else { return }
                         draftOn = tiers[m] != nil
                         draftCares = model.bodyEdits.cares[m] ?? []
+                        sharedBase = model.caseEdits.fields
                         withAnimation(.easeOut(duration: 0.15)) { tapped = m }
                     })
                     .position(x: g.size.width / 2, y: figH / 2)
@@ -911,6 +913,7 @@ struct BodyInjuryCard: View {
             e.cares[m] = nil
         }
         model.bodyEdits = e
+        model.shareBody(m, base: sharedBase)
     }
 
     /// 적은 것을 **한 번에** 병원으로 — 부위는 증상(injuryStatus) 칸, 처치는 추가 정보 한 줄

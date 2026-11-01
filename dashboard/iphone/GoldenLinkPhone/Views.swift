@@ -1,5 +1,6 @@
 import GoldenLinkCore
 import SwiftUI
+import UIKit
 
 // 화면 디자인(2026-10-05) — 웹 대시보드 디자인 시안들(구급차·병원 대시보드, 시연 콘솔, 관제 지도)과 같은 색·카드 언어를 쓴다:
 // 연회색 바탕 + 흰 카드(둥근 18) · 남색 글자 · 알약 칩 · 병상/AI 유효/전문의 세 칸 · AI(파랑)와 규칙(회색) 출처 구분.
@@ -105,10 +106,19 @@ struct ContentView: View {
     @State private var showSettings = false
 
     var body: some View {
+        // 통화가 진행 중이거나 끝난 직후엔 탭과 상관없이 통화 화면(예전 그대로) — 통화 중에 화면이 바뀌면 안 된다
+        let inCallFlow = m.call != nil
         VStack(spacing: 10) {
             header
-            content.frame(maxWidth: .infinity, maxHeight: .infinity)
-            footer
+            CaseEditStatusView(sync: m.caseEdits, onlyPending: true)
+            Group {
+                if inCallFlow || m.tab == .call { content }
+                else if m.tab == .patient { PatientTab() }
+                else if m.tab == .transport { TransportTab() }
+                else { RecordsTab() }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !inCallFlow { TabBar() }
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
@@ -129,57 +139,42 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: m.notice)
-        .sheet(isPresented: $showSettings) { SettingsView { m.start() } }
+        // 통화 중엔 화면을 켜 둔다(시연 중 화면이 꺼져 흐름이 끊기지 않게 — 녹음 자체는 백그라운드 오디오로 이어진다, 안드로이드 FLAG_KEEP_SCREEN_ON과 동일)
+        .onChange(of: m.call != nil) { _, inCall in UIApplication.shared.isIdleTimerDisabled = inCall }
+        .overlay {
+            if showSettings {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { showSettings = false }
+                    SettingsView(onApply: { m.start() }, onClose: { showSettings = false })
+                        .padding(.horizontal, 16)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: showSettings)
         .alert("알림", isPresented: .constant(m.error != nil)) { Button("확인") { m.error = nil } } message: { Text(m.error ?? "") }
     }
 
-    // 상단: 로고 · 버전 · 구급대 | 연결 · 설정
+    // 상단: 로고 · 구급대 | 연결 · 설정
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                (Text("골든").foregroundStyle(AD.navy) + Text("링크").foregroundStyle(AD.blue))
-                    .font(.system(size: 19, weight: .black))
-                Pill(text: "v2.0", fg: AD.blue, bg: AD.blueSoft, bold: true)
-                Spacer(minLength: 4)
-                ConnectionDot(state: m.connection)
-                Button { showSettings = true } label: {
-                    Image(systemName: "gearshape.fill").font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(AD.ink3)
-                        .frame(width: 36, height: 36)
-                        .background(AD.chip, in: Circle())
-                }
-                .disabled(m.call != nil && m.call?.phase != .ended)
-                .accessibilityLabel("설정")
+        HStack(spacing: 8) {
+            (Text("골든").foregroundStyle(AD.navy) + Text("링크").foregroundStyle(AD.blue))
+                .font(.system(size: 19, weight: .black))
+            Pill(text: m.identity?.name ?? m.apid ?? (m.autoFollow ? "자동 전환 대기" : "구급대 미지정"), fg: AD.ink3, bg: .white, bold: true)
+            Spacer(minLength: 4)
+            ConnectionDot(state: m.connection)
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape.fill").font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(AD.ink3)
+                    .frame(width: 36, height: 36)
+                    .background(AD.chip, in: Circle())
             }
-            HStack(spacing: 6) {
-                Pill(text: m.identity?.name ?? m.apid ?? (m.autoFollow ? "자동 전환 대기" : "구급대 미지정"), fg: AD.ink3, bg: .white, bold: true)
-                if let phase = m.mySim?.phase {
-                    Pill(text: phase.label, fg: phaseColor(phase), bg: phaseColor(phase).opacity(0.12), bold: true)
-                }
-                Spacer(minLength: 0)
-                Text("전화 앱").font(.system(size: 11, weight: .medium)).foregroundStyle(AD.muted)
-            }
+            .disabled(m.call != nil && m.call?.phase != .ended)
+            .accessibilityLabel("설정")
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(AD.line))
-    }
-
-    // 하단: 출처 범례 + 모델 상태
-    private var footer: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 12) {
-                Label { Text("AI 처리") } icon: { Dot(color: AD.blue) }
-                Label { Text("규칙 기반 · API") } icon: { Dot(color: AD.gray) }
-                Label { Text("판단은 사람") } icon: { Dot(color: AD.orange) }
-            }
-            .font(.system(size: 10.5))
-            .foregroundStyle(AD.ink3)
-            if !m.modelStatus.isEmpty {
-                Text(m.modelStatus).font(.system(size: 10.5)).foregroundStyle(AD.muted).lineLimit(1)
-            }
-        }
-        .padding(.bottom, 4)
     }
 
     @ViewBuilder private var content: some View {
@@ -191,14 +186,8 @@ struct ContentView: View {
             StatusPanel(icon: "phone.fill", tint: AD.green,
                         title: "\(s.device == "phone" ? "다른 휴대폰" : "구급차 대시보드")에서 통화 중",
                         detail: "\(s.hospitalName ?? "병원")과 통화하고 있습니다. 통화가 끝나면 다시 걸 수 있습니다.")
-        } else if m.onScene {
-            if m.sent && !m.wantsExtraCall {
-                SentView()
-            } else {
-                HospitalListView()
-            }
         } else if m.inTransport {
-            TransportCallView()
+            CallMapScreen()
         } else {
             waiting
         }
@@ -211,13 +200,10 @@ struct ContentView: View {
         } else if m.identity != nil && !m.simOn {
             StatusPanel(icon: "car", tint: AD.gray, title: "출동 시뮬레이션이 꺼져 있습니다",
                         detail: "휴대폰 전화 앱은 출동 시뮬레이션에서만 씁니다.")
+        } else if m.mySim?.gps == nil {
+            StatusPanel(icon: "car", tint: AD.gray, title: m.phase.label, pulse: true, detail: "구급차 위치를 받는 중입니다.")
         } else {
-            let phase = m.mySim?.phase ?? .idle
-            let eta = m.mySim?.etaSec.map { max(1, Int(($0 / 60).rounded(.up))) }
-            StatusPanel(icon: phase == .dispatching ? "light.beacon.max.fill" : "car.fill", tint: phaseColor(phase),
-                        title: phase.label, pulse: phase == .dispatching,
-                        detail: (phase == .dispatching && eta != nil ? "현장까지 약 \(eta!)분 (실제 도로 기준)\n" : "")
-                            + "현장에 도착하면 전화할 병원 목록이 여기에 뜹니다. 출동은 구급차 대시보드에서 합니다.")
+            CallMapScreen()
         }
     }
 }
@@ -234,163 +220,207 @@ func phaseColor(_ phase: AmbulancePhase) -> Color {
     }
 }
 
-// MARK: - 병원 목록 (현장 도착 뒤)
+// MARK: - 지도 화면 (통화 탭 기본)
 
-struct HospitalListView: View {
+/// 지도가 배경. 출동 중엔 현장까지 선과 ETA, 현장에선 Pre-KTAS → 사건 현장에서 가장 가까운 병원 → 전화,
+/// 병원 응답 중에는 관제 지도와 같은 보라색 활성 존과 확산 펄스를 지도에 표시한다. 지도는 카카오맵 iOS SDK.
+struct CallMapScreen: View {
     @Environment(PhoneModel.self) private var m
+    @State private var tappedId: String?
+    @State private var callCardHeight: CGFloat = 0
+    @State private var showCallHospitals = false
 
     var body: some View {
-        // 추천 병원을 맨 위로, 나머지는 hub가 보낸 도착 시간순 그대로
-        let all = m.scene?.hospitals ?? []
-        let ordered = all.filter { $0.firstCallRecommended == true } + all.filter { $0.firstCallRecommended != true }
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("전화할 병원").font(.system(size: 17, weight: .bold)).foregroundStyle(AD.navy)
-                        Text("도착 시간순 · \(all.count)곳").font(.system(size: 12)).foregroundStyle(AD.ink3)
-                        Spacer()
-                        Pill(text: "규칙 기반", fg: AD.ink3, bg: AD.chip)
-                    }
-                    Text(m.wantsExtraCall
-                         ? "추가 통화 — 바뀐 환자 상태를 말하면 기존 환자 정보에 덧붙여 후보 병원에 다시 전달됩니다."
-                         : "한 곳과 통화하면 그 내용이 후보 병원 전체에 동시에 전달됩니다.")
-                        .font(.system(size: 11.5)).foregroundStyle(AD.sub)
-                    if m.wantsExtraCall {
-                        Button("추가 통화 닫기") { m.wantsExtraCall = false }
-                            .font(.system(size: 12, weight: .bold)).tint(AD.ink3).padding(.top, 2)
-                    }
-                }
-                .padding(.horizontal, 4)
+        guard let sim = m.mySim, let ambulanceGps = sim.gps else { return AnyView(EmptyView()) }
+        let phase = m.phase
+        let sentMode = m.onScene && m.sent && !m.wantsExtraCall
+        let scene = m.scene?.hospitals ?? []
+        // 현장 후보는 hub 도착 시간순 — 전달된 뒤에는 실제로 정보가 간 병원(매칭 결과)을 쓴다
+        let ordered = scene.filter { $0.firstCallRecommended == true } + scene.filter { $0.firstCallRecommended != true }
+        // KTAS 적합 여부는 hub 규칙, 적합 후보 안에서는 도로 거리(없으면 직선거리)순.
+        let eligible = m.scene?.preKtas == m.preKtas && m.preKtas != nil ? scene : []
+        let nearest = eligible.first { $0.firstCallRecommended == true }
+        let target = eligible.first { $0.hospitalId == tappedId } ?? nearest
 
-                if let symptom = m.scene?.reportedSymptom {
-                    HStack(spacing: 8) {
-                        Image(systemName: "phone.arrow.down.left").foregroundStyle(AD.orange)
-                        Text("신고 내용: ").foregroundStyle(AD.ink3) + Text(symptom).bold().foregroundStyle(AD.navy)
-                        Spacer(minLength: 0)
-                        Text("현장과 다를 수 있음").font(.system(size: 10.5)).foregroundStyle(AD.muted)
-                    }
-                    .font(.system(size: 13))
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(AD.orangeSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-
-                if m.sceneCallBlocked {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "lock.fill").foregroundStyle(AD.orange)
-                        Text("시연 콘솔이 **정해진 상황 선택** 중이라 전화를 걸 수 없습니다. 콘솔에서 **음성으로 확인**을 고르면 전화할 수 있습니다.")
-                            .foregroundStyle(AD.navy)
-                    }
-                    .font(.system(size: 13))
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    .background(AD.orangeSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-
-                ForEach(ordered) { h in
-                    HospitalCard(h: h) { Task { await m.dial(h) } }
-                        .disabled(m.sceneCallBlocked)
-                        .opacity(m.sceneCallBlocked ? 0.45 : 1)
-                }
-            }
-            .padding(.bottom, 8)
+        var hospitals: [(String, String)] = sentMode
+            ? (m.result?.hospitals.map { ($0.hospitalId, $0.name) } ?? [])
+            : (m.onScene ? ordered.map { ($0.hospitalId, $0.name) } : [])
+        if m.inTransport, let dest = m.destination, !hospitals.contains(where: { $0.0 == dest.hospitalId }) {
+            hospitals.append((dest.hospitalId, dest.name))
         }
-        .scrollIndicators(.hidden)
-        .overlay {
-            if all.isEmpty {
+        var pins: [MapPin] = [MapPin(id: "ambulance", name: m.identity?.name ?? sim.apid, pos: ambulanceGps, kind: .ambulance)]
+        if [.dispatching, .returning, .idle].contains(phase), let base = sim.base {
+            pins.append(MapPin(id: "base", name: phase == .dispatching ? "출발지 · 구급대 센터" : "복귀지 · 구급대 센터", pos: base, kind: .base))
+        }
+        if let inc = sim.incident {
+            // 사건 현장 글자는 출동 중에만 — 도착하면 뗀다
+            pins.append(MapPin(id: "incident", name: phase == .dispatching ? "사건 현장" : (m.inTransport ? "출발지 · 사고 현장" : ""), pos: inc, kind: .incident))
+        }
+        for (id, name) in hospitals {
+            guard let gps = m.hospitalGps[id] else { continue }
+            let kind: MapPin.Kind = (id == m.destination?.hospitalId || (!sentMode && id == target?.hospitalId)) ? .selected : (!sentMode && id == nearest?.hospitalId) ? .recommended : .hospital
+            pins.append(MapPin(id: id, name: name, pos: gps, kind: kind))
+        }
+
+        return AnyView(AnyView(
+            ZStack(alignment: .bottom) {
+                CallMapView(pins: pins, routePath: m.routePaths[sim.apid] ?? [], showCandidates: sentMode,
+                            sceneFocusKey: m.onScene && !sentMode ? target.map { "\(m.caseId ?? "")-\(m.preKtas ?? 0)-\($0.hospitalId)" } : nil,
+                            bottomOverlayHeight: callCardHeight,
+                            responseZone: m.onScene ? ResponseZone(bands: m.result?.zoneActive ?? [1]) : nil,
+                            onPin: { id in if m.onScene, !sentMode, eligible.contains(where: { $0.hospitalId == id }) { tappedId = id } })
                 VStack(spacing: 10) {
-                    ProgressView().tint(AD.blue)
-                    Text("병원 목록을 받는 중…").font(.system(size: 13)).foregroundStyle(AD.sub)
-                }
-            }
-        }
-    }
-}
-
-struct HospitalCard: View {
-    let h: SceneCandidate
-    let onCall: () -> Void
-
-    var body: some View {
-        let recommended = h.firstCallRecommended == true
-        Card(border: recommended ? AD.green : AD.control, borderWidth: recommended ? 2 : 1) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(h.name).font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
-                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                        Text(distanceText).font(.system(size: 12)).foregroundStyle(AD.ink3)
+                    if [.dispatching, .transporting, .returning].contains(phase), (m.routePaths[sim.apid]?.count ?? 0) <= 2 {
+                        Text("도로 경로를 받지 못했습니다. hub의 경로 API 연결을 확인해 주세요.")
+                            .font(.system(size: 11)).foregroundStyle(AD.orange)
                     }
-                    Spacer(minLength: 4)
-                    if recommended {
-                        Pill(text: "첫 연락 추천", fg: AD.green, bg: AD.greenSoft, bold: true)
+                    if sentMode {
+                        let n = m.caseId.flatMap { m.sentCount[$0] } ?? hospitals.count
+                        HStack(spacing: 10) {
+                            Image(systemName: n > 0 ? "checkmark.circle.fill" : "exclamationmark.circle.fill").foregroundStyle(n > 0 ? AD.green : AD.orange).font(.system(size: 22))
+                            Text(n > 0 ? "후보 병원 \(n)곳에 전달됐습니다" : "현재 범위에 KTAS 조건에 맞는 병원이 없습니다").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
+                        }
+                        BigButton(text: "추가 통화", color: AD.blue, icon: "phone.badge.plus") { m.wantsExtraCall = true }
+                    } else if m.phase == .rerouting {
+                        Text("목적지 병원의 수용이 철회됐습니다. 이송 탭에서 다른 승인 병원을 선택하세요.")
+                            .font(.subheadline).foregroundStyle(AD.red)
+                    } else if m.inTransport {
+                        Text(m.destination?.name ?? "목적지 병원").font(.headline)
+                        BigButton(text: "목적지 병원과 통화", color: AD.blue, icon: "phone.fill", enabled: m.destination != nil && !m.transportCallBlocked && !m.paused) { Task { if let d = m.destination { await m.dial(hospitalId: d.hospitalId, name: d.name) } } }
+                    } else if m.onScene {
+                        PreKtasRow(onSelect: {
+                            tappedId = nil
+                            m.requestFirstCall()
+                            showCallHospitals = true
+                        })
                     } else {
-                        Pill(text: "통화 전", fg: AD.ink3, bg: AD.chip, bold: true)
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    bedBox
-                    validBox
-                    StatBox(label: "전문의", value: doctors > 0 ? "\(doctors)명" : "—", fg: AD.ink3, bg: AD.chip, valueColor: AD.navy)
-                }
-
-                if h.emergencyLevel != nil || !(h.specialties ?? []).isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 6) {
-                            if let level = h.emergencyLevel, level.hasSuffix("센터") {
-                                Pill(text: level, fg: AD.ink3, bg: AD.chip)
-                            }
-                            ForEach(Array((h.specialties ?? []).prefix(4).enumerated()), id: \.offset) { _, s in
-                                Pill(text: "\(s.department) \(s.doctorCount)", fg: AD.blue, bg: AD.blueSoft)
+                        HStack(spacing: 8) {
+                            Pill(text: phase.label, fg: phaseColor(phase), bg: phaseColor(phase).opacity(0.12), bold: true)
+                            if phase == .dispatching, let eta = sim.etaSec.map({ max(1, Int(($0 / 60).rounded(.up))) }) {
+                                Text("현장까지 약 \(eta)분").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
+                            } else if phase == .returning, let eta = sim.etaSec.map({ max(1, Int(($0 / 60).rounded(.up))) }) {
+                                Text("기지까지 약 \(eta)분").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
                             }
                         }
                     }
-                    .scrollIndicators(.hidden)
                 }
-
-                Button(action: onCall) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "phone.fill")
-                        Text("전화 걸기").fontWeight(.bold)
-                    }
-                    .font(.system(size: 15))
-                    .frame(maxWidth: .infinity, minHeight: 46)
-                    .foregroundStyle(.white)
-                    .background(recommended ? AD.green : AD.blue, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .buttonStyle(.plain)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(AD.line))
+                .padding(10)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { callCardHeight = $0 }
             }
-        }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        )
+        .sheet(isPresented: $showCallHospitals) {
+            NavigationStack {
+                VStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Pre-KTAS").font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        PreKtasRow(onSelect: { m.requestFirstCall() }, showsLabel: false)
+                    }
+                    Text("hub 추천순 · 다른 사건의 연락·이송을 반영합니다")
+                        .font(.caption).foregroundStyle(AD.sub)
+                    if m.scene?.preKtas != m.preKtas {
+                        ProgressView("KTAS 적합 병원을 확인하고 있습니다")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        List(m.scene?.hospitals ?? []) { h in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text((h.firstCallRecommended == true ? "추천 · " : "") + h.name).font(.headline)
+                                    Text(distanceText(h)).font(.subheadline)
+                                    Text(h.firstCallReason ?? "선택한 KTAS 적합 후보").font(.caption).foregroundStyle(AD.sub)
+                                    if m.scene?.callAttempts?.contains(h.hospitalId) == true {
+                                        Text("전화 미응답 이력").font(.caption).foregroundStyle(AD.orange)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                Button {
+                                    showCallHospitals = false
+                                    Task { await m.dial(h) }
+                                } label: {
+                                    Label("전화", systemImage: "phone.fill")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .padding(.horizontal, 12).frame(minHeight: 44)
+                                        .foregroundStyle(.white).background(AD.blue, in: RoundedRectangle(cornerRadius: 12))
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(m.sceneCallBlocked || m.paused || m.call != nil)
+                            }.padding(.vertical, 4)
+                        }
+                        .overlay {
+                            if m.scene?.hospitals.isEmpty != false {
+                                Text("현재 탐색 범위에 KTAS 적합 병원이 없습니다")
+                                    .font(.subheadline).foregroundStyle(AD.sub).padding()
+                            }
+                        }
+                    }
+                }
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        HStack {
+                            Text("병원 리스트").font(.system(size: 17, weight: .semibold))
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    ToolbarItem(placement: .confirmationAction) { Button("닫기") { showCallHospitals = false } }
+                }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        })
     }
 
-    private var distanceText: String {
+    private func distanceText(_ h: SceneCandidate) -> String {
         let km = h.roadDistanceKm ?? h.distanceKm
         let dist = h.roadDistanceKm != nil ? String(format: "%.1fkm", km) : String(format: "직선 %.1fkm", km)
         if let eta = h.etaMin { return "\(dist) · ETA \(Int(eta.rounded()))분" }
         return dist
     }
+}
 
-    private var doctors: Int { (h.specialties ?? []).reduce(0) { $0 + $1.doctorCount } }
-
-    // 미상을 0이나 "없음"으로 보이면 안 된다(대시보드와 같은 원칙) — 미상은 회색, 확인된 만실만 빨강
-    @ViewBuilder private var bedBox: some View {
-        if h.bedCountUnknown {
-            StatBox(label: "병상", value: "미상", fg: AD.ink3, bg: AD.chip)
-        } else if h.availableBedCount <= 0 {
-            StatBox(label: "병상", value: "없음", fg: AD.red, bg: AD.redSoft)
-        } else {
-            StatBox(label: "병상", value: "\(h.availableBedCount)석", fg: AD.lime, bg: AD.limeSoft)
+private struct BigButton: View {
+    let text: String
+    let color: Color
+    var icon: String?
+    var enabled = true
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if let icon { Image(systemName: icon) }
+                Text(text).fontWeight(.bold)
+            }
+            .font(.system(size: 15)).foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 46)
+            .background(color, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+        .buttonStyle(.plain).disabled(!enabled)
     }
+}
 
-    // 도착 시 유효 확률(AI) — ≥80% 파랑, 50~80% 회색, <50% 빨강
-    @ViewBuilder private var validBox: some View {
-        if let p = h.bedReliability?.rArrive {
-            let pct = Int((p * 100).rounded())
-            let (fg, bg): (Color, Color) = p >= 0.8 ? (AD.blue, AD.blueSoft) : p >= 0.5 ? (AD.ink3, AD.chip) : (AD.red, AD.redSoft)
-            StatBox(label: "AI 유효", value: "\(pct)%", fg: fg, bg: bg)
-        } else {
-            StatBox(label: "AI 유효", value: "—", fg: AD.ink3, bg: AD.chip)
+/// 현장 Pre-KTAS 선택. 같은 등급을 다시 눌러도 병원 목록을 열 수 있다.
+private struct PreKtasRow: View {
+    @Environment(PhoneModel.self) private var m
+    var onSelect: (() -> Void)? = nil
+    var showsLabel = true
+    var body: some View {
+        HStack(spacing: 6) {
+            if showsLabel {
+                Text("Pre-KTAS").font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy)
+            }
+            ForEach(1...5, id: \.self) { k in
+                let on = m.preKtas == k
+                Text("\(k)").font(.system(size: 16, weight: .black)).foregroundStyle(on ? .white : ktasColor(k))
+                    .frame(maxWidth: .infinity, minHeight: 20).padding(.vertical, 11)
+                    .background(on ? ktasColor(k) : ktasSoft(k), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .onTapGesture { m.preKtas = k; onSelect?() }
+            }
         }
     }
 }
@@ -423,7 +453,7 @@ struct InCallView: View {
                         Pill(text: "이송 잠시 멈춤 · 통화 내용 반영 뒤 다시 출발", fg: AD.blue, bg: AD.blueSoft, bold: true)
                     }
                     TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        Text(connecting ? "응급실 연결 중" : mmss(ctx.date.timeIntervalSince(call.startedAt)))
+                        Text(connecting ? "전화 응답 대기" : mmss(ctx.date.timeIntervalSince(call.startedAt)))
                             .font(.system(size: 30, weight: .bold).monospacedDigit())
                             .foregroundStyle(connecting ? AD.muted : AD.ink)
                     }
@@ -444,7 +474,7 @@ struct InCallView: View {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 6) {
                                 if m.transcriptLines.isEmpty {
-                                    Text(connecting ? "곧 연결됩니다." : "말이 끊길 때마다 인식된 문장이 여기에 뜹니다.")
+                                    Text(connecting ? "병원 응답 대기 중입니다. 연결 후 녹음이 시작됩니다." : "말이 끊길 때마다 인식된 문장이 여기에 뜹니다.")
                                         .font(.system(size: 13)).foregroundStyle(AD.muted)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -463,6 +493,10 @@ struct InCallView: View {
             }
             .frame(maxHeight: .infinity)
 
+            if m.call?.phase == .connecting {
+                Button("미응답 · 다음 병원") { m.noAnswerNext() }
+                    .font(.system(size: 16, weight: .bold)).foregroundStyle(AD.orange)
+            }
             // [취소]는 아무것도 보내지 않고, [전송]을 눌러야만 음성을 처리해 병원에 보낸다(2026-10-05)
             HStack(spacing: 10) {
                 Button { m.cancelCall() } label: {
@@ -535,15 +569,15 @@ struct EndedView: View {
         let finished = sent != nil || timedOut || stage == .noSpeech || isFailed(stage)
         VStack(spacing: 12) {
             Spacer(minLength: 0)
-            Card(border: sent != nil ? AD.green : AD.line, borderWidth: sent != nil ? 2 : 1) {
+            Card(border: sent == 0 ? AD.orange : sent != nil ? AD.green : AD.line, borderWidth: sent != nil ? 2 : 1) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 10) {
-                        Image(systemName: sent != nil ? "checkmark.circle.fill" : "waveform")
+                        Image(systemName: sent == 0 ? "exclamationmark.circle.fill" : sent != nil ? "checkmark.circle.fill" : "waveform")
                             .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(sent != nil ? AD.green : AD.blue)
+                            .foregroundStyle(sent == 0 ? AD.orange : sent != nil ? AD.green : AD.blue)
                             .symbolEffect(.pulse, isActive: sent == nil)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(sent.map { followup ? "환자 정보에 덧붙여 \($0)곳에 전달됐습니다" : "후보 병원 \($0)곳에 전달됐습니다" }
+                            Text(sent.map { $0 == 0 ? "KTAS 조건에 맞는 전달 병원이 없습니다" : followup ? "환자 정보에 덧붙여 \($0)곳에 전달됐습니다" : "후보 병원 \($0)곳에 전달됐습니다" }
                                  ?? (timedOut ? "전달되지 않았습니다" : stageTitle(stage)))
                                 .font(.system(size: 17, weight: .bold)).foregroundStyle(AD.navy)
                             Text("\(followup ? "추가 통화" : "통화"): \(hospital)").font(.system(size: 12)).foregroundStyle(AD.sub)
@@ -565,9 +599,9 @@ struct EndedView: View {
                     Divider().overlay(AD.line)
                     Text("병원 응답 확인·이송 승인은 구급차 대시보드에서 합니다.")
                         .font(.system(size: 12)).foregroundStyle(AD.sub)
-                    if finished {
-                        Button { m.dismissEnded() } label: {
-                            Text(sent != nil ? "확인" : "확인 · 다시 걸기")
+                    if finished, sent == nil {
+                        Button { m.dismissEnded(); m.tab = .call } label: {
+                            Text("다시 통화하기")
                                 .font(.system(size: 15, weight: .bold))
                                 .frame(maxWidth: .infinity, minHeight: 46)
                                 .foregroundStyle(.white)
@@ -599,6 +633,7 @@ struct EndedView: View {
 
     /// 0 인식 · 1 구조화 · 2 전달. 서버 STT 모드(session 없음)는 hub의 매칭 결과(sent)만으로 판단한다.
     private func stepState(_ index: Int, stage: CallSession.Stage?, sent: Int?) -> StepRow.State {
+        if sent == 0 { return index < 2 ? .done : .failed }
         if sent != nil { return .done }
         switch stage {
         case .failed?, .noSpeech?, .cancelled?: return index == 0 ? .done : .failed
@@ -631,45 +666,6 @@ struct StepRow: View {
                 .foregroundStyle(state == .pending ? AD.muted : AD.ink)
             Spacer()
             Pill(text: source, fg: source == "AI" ? AD.blue : AD.ink3, bg: source == "AI" ? AD.blueSoft : AD.chip)
-        }
-    }
-}
-
-// MARK: - 현장: 전달됨 · 추가 통화
-
-struct SentView: View {
-    @Environment(PhoneModel.self) private var m
-
-    var body: some View {
-        let n = m.caseId.flatMap { m.sentCount[$0] } ?? 0
-        VStack(spacing: 12) {
-            Spacer(minLength: 0)
-            Card(border: AD.green, borderWidth: 2) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.circle.fill").font(.system(size: 26, weight: .semibold)).foregroundStyle(AD.green)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("후보 병원 \(n)곳에 전달됐습니다").font(.system(size: 17, weight: .bold)).foregroundStyle(AD.navy)
-                            Text("병원 응답 확인·이송 승인은 구급차 대시보드에서 합니다").font(.system(size: 12)).foregroundStyle(AD.sub)
-                        }
-                    }
-                    Divider().overlay(AD.line)
-                    Text("환자 상태가 바뀌었으면 다시 통화하세요. 새 통화 내용은 기존 환자 정보에 덧붙여 전달됩니다.")
-                        .font(.system(size: 12.5)).foregroundStyle(AD.ink3).fixedSize(horizontal: false, vertical: true)
-                    Button { m.wantsExtraCall = true } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "phone.badge.plus")
-                            Text("추가 통화").fontWeight(.bold)
-                        }
-                        .font(.system(size: 15))
-                        .frame(maxWidth: .infinity, minHeight: 46)
-                        .foregroundStyle(AD.blue)
-                        .background(AD.blueSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            Spacer(minLength: 0)
         }
     }
 }
@@ -791,60 +787,153 @@ struct ConnectionDot: View {
     }
 }
 
-// MARK: - 설정
+// MARK: - 설정 (안드로이드 SettingsDialog와 같은 AD 카드 디자인 — 네이티브 Form/NavigationStack 대신 커스텀 모달)
 
 struct SettingsView: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(PhoneModel.self) private var m
     let onApply: () -> Void
+    let onClose: () -> Void
+    @State private var recordToken = RecordAccess.token(Settings.apid)
+    @State private var kakaoKey = Settings.kakaoNativeAppKey
     @State private var hub = Settings.hubBase
-    @State private var apid = Settings.apid
     @State private var onDevice = Settings.onDevice
     @State private var rms = Double(Settings.silenceRMS)
     @State private var hold = Settings.holdSec
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("hub") {
+        VStack(spacing: 12) {
+            HStack {
+                Text("닫기").foregroundStyle(AD.ink3).onTapGesture(perform: onClose)
+                Spacer()
+                Text("설정").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
+                Spacer()
+                Text("적용").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.blue).onTapGesture {
+                    Settings.kakaoNativeAppKey = kakaoKey
+                    Settings.hubBase = hub
+                    guard RecordAccess.save(recordToken, apid: Settings.apid) else { return }
+                    Settings.onDevice = onDevice
+                    Settings.silenceRMS = Float(rms)
+                    Settings.holdSec = hold
+                    onApply()
+                    onClose()
+                }
+            }
+
+            Card {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("hub").font(.system(size: 12)).foregroundStyle(AD.sub)
                     TextField("https://app.rookie-goldenlink.xyz 또는 http://<맥 IP>:5001", text: $hub)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    TextField("구급차 ID (SEL0001 또는 auto)", text: $apid).textInputAutocapitalization(.characters)
-                }
-                Section {
-                    Toggle("기기 안에서 음성 인식·구조화", isOn: $onDevice).tint(AD.blue)
-                } footer: {
-                    Text("끄면 웹 전화 앱처럼 음성을 hub로 보내 중앙 voice가 처리합니다. 켜면 음성은 기기 밖으로 나가지 않고, [전송]을 누를 때 구조화된 요약만 hub로 보냅니다(공개 도메인 가능).")
-                }
-                Section("무음 감지") {
-                    LabeledContent("무음 기준 RMS \(rms, specifier: "%.3f")") { Slider(value: $rms, in: 0.002...0.05).tint(AD.blue) }
-                    LabeledContent("발화 끝 \(hold, specifier: "%.1f")초") { Slider(value: $hold, in: 0.2...1.5, step: 0.1).tint(AD.blue) }
+                    Text("구급대 코드: " + Settings.accessCode).font(.system(size: 13, weight: .semibold))
+                    SecureField("카카오맵 네이티브 앱 키", text: $kakaoKey)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField("기록 동기화 키 (운영자 발급)", text: $recordToken)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Text("과거 기록은 같은 구급차 ID와 동기화 키가 있어야 내려받습니다. auto 모드 대신 소속 구급차 ID를 지정해 주세요.")
+                        .font(.system(size: 11)).foregroundStyle(AD.sub)
                 }
             }
-            .scrollContentBackground(.hidden)
-            .background(AD.bg)
-            .navigationTitle("설정")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("적용") {
-                        Settings.hubBase = hub
-                        Settings.apid = apid.trimmingCharacters(in: .whitespaces).isEmpty ? "auto" : apid
-                        Settings.onDevice = onDevice
-                        Settings.silenceRMS = Float(rms)
-                        Settings.holdSec = hold
-                        onApply()
-                        dismiss()
+            Card {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("기기 안에서 음성 인식·구조화").foregroundStyle(AD.ink)
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: $onDevice).labelsHidden().tint(AD.blue)
                     }
-                    .fontWeight(.bold)
-                    .tint(AD.blue)
+                    Text("끄면 웹 전화 앱처럼 음성을 hub로 보내 중앙 voice가 처리합니다. 켜면 음성은 기기 밖으로 나가지 않고, [전송]을 누를 때 구조화된 요약만 hub로 보냅니다(공개 도메인 가능).")
+                        .font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 }
-                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.tint(AD.ink3) }
+            }
+            Button("접근 코드 변경") {
+                m.stop()
+                Settings.accessCode = ""
+                m.accessRequired = true
+                onClose()
+            }
+            .font(.system(size: 14, weight: .semibold)).foregroundStyle(AD.blue)
+            Card {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("무음 감지").font(.system(size: 12)).foregroundStyle(AD.sub)
+                    Text("무음 기준 RMS \(rms, specifier: "%.3f")").font(.system(size: 13)).foregroundStyle(AD.ink)
+                    Slider(value: $rms, in: 0.002...0.05).tint(AD.blue)
+                    Text("발화 끝 \(hold, specifier: "%.1f")초").font(.system(size: 13)).foregroundStyle(AD.ink)
+                    Slider(value: $hold, in: 0.2...1.5, step: 0.1).tint(AD.blue)
+                }
             }
         }
+        .padding(16)
+        .background(AD.bg, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
 func mmss(_ sec: TimeInterval) -> String {
     let t = max(0, Int(sec))
     return String(format: "%02d:%02d", t / 60, t % 60)
+}
+
+
+/// 기기를 한 구급대에 연결한다. 웹 아이패드의 A-코드와 같은 hub identity를 확인한다.
+struct AccessCodeEntry: View {
+    let onEnter: () -> Void
+    @State private var code = ""
+    @State private var hub = Settings.hubBase
+    @State private var checking = false
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("골든링크").font(.system(size: 28, weight: .black)).foregroundStyle(AD.navy)
+                Text("구급대 접근 코드").font(.title3.bold())
+                Text("소속 구급대 코드를 입력하면 해당 구급대의 사건과 이송 정보를 확인합니다.")
+                    .font(.subheadline).foregroundStyle(AD.sub)
+                TextField("예: P-SEL0111", text: $code)
+                    .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder).accessibilityLabel("접근 코드")
+                    .onSubmit { Task { await enter() } }
+                if let error { Text(error).font(.footnote).foregroundStyle(AD.red) }
+                Button { Task { await enter() } } label: {
+                    Text(checking ? "구급대 확인 중…" : "입장")
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
+                        .foregroundStyle(.white).background(AD.blue, in: RoundedRectangle(cornerRadius: 12))
+                }.disabled(checking || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Text("시연: 역삼119안전센터 구급 1\n아이폰 P-SEL0111 · 아이패드 A-SEL0111")
+                    .font(.footnote).foregroundStyle(AD.sub)
+                DisclosureGroup("서버 연결 설정") {
+                    TextField("hub 주소", text: $hub)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder).padding(.top, 8)
+                }.font(.subheadline)
+            }.padding(24).frame(maxWidth: 480).frame(maxWidth: .infinity).padding(.top, 64)
+        }.background(AD.bg.ignoresSafeArea())
+    }
+
+    @MainActor private func enter() async {
+        guard !checking else { return }
+        guard let id = Settings.ambulanceID(from: code) else {
+            error = "P-SEL0111 형식의 구급대 접근 코드를 입력하세요."
+            return
+        }
+        guard let base = URL(string: hub.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(base.scheme?.lowercased() ?? ""), base.host != nil,
+              var url = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            error = "서버 주소를 확인하세요."; return
+        }
+        url.path = "/identity"
+        url.queryItems = [URLQueryItem(name: "role", value: "ambulance"), URLQueryItem(name: "id", value: id)]
+        guard let endpoint = url.url else { return }
+        checking = true; error = nil
+        defer { checking = false }
+        do {
+            var request = URLRequest(url: endpoint); request.timeoutInterval = 10
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "서버에서 구급대를 확인하지 못했습니다."; return }
+            struct IdentityCheck: Decodable { let known: Bool; let id: String }
+            let identity = try JSONDecoder().decode(IdentityCheck.self, from: data)
+            guard identity.known, identity.id == id else { error = "등록되지 않은 구급대 코드입니다."; return }
+            Settings.hubBase = hub.trimmingCharacters(in: .whitespacesAndNewlines)
+            Settings.apid = id; Settings.accessCode = "P-" + id
+            onEnter()
+        } catch { self.error = "서버에 연결하지 못했습니다. 네트워크와 서버 주소를 확인한 뒤 다시 시도하세요." }
+    }
 }

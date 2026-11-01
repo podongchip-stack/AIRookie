@@ -54,6 +54,8 @@ def main() -> None:
     far = _hospital(beds=3).model_copy(update={  # 존 1(0~5km) 밖 — 도착 후 수용 불가 때 존 확장으로 들어온다
         "hospitalId": "T_FAR", "name": "[테스트] 먼 병원", "gps": GpsPoint(lat=37.6400, lng=126.9780)})
     app.engine.update_hospital_info(far)
+    alternate = _hospital(beds=3).model_copy(update={"hospitalId":"T_ALT", "name":"[테스트] 대안 병원"})
+    app.engine.update_hospital_info(alternate)
     client = app.app.test_client()
     client.post("/info/ambulances", json=AmbulanceInfo(
         apid="A_SIM", name="[테스트] 시뮬레이션 구급차", gps=BASE, voicePort=6000, updatedAt="2026-10-01T00:00:00Z",
@@ -114,9 +116,11 @@ def main() -> None:
         ),
         gps, max_zone=app.engine.resolve_start_zone(gps),
     )
-    for action, actor in (("hospital_approve", "hospital"), ("final_approval", "paramedic")):
-        app._handle_dashboard_action({"caseId": case_id, "action": action, "hospital_id": "T001",
-                                      "actor": actor, "timestamp": "2026-10-01T00:01:00Z"})
+    for hid in ("T001", "T_ALT"):
+        app._handle_dashboard_action({"caseId": case_id, "action": "hospital_approve", "hospital_id": hid,
+                                      "actor": "hospital", "timestamp": "2026-10-01T00:01:00Z"})
+    app._handle_dashboard_action({"caseId": case_id, "action": "final_approval", "hospital_id": "T001",
+                                  "actor": "paramedic", "timestamp": "2026-10-01T00:01:00Z"})
     assert app.sim.phase_of("A_SIM") == "transporting" and "transporting" in _phases(hosp), "확정 병원 탭도 이송을 본다"
     assert "ambulance_phase" not in _types(other), "다른 병원 탭은 위치를 받지 않는다"
     assert app.engine.refresh_case(case_id, gps) is None, "확정된 사건은 재정렬하지 않는다"
@@ -131,6 +135,14 @@ def main() -> None:
     clock.t += 3600
     app._sim_tick()
     assert app.sim.phase_of("A_SIM") == "at_hospital", "도착 결과가 없으면 병원에서 계속 기다린다"
+    amb.sent.clear()
+    app._handle_dashboard_action({"caseId": case_id, "action": "final_approval", "hospital_id": "T_ALT",
+                                  "actor": "paramedic", "timestamp": "2026-10-01T00:10:30Z"}, ws=amb)
+    current = app.engine.get_case_result(case_id)
+    assert app.sim.state("A_SIM")["hospitalId"] == "T001", "도착 뒤 재확정은 구급차 목적지를 바꾸면 안 된다"
+    assert next(h for h in current.hospitals if h.hospitalId == "T001").status == "confirmed"
+    assert next(h for h in current.hospitals if h.hospitalId == "T_ALT").status == "approved"
+    assert amb.sent[-1].get("reason") == "already_arrived", "구급대 화면에 거부 이유를 알린다"
     assert "T_FAR" not in [h.hospitalId for h in app.engine.get_case_result(case_id).hospitals]
     _REJECTIONS.clear()
     app._handle_dashboard_action({"caseId": case_id, "action": "arrival_refused", "hospital_id": "T001",

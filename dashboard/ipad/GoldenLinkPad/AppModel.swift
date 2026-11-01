@@ -31,6 +31,10 @@ struct BetterHospital: Identifiable {
 /// 출동하는 구급차를 찾아 그 구급차로 넘어간다(웹 AmbulanceAutoFollow · 아이폰 앱과 같은 규칙).
 @MainActor
 final class AppModel: ObservableObject {
+    let caseEdits = CaseEditSync()
+    @Published var handoverVersion = 0
+    @Published var accessRequired = Settings.accessCode.isEmpty
+
     // 연결
     @Published var connection: HubSocket.State = .connecting {
         didSet { if connection == .live, oldValue != .live { liveSince = Date() } }
@@ -96,6 +100,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.now = Date()
+                self.caseEdits.tick()
                 // 라이브 보드는 서버가 20분 캐시 — 10분마다 다시 받는다
                 if let at = self.liveBoardFetchedAt, Date().timeIntervalSince(at) > 600, !self.liveBoardLoading { self.fetchLiveBoard() }
             }
@@ -113,6 +118,21 @@ final class AppModel: ObservableObject {
         connect()
         liveBoard = nil; liveBoardError = nil
         fetchLiveBoard()
+    }
+
+    /// 구급대 코드 변경 시 이전 소켓·사건·타이머를 정리하고 입장 화면으로 돌아간다.
+    func changeAccessCode() {
+        monitor?.close(); monitor = nil
+        ambulance?.close(); ambulance = nil
+        clock?.invalidate(); clock = nil
+        noticeTask?.cancel(); noticeTask = nil
+        started = false
+        apid = nil; ambulanceName = nil
+        monitorSims = [:]
+        clearCase()
+        liveBoard = nil; liveBoardError = nil; liveBoardFetchedAt = nil
+        Settings.accessCode = ""
+        accessRequired = true
     }
 
     private func connect() {
@@ -158,8 +178,13 @@ final class AppModel: ObservableObject {
     // ── 구급차 소켓 ──
     private func handleAmbulance(_ type: String, _ data: Data) {
         let dec = JSONDecoder()
+        defer { syncLiveCase() }
         switch type {
+        case "live_case_state", "live_case_error":
+            caseEdits.accept(data)
         case "identity_info":
+            syncLiveCase()
+            caseEdits.reconnect()
             if let m = try? dec.decode(IdentityInfo.self, from: data) {
                 ambulanceName = m.name ?? ambulanceName
                 simDispatch = m.simDispatch ?? simDispatch
@@ -401,5 +426,52 @@ final class AppModel: ObservableObject {
                 liveBoardFetchedAt = Date()
             }
         }
+    }
+}
+
+
+// MARK: - 같은 구급대의 아이폰·아이패드 수동 수정 동기화
+extension AppModel {
+    func syncLiveCase() {
+        caseEdits.onUpdate = { [weak self] in
+            guard let self, let id = self.caseId else { return }
+            Handover.saveEdits(id, self.caseEdits.handover)
+            self.applySharedBody()
+            self.handoverVersion += 1
+        }
+        caseEdits.activate(caseId: caseId, apid: apid, server: Settings.hubBase, initialHandover: Handover.loadEdits(caseId)) { [weak self] data in
+            self?.ambulance?.sendJSON(data) ?? false
+        }
+    }
+    func shareHandover(caseId: String, draft: [String: String], auto: [String: String], touched: Set<String>, base: [String: String]) {
+        var changes: [String: String?] = [:]
+        for id in touched {
+            let value = (draft[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            changes["h:" + id] = .some(value == (auto[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) ? nil : value)
+        }
+        if !caseEdits.submit(caseId: caseId, changes: changes, base: base) { show("사건이 변경되어 저장하지 못했습니다.") }
+    }
+    func shareBody(_ mark: BodyMark, base: [String: String]) {
+        guard let id = caseId else { return }
+        let r = mark.region
+        let side = mark.side == .left ? "좌" : mark.side == .right ? "우" : ""
+        let key = "b:" + r.rawValue + ":" + side
+        let body = SharedBodyValue(added: bodyEdits.added.contains(mark), removed: bodyEdits.removed.contains(mark), cares: bodyEdits.cares[mark] ?? [])
+        guard let data = try? JSONEncoder().encode(body), let value = String(data: data, encoding: .utf8) else { return }
+        _ = caseEdits.submit(caseId: id, changes: [key: value], base: base)
+    }
+    private func applySharedBody() {
+        var edits = BodyEdits()
+        for (key, text) in caseEdits.fields where key.hasPrefix("b:") {
+            let parts = key.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 3, let region = BodyRegion.allCases.first(where: { $0.rawValue == parts[1] }),
+                  let data = text.data(using: .utf8), let value = try? JSONDecoder().decode(SharedBodyValue.self, from: data) else { continue }
+            let side: BodySide = parts[2] == "좌" ? .left : parts[2] == "우" ? .right : .unknown
+            let mark = BodyMark(region: region, side: side)
+            if value.added { edits.added.insert(mark) }
+            if value.removed { edits.removed.insert(mark) }
+            if !value.cares.isEmpty { edits.cares[mark] = value.cares }
+        }
+        bodyEdits = edits
     }
 }

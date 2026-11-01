@@ -22,7 +22,10 @@ export function usePauseToast(
   const [seenRefusal, setSeenRefusal] = useState<number | null>(refused?.at ?? null);
   if (refused && refused.at !== seenRefusal) {
     setSeenRefusal(refused.at);
-    setMessage(refused.reason === "paused" ? PAUSED_MESSAGE : "지금은 이 조작을 할 수 없습니다.");
+    setMessage(refused.reason === "paused" ? PAUSED_MESSAGE
+      : refused.reason === "already_arrived"
+        ? "이미 병원에 도착해 이송 병원을 바꿀 수 없습니다. 현재 병원의 수용 불가 처리 후 다시 선택해 주세요."
+        : "지금은 이 조작을 할 수 없습니다.");
     setShownAt(refused.at);
   }
   const [seenNotice, setSeenNotice] = useState<number | null>(notice?.at ?? null);

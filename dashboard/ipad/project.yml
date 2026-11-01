@@ -13,6 +13,7 @@ targets:
     type: application
     platform: iOS
     sources:
+      - path: ../shared/CaseEditSync.swift
       - path: GoldenLinkPad
     settings:
       base:

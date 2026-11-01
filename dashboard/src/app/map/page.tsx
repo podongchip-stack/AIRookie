@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
+import { DEMO_UNIT } from "@/lib/demo-unit";
 import { ControlMapPanel } from "@/components/map/ControlMapPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
@@ -23,8 +25,9 @@ import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 import { useAutoDemo } from "@/lib/auto-demo";
 
 // 관제 지도(2026-10-03 신설, 2026-10-04 디자인 시안 "골든링크 관제"로 전면 개편). hub에 role=monitor로 붙어
-// 사건 요약·구급차 위치만 받는다 — 통화 전문 등 환자 상세는 받지 않는다(증상은 한 줄뿐). 보기 전용이라 승인 같은
-// 행위는 없고, 병원 대시보드도 열지 않는다(첫 페이지에서 접근 코드로 — 병원 점에 마우스를 올리면 H-코드가 보인다).
+// 사건 요약·구급차 위치만 받는다 — 통화 전문 등 환자 상세는 받지 않는다(증상은 한 줄뿐).
+// 시연 조작을 열면 공통 DemoConsole이 별도 monitor 연결로 기존 시연 명령을 보낸다.
+// 병원 대시보드는 첫 페이지에서 접근 코드로 연다(병원 점에 마우스를 올리면 H-코드가 보인다).
 //
 // 왼쪽: 진행 중인 사건(중증도 → 시작 순) · 지난 사건 보기 · 선택한 사건의 요청 병원(탭: 판단 대기/수용 불가/수용 승인)
 // 오른쪽: 지도(선택한 사건의 병원 응답 상태·요청 범위, 전체 구급차) + 하단 구급차 패널(선택한 사건 기준 가까운 순)
@@ -33,6 +36,11 @@ import { useAutoDemo } from "@/lib/auto-demo";
 // 3D 거미줄(spider/serve.py, 포트 2700) 실시간 화면. 배포 도메인에선 같은 호스트의 /spider/ 아래로 열려 있고,
 // 로컬 개발(3000)에선 NEXT_PUBLIC_SPIDER_URL(예: http://localhost:2700/spider/)로 덮어쓴다.
 const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? "/spider/"}?mode=live&embed=1`;
+
+const DemoConsole = dynamic(() => import("@/components/control/DemoConsole").then((module) => module.DemoConsole), {
+  ssr: false,
+  loading: () => <div role="status" style={{ padding: 24 }}>시연 조작을 불러오는 중…</div>,
+});
 
 type MapView = "2d" | "3d";
 type Tab = "all" | St;
@@ -55,6 +63,10 @@ export default function MonitorMapPage() {
   const [hoverAmb, setHoverAmb] = useState("");
   const [view, setView] = useState<MapView>("2d");
   const [showPast, setShowPast] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  // 닫아도 컴포넌트는 유지해 작성 중 입력·대량사고 대기열·재생 타이머를 보존한다.
+  const [consoleMounted, setConsoleMounted] = useState(false);
+  const [, setConsoleApid] = useState<string | null>(null);
   // 사건별로 마지막으로 본 시각 — 그 뒤의 병원 응답이 "새 N"
   const [seenAt, setSeenAt] = useState<Record<string, number>>({});
   const [mountedAt] = useState(() => Date.now());
@@ -73,16 +85,24 @@ export default function MonitorMapPage() {
   );
   // 자동 시연(2026-10-06) — 콘솔로 실제 시연을 하지 않는 동안(실제 사건이 없을 때)만 이 화면 안에서 가짜 사건을 돌린다.
   // hub·다른 대시보드·로그와 무관하고, 실제 사건이 생기면 가짜 사건은 바로 모두 사라진다(lib/auto-demo.ts).
-  const demo = useAutoDemo(realIncidents.length === 0, overview, state.ambulanceSim);
+  const demo = useAutoDemo(realIncidents.length === 0 && !consoleMounted, overview, state.ambulanceSim);
   const incidents = useMemo(() => [...realIncidents, ...demo.incidents], [realIncidents, demo.incidents]);
   const ambulanceSim = useMemo(() => ({ ...state.ambulanceSim, ...demo.sims }), [state.ambulanceSim, demo.sims]);
   const selected = incidents.find((i) => i.caseId === selId) ?? incidents[0] ?? null;
 
   const selectCase = useCallback((caseId: string) => {
     setSelId(caseId);
+    const apid = realIncidents.find((incident) => incident.caseId === caseId)?.apid;
+    if (apid) setConsoleApid(apid);
     setTab("all");
     setSeenAt((prev) => ({ ...prev, [caseId]: Date.now() }));
-  }, []);
+  }, [realIncidents]);
+
+  const selectConsoleAmbulance = useCallback((apid: string | null) => {
+    setConsoleApid(apid);
+    const incident = realIncidents.find((item) => item.apid === apid);
+    if (incident) selectCase(incident.caseId);
+  }, [realIncidents, selectCase]);
 
   // 콘솔로 새 실제 사건이 생기면 그 사건을 바로 고른다 — 지도도 그 사건 단계에 맞춰 자동으로 맞춰진다(ControlMapPanel)
   const knownRealRef = useRef<Set<string> | null>(null);
@@ -186,6 +206,18 @@ export default function MonitorMapPage() {
             <div style={{ width: 1, height: 16, background: "#CDD3DA" }} />
             <div style={{ fontSize: 13, color: C.ink3 }}>관제 지도 · 병원·구급차 실시간 위치</div>
             <div style={{ flex: "1 1 0" }} />
+            <button type="button" aria-expanded={consoleOpen} aria-controls="map-demo-console"
+              onClick={() => {
+                setConsoleMounted(true);
+                if (!consoleOpen) {
+                  const incident = realIncidents.find((item) => item.apid === DEMO_UNIT.apid);
+                  if (incident) selectCase(incident.caseId);
+                }
+                setConsoleOpen((open) => !open);
+              }}
+              style={{ ...tab2Style, minHeight: 40, background: consoleOpen ? C.navy : "#E8EEF8", color: consoleOpen ? "#fff" : C.navy }}>
+              {consoleOpen ? "관제 목록으로" : "시연 조작"}
+            </button>
             <AlertSoundButton soundOn={alertView.soundOn} count={alertView.alerts.length} onToggle={alertView.toggleSound} />
             <div role="tablist" aria-label="지도 보기" style={{ display: "flex", gap: 4 }}>
               {([["2d", "2D 지도"], ["3d", "3D 거미줄"]] as [MapView, string][]).map(([key, label]) => {
@@ -245,9 +277,17 @@ export default function MonitorMapPage() {
         </div>
         <style>{"@keyframes ctlbl{0%,100%{opacity:1}50%{opacity:.3}}.ctl-live{animation:ctlbl 1.6s infinite}@keyframes ctlnew{0%,100%{background:#fff}50%{background:#FFD9D5}}.ctl-new{animation:ctlnew 1s ease-in-out 10;border-color:#D93025!important}.ctl-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C5CCD6 transparent}.ctl-scroll::-webkit-scrollbar{width:6px}.ctl-scroll::-webkit-scrollbar-thumb{background:#C5CCD6;border-radius:3px}"}</style>
 
-        <div style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 16 }}>
+        <style>{`
+          .monitor-console-pane{flex:0 0 min(760px,56%);min-width:0;min-height:0;overflow:hidden;border:1px solid ${C.line};border-radius:14px;background:${C.bg}}
+          @media(max-width:1100px){
+            .monitor-workspace--control{flex-direction:column}
+            .monitor-workspace--control .monitor-console-pane{flex:0 0 55%;width:100%}
+            .monitor-workspace--control .monitor-ambulance-panel{display:none!important}
+          }
+        `}</style>
+        <div className={`monitor-workspace${consoleOpen ? " monitor-workspace--control" : ""}`} style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 16 }}>
           {/* 왼쪽: 진행 중인 사건 · 지난 사건 · 선택한 사건의 병원 */}
-          <aside style={{ flex: "none", width: SIDEBAR_W, display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+          <aside style={{ flex: "none", width: SIDEBAR_W, display: consoleOpen ? "none" : "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
             <div style={{ ...cardStyle, flex: "1 1 0", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>진행 중인 사건 {incidents.length}건</div>
@@ -432,6 +472,12 @@ export default function MonitorMapPage() {
             </div>
           </aside>
 
+          {consoleMounted && (
+            <section id="map-demo-console" aria-label="시연 조작" className="monitor-console-pane" style={{ display: consoleOpen ? "flex" : "none" }}>
+              <DemoConsole embedded activeApid={DEMO_UNIT.apid} onAmbulanceChange={selectConsoleAmbulance} />
+            </section>
+          )}
+
           {/* 오른쪽: 지도 + 하단 구급차 패널. 3D 보기 중에도 2D 지도는 숨기기만 해서 다시 켜도 지도가 초기화되지 않는다 */}
           {view === "3d" && (
             <iframe
@@ -455,8 +501,8 @@ export default function MonitorMapPage() {
             onHoverAmb={setHoverAmb}
             onSelectCase={selectCase}
           >
-            <div style={{ position: "absolute", left: 12, right: 12, bottom: 12, height: 158, boxSizing: "border-box", zIndex: 90, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: "0 4px 16px rgba(20,30,50,.14)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div className="monitor-ambulance-panel" style={{ position: "absolute", left: 12, right: 12, bottom: 12, height: 158, boxSizing: "border-box", zIndex: 90, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: "0 4px 16px rgba(20,30,50,.14)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 14px" }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>구급차 {ambRows.length}대</div>
                 <div role="tablist" style={{ display: "flex", gap: 6 }}>
                   {([["all", "전체", ambRows.length], ["sd", "현장·출동", ambCount.s + ambCount.d], ["t", "이송 중", ambCount.t], ["b", "기지 대기", ambCount.b]] as [AmbTab, string, number][]).map(([key, label, count]) => {

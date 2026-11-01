@@ -29,6 +29,12 @@ final class HubSocket {
         onState(.closed)
     }
 
+    func sendJSON(_ data: Data) -> Bool {
+        guard let task, task.state == .running, let text = String(data: data, encoding: .utf8) else { return false }
+        task.send(.string(text)) { _ in }
+        return true
+    }
+
     var isOpen: Bool { task?.state == .running }
 
     @discardableResult

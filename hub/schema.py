@@ -8,6 +8,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from voice_treatments import normalize as normalize_treatments
 from voice_v2 import is_v2, normalize as normalize_v2
 
 Severity = Literal["high", "medium", "low"]
@@ -52,6 +53,8 @@ class VoiceSummary(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _from_v2(cls, data):
+        if isinstance(data, dict) and "patients" in data:
+            return normalize_treatments(data)
         return normalize_v2(data) if is_v2(data) else data
 
 
@@ -563,6 +566,8 @@ class HospitalMatch(BaseModel):
     spiderLen: Optional[float] = None
     spiderGap: Optional[float] = None
     spiderBlocked: Optional[str] = None
+    # spider 시연 모형의 KTAS별 전달 근거(임상 검증 전). 병원의 실제 수용 여부와 구분한다.
+    ktasSuitability: Optional[dict] = None
     spiderWindow: Optional[list[str]] = None
     # 전문성·등급 가산(2026-10-01, scoring.expertise_bonus_min). 이동시간에서 뺀 분과 그 이유.
     emergencyLevel: Optional[str] = None

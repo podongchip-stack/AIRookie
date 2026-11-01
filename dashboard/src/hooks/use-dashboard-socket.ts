@@ -704,7 +704,15 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
-  return { state, connectionMode, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendPatientOverride, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
+  const sendCallConnection = useCallback((call: CallStatus, operation: "answer" | "no_answer") => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !call.requestId) return false;
+    socket.send(JSON.stringify({ type: "call_connection", operation, caseId: call.caseId,
+      hospitalId: call.hospitalId, requestId: call.requestId, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendCallConnection, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendPatientOverride, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.

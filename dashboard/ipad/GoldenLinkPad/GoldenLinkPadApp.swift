@@ -18,7 +18,13 @@ struct GoldenLinkPadApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Group {
+                if model.accessRequired {
+                    PadAccessCodeEntry { model.accessRequired = false }
+                } else {
+                    RootView()
+                }
+            }
                 .environmentObject(model)
                 .preferredColorScheme(.light)
         }

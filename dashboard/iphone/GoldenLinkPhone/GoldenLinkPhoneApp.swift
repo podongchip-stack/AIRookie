@@ -6,9 +6,16 @@ struct GoldenLinkPhoneApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(model)
-                .onAppear { model.start() }
+            Group {
+                if model.accessRequired {
+                    AccessCodeEntry {
+                        model.accessRequired = false
+                    }
+                } else {
+                    ContentView().onAppear { model.start() }
+                }
+            }
+            .environment(model)
         }
     }
 }

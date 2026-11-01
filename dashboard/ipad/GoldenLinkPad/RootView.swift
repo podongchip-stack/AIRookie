@@ -20,6 +20,7 @@ struct RootView: View {
             AD.bg.ignoresSafeArea()
             VStack(spacing: 8) {
                 TopBar(showSurvival: $showSurvival, showSettings: $showSettings, screenRaw: $screenRaw)
+                CaseEditStatusView(sync: model.caseEdits, onlyPending: true)
                 callBanner
                 if !model.hasIncident {
                     // 출동도 사건도 전혀 없는 평상시(2026-10-29) — 탭을 골라도 보여줄 게 없으니 대기 화면 하나로 통일

@@ -30,12 +30,14 @@ from pydantic import ValidationError
 import bed_reliability
 from ambulance_sim import TRANSPORT_SEC as SIM_TRANSPORT_SEC, TRIP_SEC as SIM_TRIP_SEC, DispatchSim
 import decision_log
+from hospital_dispatch import dashboard_payload
 from delivery import HUB_REJECTION_URL, LIVE_OUTPUT_DIR, deliver, send_rejection_to_info
 from routing import KakaoRouting
 from geo import ZONE_BAND_KM, haversine_km, zone_of
 from scoring import DEFAULT_MIN_PER_KM
 from hub_engine import HubEngine, _is_bed_count_unknown
 from case_history import CaseTracker
+from record_archive import RecordArchive
 from schema import (
     AmbulanceInfo,
     ApprovalAction,
@@ -83,6 +85,72 @@ sock = Sock(app)
 # 없으면 None — 그 경우 ETA·도로 경로 없이 지금처럼 직선거리로만 동작한다.
 router = KakaoRouting.from_env()
 engine = HubEngine(router=router)
+record_archive = RecordArchive()
+
+
+def _archive_call(method, *args):
+    # 기록 저장 실패는 숨기지 않되 응급이송의 실시간 처리를 중단시키지 않는다.
+    try:
+        result = getattr(record_archive, method)(*args)
+        if result and result.get("apid"):
+            _notify_record_clients(result["apid"])
+        return result
+    except Exception as exc:
+        print(f"  [기록 동기화] {method} 실패 ({type(exc).__name__}) — 로컬 기록 보존, 서버 저장소 점검 필요")
+
+
+def _notify_record_clients(apid):
+    # 내용은 동기화 키를 검증하는 record_sync에서만 반환한다. 이 메시지는 재조회 알림뿐이다.
+    message = json.dumps({"type": "records_changed"})
+    with _sockets_lock:
+        for ws in list(_dashboard_sockets):
+            if _socket_identity.get(ws) == ("ambulance", apid):
+                try:
+                    ws.send(message)
+                except Exception:
+                    pass
+
+
+def _handle_live_case_edit(ws, payload):
+    """현재 사건의 대원 기기끼리만 수정 칸을 공유한다. 과거 기록 조회 권한은 열지 않는다."""
+    role, apid = _socket_identity.get(ws, (None, None))
+    cid = payload.get("caseId")
+    error = None
+    owner = engine.get_case_apid(cid) if isinstance(cid, str) else None
+    # 진행 중에 받은 사건별 증표가 있으면, 사건 종료 직전 오프라인에 쌓인 수정도 재전송할 수 있다.
+    retained = False
+    if role == "ambulance" and owner is None and isinstance(cid, str):
+        try:
+            retained = record_archive.authorized_live(apid, cid, payload.get("ticket"))
+        except Exception:
+            _send_to_socket(ws, {"type": "live_case_error", "caseId": cid, "requestId": payload.get("requestId"), "error": "storage_unavailable"}, "기기 수정 동기화")
+            return
+    if role != "ambulance" or not isinstance(cid, str) or not (owner == apid and apid is not None or retained):
+        error = "not_owner"
+    elif payload.get("type") == "live_case_patch" and _case_paused(cid):
+        error = "paused"
+    if error:
+        _send_to_socket(ws, {"type": "live_case_error", "caseId": cid, "requestId": payload.get("requestId"), "error": error}, "기기 수정 동기화")
+        return
+    try:
+        if len(json.dumps(payload)) > 1000000: raise ValueError("too_large")
+        state = record_archive.live_get(apid, cid) if payload["type"] == "live_case_get" else record_archive.live_patch(apid, payload)
+    except (ValueError, TypeError):
+        _send_to_socket(ws, {"type": "live_case_error", "caseId": cid, "requestId": payload.get("requestId"), "error": "invalid_patch"}, "기기 수정 동기화")
+        return
+    except Exception:
+        _send_to_socket(ws, {"type": "live_case_error", "caseId": cid, "requestId": payload.get("requestId"), "error": "storage_unavailable"}, "기기 수정 동기화")
+        return
+    _send_to_socket(ws, state, "기기 수정 동기화")
+    if payload["type"] == "live_case_patch" and not state.get("conflicts"):
+        broadcast = {k: v for k,v in state.items() if k not in ("requestId", "conflicts")}
+        with _sockets_lock:
+            targets = [s for s in _dashboard_sockets if owner == apid and s != ws and _socket_identity.get(s) == ("ambulance", apid)]
+        for target in targets:
+            _send_to_socket(target, broadcast, "다른 대원 기기 수정 반영")
+        _notify_record_clients(apid)
+
+
 #: 구급차 출동 시뮬레이션(시연용 가짜 위치, 2026-10-01). HUB_SIM_DISPATCH=1일 때만 켠다.
 SIM_DISPATCH = os.environ.get("HUB_SIM_DISPATCH") == "1"
 sim: DispatchSim | None = DispatchSim(router) if SIM_DISPATCH else None
@@ -681,18 +749,18 @@ def get_hospital_features():
     return jsonify({"hospitals": engine.spider_features(), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}), 200
 
 
-#: 매칭 결과를 한 번이라도 받은 병원들(caseId -> hpid 집합). 후보에서 빠진 병원도
-#: 다음 결과를 받아야 자기 화면의 카드를 지울 수 있어서, 역할별 전송의 수신 대상에 남긴다.
+#: 현재 매칭 결과를 받는 병원들(caseId -> hpid 집합). 재매칭으로 빠진 병원에는
+#: 새 환자 정보 대신 요청 철회(case_closed)만 보내 이전 카드를 지운다.
 _case_audience: dict[str, set[str]] = {}
 
 
 def _match_recipients(payload: dict) -> tuple[str | None, set[str]]:
     """매칭 결과를 받을 (구급차 apid, 병원 hpid 집합). _sockets_lock을 쥔 채로 부른다."""
     case_id = payload["caseId"]
-    hospital_ids = {h.get("hospitalId") for h in payload.get("hospitals") or []}
+    hospital_ids = {h.get("hospitalId") for h in dashboard_payload(payload).get("hospitals") or []}
     audience = _case_audience.setdefault(case_id, set())
-    audience.update(hospital_ids)
-    return payload.get("apid") or engine.get_case_apid(case_id), set(audience)
+    audience.clear(); audience.update(hospital_ids)
+    return payload.get("apid") or engine.get_case_apid(case_id), set(hospital_ids)
 
 
 def _send_to_dashboard(payload: dict) -> None:
@@ -706,9 +774,14 @@ def _send_to_dashboard(payload: dict) -> None:
     실시간 전송은 WebSocket 연결을 쥐고 있는 여기서 처리한다. 전송 실패한
     소켓은 죽은 것으로 보고 집합에서 뺀다 (voice의 send_to_hub()와 동일한
     방어 패턴 — 연결이 없거나 끊겼어도 본 요청은 계속돼야 함)."""
+    if payload.get("type") == "case_closed" and payload.get("caseId"):
+        _archive_call("close", payload["caseId"])
     is_match = payload.get("type") == "match_result" and bool(payload.get("caseId"))
     if is_match:
+        payload = dashboard_payload(payload)
         payload = {**payload, "paused": _case_paused(payload["caseId"])}
+        ambulance = engine.get_ambulance(payload.get("apid")) if payload.get("apid") else None
+        _archive_call("observe", {**payload, "ambulanceName": ambulance.name if ambulance else None})
         case_tracker.observe(payload)  # 관제 지도 사건 기록(2026-10-04) — 직전 결과와 비교해 이벤트를 남긴다
         _touch_zone_timer(payload)
         # 다음 자동 존 확장 시각(2026-10-16) — 관제 지도만 받던 값을 구급차·병원 탭도(아이패드 병원 리스트의 "Zone 2로 확장까지 N초")
@@ -717,11 +790,20 @@ def _send_to_dashboard(payload: dict) -> None:
     message = json.dumps(payload, ensure_ascii=False)
     with _sockets_lock:
         if is_match:
+            previous_audience = set(_case_audience.get(payload["caseId"], set()))
             apid, hospital_ids = _match_recipients(payload)
+            withdrawn = previous_audience - hospital_ids
         dead = set()
         for ws in _dashboard_sockets:
             if is_match:
                 role, id_ = _socket_identity.get(ws, (None, None))
+                if role == "hospital" and id_ in withdrawn:
+                    # 새 환자 정보는 보내지 않고 이전 요청 카드만 회수한다.
+                    try:
+                        ws.send(json.dumps({"type": "case_closed", "caseId": payload["caseId"], "reason": "ktas_dispatch_changed"}))
+                    except Exception:
+                        dead.add(ws)
+                    continue
                 if not ((role == "ambulance" and id_ == apid) or (role == "hospital" and id_ in hospital_ids)):
                     continue
             try:
@@ -763,6 +845,7 @@ _MONITOR_EXPLAIN_FIELDS = (
 
 def _monitor_case(payload: dict) -> dict:
     """매칭 결과(HubMatchResult를 dump한 dict) → 관제 지도용 사건 요약."""
+    payload = dashboard_payload(payload)
     patient = payload.get("patientInfo") or {}
     meta = case_tracker.meta(payload["caseId"]) or {}
     responded = case_tracker.responded(payload["caseId"])
@@ -917,7 +1000,50 @@ def _send_to_socket(ws, payload: dict, label: str) -> None:
             print(f"  [통신] {label} 전송 실패: {e}")
 
 
+# 사건별 미응답은 수용 거절과 별개이며 기존 scene 캐시와 함께 정리된다.
+import first_call
+_first_call_lock = threading.RLock()
+_first_call_coordinator = first_call.Coordinator()
+
+def _handle_first_call(ws, payload):
+    with _first_call_lock:
+        _apply_first_call(ws, payload)
+
+
+def _apply_first_call(ws, payload):
+    case_id = payload.get("caseId")
+    role, apid = _socket_identity.get(ws, (None, None))
+    if role != "ambulance" or not case_id or engine.get_case_apid(case_id) != apid:
+        _send_to_socket(ws, {"type": "first_call_error", "message": "현재 구급대 사건이 아닙니다"}, "첫 통화")
+        return
+    k = payload.get("ktas")
+    if type(k) is not int or k not in range(1, 6) or _case_paused(case_id):
+        return
+    previous = _case_scene.get(case_id, {})
+    if previous.get("preKtas") != k:
+        _first_call_coordinator.release(case_id)
+    attempts = list(previous.get("callAttempts", []))
+    hid = payload.get("noAnswerHospitalId")
+    if hid:
+        valid = {h["hospitalId"] for h in previous.get("hospitals", [])}
+        if hid not in valid:
+            return
+        if hid not in attempts:
+            attempts.append(hid)
+            decision_log.log_decision("first_call_no_answer", {"caseId": case_id, "hospitalId": hid, "source": "rule"})
+    # 원래 현장 좌표를 유지하며 재연결/KTAS 변경에도 미응답 이력을 보존한다.
+    gps = previous.get("ambulanceGps")
+    _case_scene[case_id] = {**previous, "preKtas": k, "callAttempts": attempts}
+    _send_scene_candidates(case_id, apid, GpsPoint(**gps) if gps else None)
+
+
 def _send_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None = None) -> None:
+    # 추천 계산과 의향 반영을 직렬화해 동시 요청의 중복 추천을 줄인다.
+    with _first_call_lock:
+        _build_scene_candidates(case_id, apid, scene_gps)
+
+
+def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None = None) -> None:
     """환자 정보가 오기 전, 후보를 그 구급차 탭에만 보낸다(2026-10-01). 규칙 기반(거리 +
     신고 중증도 가산)이고 진료과 매칭·승인은 아직 없어서, 병원 탭에는 보내지 않는다.
 
@@ -935,6 +1061,42 @@ def _send_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None =
     pre = _pre_alerts.get(case_id) or {}
     reported_severity = pre.get("reportedSeverity")
     hospitals = engine.build_zone_candidates(gps, max_zone=zone, reported_severity=reported_severity)
+    previous = _case_scene.get(case_id, {})
+    k = previous.get("preKtas")
+    attempts = previous.get("callAttempts", [])
+    attempted_rows = []
+    if k in range(1, 6):
+        now_mono = time.monotonic()
+        with _sockets_lock:
+            calls = list(_case_call.values())
+        results = engine.list_case_results()
+        active_ids = set(_case_scene) | {r.caseId for r in results}
+        # 완료 사건은 남아 있는 캐시가 있어도 부하에서 제외한다.
+        active_ids = set(engine.list_open_case_ids())
+        transport_etas = {}
+        if sim is not None:
+            for r in results:
+                state = sim.state(r.apid) if r.apid else None
+                if state and state.get("caseId") == r.caseId and state.get("phase") == "transporting" and state.get("etaSec") is not None:
+                    for h in r.hospitals:
+                        if h.status == "confirmed": transport_etas[r.caseId, h.hospitalId] = state["etaSec"] / 60
+        loads = _first_call_coordinator.pressure(case_id, active_ids, calls, results, now_mono, transport_etas)
+        while True:
+            fresh, attempted_rows = first_call.rank(hospitals, k, attempts, loads)
+            if fresh or zone >= 10:
+                hospitals = fresh + attempted_rows
+                # 통화 요청·통화 중에는 현재 선택을 유지한다.
+                current = next((c for c in calls if c.get("caseId") == case_id and c.get("state") in ("ringing", "calling")), None)
+                stable_id = current.get("hospitalId") if current else None
+                stable = next((h for h in fresh if h["hospitalId"] == stable_id), None)
+                if stable:
+                    for h in hospitals: h["firstCallRecommended"] = h is stable
+                chosen = next((h for h in hospitals if h.get("firstCallRecommended")), None)
+                _first_call_coordinator.remember(case_id, chosen["hospitalId"] if chosen else None, now_mono)
+                break
+            zone += 1
+            hospitals = engine.build_zone_candidates(gps, max_zone=zone, reported_severity=reported_severity)
+
     payload = {
         "type": "scene_candidates",
         "caseId": case_id,
@@ -943,6 +1105,8 @@ def _send_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None =
         "ambulanceGpsFallback": fallback,
         "zoneActive": list(range(1, zone + 1)),
         "hospitals": hospitals,
+        "preKtas": k, "callAttempts": attempts,
+        "firstCallExhausted": k is not None and not any(h.get("firstCallRecommended") for h in hospitals),
         "reportedSymptom": pre.get("reportedSymptom"),
         "reportedSeverity": reported_severity,
         "source": "rule",
@@ -956,7 +1120,9 @@ def _send_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None =
             "caseId": case_id,
             "apid": apid,
             "hospitalId": recommended["hospitalId"],
-            "rArrive": round(recommended["bedReliability"]["rArrive"], 4),
+            "coordination": recommended.get("coordination"),
+            "source": "rule",
+            "reason": recommended.get("firstCallReason"),
             "distanceKm": recommended["distanceKm"],
             "availableBedCount": recommended["availableBedCount"],
         })
@@ -1066,10 +1232,65 @@ def _call_status_targets_locked(status: dict) -> list:
 
 def _send_call_status(status: dict) -> None:
     with _sockets_lock:
+        if "requestId" not in status and status.get("state") == "calling":
+            status = {**status, "requestId": _case_call.get(status["caseId"], {}).get("requestId")}
         _case_call[status["caseId"]] = status
         targets = _call_status_targets_locked(status)
     for ws in targets:
         _send_to_socket(ws, status, "통화 상태")
+
+
+_call_connection_lock = threading.RLock()
+_call_request_sockets = {}
+
+def _handle_call_connection(ws, payload):
+    """시연 연결 결과. ringing 동안 voice/녹음은 시작하지 않는다."""
+    with _call_connection_lock:
+        cid, hid, rid = payload.get("caseId"), payload.get("hospitalId"), payload.get("requestId")
+        role, actor = _socket_identity.get(ws, (None, None))
+        apid = engine.get_case_apid(cid) if cid else None
+        op = payload.get("operation")
+        if not apid or not isinstance(rid, str) or not rid or len(rid) > 100:
+            return
+        status = _case_call.get(cid, {})
+        owner = role == "ambulance" and actor == apid
+        if op == "request":
+            if not owner or not engine.get_hospital(hid) or status.get("state") in ("ringing", "calling"):
+                return
+            if _case_paused(cid) or (sim is not None and (sim.case_of(apid) != cid or sim.phase_of(apid) not in CALLABLE_PHASES)):
+                _send_to_socket(ws, {"type":"call_connection_error", "requestId":rid}, "전화 연결")
+                return
+            hospital = engine.get_hospital(hid)
+            _call_request_sockets[cid] = ws
+            _send_call_status({"type":"call_status", "caseId":cid, "apid":apid, "hospitalId":hid,
+                              "hospitalName":hospital.name, "state":"ringing", "startedAt":payload.get("timestamp", ""),
+                              "requestId":rid, "device":"phone", "followup":engine.get_case_result(cid) is not None})
+            return
+        if status.get("requestId") != rid or status.get("hospitalId") != hid or status.get("state") != "ringing":
+            return
+        responder = role == "monitor" or (role == "hospital" and actor == hid)
+        if op == "answer" and responder:
+            signal = CallSignal(signal="call_started", timestamp=payload.get("timestamp", ""), apid=apid, caseId=cid, hospitalId=hid, device="phone")
+            origin = _call_request_sockets.pop(cid, None)
+            if origin is None or _socket_identity.get(origin) != ("ambulance", apid):
+                _send_call_status({**status, "state":"cancelled", "cancelled":True})
+                return
+            _relay_call_signal(signal, origin)
+            if _case_call.get(cid, {}).get("state") == "ringing":
+                _send_call_status({**status, "state":"cancelled", "cancelled":True})
+        elif (op == "no_answer" and (owner or responder)) or (op == "cancel" and owner):
+            _call_request_sockets.pop(cid, None)
+            _first_call_coordinator.release(cid)
+            _send_call_status({**status, "state":"no_answer" if op == "no_answer" else "cancelled", "cancelled":True})
+            if op == "no_answer":
+                previous = _case_scene.get(cid, {})
+                attempts = list(previous.get("callAttempts", []))
+                if hid not in attempts: attempts.append(hid)
+                _case_scene[cid] = {**previous, "callAttempts":attempts}
+                decision_log.log_decision("first_call_no_answer", {"caseId":cid,"hospitalId":hid,"source":"rule"})
+                if previous.get("preKtas"):
+                    gps = previous.get("ambulanceGps")
+                    _send_scene_candidates(cid, apid, GpsPoint(**gps) if gps else None)
 
 
 def _relay_call_signal(signal: CallSignal, ws=None) -> None:
@@ -1240,7 +1461,10 @@ def _send_catchup(ws, identify: DashboardIdentify) -> list[str]:
     )
     print(f"  [통신] {identify.role} {identify.id} 연결 — 진행 중인 사건 {len(cases)}건 따라잡기 전송")
     for result in cases:
-        dumped = result.model_dump()
+        dumped = dashboard_payload(result.model_dump())
+        if identify.role == "hospital":
+            with _sockets_lock:
+                _case_audience.setdefault(result.caseId, set()).add(identify.id)
         _send_to_socket(ws, {**dumped, "paused": _case_paused(result.caseId), "zoneExpandAt": _zone_expand_at(dumped),
                              "zonePausedLeftSec": _zone_paused_left(dumped)}, "따라잡기")
         # 따라잡기로 받아 본 것도 "도달"이다 — 뒤늦게 연결한 병원이 요청을
@@ -1573,6 +1797,21 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
                 "action": action.model_dump(), "reason": "ambulance has not arrived (simulation)",
                 "ambulancePhase": state["phase"] if state else None})
             return
+    # 구급차가 이미 도착한 뒤에는 목적지를 바꿀 수 없다. final_approval을 받아 엔진의
+    # confirmed 병원만 바뀌면 도착 결과 화면이 실제 도착 병원과 다른 이름을 표시한다.
+    # 도착 후 다른 병원이 수용할 수 있다면 먼저 현재 도착 병원의 arrival_refused를 기록하고
+    # rerouting 단계에서 새 목적지를 확정해야 한다.
+    if sim is not None and action.action == "final_approval":
+        apid = engine.get_case_apid(action.caseId)
+        state = sim.state(apid) if apid else None
+        if state and state.get("phase") == "at_hospital" and state.get("caseId") == action.caseId:
+            decision_log.log_decision("approval_action_refused", {
+                "action": action.model_dump(), "reason": "destination cannot change after arrival",
+                "arrivedHospitalId": state.get("hospitalId"),
+            })
+            _notify_refused(ws, action.caseId, "already_arrived")
+            return
+
     # 이송 중 수용 철회(2026-10-05)는 구급차가 그 병원으로 가는 중일 때만 — 이미 도착했으면 "도착 후 수용 불가"를 쓴다.
     if sim is not None and action.action == "transport_withdraw":
         apid = engine.get_case_apid(action.caseId)
@@ -1588,6 +1827,8 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
     # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
     arrival_refusal = _build_rejection_payload(action) if action.action in ("arrival_refused", "transport_withdraw") else None
     applied = engine.apply_approval_action(action)
+    if applied:
+        _archive_call("action", action.model_dump(), engine.get_case_apid(action.caseId))
     # spider 매칭 규칙(2026-10-15): 승인·확정·도착 결과로 부하·줄 길이가 바뀌면 다른 사건의 순위·τ 창 표시를 다시 맞춘다
     if applied:
         _match_executor.submit(_refresh_active_cases)
@@ -1963,6 +2204,10 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 CallSignal 수신: {exc.errors()}")
                     continue
                 _relay_call_signal(signal, ws)
+            elif payload.get("type") == "call_connection":
+                _handle_call_connection(ws, payload)
+            elif payload.get("type") == "first_call_request":
+                _handle_first_call(ws, payload)
             elif payload.get("type") == "identify":
                 try:
                     identify = DashboardIdentify.model_validate(payload)
@@ -1970,6 +2215,28 @@ def dashboard_socket(ws):
                     print(f"  [통신] 잘못된 DashboardIdentify 수신: {exc.errors()}")
                     continue
                 _handle_identify(ws, identify)
+            elif payload.get("type") in ("live_case_get", "live_case_patch"):
+                _handle_live_case_edit(ws, payload)
+            elif payload.get("type") in ("record_sync", "record_import", "record_handover"):
+                # token은 로그에 출력하지 않는다. identify만으로 과거 기록을 읽을 수 없다.
+                identity = _socket_identity.get(ws, (None, None))
+                if payload.get("type") == "record_sync" and identity[0] == "ambulance" and record_archive.authorized(identity[1], payload.get("token")):
+                    for result in engine.get_cases_for_apid(identity[1]):
+                        _archive_call("observe", dashboard_payload(result.model_dump()))
+                try:
+                    response = record_archive.handle(identity, payload)
+                except Exception:
+                    response = {"type": "record_error", "requestId": payload.get("requestId"), "error": "storage_unavailable"}
+                _send_to_socket(ws, response, "기록 동기화")
+                if response.get("type") in ("record_import_result", "record_handover_result") and not response.get("conflict"):
+                    _notify_record_clients(identity[1])
+                    record = response.get("record")
+                    if record and engine.get_case_apid(record["caseId"]) == identity[1]:
+                        live = record_archive.live_get(identity[1], record["caseId"])
+                        with _sockets_lock:
+                            targets = [s for s in _dashboard_sockets if _socket_identity.get(s) == identity]
+                        for target in targets:
+                            _send_to_socket(target, live, "기록 수정의 현재 화면 반영")
             elif payload.get("type") == "voice_summary":
                 # 아이폰 앱의 온디바이스 통화 요약(2026-10-05) — /voice/summary(HTTP)와 같은 내용을 이 연결로 받는다.
                 # 공개 도메인 터널은 /voice/*를 열지 않아서(인증 없는 주입 경로 차단) 기기에서 만든 요약이 404가 났다.
@@ -2062,6 +2329,13 @@ def dashboard_socket(ws):
             _socket_identity.pop(ws, None)
             # 통화 중 끊긴 소켓 — 전송기는 그대로 두고(종료 신호나 voice의 무음 자동 종료로 끝난다) 묶음만 푼다
             _socket_call.pop(ws, None)
+        with _call_connection_lock:
+            for cid, origin in list(_call_request_sockets.items()):
+                if origin is ws:
+                    _call_request_sockets.pop(cid, None)
+                    status = _case_call.get(cid, {})
+                    if status.get("state") == "ringing":
+                        _send_call_status({**status, "state":"cancelled", "cancelled":True})
 
 
 # ── 출동 시뮬레이션 (2026-10-01, HUB_SIM_DISPATCH=1) ─────────────────────────
@@ -2075,6 +2349,9 @@ def _sim_message(kind: str, state: dict) -> dict:
 
 def _send_sim(kind: str, state: dict) -> None:
     """그 구급차 탭 전부 + 이송 중·병원 도착이면 그 확정 병원 탭 + 관제 지도 탭 전부(2026-10-03)에 보낸다."""
+    if kind == "ambulance_phase":
+        ambulance = engine.get_ambulance(state["apid"])
+        _archive_call("phase", state, ambulance.name if ambulance else None)
     message = json.dumps(_sim_message(kind, state), ensure_ascii=False)
     hospital_id = state.get("hospitalId") if state.get("phase") in ("transporting", "at_hospital") else None
     with _sockets_lock:
@@ -2350,7 +2627,7 @@ def _expand_case_zone(case_id: str, cause: str) -> None:
     case_tracker.note_expand_cause(case_id, label)
     gps, _ = _resolve_ambulance_gps(case_id)
     current = max(result.zoneActive or [1])
-    target = engine.next_zone_with_new(gps, current)
+    target = engine.next_zone_with_new(gps, current, case_id=case_id)
     expanded = engine.force_expand_zone(case_id, gps, cause=f"zone_{cause}", to_zone=target) if target else None
     if expanded is None:
         # 더 넓힐 수 없다(상한) — 타이머를 멈추고 화면의 카운트다운도 지운다
@@ -2412,6 +2689,7 @@ def _send_case_meta(case_id: str, ws=None) -> None:
 
 def _record_case_closed(case_id: str, reason: str) -> None:
     """사건이 끝나면 지난 사건 목록에 남기고 관제 지도에 새 목록을 보낸다."""
+    _archive_call("close", case_id)
     if case_tracker.close(case_id, reason) is None:
         return
     payload = CaseHistory(cases=case_tracker.history()).model_dump()

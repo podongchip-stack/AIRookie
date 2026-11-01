@@ -435,7 +435,8 @@ export interface CallStatus {
   hospitalId: string | null;
   hospitalName: string | null;
   device: CallDevice | null;
-  state: "calling" | "ended";
+  requestId?: string;
+  state: "ringing" | "calling" | "ended" | "no_answer" | "cancelled";
   startedAt: string;
   endedAt: string | null;
   // 2026-10-05: 같은 사건의 추가 통화인지(환자 상태 변화) · 취소된 통화인지(전달 안 됨)
