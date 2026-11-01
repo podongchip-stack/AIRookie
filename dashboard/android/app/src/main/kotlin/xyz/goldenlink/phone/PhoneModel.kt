@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
@@ -111,6 +112,16 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     val hospitalGps = mutableStateMapOf<String, GPS>()
     /** 현장에서 구급대원이 고른 Pre-KTAS(1~5). 지금은 화면에만 둔다 — hub 전송은 다음 작업(hub와 정하기로 함) */
     var preKtas by mutableStateOf<Int?>(null)
+    /** 통화 요약이 병원들에 전달되는 모습을 지도에서 보여 주는 중 — 끝나면(또는 눌러서 건너뛰면) 환자 정보 탭으로 넘어간다 */
+    /** 전화를 걸었다가 받지 않아 취소한 병원(사건별) — 병원 리스트 맨 아래로 내린다. hub의 미응답 이력(callAttempts)이 늦게 와도 바로 반영되게 앱에서도 기억한다 */
+    val skippedHospitals = mutableStateMapOf<String, Set<String>>()
+    /** 통화가 취소·미응답으로 끝나면 현장 지도의 병원 리스트 시트를 펼친 채로 돌아온다(바로 전 화면) */
+    var reopenList by mutableStateOf(false)
+    class DeliveryShow(val caseId: String, val durationMs: Long, val reduceMotion: Boolean) {
+        /** 지도가 준비돼 연출이 실제로 시작된 시각(0이면 아직) — 지도를 불러오는 동안 연출 시간이 흘러가 버리지 않게 화면이 채운다 */
+        var readyAt by mutableLongStateOf(0L)
+    }
+    var deliveryShow by mutableStateOf<DeliveryShow?>(null)
     var bodyEdits by mutableStateOf(BodyEdits())         // 외상 도해에서 구급대원이 고친 부위·처치 — 새 사건이면 비운다
     var bodySentSignature by mutableStateOf("")            // 마지막으로 병원에 보낸 도해 내용의 지문 — 그 뒤로 또 고쳤는지만 본다
     /** 인계확인서 시각 칸 — 출동 단계가 바뀐 그 순간(epoch ms). hub는 단계만 보내고 시각은 안 보내므로 앱이 기억한다 */
@@ -197,6 +208,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         recordSyncStatus = "기록 연결 대기 중"
         identity = null
         wantsExtraCall = false
+        deliveryShow = null
         trackedSim = null; phaseTimes.clear(); incidentAddress = null; pendingConfirmId = null; resetBody()
         if (newApid == null) return
         ambulance = HubSocket(settings.wsUrl, "ambulance", newApid, { t, d -> handle(t, d, fromMonitor = false) }, { s -> onConnectionState(s) })
@@ -215,6 +227,17 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     val simOn: Boolean get() = identity?.simDispatch == true
     val caseId: String? get() = if (simOn) mySim?.caseId else null
     val scene: SceneCandidates? get() = caseId?.let { scenes[it] }
+    /** 받지 않은 병원인가 — hub의 미응답 이력 또는 방금 이 앱에서 취소한 병원 */
+    fun isSkipped(h: SceneCandidate): Boolean =
+        caseId?.let { c -> h.hospitalId in (skippedHospitals[c] ?: emptySet()) || h.hospitalId in (scenes[c]?.callAttempts ?: emptyList()) } == true
+    /** 병원 리스트 — hub 추천 순서 그대로, 받지 않은 병원만 맨 아래로(순서는 유지) */
+    val sceneHospitals: List<SceneCandidate>
+        get() = (scene?.hospitals ?: emptyList()).let { all -> all.filterNot(::isSkipped) + all.filter(::isSkipped) }
+
+    private fun markSkipped(caseId: String, hospitalId: String) {
+        skippedHospitals[caseId] = (skippedHospitals[caseId] ?: emptySet()) + hospitalId
+        reopenList = true
+    }
     val status: CallStatus? get() = caseId?.let { callStatus[it] }
     val phase: AmbulancePhase get() = mySim?.phaseEnum ?: AmbulancePhase.idle
     val onScene: Boolean get() = simOn && phase == AmbulancePhase.on_scene && caseId != null
@@ -284,7 +307,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     val sim = if (decoded.path == null && prev != null && prev.caseId == decoded.caseId) decoded.copy(path = prev.path, base = decoded.base ?: prev.base) else decoded
                     sims[sim.apid] = sim
                     if (sim.apid == apid && sim.phaseEnum != AmbulancePhase.on_scene) wantsExtraCall = false
-                    if (sim.apid == apid) trackPhase(sim)
+                    if (sim.apid == apid) { trackPhase(sim); ensureDefaultPreKtas() }
                     if (fromMonitor) autoSwitch()
                 }
                 "call_connection_error" -> if (call?.phase == LocalCall.Phase.CONNECTING) { call = null; callRequestId = null; show("현재 단계에서는 전화할 수 없습니다") }
@@ -304,6 +327,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     if (c != null && s.requestId != null && s.requestId == callRequestId && s.caseId == c.caseId && s.hospitalId == c.hospitalId) {
                         if (s.state == "calling") beginConnectedCall()
                         if (s.state == "no_answer" || s.state == "cancelled") {
+                            markSkipped(c.caseId, c.hospitalId)
                             session?.cancel(); session = null; call = null; callRequestId = null
                             show(if (s.state == "no_answer") "전화 미응답 — 다음 추천 병원을 확인하세요" else "전화 요청이 취소됐습니다")
                         }
@@ -322,7 +346,9 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     val firstForCase = results[m.caseId] == null
                     results[m.caseId] = m
                     val settled = System.currentTimeMillis() - liveSince > 3000
-                    if (settled && firstForCase && (m.patientInfo?.callRound ?: 1) <= 1 && phase != AmbulancePhase.transporting) tab = Tab.PATIENT
+                    // 이 기기에서 건 통화의 요약은 아래 delivered 분기에서 연출한다(여기서 먼저 넘기지 않는다).
+                    // 시연 콘솔 등 다른 곳에서 들어온 요약도 같은 전달 연출을 보여 준 뒤 환자 정보로 넘어간다
+                    if (settled && firstForCase && (m.patientInfo?.callRound ?: 1) <= 1 && phase != AmbulancePhase.transporting && call?.caseId != m.caseId) startDeliveryShow(m.caseId)
                     val confirmedId = m.hospitals.firstOrNull { it.status == "confirmed" }?.hospitalId
                     if (pendingConfirmId != null && pendingConfirmId == confirmedId) pendingConfirmId = null
                     sentCount[m.caseId] = m.hospitals.size
@@ -331,7 +357,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     snapshotCase(m.caseId)
                     // 이번 통화의 새 요약이 반영되면 성공 확인 화면을 거치지 않고 환자 정보로.
                     // 병원 응답·주기 갱신만으로는 callRound가 늘지 않으므로 통화 처리를 닫지 않는다.
-                    if (call?.caseId == m.caseId && delivered) { dismissEnded(); tab = Tab.PATIENT }
+                    if (call?.caseId == m.caseId && delivered) { dismissEnded(); startDeliveryShow(m.caseId) }
                 }
                 "action_refused" -> if (!fromMonitor) {
                     val r = hubJson.decodeFromString(ActionRefused.serializer(), text)
@@ -361,6 +387,8 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         scenes.remove(caseId); callStatus.remove(caseId); hubTranscripts.remove(caseId); sentCount.remove(caseId)
         matchVersion.remove(caseId); destinations.remove(caseId); sceneInputMode.remove(caseId)
         transportInputMode.remove(caseId)
+        if (deliveryShow?.caseId == caseId) deliveryShow = null
+        skippedHospitals.remove(caseId)
         if (call?.caseId == caseId && (session == null || call?.phase == LocalCall.Phase.ENDED)) { call = null; session = null }
     }
 
@@ -383,13 +411,20 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     // ── 통화 ──
 
     /** 현장 Pre-KTAS를 hub에 알리면 KTAS 적합 후보를 추천순으로 다시 보낸다(scene_candidates). 미응답 병원이 있으면 함께 알린다 */
-    fun requestFirstCall() {
+    fun requestFirstCall(quiet: Boolean = false) {
         val id = caseId ?: return
         val k = preKtas ?: return
         Log.i("GoldenLink", "first_call_request case=$id ktas=$k 소켓연결=${ambulance?.isOpen}")
-        if (!sendToHub(hubJson.encodeToJsonElement(FirstCallRequest.serializer(), FirstCallRequest(id, k)))) {
+        if (!sendToHub(hubJson.encodeToJsonElement(FirstCallRequest.serializer(), FirstCallRequest(id, k))) && !quiet) {
             show("hub 연결을 확인해 주세요. 추천 요청을 보내지 못했습니다.")
         }
+    }
+
+    /** 현장에 도착하면 Pre-KTAS 1이 미리 골라져 있다 — 고르지 않아도 병원 목록이 바로 채워진다. 연결이 아직이면 15초 주기 재요청이 이어서 보낸다 */
+    private fun ensureDefaultPreKtas() {
+        if (!onScene || preKtas != null) return
+        preKtas = 1
+        requestFirstCall(quiet = true)
     }
 
     private fun connectionAction(operation: String): Boolean {
@@ -456,8 +491,10 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         val c = call ?: return
         val apid = apid
         if (c.phase == LocalCall.Phase.CONNECTING) {
-            if (!connectionAction("cancel")) { show("hub 연결을 확인해 주세요"); return }
-        }
+            // 받지 않는 병원을 취소하는 것이라 미응답으로 알린다 — hub가 이 병원을 시도한 것으로 적고 다음 추천을 다시 보낸다
+            if (!connectionAction("no_answer")) { show("hub 연결을 확인해 주세요"); return }
+            markSkipped(c.caseId, c.hospitalId)
+        } else reopenList = true
         if (c.phase == LocalCall.Phase.IN_CALL && apid != null) {
             sendToHub(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
                 CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId, cancelled = true)))
@@ -483,6 +520,29 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         wantsExtraCall = false
         val s = session
         viewModelScope.launch { s?.finish() }
+    }
+
+    /** 요약이 반영되면 환자 정보로 바로 넘기지 않고, 현장 지도에서 병원들로 전달되는 연출을 먼저 보여 준다.
+     *  현장이 아니거나(이송 중 추가 통화) 지도에 찍을 병원 좌표가 없으면 연출 없이 바로 넘어간다 */
+    private fun startDeliveryShow(caseId: String) {
+        val anyTarget = results[caseId]?.hospitals?.any { hospitalGps[it.hospitalId] != null } == true
+        if (!onScene || mySim?.gps == null || !anyTarget || BuildConfig.KAKAO_NATIVE_APP_KEY.isBlank()) { tab = Tab.PATIENT; return }
+        // 기기의 "애니메이션 제거" 설정이면 움직임 없이 병원이 켜진 상태만 잠깐 보여 준다
+        val reduce = android.provider.Settings.Global.getFloat(getApplication<Application>().contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+        val show = DeliveryShow(caseId, if (reduce) 1200L else 2600L, reduce)
+        deliveryShow = show
+        tab = Tab.CALL
+        // 화면이 바뀌어 연출이 멈춰도 여기서 반드시 끝낸다
+        // 연출은 화면이 지도 준비 뒤 시계를 흘려 끝내지만, 지도가 끝내 준비되지 않아도 막히지 않게 여유를 두고 끝낸다
+        viewModelScope.launch { delay(show.durationMs + 5_000); if (deliveryShow === show) finishDelivery() }
+    }
+
+    /** 연출이 끝났거나 구급대원이 눌러 건너뛰었다 — 환자 정보 탭으로 */
+    fun finishDelivery() {
+        if (deliveryShow == null) return
+        deliveryShow = null
+        tab = Tab.PATIENT
     }
 
     /** 종료 화면의 [확인] — 다음 화면(전달됨 · 추가 통화)으로 */
