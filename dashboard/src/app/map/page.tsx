@@ -15,11 +15,12 @@ import {
 import type { CaseHistoryItem } from "@/types/dashboard";
 import { useCaseArchive } from "@/hooks/use-case-archive";
 import { useControlAlerts } from "@/hooks/use-control-alerts";
-import { isTransportStalled } from "@/lib/control-alerts";
+import { isConfirmDelayed, isTransportStalled } from "@/lib/control-alerts";
 import { CaseTimeline } from "@/components/map/CaseTimeline";
 import { CaseStatusSummary } from "@/components/map/CaseStatusSummary";
-import { HandlingActions } from "@/components/map/HandlingActions";
-import { AlertSoundButton, AlertStack, topAlertOf, useAlertTabTitle } from "@/components/map/ControlAlerts";
+import { RejectionStatsModal } from "@/components/map/RejectionStatsModal";
+import { HandlingActions, resultNotice } from "@/components/map/HandlingActions";
+import { AlertStack, topAlertOf, useAlertTabTitle } from "@/components/map/ControlAlerts";
 import { ARCHIVE_MOCK, daysAgo, type ArchiveResult } from "@/lib/case-archive";
 import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
 import { useAutoDemo } from "@/lib/auto-demo";
@@ -29,13 +30,15 @@ import { useAutoDemo } from "@/lib/auto-demo";
 // 시연 조작을 열면 공통 DemoConsole이 별도 monitor 연결로 기존 시연 명령을 보낸다.
 // 병원 대시보드는 첫 페이지에서 접근 코드로 연다(병원 점에 마우스를 올리면 H-코드가 보인다).
 //
-// 왼쪽: 진행 중인 사건(중증도 → 시작 순) · 지난 사건 보기 · 선택한 사건의 요청 병원(탭: 판단 대기/수용 불가/수용 승인)
-// 오른쪽: 지도(선택한 사건의 병원 응답 상태·요청 범위, 전체 구급차) + 하단 구급차 패널(선택한 사건 기준 가까운 순)
+// 왼쪽: 진행 중인 사건(중증도 → 시작 순) · 선택한 사건의 요청 병원(탭: 판단 대기/수용 불가/수용 승인)
+// 가운데: 지도(선택한 사건의 병원 응답 상태·요청 범위, 구급차) 전체 배경 / 오른쪽: 구급차 카드(움직이는 것 먼저, 선택한 사건 기준 가까운 순)
 // 위치·존·상태는 전부 규칙 기반이고, 구급차 위치는 시연용 시뮬레이션이다.
 
 // 3D 거미줄(spider/serve.py, 포트 2700) 실시간 화면. 배포 도메인에선 같은 호스트의 /spider/ 아래로 열려 있고,
 // 로컬 개발(3000)에선 NEXT_PUBLIC_SPIDER_URL(예: http://localhost:2700/spider/)로 덮어쓴다.
-const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? "/spider/"}?mode=live&embed=1`;
+// 거미줄 파일(spider/web)을 고치면 SPIDER_BUILD와 spider/web/index.html의 ?v=를 같이 올린다 — 공개 도메인이 .js를 4시간 캐시해서 주소가 바뀌어야 새 파일을 받는다.
+const SPIDER_BUILD = "20261101c";
+const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? "/spider/"}?mode=live&embed=1&v=${SPIDER_BUILD}`;
 
 const DemoConsole = dynamic(() => import("@/components/control/DemoConsole").then((module) => module.DemoConsole), {
   ssr: false,
@@ -44,7 +47,6 @@ const DemoConsole = dynamic(() => import("@/components/control/DemoConsole").the
 
 type MapView = "2d" | "3d";
 type Tab = "all" | St;
-type AmbTab = "all" | "sd" | "t" | "b";
 
 const LEGEND_LEVELS: [string, string][] = [
   [LEVEL_DOT["권역응급의료센터"], "권역센터 (중증)"],
@@ -53,20 +55,36 @@ const LEGEND_LEVELS: [string, string][] = [
 ];
 
 export default function MonitorMapPage() {
-  const { state, connectionMode } = useDashboardSocket({ role: "monitor", id: "map" });
+  const { state, connectionMode, sendZoneExpand, sendAction } = useDashboardSocket({ role: "monitor", id: "map" });
   const overview = state.mapOverview;
   const [now, setNow] = useState(() => Date.now());
   const [selId, setSelId] = useState<string>("");
   const [tab, setTab] = useState<Tab>("all");
-  const [ambTab, setAmbTab] = useState<AmbTab>("all");
+  const [ambQuery, setAmbQuery] = useState("");
+  const [standbyOpen, setStandbyOpen] = useState(false);       // 기지 대기 전체 목록 펼침
+  const [standbyOnMap, setStandbyOnMap] = useState(false);     // 지도에 기지 대기 구급차 전부 표시
   const [hoverHospital, setHoverHospital] = useState("");
   const [hoverAmb, setHoverAmb] = useState("");
-  const [view, setView] = useState<MapView>("2d");
+  const [view, setView] = useState<MapView>("3d");   // 기본은 3D 거미줄(다크). 거미줄 서버가 안 뜨면 아래 점검이 2D로 돌려보낸다
+  const dark = view === "3d";
+  const spiderRef = useRef<HTMLIFrameElement | null>(null);
   const [showPast, setShowPast] = useState(false);
+  // 브라우저 전체 화면(F11과 별개로 버튼 한 번) — Esc로 나가도 상태가 맞도록 fullscreenchange를 따른다
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const sync = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.();
+  }, []);
   const [consoleOpen, setConsoleOpen] = useState(false);
   // 닫아도 컴포넌트는 유지해 작성 중 입력·대량사고 대기열·재생 타이머를 보존한다.
   const [consoleMounted, setConsoleMounted] = useState(false);
   const [, setConsoleApid] = useState<string | null>(null);
+  const [showReject, setShowReject] = useState(false);
   // 사건별로 마지막으로 본 시각 — 그 뒤의 병원 응답이 "새 N"
   const [seenAt, setSeenAt] = useState<Record<string, number>>({});
   const [mountedAt] = useState(() => Date.now());
@@ -90,7 +108,10 @@ export default function MonitorMapPage() {
   const ambulanceSim = useMemo(() => ({ ...state.ambulanceSim, ...demo.sims }), [state.ambulanceSim, demo.sims]);
   const selected = incidents.find((i) => i.caseId === selId) ?? incidents[0] ?? null;
 
+  // 사건을 누를 때마다 올리는 값 — 이미 고른 사건을 다시 눌러도 지도가 그 사건으로 줌인하게 한다(선택이 안 바뀌면 지도 효과가 안 돌았다)
+  const [focusNonce, setFocusNonce] = useState(0);
   const selectCase = useCallback((caseId: string) => {
+    setFocusNonce((n) => n + 1);
     setSelId(caseId);
     const apid = realIncidents.find((incident) => incident.caseId === caseId)?.apid;
     if (apid) setConsoleApid(apid);
@@ -135,17 +156,44 @@ export default function MonitorMapPage() {
       return { apid: a.apid, name: a.name, key: st.key, text: st.text, km };
     });
   }, [ambulances, ambulanceSim, center]);
+  const ambKeyOf = useMemo(() => new Map(ambRows.map((r) => [r.apid, r.key])), [ambRows]);
+  // 움직이는 구급차(현장·출동·이송 중)를 먼저, 기지 대기는 접어 두고 선택한 사건에서 가까운 5대만(2026-11-01)
+  const sortAmb = (list: typeof ambRows) =>
+    [...list].sort((p, q) => AMB_RANK[p.key] - AMB_RANK[q.key] || (p.km ?? 1e9) - (q.km ?? 1e9) || p.name.localeCompare(q.name));
+  const activeAmbs = sortAmb(ambRows.filter((r) => r.key !== "b"));
+  const standbyAmbs = sortAmb(ambRows.filter((r) => r.key === "b"));
+  const nearStandby = center ? standbyAmbs.slice(0, 5) : [];
+  const ambQ = ambQuery.trim().toLowerCase();
+  const ambHits = ambQ ? sortAmb(ambRows.filter((r) => r.name.toLowerCase().includes(ambQ))) : [];
+  // 지도에 보이는 구급차: 움직이는 것 + 가까운 대기 5대 + 검색 결과(토글을 켜면 대기 전부)
+  const ambShown = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of ambRows) if (r.key !== "b" || standbyOnMap) ids.add(r.apid);
+    for (const r of nearStandby) ids.add(r.apid);
+    for (const r of ambHits) ids.add(r.apid);
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ambRows, standbyOnMap, ambQ, center]);
+  const ambVisible = useCallback((apid: string) => ambShown.has(apid), [ambShown]);
   const ambCount: Record<AmbKey, number> = { s: 0, d: 0, t: 0, b: 0 };
   for (const r of ambRows) ambCount[r.key]++;
-  const inAmbTab = useCallback(
-    (key: AmbKey) => ambTab === "all" || (ambTab === "sd" ? key === "s" || key === "d" : ambTab === key),
-    [ambTab],
-  );
-  const ambKeyOf = useMemo(() => new Map(ambRows.map((r) => [r.apid, r.key])), [ambRows]);
-  const ambInTab = useCallback((apid: string) => inAmbTab(ambKeyOf.get(apid) ?? "b"), [inAmbTab, ambKeyOf]);
-  const ambList = ambRows
-    .filter((r) => inAmbTab(r.key))
-    .sort((p, q) => AMB_RANK[p.key] - AMB_RANK[q.key] || (p.km ?? 1e9) - (q.km ?? 1e9) || p.name.localeCompare(q.name));
+  const renderAmb = (a: (typeof ambRows)[number]) => {
+    const on = hoverAmb === a.apid;
+    return (
+      <div
+        key={a.apid}
+        onMouseEnter={() => setHoverAmb(a.apid)}
+        onMouseLeave={() => setHoverAmb("")}
+        style={{ ...acellStyle, flex: "none", background: on ? "#E8EEF8" : a.key === "s" ? "#FFF4EC" : undefined }}
+      >
+        <span title={a.name} style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(a.name)}</span>
+        <span style={{ flex: "none", color: C.sub, fontSize: 12, minWidth: 38, textAlign: "right" }}>
+          {a.km == null ? "" : a.km < 0.05 ? "현장" : `${a.km.toFixed(1)}km`}
+        </span>
+        <span style={{ flex: "none", width: 62, textAlign: "center", fontSize: 11.5, lineHeight: "17px", borderRadius: 3, ...AMB_CHIP[a.key] }}>{a.text}</span>
+      </div>
+    );
+  };
 
   // ── 선택한 사건의 병원 ──
   const selCounts = selected ? counts(selected) : { w: 0, r: 0, a: 0, t: 0 };
@@ -178,6 +226,88 @@ export default function MonitorMapPage() {
   const past = state.caseHistory;
   const live = connectionMode === "live";
   const alertView = useControlAlerts(incidents, live);
+
+  // ── 3D 거미줄과의 연동(2026-11-01) — 같은 도메인의 iframe이라 거미줄 화면의 함수를 직접 부른다 ──
+  type SpiderWin = Window & {
+    setViewInsets?: (i: { left: number; right: number; top: number; bottom: number }) => void;
+    focusPoint?: (lat: number, lng: number) => void;
+  };
+  const spiderWin = () => spiderRef.current?.contentWindow as SpiderWin | null | undefined;
+  // 패널이 덮은 폭을 알려 줘서, 카메라가 가려지지 않은 가운데에 목표를 놓게 한다
+  const pushInsets = useCallback(() => {
+    const w = spiderRef.current?.contentWindow as SpiderWin | null | undefined;
+    if (!w?.setViewInsets) return false;
+    const edge = (side: string) => document.querySelector<HTMLElement>(`[data-map-cover="${side}"]`)?.getBoundingClientRect();
+    const l = edge("left"), r = edge("right"), t = edge("top");
+    w.setViewInsets({ left: l ? l.right : 0, right: r ? window.innerWidth - r.left : 0, top: t ? t.bottom : 0, bottom: 0 });
+    return true;
+  }, []);
+  const selCenter = selected?.center ?? null;
+  // 2D(ControlMapPanel.focusTarget)와 같은 규칙으로 "지금 보여야 할 점들"을 고른다 — 출동 중이면 현장+구급차, 병원 요청 중이면 요청 병원들,
+  // 이송 중이면 구급차+병원, 도착이면 병원. 이동 경로가 짧으면 거미줄이 더 가까이 확대한다.
+  const focusPointsOf = (): { lat: number; lng: number }[] => {
+    const sel = selected;
+    if (!sel?.center) return [];
+    const sim = sel.apid ? ambulanceSim[sel.apid] : undefined;
+    const gpsOf = (id: string) => overview?.hospitals.find((h) => h.hospitalId === id)?.gps ?? null;
+    const dest = sel.hospitals.find((h) => h.st === "t");
+    const destGps = dest ? gpsOf(dest.hospitalId) : null;
+    if (sim?.phase === "at_hospital" && destGps) return [destGps];
+    if (sim?.phase === "transporting" && destGps && sim.gps) return [sim.gps, destGps];
+    if (sim?.phase === "dispatching" && sim.gps) return [sel.center, sim.gps];
+    if (sel.matched && !destGps) {
+      const req = sel.hospitals.map((h) => gpsOf(h.hospitalId)).filter((g): g is { lat: number; lng: number } => g != null);
+      return [sel.center, ...req];
+    }
+    return [sel.center];
+  };
+  const focusRef = useRef(focusPointsOf);
+  useEffect(() => { focusRef.current = focusPointsOf; });
+  const focusSelected = useCallback(() => {
+    if (!pushInsets()) return;
+    const pts = focusRef.current();
+    if (pts.length === 0) return;
+    const w = spiderWin() as (SpiderWin & { focusPoints?: (p: { lat: number; lng: number }[]) => void }) | null | undefined;
+    if (w?.focusPoints) w.focusPoints(pts);
+    else if (pts[0]) w?.focusPoint?.(pts[0].lat, pts[0].lng);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pushInsets]);
+  // 사건을 고르거나(다시 눌러도) 사건 단계가 바뀌면(출동→병원 요청→이송→도착) 거미줄 카메라를 맞춘다 — 카드에 가리지 않는 가운데에
+  const selSimPhase = selected?.apid ? ambulanceSim[selected.apid]?.phase : undefined;
+  const selConfirmed = selected?.hospitals.find((h) => h.st === "t")?.hospitalId ?? "";
+  const focusKey3d = selected ? `${selected.caseId}|${selSimPhase ?? ""}|${selected.matched}|${selConfirmed}|${selected.zone}|${focusNonce}|${selCenter?.lat},${selCenter?.lng}` : "";
+  useEffect(() => {
+    if (view === "3d" && focusKey3d) focusSelected();
+  }, [view, focusKey3d, focusSelected]);
+  // 2D로 돌아오면 지도 칸이 숨겨져 있던 동안 크기가 0이라 포커스가 엉뚱한 곳에 맞았다 — 칸이 다시 보인 뒤 한 번 더 맞춘다
+  useEffect(() => {
+    if (view !== "2d") return;
+    const t = setTimeout(() => setFocusNonce((n) => n + 1), 150);
+    return () => clearTimeout(t);
+  }, [view]);
+  useEffect(() => {
+    const onResize = () => { if (view === "3d") pushInsets(); };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [view, pushInsets]);
+  // 거미줄 서버가 안 떠 있으면(주소가 안 열리면) 빈 화면 대신 2D 카카오 지도로 돌아간다. 일시적인 네트워크 흔들림에는 2D로 가지 않게 3번 확인한다.
+  useEffect(() => {
+    const ctl = new AbortController();
+    (async () => {
+      for (let i = 0; i < 3; i++) {
+        try {
+          const r = await fetch(SPIDER_URL, { method: "HEAD", signal: ctl.signal });
+          if (r.ok) return;
+        } catch (e) {
+          if ((e as Error)?.name === "AbortError") return;
+        }
+        await new Promise((res) => setTimeout(res, 1500));
+        if (ctl.signal.aborted) return;
+      }
+      setView("2d");
+    })();
+    return () => ctl.abort();
+  }, []);
   useAlertTabTitle(new Set(alertView.alerts.map((a) => a.caseId ?? a.key)).size);
   // 알림이 걸린 사건은 목록 맨 위에 고정하고 지도 마커를 강조한다. 알림은 오른쪽 위 카드로 쌓이고 색으로 등급을 나눈다(빨강 긴급·새 사건 / 주황 주의 / 회색 시스템).
   const alertCaseIds = useMemo(() => new Set(alertView.alerts.flatMap((a) => (a.caseId ? [a.caseId] : []))), [alertView.alerts]);
@@ -200,7 +330,7 @@ export default function MonitorMapPage() {
       <DemoVideoOverlay src="/demo-videos/ijs.mp4" />
       <div style={{ position: "absolute", inset: 0, boxSizing: "border-box", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {/* 헤더 + 범례 */}
-        <header style={{ flex: "none", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <Glass as="header" dark={dark} data-map-cover="top" style={{ position: "relative", zIndex: 10, flex: "none", borderRadius: 6, padding: "12px 20px", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <Link href="/" style={{ fontSize: 19, fontWeight: 900, letterSpacing: "-0.02em", color: C.navy }}>골든링크</Link>
             <div style={{ width: 1, height: 16, background: "#CDD3DA" }} />
@@ -218,7 +348,11 @@ export default function MonitorMapPage() {
               style={{ ...tab2Style, minHeight: 40, background: consoleOpen ? C.navy : "#E8EEF8", color: consoleOpen ? "#fff" : C.navy }}>
               {consoleOpen ? "관제 목록으로" : "시연 조작"}
             </button>
-            <AlertSoundButton soundOn={alertView.soundOn} count={alertView.alerts.length} onToggle={alertView.toggleSound} />
+            <button type="button" aria-label="지난 사건 보기" onClick={() => setShowPast(true)} style={toolBtnStyle}>
+              지난 사건 <b style={{ fontWeight: 900 }}>오늘 {past.length}</b>
+            </button>
+            <button type="button" onClick={() => setShowReject(true)} style={toolBtnStyle}>거절 사유 통계</button>
+            <button type="button" aria-pressed={fullscreen} onClick={toggleFullscreen} style={toolBtnStyle}>{fullscreen ? "전체 화면 종료" : "전체 화면"}</button>
             <div role="tablist" aria-label="지도 보기" style={{ display: "flex", gap: 4 }}>
               {([["2d", "2D 지도"], ["3d", "3D 거미줄"]] as [MapView, string][]).map(([key, label]) => {
                 const on = view === key;
@@ -270,15 +404,15 @@ export default function MonitorMapPage() {
               {CONNECTION_LABEL[connectionMode].text.replace(/^[●◌○]\s*/, "")}
             </span>
           </div>
-        </header>
+        </Glass>
         {/* 관제 알림 카드 — 헤더 바로 아래 기준점에서 아래로 쌓인다(높이 0) */}
         <div style={{ position: "relative", flex: "none", height: 0, marginTop: -14, zIndex: 250 }}>
-          <AlertStack alerts={alertView.alerts} incidents={incidents} onAck={alertView.ack} onAckAll={alertView.ackAll} onOpen={selectCase} onHandle={(caseId, keys) => { alertView.startHandling(caseId, keys); selectCase(caseId); }} />
+          <AlertStack dark={dark} alerts={alertView.alerts} incidents={incidents} onAck={alertView.ack} onAckAll={alertView.ackAll} onOpen={selectCase} onHandle={(caseId, keys) => { alertView.startHandling(caseId, keys); selectCase(caseId); }} />
         </div>
         <style>{"@keyframes ctlbl{0%,100%{opacity:1}50%{opacity:.3}}.ctl-live{animation:ctlbl 1.6s infinite}@keyframes ctlnew{0%,100%{background:#fff}50%{background:#FFD9D5}}.ctl-new{animation:ctlnew 1s ease-in-out 10;border-color:#D93025!important}.ctl-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C5CCD6 transparent}.ctl-scroll::-webkit-scrollbar{width:6px}.ctl-scroll::-webkit-scrollbar-thumb{background:#C5CCD6;border-radius:3px}"}</style>
 
         <style>{`
-          .monitor-console-pane{flex:0 0 min(760px,56%);min-width:0;min-height:0;overflow:hidden;border:1px solid ${C.line};border-radius:14px;background:${C.bg}}
+          .monitor-console-pane{flex:0 0 min(760px,56%);min-width:0;min-height:0;overflow:hidden;border:1px solid ${C.line};border-radius:6px;background:${C.bg}}
           @media(max-width:1100px){
             .monitor-workspace--control{flex-direction:column}
             .monitor-workspace--control .monitor-console-pane{flex:0 0 55%;width:100%}
@@ -287,17 +421,17 @@ export default function MonitorMapPage() {
         `}</style>
         <div className={`monitor-workspace${consoleOpen ? " monitor-workspace--control" : ""}`} style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 16 }}>
           {/* 왼쪽: 진행 중인 사건 · 지난 사건 · 선택한 사건의 병원 */}
-          <aside style={{ flex: "none", width: SIDEBAR_W, display: consoleOpen ? "none" : "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
-            <div style={{ ...cardStyle, flex: "1 1 0", gap: 6 }}>
+          <aside data-map-cover="left" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, alignSelf: "flex-start", maxHeight: "100%", display: consoleOpen ? "none" : "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+            <Glass dark={dark} style={{ ...cardStyle, flex: "none", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>진행 중인 사건 {incidents.length}건</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>진행 중인 사건 {incidents.length}건</div>
                 <div style={{ fontSize: 11.5, color: C.sub }}>중증 {sevCount.중증} · 중등증 {sevCount.중등증} · 경증 {sevCount.경증}</div>
               </div>
 
-              <div style={{ position: "relative", flex: "none", height: 160 }}>
-                <div className="ctl-scroll" style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", gap: 5, paddingRight: 6, scrollSnapType: "y mandatory" }}>
+              <div style={{ position: "relative", flex: "none" }}>
+                <div className="ctl-scroll" style={{ maxHeight: 4 * 50 - 5, overflowY: incidents.length > 4 ? "auto" : "hidden", display: "flex", flexDirection: "column", gap: 5, paddingRight: 6, scrollSnapType: "y mandatory" }}>
                   {incidents.length === 0 && (
-                    <div style={{ padding: "40px 12px", textAlign: "center", fontSize: 12.5, color: C.muted, whiteSpace: "normal" }}>
+                    <div style={{ padding: "28px 12px", textAlign: "center", fontSize: 12.5, color: C.muted, whiteSpace: "normal" }}>
                       진행 중인 사건이 없습니다. 신고가 접수되면(구급대 출동) 여기에 뜹니다.
                     </div>
                   )}
@@ -325,7 +459,7 @@ export default function MonitorMapPage() {
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <NumBadge n={inc.num} />
                           {alertView.freshIds.has(inc.caseId) && (
-                            <span style={{ flex: "none", fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#D93025", borderRadius: 5, padding: "0 5px", lineHeight: "15px" }}>NEW</span>
+                            <span style={{ flex: "none", fontSize: 9.5, fontWeight: 900, color: "#fff", background: "#D93025", borderRadius: 3, padding: "0 5px", lineHeight: "15px" }}>NEW</span>
                           )}
                           {inc.sev && <SevChip sev={inc.sev} />}
                           <span title={inc.name} style={{ flex: "none", fontSize: 13, fontWeight: 700, color: C.navy, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(inc.name)}</span>
@@ -335,7 +469,7 @@ export default function MonitorMapPage() {
                         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>
                           <span style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, color: alertView.handling.has(inc.caseId) ? "#1F4E9C" : alert ? (alertRed ? "#D93025" : "#C75B00") : stage.color, overflow: "hidden", textOverflow: "ellipsis" }}>{alertView.handling.has(inc.caseId) ? `처리 중${alert ? ` · ${alert.title}` : ""}` : alert ? `${alert.title}${alert.detail ? ` · ${alert.detail}` : ""}` : stage.text}</span>
                           {unseen > 0 && (
-                            <span style={{ flex: "none", fontSize: 10, fontWeight: 700, color: "#fff", background: C.blue, borderRadius: 8, padding: "0 6px", lineHeight: "15px" }}>새 {unseen}</span>
+                            <span style={{ flex: "none", fontSize: 10, fontWeight: 700, color: "#fff", background: C.blue, borderRadius: 4, padding: "0 6px", lineHeight: "15px" }}>새 {unseen}</span>
                           )}
                           <CountDot color="#F6C21B" n={c.w} />
                           <CountDot color="#D93025" n={c.r} />
@@ -347,30 +481,16 @@ export default function MonitorMapPage() {
                 </div>
               </div>
 
-              {incidents.length > 6 && (
+              {incidents.length > 4 && (
                 <div style={{ flex: "none", textAlign: "center", fontSize: 11, fontWeight: 700, color: "#1F4E9C", lineHeight: "14px" }}>
-                  ▼ 스크롤하면 외 {incidents.length - 6}건 더 있어요
+                  ▼ 스크롤하면 외 {incidents.length - 4}건 더 있어요
                 </div>
               )}
 
-              <div style={{ flex: "none", paddingTop: 2, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <button
-                  type="button"
-                  aria-label="지난 사건 보기"
-                  onClick={() => setShowPast(true)}
-                  style={pastBtnStyle}
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                    <path d="M2.2 7a4.8 4.8 0 1 0 1.5-3.5M2 2v3h3" stroke={C.navy} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M7 4.5V7l1.8 1.2" stroke={C.navy} strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                  지난 사건 보기
-                </button>
-                <span style={{ fontSize: 11.5, color: C.sub }}>오늘 종료 {past.length}건</span>
-              </div>
 
-              {/* 선택한 사건의 병원 */}
-              <div style={{ flex: "1 1 0", minHeight: 0, borderTop: `1px solid ${C.line2}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            </Glass>
+            <Glass dark={dark} style={{ ...cardStyle, flex: "0 1 auto" }}>
+              <div style={{ flex: "0 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 6 }}>
                 {selected ? (
                   <>
                     {/* 선택한 사건 머리(2026-10-04) — 한 줄에 다 넣으면 증상·요청 수에 밀려 구급대 이름이 사라졌다.
@@ -385,7 +505,7 @@ export default function MonitorMapPage() {
                             type="button"
                             onClick={() => alertView.finishHandling(selected.caseId)}
                             title="이 화면 안에서만 표시됩니다(다른 관제 화면과 공유되지 않음)"
-                            style={{ marginLeft: "auto", flex: "none", height: 22, padding: "0 10px", border: "1px solid #1F4E9C", borderRadius: 11, background: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, color: "#1F4E9C", cursor: "pointer" }}
+                            style={{ marginLeft: "auto", flex: "none", height: 22, padding: "0 10px", border: "1px solid #1F4E9C", borderRadius: 3, background: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, color: "#1F4E9C", cursor: "pointer" }}
                           >
                             처리 중 · 완료로 표시
                           </button>
@@ -401,7 +521,13 @@ export default function MonitorMapPage() {
 
                     <CaseStatusSummary inc={selected} now={now} />
 
-                    {isTransportStalled(selected, now) && <HandlingActions />}
+                    {(isTransportStalled(selected, now) || isConfirmDelayed(selected, now)) && <HandlingActions key={selected.caseId} dispatchOnly={!isTransportStalled(selected, now)} notice={resultNotice(state, selected.caseId, now)} onZoneExpand={() => sendZoneExpand(selected.caseId)}
+                    waiting={selected.hospitals.filter((h) => h.st === "w").map((h) => ({
+                      hospitalId: h.hospitalId, name: h.name,
+                      phone: overview?.hospitals.find((o) => o.hospitalId === h.hospitalId)?.erPhone ?? null,
+                    }))}
+                    approved={selected.hospitals.filter((h) => h.st === "a" && !h.notSelected)}
+                    onDispatch={(h) => sendAction({ caseId: selected.caseId, action: "final_approval", hospital_id: h.hospitalId, actor: "dispatcher", timestamp: new Date().toISOString() })} />}
 
                     <div role="tablist" style={{ display: "flex", gap: 4, width: "100%" }}>
                       {tabDefs.map(([key, label, count]) => {
@@ -423,7 +549,7 @@ export default function MonitorMapPage() {
                       })}
                     </div>
 
-                    <div style={{ flex: "0 1 auto", minHeight: 0, maxHeight: "55%", display: "flex", flexDirection: "column" }}>
+                    <div style={{ flex: "0 1 auto", minHeight: 0, maxHeight: "40vh", display: "flex", flexDirection: "column" }}>
                       <div className="ctl-scroll" style={{ minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", paddingRight: 2 }}>
                         {rows.map((h) => {
                           const on = hoverHospital === h.hospitalId;
@@ -469,7 +595,69 @@ export default function MonitorMapPage() {
                   </div>
                 )}
               </div>
-            </div>
+            </Glass>
+          </aside>
+
+          {/* 오른쪽: 구급차 — 왼쪽 칼럼(사건 목록·사건 상세)과 짝으로 양쪽에 둬 지도를 가운데로 열어 둔다(2026-11-01) */}
+          <aside data-map-cover="right" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, marginLeft: "auto", alignSelf: "flex-start", maxHeight: "100%", display: consoleOpen ? "none" : "flex", flexDirection: "column", minHeight: 0 }}>
+            <Glass dark={dark} style={{ ...cardStyle, flex: "0 1 auto", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>구급차 {ambRows.length}대</div>
+                <div style={{ fontSize: 11.5, color: C.sub }}>{selected ? "선택한 사건 기준 · 가까운 순" : "상태순"}</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="search"
+                  value={ambQuery}
+                  onChange={(e) => setAmbQuery(e.target.value)}
+                  placeholder="구급차 이름 검색"
+                  aria-label="구급차 이름 검색"
+                  style={{ flex: "1 1 0", minWidth: 0, height: 28, boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 4, padding: "0 10px", fontFamily: "inherit", fontSize: 12.5, color: C.ink, background: "#fff" }}
+                />
+                <button
+                  type="button"
+                  aria-pressed={standbyOnMap}
+                  onClick={() => setStandbyOnMap((v) => !v)}
+                  title="켜면 기지 대기 구급차를 지도에 전부 표시합니다. 기본은 움직이는 구급차와 가까운 대기 5대만 보입니다."
+                  style={{ flex: "none", height: 28, padding: "0 10px", border: `1px solid ${standbyOnMap ? C.navy : C.line}`, borderRadius: 6, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: standbyOnMap ? C.navy : "#fff", color: standbyOnMap ? "#fff" : C.ink2 }}
+                >
+                  지도에 대기 전체
+                </button>
+              </div>
+              {ambQ ? (
+                <div className="ctl-scroll" style={{ flex: "0 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
+                  <div style={{ flex: "none", fontSize: 11.5, fontWeight: 700, color: C.sub }}>검색 결과 {ambHits.length}대</div>
+                  {ambHits.map(renderAmb)}
+                  {ambHits.length === 0 && <div style={{ padding: "16px 8px", textAlign: "center", fontSize: 12.5, color: C.muted }}>이름이 맞는 구급차가 없습니다.</div>}
+                </div>
+              ) : (
+                <>
+                  {/* 움직이는 구급차는 고정, 스크롤은 기지 대기 목록만 */}
+                  <div style={{ flex: "none", display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: C.sub }}>
+                      움직이는 구급차 {activeAmbs.length}대 <span style={{ fontWeight: 500 }}>· 현장 {ambCount.s} · 출동 {ambCount.d} · 이송 중 {ambCount.t}</span>
+                    </div>
+                    {activeAmbs.map(renderAmb)}
+                    {activeAmbs.length === 0 && <div style={{ padding: "10px 8px", textAlign: "center", fontSize: 12.5, color: C.muted }}>지금 움직이는 구급차가 없습니다.</div>}
+                    <button
+                      type="button"
+                      aria-expanded={standbyOpen}
+                      onClick={() => setStandbyOpen((v) => !v)}
+                      style={{ flex: "none", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between", height: 30, padding: "0 10px", border: `1px solid ${C.line2}`, borderRadius: 4, background: C.bg, fontFamily: "inherit", fontSize: 12, fontWeight: 700, color: C.ink2, cursor: "pointer" }}
+                    >
+                      <span>기지 대기 {standbyAmbs.length}대{!standbyOpen && center ? " · 가까운 5대" : ""}</span>
+                      <span aria-hidden="true">{standbyOpen ? "▴" : "▾"}</span>
+                    </button>
+                  </div>
+                  <div className="ctl-scroll" style={{ flex: "0 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
+                    {(standbyOpen ? standbyAmbs : nearStandby).map(renderAmb)}
+                    {!standbyOpen && !center && (
+                      <div style={{ flex: "none", padding: "2px 8px", fontSize: 11.5, color: C.muted, whiteSpace: "normal" }}>사건을 고르면 가까운 대기 구급차 5대가 여기 뜹니다. 눌러서 전체를 펼칠 수 있어요.</div>
+                    )}
+                  </div>
+                </>
+              )}
+            </Glass>
           </aside>
 
           {consoleMounted && (
@@ -481,13 +669,16 @@ export default function MonitorMapPage() {
           {/* 오른쪽: 지도 + 하단 구급차 패널. 3D 보기 중에도 2D 지도는 숨기기만 해서 다시 켜도 지도가 초기화되지 않는다 */}
           {view === "3d" && (
             <iframe
+              ref={spiderRef}
               title="3D 거미줄"
               src={SPIDER_URL}
-              style={{ flex: "1 1 0", minWidth: 0, border: `1px solid ${C.line}`, borderRadius: 14, background: "#fff" }}
+              onLoad={() => { setTimeout(focusSelected, 400); pushInsets(); }}
+              style={{ position: "absolute", inset: 0, zIndex: 0, width: "100%", height: "100%", border: 0, background: "#0a1024" }}
             />
           )}
           <div style={{ display: view === "2d" ? "contents" : "none" }}>
           <ControlMapPanel
+            focusNonce={focusNonce}
             overview={overview}
             incidents={incidents}
             selected={selected}
@@ -495,60 +686,18 @@ export default function MonitorMapPage() {
             ambulanceSim={ambulanceSim}
             hoverHospital={hoverHospital}
             hoverAmb={hoverAmb}
-            ambInTab={ambInTab}
+            ambVisible={ambVisible}
             alertCaseIds={alertCaseIds}
             onHoverHospital={setHoverHospital}
             onHoverAmb={setHoverAmb}
             onSelectCase={selectCase}
           >
-            <div className="monitor-ambulance-panel" style={{ position: "absolute", left: 12, right: 12, bottom: 12, height: 158, boxSizing: "border-box", zIndex: 90, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: "0 4px 16px rgba(20,30,50,.14)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 14px" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>구급차 {ambRows.length}대</div>
-                <div role="tablist" style={{ display: "flex", gap: 6 }}>
-                  {([["all", "전체", ambRows.length], ["sd", "현장·출동", ambCount.s + ambCount.d], ["t", "이송 중", ambCount.t], ["b", "기지 대기", ambCount.b]] as [AmbTab, string, number][]).map(([key, label, count]) => {
-                    const on = ambTab === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        role="tab"
-                        aria-selected={on}
-                        onClick={() => setAmbTab(key)}
-                        style={{ ...tab2Style, ...(on ? { background: C.navy, color: "#fff" } : { background: C.bg, color: count === 0 && key !== "all" ? C.faint : C.ink2 }) }}
-                      >
-                        {label}<b style={{ fontWeight: 900, marginLeft: 5 }}>{count}</b>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ flex: "1 1 0" }} />
-                <div style={{ fontSize: 12, color: C.sub }}>{selected ? "선택한 사건 기준 · 가까운 순" : "상태순"}</div>
-              </div>
-              <div className="ctl-scroll" style={{ flex: "none", height: 104, display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gridAutoRows: 30, gap: 7, alignContent: "start", paddingRight: 8, scrollSnapType: "y mandatory", boxSizing: "border-box" }}>
-                {ambList.map((a) => {
-                  const on = hoverAmb === a.apid;
-                  return (
-                    <div
-                      key={a.apid}
-                      onMouseEnter={() => setHoverAmb(a.apid)}
-                      onMouseLeave={() => setHoverAmb("")}
-                      style={{ ...acellStyle, background: on ? "#E8EEF8" : a.key === "s" ? "#FFF4EC" : undefined }}
-                    >
-                      <span title={a.name} style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(a.name)}</span>
-                      <span style={{ flex: "none", color: C.sub, fontSize: 12, minWidth: 38, textAlign: "right" }}>
-                        {a.km == null ? "" : a.km < 0.05 ? "현장" : `${a.km.toFixed(1)}km`}
-                      </span>
-                      <span style={{ flex: "none", width: 62, textAlign: "center", fontSize: 11.5, lineHeight: "17px", borderRadius: 9, ...AMB_CHIP[a.key] }}>{a.text}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </ControlMapPanel>
           </div>
         </div>
       </div>
 
+      {showReject && <RejectionStatsModal onClose={() => setShowReject(false)} />}
       {showPast && (
         <PastModal today={past} onClose={() => setShowPast(false)} />
       )}
@@ -587,15 +736,15 @@ function PastModal({ today, onClose }: {
   return (
     <div role="dialog" aria-modal="true" aria-label="지난 사건" style={{ position: "absolute", inset: 0, zIndex: 300, background: "rgba(20,33,61,.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <button type="button" aria-label="닫기" onClick={onClose} style={{ position: "absolute", inset: 0, border: 0, background: "transparent", cursor: "default" }} />
-      <div style={{ position: "relative", width: 940, height: 660, maxWidth: "calc(100% - 48px)", maxHeight: "calc(100% - 48px)", background: "#fff", borderRadius: 16, boxShadow: "0 20px 60px rgba(20,33,61,.35)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ position: "relative", width: 940, height: 660, maxWidth: "calc(100% - 48px)", maxHeight: "calc(100% - 48px)", background: "#fff", borderRadius: 6, boxShadow: "0 20px 60px rgba(20,33,61,.35)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 12, padding: "16px 22px", borderBottom: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>지난 사건</div>
           <div style={{ fontSize: 12.5, color: C.sub }}>
             {multiDay ? `${from} ~ ${to}` : from === daysAgo(0) ? "오늘" : from} 종료된 사건 {n}건 · 최근 종료 순
           </div>
-          {ARCHIVE_MOCK && <span style={{ fontSize: 11, fontWeight: 700, color: "#C75B00", background: "#FFF1E0", borderRadius: 9, padding: "0 8px", lineHeight: "18px" }}>가짜 데이터 (설계 확인용)</span>}
+          {ARCHIVE_MOCK && <span style={{ fontSize: 11, fontWeight: 700, color: "#C75B00", background: "#FFF1E0", borderRadius: 3, padding: "0 8px", lineHeight: "18px" }}>가짜 데이터 (설계 확인용)</span>}
           <div style={{ flex: "1 1 0" }} />
-          <button type="button" onClick={onClose} style={{ fontFamily: "inherit", fontSize: 13, color: C.ink3, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>닫기 ✕</button>
+          <button type="button" onClick={onClose} style={{ fontFamily: "inherit", fontSize: 13, color: C.ink3, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 4, padding: "5px 12px", cursor: "pointer" }}>닫기 ✕</button>
         </div>
 
         {/* 조회 조건 — 기간(빠른 선택·직접 지정)·검색(증상·구급차·병원)·결과 */}
@@ -659,7 +808,7 @@ function PastModal({ today, onClose }: {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11.5 }}>
                       <span style={{ flex: "none", color: C.muted, fontVariantNumeric: "tabular-nums" }}>{multiDay ? `${fmtMd(p.endedAt)} ` : ""}{fmtHm(p.startedAt)} ~ {fmtHm(p.endedAt)}</span>
-                      <span style={{ flex: "none", fontWeight: 700, padding: "0 8px", borderRadius: 9, lineHeight: "17px", maxWidth: 210, overflow: "hidden", textOverflow: "ellipsis", ...res.style }}>{res.text}</span>
+                      <span style={{ flex: "none", fontWeight: 700, padding: "0 8px", borderRadius: 3, lineHeight: "17px", maxWidth: 210, overflow: "hidden", textOverflow: "ellipsis", ...res.style }}>{res.text}</span>
                     </div>
                   </button>
                 );
@@ -670,14 +819,14 @@ function PastModal({ today, onClose }: {
             </div>
           </div>
 
-          <div style={{ flex: "1 1 0", minWidth: 0, border: `1px solid ${C.line2}`, borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ flex: "1 1 0", minWidth: 0, border: `1px solid ${C.line2}`, borderRadius: 6, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
             {sel ? (
               <>
                 <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 17, fontWeight: 900, color: C.navy, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(sel.ambulanceName ?? sel.apid ?? "구급차")}</span>
                   {selSev && <SevChip sev={selSev} />}
                   {sel.symptom && <SymChip text={sel.symptom} />}
-                  {selRes && <span style={{ flex: "none", fontSize: 11.5, fontWeight: 700, padding: "0 9px", borderRadius: 9, lineHeight: "18px", ...selRes.style }}>{selRes.text}</span>}
+                  {selRes && <span style={{ flex: "none", fontSize: 11.5, fontWeight: 700, padding: "0 9px", borderRadius: 3, lineHeight: "18px", ...selRes.style }}>{selRes.text}</span>}
                 </div>
                 <div style={{ flex: "none", display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8 }}>
                   <MiniStat label="요청 병원" value={`${sel.requested}곳`} />
@@ -685,7 +834,7 @@ function PastModal({ today, onClose }: {
                   <MiniStat label="요청 범위" value={sel.zone ? zoneText(sel.zone) : "요청 전"} />
                   <MiniStat label="총 소요" value={fmtElapsed(durMs(sel))} />
                 </div>
-                <div style={{ flex: "none", fontSize: 12.5, color: C.ink3, padding: "8px 12px", background: "#F5F8FF", borderRadius: 8, whiteSpace: "normal" }}>
+                <div style={{ flex: "none", fontSize: 12.5, color: C.ink3, padding: "8px 12px", background: "#F5F8FF", borderRadius: 4, whiteSpace: "normal" }}>
                   {sel.result === "done"
                     ? `최종 이송 병원 ${sel.hospital ? shortHospital(sel.hospital) : "-"} · 요청 ${sel.requested}곳 중 ${sel.rejected}곳이 수용 불가`
                     : sel.hospital
@@ -733,14 +882,14 @@ function Divider() {
 
 function NumBadge({ n }: { n: number }) {
   return (
-    <span style={{ flex: "none", minWidth: 17, height: 17, padding: "0 4px", boxSizing: "border-box", borderRadius: 9, background: C.navy, color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <span style={{ flex: "none", minWidth: 17, height: 17, padding: "0 4px", boxSizing: "border-box", borderRadius: 3, background: C.navy, color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
       {n}
     </span>
   );
 }
 
 function SevChip({ sev }: { sev: keyof typeof SEV_STYLE }) {
-  return <span style={{ flex: "none", fontSize: 10.5, fontWeight: 700, padding: "0 7px", borderRadius: 9, lineHeight: "16px", ...SEV_STYLE[sev] }}>{sev}</span>;
+  return <span style={{ flex: "none", fontSize: 10.5, fontWeight: 700, padding: "0 7px", borderRadius: 3, lineHeight: "16px", ...SEV_STYLE[sev] }}>{sev}</span>;
 }
 
 function SymChip({ text }: { text: string }) {
@@ -749,7 +898,7 @@ function SymChip({ text }: { text: string }) {
       title={text}
       style={{
         display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", verticalAlign: "middle",
-        fontSize: 10.5, fontWeight: 500, color: C.ink3, background: C.bg, borderRadius: 5, padding: "1px 6px", whiteSpace: "nowrap",
+        fontSize: 10.5, fontWeight: 500, color: C.ink3, background: C.bg, borderRadius: 3, padding: "1px 6px", whiteSpace: "nowrap",
       }}
     >
       {text}
@@ -781,7 +930,7 @@ function StatusIcon({ st, color }: { st: St; color: string }) {
 
 function Stat({ label, value, color = C.navy, sub }: { label: string; value: string; color?: string; sub?: string }) {
   return (
-    <div style={{ border: `1px solid ${C.line2}`, borderRadius: 10, padding: "8px 12px" }}>
+    <div style={{ border: `1px solid ${C.line2}`, borderRadius: 4, padding: "8px 12px" }}>
       <div style={{ fontSize: 11.5, color: C.sub }}>{label}</div>
       <div style={{ fontSize: 19, fontWeight: 900, color, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       <div style={{ fontSize: 11, color: C.muted, minHeight: 14 }}>{sub}</div>
@@ -800,13 +949,40 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
 
 // ── 스타일(시안 값 그대로) ──────────────────────────────────────────────────
 
+const DARK_FILTER = "invert(1) hue-rotate(180deg) brightness(1.25) saturate(1.15)";
+const GLASS_COMMON: React.CSSProperties = { backdropFilter: "blur(16px) saturate(1.2)", WebkitBackdropFilter: "blur(16px) saturate(1.2)", boxShadow: "0 1px 3px rgba(20,33,61,.18)" };
+/**
+ * 지도 위에 떠 있는 유리 패널(2026-11-01). 3D 거미줄(어두운 지도) 위에서는 dark — 어두운 유리 + 안쪽 내용의 색을 반전한다.
+ * 유리(배경·블러)와 내용(반전)을 두 겹으로 나눈 이유: 같은 요소에 filter를 걸면 뒤 지도의 블러까지 같이 반전돼 버린다.
+ * 반전은 hue-rotate로 색상을 되돌려 빨강·초록·노랑 같은 상태색이 거의 그대로 남는다(흰 바탕·남색 글자만 뒤바뀐다).
+ */
+function Glass({ as = "div", dark, style, children, ...rest }: {
+  as?: "div" | "header"; dark: boolean; style: React.CSSProperties; children: React.ReactNode; [k: string]: unknown;
+}) {
+  const Tag = as as React.ElementType;
+  const { gap, ...outer } = style;
+  return (
+    <Tag
+      {...rest}
+      style={{
+        ...outer, ...GLASS_COMMON, display: "flex", flexDirection: "column", boxSizing: "border-box",
+        background: dark ? "rgba(11,17,38,.80)" : "rgba(255,255,255,.84)",
+        border: dark ? "1px solid rgba(130,150,210,.30)" : "1px solid rgba(20,33,61,.14)",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap, minHeight: 0, flex: "0 1 auto", filter: dark ? DARK_FILTER : undefined }}>
+        {children}
+      </div>
+    </Tag>
+  );
+}
 const cardStyle: React.CSSProperties = {
-  background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, boxSizing: "border-box",
+  background: "rgba(255,255,255,.84)", backdropFilter: "blur(16px) saturate(1.2)", WebkitBackdropFilter: "blur(16px) saturate(1.2)", border: "1px solid rgba(20,33,61,.14)", boxShadow: "0 1px 3px rgba(20,33,61,.18)", borderRadius: 6, padding: 14, boxSizing: "border-box",
   display: "flex", flexDirection: "column", gap: 8, minHeight: 0,
 };
 const irowStyle: React.CSSProperties = {
-  flex: "none", display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, width: "100%", height: 42,
-  boxSizing: "border-box", padding: "0 10px", border: `1px solid ${C.line2}`, borderRadius: 10, background: "#fff",
+  flex: "none", display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, width: "100%", minHeight: 42,
+  boxSizing: "border-box", padding: "3px 10px", border: `1px solid ${C.line2}`, borderRadius: 4, background: "#fff",
   fontFamily: "inherit", textAlign: "left", cursor: "pointer", scrollSnapAlign: "start", transition: "background .6s",
 };
 const srowStyle: React.CSSProperties = {
@@ -814,28 +990,28 @@ const srowStyle: React.CSSProperties = {
   fontVariantNumeric: "tabular-nums", cursor: "default", transition: "background .6s",
 };
 const tabStyle: React.CSSProperties = {
-  flex: "1 1 0", minWidth: 0, boxSizing: "border-box", fontFamily: "inherit", border: 0, borderRadius: 8, height: 38,
+  flex: "1 1 0", minWidth: 0, boxSizing: "border-box", fontFamily: "inherit", border: 0, borderRadius: 4, height: 38,
   padding: "0 2px", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
   lineHeight: 1.15, fontVariantNumeric: "tabular-nums",
 };
 const tab2Style: React.CSSProperties = {
-  flex: "none", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12, fontWeight: 500, border: 0, borderRadius: 13,
+  flex: "none", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12, fontWeight: 500, border: 0, borderRadius: 3,
   height: 26, padding: "0 12px", cursor: "pointer", fontVariantNumeric: "tabular-nums",
 };
 const acellStyle: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: 8, height: 30, padding: "0 10px", border: `1px solid ${C.line2}`, borderRadius: 8,
+  display: "flex", alignItems: "center", gap: 8, height: 28, padding: "0 6px", border: 0, borderBottom: `1px solid ${C.line2}`, borderRadius: 0,
   fontSize: 12.5, fontVariantNumeric: "tabular-nums", cursor: "default", boxSizing: "border-box", scrollSnapAlign: "start",
 };
 const dateInputStyle: React.CSSProperties = {
-  boxSizing: "border-box", height: 26, padding: "0 8px", border: `1px solid ${C.line}`, borderRadius: 8,
+  boxSizing: "border-box", height: 26, padding: "0 8px", border: `1px solid ${C.line}`, borderRadius: 4,
   fontFamily: "inherit", fontSize: 12, color: C.ink2, background: "#fff",
 };
-const pastBtnStyle: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", border: "1px solid #CDD3DA",
-  borderRadius: 8, background: "#fff", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: C.navy, cursor: "pointer",
+const toolBtnStyle: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 12px", border: 0, borderRadius: 3,
+  background: C.bg, fontFamily: "inherit", fontSize: 12, fontWeight: 500, color: C.ink2, cursor: "pointer",
 };
 const prowStyle: React.CSSProperties = {
   flex: "none", display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, width: "100%", height: 58,
-  boxSizing: "border-box", padding: "0 12px", border: `1px solid ${C.line2}`, borderRadius: 10, background: "#fff",
+  boxSizing: "border-box", padding: "0 12px", border: `1px solid ${C.line2}`, borderRadius: 4, background: "#fff",
   fontFamily: "inherit", textAlign: "left", cursor: "pointer",
 };

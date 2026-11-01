@@ -11,12 +11,12 @@ import type { AlertLevel, ControlAlert } from "@/lib/control-alerts";
 
 const TONE: Record<AlertLevel, { bg: string; bar: string; text: string; label: string }> = {
   urgent: { bg: "#FBD9D5", bar: "#B3261E", text: "#8C1B14", label: "긴급" },
-  info: { bg: "#FDECEA", bar: "#D93025", text: "#A5251B", label: "새 사건" },
+  info: { bg: "#FDECEA", bar: "#D93025", text: "#A5251B", label: "NEW" },
   warn: { bg: "#FFF1E0", bar: "#C75B00", text: "#8F4300", label: "주의" },
   system: { bg: "#F1F3F6", bar: "#5A6676", text: "#2A3441", label: "시스템" },
 };
 const RANK: Record<AlertLevel, number> = { urgent: 0, info: 1, warn: 2, system: 3 };
-const MAX_SHOWN = 3;
+const MAX_SHOWN = 5;
 
 interface Group {
   id: string;
@@ -42,29 +42,8 @@ function groupAlerts(alerts: ControlAlert[]): Group[] {
 }
 
 /** 수용할 병원이 없는 상황(승인 병원 없음·전부 수용 불가·재선택 대기)이면 보기만이 아니라 개입이 필요한 사건이다 */
-const NO_HOSPITAL_KINDS = ["noapproval", "allrejected", "rerouting"];
+const NO_HOSPITAL_KINDS = ["noapproval", "allrejected", "rerouting", "confirmwait"];
 const needsIntervention = (g: Group) => g.keys.some((k) => NO_HOSPITAL_KINDS.some((kind) => k.endsWith(`:${kind}`)));
-
-export function AlertSoundButton({ soundOn, count, onToggle }: { soundOn: boolean; count: number; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={soundOn}
-      onClick={onToggle}
-      title={soundOn ? "긴급 알림이 오면 소리를 냅니다 (누르면 끔)" : "누르면 알림음을 켭니다"}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 12px", border: 0, borderRadius: 13,
-        fontFamily: "inherit", fontSize: 12, fontWeight: 500, cursor: "pointer",
-        background: soundOn ? C.navy : C.bg, color: soundOn ? "#fff" : C.ink2,
-      }}
-    >
-      {soundOn ? "알림음 켜짐" : "알림음 꺼짐"}
-      {count > 0 && (
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", background: "#D93025", borderRadius: 8, padding: "0 6px", lineHeight: "15px" }}>{count}</span>
-      )}
-    </button>
-  );
-}
 
 /** 다른 탭을 보는 중에도 알림이 있다는 걸 알 수 있게 탭 제목을 바꾼다 */
 export function useAlertTabTitle(count: number) {
@@ -90,7 +69,8 @@ export function topAlertOf(alerts: ControlAlert[], caseId: string): ControlAlert
   return best;
 }
 
-export function AlertStack({ alerts, incidents, onAck, onAckAll, onOpen, onHandle }: {
+export function AlertStack({ dark = false, alerts, incidents, onAck, onAckAll, onOpen, onHandle }: {
+  dark?: boolean;
   alerts: ControlAlert[];
   incidents: Incident[];
   onAck: (keys: string[]) => void;
@@ -102,76 +82,70 @@ export function AlertStack({ alerts, incidents, onAck, onAckAll, onOpen, onHandl
   const n = groups.length;
   if (n === 0) return null;
   const byId = new Map(incidents.map((i) => [i.caseId, i]));
+  const urgentAny = groups.some((g) => g.level === "urgent");
+  // 로그형: 한 줄에 알림 한 건. 왼쪽 세로선 = 등급, 그 오른쪽에 사건 · 단계 · 사유 · 조치. 평평한 반투명 패널 하나.
   return (
-    <div role="region" aria-label="관제 알림" style={{ position: "absolute", top: 8, left: SIDEBAR_W + SIDEBAR_GAP, right: 0, zIndex: 250, fontSize: "clamp(12px, 0.7vw, 15px)", display: "flex", flexDirection: "column", alignItems: "stretch", gap: "0.4em", whiteSpace: "normal" }}>
-      <style>{"@keyframes alpulse{0%,100%{box-shadow:0 .4em 1.2em rgba(20,30,50,.3)}50%{box-shadow:0 0 0 .35em rgba(217,48,37,.45),0 .4em 1.2em rgba(20,30,50,.3)}}.al-red{animation:alpulse 1.2s ease-in-out infinite}@media (prefers-reduced-motion:reduce){.al-red{animation:none}}"}</style>
-      {groups.slice(0, MAX_SHOWN).map((g) => {
-        const tone = TONE[g.level];
-        const inc = g.caseId ? byId.get(g.caseId) : undefined;
-        const stage = inc ? stageOf(inc) : null;
-        const c = inc ? counts(inc) : null;
-        return (
-          <div key={g.id} role={g.level === "urgent" || g.level === "info" ? "alert" : "status"} className={g.level === "urgent" || g.level === "info" ? "al-red" : undefined} style={{ display: "flex", borderRadius: "0.6em", overflow: "hidden", background: "#fff", border: `0.12em solid ${tone.bar}`, boxShadow: "0 .4em 1.2em rgba(20,30,50,.3)" }}>
-            <button
-              type="button"
-              disabled={!g.caseId}
-              onClick={() => g.caseId && onOpen(g.caseId)}
-              style={{ flex: "1 1 auto", minWidth: 0, padding: 0, border: 0, background: "transparent", textAlign: "left", fontFamily: "inherit", cursor: g.caseId ? "pointer" : "default", display: "flex", alignItems: "stretch", overflow: "hidden" }}
-            >
-              {/* 한 줄 배치 — 사건(번호·중증도·구급차·증상) | 단계·응답 수 | 알리는 이유 */}
-              {inc && stage && c ? (
-                <>
-                  <div style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", display: "flex", alignItems: "center", gap: "0.45em", whiteSpace: "nowrap", padding: "0.4em 0.75em", borderRight: `1px solid ${C.line2}` }}>
-                    <span style={{ flex: "none", minWidth: "1.7em", height: "1.7em", padding: "0 0.3em", boxSizing: "border-box", borderRadius: "0.85em", background: C.navy, color: "#fff", fontSize: "0.9em", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{inc.num}</span>
-                    {inc.sev && <span style={{ flex: "none", fontSize: "0.9em", fontWeight: 700, padding: "0 0.6em", borderRadius: "0.8em", lineHeight: "1.6em", ...SEV_STYLE[inc.sev] }}>{inc.sev}</span>}
-                    <span style={{ flex: "0 1 auto", minWidth: 0, fontSize: "1.1em", fontWeight: 900, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shortAmb(inc.name)}</span>
-                    {inc.sym && <span style={{ flex: "1 1 0", minWidth: 0, fontSize: "0.95em", color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inc.sym}</span>}
-                    {g.fake && <span style={{ flex: "none", fontSize: "0.8em", color: C.muted }}>시연</span>}
-                  </div>
-                  <div style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", display: "flex", alignItems: "center", gap: "0.8em", whiteSpace: "nowrap", padding: "0.4em 0.75em", borderRight: `1px solid ${C.line2}`, fontSize: "0.95em" }}>
-                    <span style={{ flex: "0 1 auto", minWidth: 0, fontWeight: 700, color: stage.color, overflow: "hidden", textOverflow: "ellipsis" }}>{stage.text}</span>
-                    {inc.matched && (
-                      <span style={{ flex: "none", display: "flex", gap: "0.5em", fontVariantNumeric: "tabular-nums", color: C.ink3, whiteSpace: "nowrap" }}>
-                        <span>대기 <b>{c.w}</b></span>
-                        <span style={{ color: "#D93025" }}>불가 <b>{c.r}</b></span>
-                        <span style={{ color: "#4E8B1F" }}>승인 <b>{c.a + c.t}</b></span>
-                      </span>
-                    )}
-                  </div>
-                </>
-              ) : null}
-              {/* 알리는 이유 — 가로로 나열 */}
-              <div style={{ flex: "none", display: "flex", flexWrap: "nowrap", alignItems: "center", gap: "0.9em", padding: "0.4em 0.75em", whiteSpace: "nowrap" }}>
-                {(inc ? g.items : g.items.slice(0, 1)).map((a) => {
-                  const t = TONE[a.level];
-                  return (
-                    <span key={a.key} style={{ flex: "none", display: "inline-flex", alignItems: "baseline", gap: "0.4em" }}>
-                      <span style={{ flex: "none", fontSize: "0.8em", fontWeight: 700, color: "#fff", background: t.bar, borderRadius: "0.5em", padding: "0 0.5em", lineHeight: "1.5em" }}>{t.label}</span>
-                      <span style={{ fontSize: "1em", fontWeight: 900, color: t.text }}>{a.title}</span>
-                      {a.detail && <span style={{ fontSize: "0.9em", color: C.ink3 }}>{a.detail}</span>}
-                    </span>
-                  );
-                })}
-              </div>
-            </button>
-            <div style={{ flex: "none", display: "flex", borderLeft: `1px solid ${C.line2}` }}>
-              {g.caseId && (
-                <button type="button" onClick={() => onHandle(g.caseId as string, g.keys)} style={{ border: 0, padding: "0 1.1em", background: tone.bar, fontFamily: "inherit", fontSize: "0.95em", fontWeight: 700, color: "#fff", cursor: "pointer", whiteSpace: "nowrap" }}>
-                  {needsIntervention(g) ? "사건 개입" : "사건 보기"}
-                </button>
-              )}
-              <button type="button" aria-label="알림 확인" onClick={() => onAck(g.keys)} style={{ border: 0, borderLeft: g.caseId ? `1px solid ${C.line2}` : 0, padding: "0 1.1em", background: "#fff", fontFamily: "inherit", fontSize: "0.95em", fontWeight: 700, color: tone.text, cursor: "pointer", whiteSpace: "nowrap" }}>
-                확인
-              </button>
-            </div>
+    <div role="region" aria-label="관제 알림" style={{ position: "absolute", top: 8, left: SIDEBAR_W + SIDEBAR_GAP, right: SIDEBAR_W + SIDEBAR_GAP, zIndex: 250, fontSize: "clamp(12px, 0.7vw, 14px)", display: "flex", justifyContent: "center", whiteSpace: "normal", pointerEvents: "none" }}>
+      <div style={{ pointerEvents: "auto", width: "100%", maxWidth: 980, boxSizing: "border-box", borderRadius: 4, overflow: "hidden", border: dark ? "1px solid rgba(130,150,210,.30)" : "1px solid rgba(20,33,61,.14)", background: dark ? "rgba(11,17,38,.86)" : "rgba(255,255,255,.88)", backdropFilter: "blur(16px) saturate(1.2)", WebkitBackdropFilter: "blur(16px) saturate(1.2)", boxShadow: "0 1px 3px rgba(20,33,61,.18)" }}>
+        <div style={{ filter: dark ? "invert(1) hue-rotate(180deg) brightness(1.25) saturate(1.15)" : undefined }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.8em", padding: "0.35em 0.8em", borderBottom: `1px solid ${C.line2}`, background: C.bg, fontSize: "0.9em", color: C.sub }}>
+            <b style={{ color: urgentAny ? "#B3261E" : C.ink2 }}>관제 알림 {n}건</b>
+            <span style={{ flex: "1 1 auto" }} />
+            {n > MAX_SHOWN && <span>외 {n - MAX_SHOWN}건</span>}
+            <button type="button" onClick={onAckAll} style={{ border: 0, background: "transparent", padding: 0, fontFamily: "inherit", fontSize: "1em", fontWeight: 700, color: C.ink2, cursor: "pointer", textDecoration: "underline" }}>모두 확인</button>
           </div>
-        );
-      })}
-      {n > 1 && (
-        <button type="button" onClick={onAckAll} style={{ flex: "none", alignSelf: "flex-end", border: 0, borderRadius: "0.6em", padding: "0.3em 0.9em", background: "#fff", boxShadow: "0 2px 8px rgba(20,30,50,.2)", fontFamily: "inherit", fontSize: "0.85em", color: C.ink3, cursor: "pointer" }}>
-          {n > MAX_SHOWN ? `외 ${n - MAX_SHOWN}건 · ` : ""}모두 확인
-        </button>
-      )}
+          {groups.slice(0, MAX_SHOWN).map((g) => {
+            const tone = TONE[g.level];
+            const inc = g.caseId ? byId.get(g.caseId) : undefined;
+            const stage = inc ? stageOf(inc) : null;
+            const c = inc ? counts(inc) : null;
+            return (
+              <div key={g.id} role={g.level === "urgent" || g.level === "info" ? "alert" : "status"} style={{ display: "flex", alignItems: "stretch", borderBottom: `1px solid ${C.line2}`, borderLeft: `3px solid ${tone.bar}`, background: g.level === "urgent" ? "#FDF1EF" : undefined }}>
+                <button
+                  type="button"
+                  disabled={!g.caseId}
+                  onClick={() => g.caseId && onOpen(g.caseId)}
+                  style={{ flex: "1 1 auto", minWidth: 0, padding: "0.4em 0.8em", border: 0, background: "transparent", textAlign: "left", fontFamily: "inherit", cursor: g.caseId ? "pointer" : "default", display: "flex", alignItems: "center", gap: "0.9em", whiteSpace: "nowrap", overflow: "hidden", fontVariantNumeric: "tabular-nums" }}
+                >
+                  <span style={{ flex: "none", width: "3.2em", fontSize: "0.85em", fontWeight: 700, color: tone.text }}>{tone.label}</span>
+                  {inc && stage && c && (
+                    <>
+                      <span style={{ flex: "none", display: "flex", alignItems: "center", gap: "0.5em", minWidth: 0, maxWidth: "34%", overflow: "hidden" }}>
+                        <span style={{ flex: "none", fontWeight: 700, color: C.ink3 }}>#{inc.num}</span>
+                        {inc.sev && <span style={{ flex: "none", fontSize: "0.9em", fontWeight: 700, padding: "0 0.45em", borderRadius: 2, lineHeight: "1.5em", ...SEV_STYLE[inc.sev] }}>{inc.sev}</span>}
+                        <span style={{ flex: "0 1 auto", minWidth: 0, fontWeight: 700, color: C.navy, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(inc.name)}</span>
+                        {inc.sym && <span style={{ flex: "0 1 auto", minWidth: 0, color: C.ink3, overflow: "hidden", textOverflow: "ellipsis" }}>{inc.sym}</span>}
+                      </span>
+                      <span style={{ flex: "none", display: "flex", gap: "0.7em", color: C.ink3 }}>
+                        <span style={{ color: stage.color, fontWeight: 700 }}>{stage.text}</span>
+                        {inc.matched && <span>대기 {c.w} · <span style={{ color: "#D93025" }}>불가 {c.r}</span> · <span style={{ color: "#4E8B1F" }}>승인 {c.a + c.t}</span></span>}
+                      </span>
+                    </>
+                  )}
+                  <span style={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", color: tone.text }}>
+                    {(inc ? g.items : g.items.slice(0, 1)).map((a) => (
+                      <span key={a.key} style={{ marginRight: "1em" }}>
+                        <b>{a.title}</b>{a.detail && <span style={{ color: C.ink3 }}> {a.detail}</span>}
+                      </span>
+                    ))}
+                    {g.fake && <span style={{ color: C.muted }}>시연</span>}
+                  </span>
+                </button>
+                <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "0.4em", padding: "0 0.6em" }}>
+                  {g.caseId && (
+                    <button type="button" onClick={() => onHandle(g.caseId as string, g.keys)} style={{ border: 0, borderRadius: 3, padding: "0.25em 0.8em", background: tone.bar, fontFamily: "inherit", fontSize: "0.95em", fontWeight: 700, color: "#fff", cursor: "pointer" }}>
+                      {needsIntervention(g) ? "개입" : "보기"}
+                    </button>
+                  )}
+                  <button type="button" aria-label="알림 확인" onClick={() => onAck(g.keys)} style={{ border: `1px solid ${C.line}`, borderRadius: 3, padding: "0.25em 0.8em", background: "#fff", fontFamily: "inherit", fontSize: "0.95em", fontWeight: 700, color: C.ink2, cursor: "pointer" }}>
+                    확인
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

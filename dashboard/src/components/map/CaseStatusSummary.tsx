@@ -35,7 +35,7 @@ export function CaseStatusSummary({ inc, now }: { inc: Incident; now: number }) 
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, padding: "7px 10px", border: `1px solid ${C.line2}`, borderRadius: 10, background: "#FAFBFC" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, padding: "7px 10px", border: `1px solid ${C.line2}`, borderRadius: 4, background: "#FAFBFC" }}>
       <div style={{ fontSize: 13.5, fontWeight: 900, color: verdict.color, whiteSpace: "normal" }}>{verdict.text}</div>
       {c.t > 0 ? (
         // 이송이 확정되면 병원 응답 대기 정보(요청 후 경과·판단 대기 수·자동 확장)는 더 이상 의미가 없다 — 확정 이후 상황만 보여준다
@@ -45,7 +45,7 @@ export function CaseStatusSummary({ inc, now }: { inc: Incident; now: number }) 
         </div>
       ) : inc.matched && total > 0 && (
         <>
-          <div role="img" aria-label={`요청 ${total}곳 · 승인 ${c.t + c.a} · 불가 ${c.r} · 대기 ${c.w}`} style={{ display: "flex", height: 16, borderRadius: 8, overflow: "hidden", background: C.bg }}>
+          <div role="img" aria-label={`요청 ${total}곳 · 승인 ${c.t + c.a} · 불가 ${c.r} · 대기 ${c.w}`} style={{ display: "flex", height: 16, borderRadius: 4, overflow: "hidden", background: C.bg }}>
             {segs.map(([n, color, label]) =>
               n > 0 ? (
                 <div key={label} style={{ flex: `${n} 0 0`, minWidth: 0, background: color, color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", whiteSpace: "nowrap" }}>

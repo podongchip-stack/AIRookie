@@ -205,6 +205,32 @@ const PATIENT_TEMPLATES = [
     },
     transcript: "38세 여성, 높은 곳에서 추락, 발목 뼈 노출·출혈 거즈 압박 중, 발등 맥박 약하고 발가락 차가움. 혈압 105에 65, 맥박 112, 산소포화도 97. 개방성 발목 골절입니다. 출혈 부위는 거즈로 압박 지혈 중이며 상처 드레싱과 발목 부목 고정을 마쳤습니다.",
   },
+  {
+    key: "arrest", report: "arrest", label: "심정지 의심 · 자발순환 회복 직후", severity: "중증" as const,
+    detail: "58세 남성 · 갑자기 쓰러져 의식·호흡 없음, 현장 CPR 후 맥박 회복 · 필요 진료과 순환기내과",
+    symText: "갑자기 쓰러짐, 의식 없음, 호흡 없음, CPR 후 맥박 회복",
+    summary: {
+      patient: "58세 남성", mechanism: "심정지 의심 — CPR 후 자발순환 회복",
+      symptoms: ["의식 없음", "호흡 없음", "맥박 회복"], treatment: ["흉부 압박", "제세동", "산소 공급", "정맥로 확보"],
+      severity_tag: "high", required_department: "순환기내과",
+      ktas_level: 1, consciousness: "U", onset: "방금 전", chief_complaint: "심정지",
+      vitals: [{ sequence: 1, sbp: 70, dbp: 40, hr: 130, spo2: 82 }],
+    },
+    transcript: "58세 남성, 갑자기 쓰러져 의식과 호흡이 없었음. 현장에서 흉부 압박과 제세동 후 맥박 회복. 혈압 70에 40, 맥박 130, 산소포화도 82. 심정지 후 자발순환 회복 직후입니다. 산소 공급 중이고 정맥로 확보를 마쳤습니다.",
+  },
+  {
+    key: "minor", report: "minor", label: "손바닥 찰과상", severity: "경증" as const,
+    detail: "27세 여성 · 넘어져 손바닥이 쓸림, 출혈 거의 없음 · 필요 진료과 외과",
+    symText: "넘어져 손바닥 찰과상, 약간의 쓰라림",
+    summary: {
+      patient: "27세 여성", mechanism: "넘어짐 — 손바닥 찰과상",
+      symptoms: ["찰과상", "쓰라림"], treatment: ["생리식염수 세척", "드레싱"],
+      severity_tag: "low", required_department: "외과",
+      ktas_level: 5, consciousness: "A", onset: "방금 전", chief_complaint: "손바닥 찰과상",
+      vitals: [{ sequence: 1, sbp: 120, dbp: 74, hr: 76, spo2: 99 }],
+    },
+    transcript: "27세 여성, 보도에서 넘어져 손바닥이 쓸렸고 출혈은 거의 없습니다. 혈압 120에 74, 맥박 76, 산소포화도 99. 손바닥 찰과상입니다. 생리식염수로 세척하고 드레싱을 마쳤습니다.",
+  },
 ] as const;
 
 type Template = (typeof PATIENT_TEMPLATES)[number];
@@ -308,6 +334,12 @@ const TRANSPORT: Record<string, Transport> = {
   },
   mild_fracture: {
     monitor: { stable: "부목 고정 후 안정", shock: "출혈·통증 — 혈압 저하", mismatch: "발 저림·창백(혈관 손상 의심) — 목적지 부적합", consciousness: "실신 — 의식 저하", spike: "측정값 일시적 튐" },
+  },
+  arrest: {
+    monitor: { stable: "자발순환 유지 · 활력 안정", shock: "재정지 우려 — 혈압 급락", mismatch: "심정지 재발 — 목적지 부적합", consciousness: "의식 회복 없음 · 호흡 불안정", spike: "측정값 일시적 튐(압박 중 흔들림)" },
+  },
+  minor: {
+    monitor: { stable: "드레싱 후 안정", shock: "혈압 저하 — 숨은 손상", mismatch: "손목 통증·부종 — 목적지 부적합", consciousness: "어지러움 — 의식 저하", spike: "측정값 일시적 튐" },
   },
   mild_open: {
     monitor: { stable: "지혈 후 안정", shock: "출혈 지속 — 출혈성 쇼크", mismatch: "말단 허혈 — 목적지 부적합", consciousness: "출혈로 의식 저하", spike: "측정값 일시적 튐" },
@@ -429,6 +461,54 @@ const SCRIPTS: Record<string, Script> = {
       spike: { label: "측정값 일시적 튐", note: "이어서 두 번 읽기", lines: [
         "1차 방금 맥박이 170으로 한 번 찍혔습니다. 손가락 센서가 움직여서 그런 것 같습니다.",
         "2차 다시 측정했더니 맥박 80, 산소포화도 99퍼센트, 혈압 120에 76으로 정상입니다. 환자는 편안하고 의식도 명료합니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  arrest: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 강남역 인근에서 사람이 갑자기 쓰러진 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "강남역 근처입니다. 50대 남자분이 갑자기 쓰러졌는데 부르는 데 반응이 없고 숨을 안 쉬는 것 같아요. 빨리 와주세요.",
+    callerShort: "강남역 근처입니다. 남자분이 쓰러져서 반응도 없고 숨을 안 쉬어요. 빨리 와주세요.",
+    scene: {
+      arrest: "58세 남성입니다. 갑자기 쓰러져 의식과 호흡이 없었습니다. 흉부 압박과 제세동을 시행했고 맥박이 돌아왔습니다. 혈압 70에 40, 맥박 130, 산소포화도 82퍼센트입니다. 심정지 후 자발순환 회복 직후입니다. 산소 공급 중이고 정맥로 확보를 마쳤습니다.",
+    },
+    transport: {
+      stable: { label: "자발순환 유지, 활력 안정", lines: ["이송 중 자발순환이 유지되고 있습니다. 혈압 100에 60, 맥박 100, 산소포화도 95퍼센트입니다. 변화 없이 안정적입니다."] },
+      shock: { label: "혈압 급락", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 80에 50으로 떨어졌고 맥박 135입니다.",
+        "2차 다시 재측정했습니다. 혈압 70에 40, 맥박 140으로 계속 떨어집니다. 재정지가 우려됩니다.",
+      ] },
+      mismatch: { label: "심정지 재발", note: "병원 변경 필요", lines: ["이송 중 맥박이 다시 사라졌습니다. 흉부 압박을 재개했습니다. 가장 가까운 응급 병원으로 변경이 필요한지 확인 부탁드립니다."] },
+      consciousness: { label: "의식 회복 없음, 호흡 불안정", lines: ["의식이 돌아오지 않고 호흡이 불안정합니다. 호흡 8회, 산소포화도 85퍼센트로 산소 투여 중입니다."] },
+      spike: { label: "측정값 일시적 튐", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 40으로 한 번 찍혔습니다. 압박 중에 센서가 흔들린 것 같습니다.",
+        "2차 다시 측정했더니 맥박 98, 산소포화도 95퍼센트, 혈압 100에 60으로 정상입니다. 일시적인 측정 오류였습니다.",
+      ] },
+    },
+  },
+  minor: {
+    host: [
+      "먼저 사고 장소를 골라 주세요. 서울시청 앞, 이태원역, 강남역, 여의도공원 중에서 고르시면 됩니다.",
+      "이번에는 강남역 인근에서 넘어져 손바닥을 다친 상황으로 시작하겠습니다. 신고 전화를 직접 해 보시겠어요?",
+    ],
+    caller: "강남역 근처입니다. 20대 여자분이 보도에서 넘어져서 손바닥이 쓸렸어요. 피는 거의 안 나는데 쓰라리다고 해요. 와주세요.",
+    callerShort: "강남역 근처입니다. 여자분이 넘어져서 손바닥이 쓸렸어요. 와주세요.",
+    scene: {
+      minor: "27세 여성입니다. 보도에서 넘어져 손바닥이 쓸렸습니다. 출혈은 거의 없고 통증은 가볍습니다. 혈압 120에 74, 맥박 76, 산소포화도 99퍼센트, 의식 명료합니다. 손바닥 찰과상입니다. 생리식염수로 세척하고 드레싱을 마쳤습니다.",
+    },
+    transport: {
+      stable: { label: "드레싱 후 안정", lines: ["드레싱하고 통증은 거의 없습니다. 혈압 118에 72, 맥박 74, 산소포화도 99퍼센트, 의식 명료합니다. 변화 없이 안정적입니다."] },
+      shock: { label: "혈압 저하, 숨은 손상", note: "1~2분 간격으로 두 번 읽기", lines: [
+        "1차 재측정했습니다. 혈압 94에 58로 떨어졌고 맥박 112입니다. 얼굴이 창백합니다.",
+        "2차 다시 재측정했습니다. 혈압 90에 55, 맥박 118로 계속 낮습니다. 숨은 손상이 의심됩니다.",
+      ] },
+      mismatch: { label: "손목 통증과 부종", note: "병원 변경 필요", lines: ["손목 통증이 갑자기 심해지고 붓기 시작했습니다. 골절이 의심돼서 정형외과 진료가 가능한지 다시 확인 부탁드립니다."] },
+      consciousness: { label: "어지러움, 의식 저하", lines: ["환자가 갑자기 어지럽다며 쓰러지려 합니다. 부르면 눈만 뜨고 말이 어눌합니다. 산소 투여 중입니다."] },
+      spike: { label: "측정값 일시적 튐", note: "이어서 두 번 읽기", lines: [
+        "1차 방금 맥박이 160으로 한 번 찍혔습니다. 손가락 센서가 움직인 것 같습니다.",
+        "2차 다시 측정했더니 맥박 76, 산소포화도 99퍼센트, 혈압 120에 74로 정상입니다. 일시적인 측정 오류였습니다.",
       ] },
     },
   },
@@ -1463,7 +1543,7 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
               {/* ── ① 신고 접수 ── */}
               {screen === "occur" && singleUnit && (
                 <ScreenCard title="① 상황 부여 — 역삼 구급대에 출동 사건을 선택하세요">
-                  <p style={{ margin: 0, fontSize: 13, color: C.ink3 }}>두 상황을 한 번에 하나씩 진행합니다. 현장 도착 후 아이폰으로 병원에 전화하세요.</p>
+                  <p style={{ margin: 0, fontSize: 13, color: C.ink3 }}>Pre-KTAS 1~5 중 하나를 골라 한 번에 하나씩 진행합니다. 현장 도착 후 아이폰으로 병원에 전화하세요.</p>
                   {UNIT_SCENARIOS.map((scenario) => (
                     <button key={scenario.key} type="button" aria-pressed={reportedKey === scenario.key}
                       onClick={() => { setReportedKey(scenario.key); setSpot(scenario.spot); }}

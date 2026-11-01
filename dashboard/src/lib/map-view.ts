@@ -25,12 +25,25 @@ function coveredInsets(mapEl: HTMLElement): Insets {
       out.right = Math.max(out.right, f.right - r.left);
     }
   }
+  // 지도 위에 따로 떠 있는 패널(2026-11-01 — 지도가 화면 전체 배경이 되면서 패널이 지도 칸의 형제가 아니게 됐다)은
+  // data-map-cover="top|right|bottom|left"로 어느 가장자리를 덮는지 직접 밝힌다.
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-map-cover]"))) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    switch (el.dataset.mapCover) {
+      case "top": out.top = Math.max(out.top, r.bottom - f.top); break;
+      case "bottom": out.bottom = Math.max(out.bottom, f.bottom - r.top); break;
+      case "left": out.left = Math.max(out.left, r.right - f.left); break;
+      case "right": out.right = Math.max(out.right, f.right - r.left); break;
+    }
+  }
   return out;
 }
 
 /** point를 보이는 영역의 한가운데에 둔다(확대 수준은 그대로). */
 export function centerInView(map: kakao.maps.Map, mapEl: HTMLElement, point: LatLngLike): void {
   const { kakao } = window;
+  map.relayout(); // 숨겨져 있다 보이게 된 지도는 안쪽 크기가 옛값이라 좌표 변환이 어긋난다
   const i = coveredInsets(mapEl);
   const w = mapEl.clientWidth;
   const h = mapEl.clientHeight;
@@ -51,6 +64,7 @@ export function fitAroundInView(
     return;
   }
   const { kakao } = window;
+  map.relayout();
   const bounds = new kakao.maps.LatLngBounds();
   bounds.extend(new kakao.maps.LatLng(center.lat, center.lng));
   for (const p of others) {

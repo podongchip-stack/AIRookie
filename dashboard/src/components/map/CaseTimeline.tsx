@@ -55,9 +55,9 @@ export function CaseTimeline({ inc, now }: { inc: Incident; now: number }) {
   const past = [...rowsOf(inc)].reverse();
   const list = live ? [live, ...past] : past;
   return (
-    <div style={{ flex: "1 1 0", minHeight: 0, display: "flex", flexDirection: "column", borderTop: `1px solid ${C.line2}`, paddingTop: 6 }}>
+    <div style={{ flex: "0 1 auto", minHeight: 0, display: "flex", flexDirection: "column", borderTop: `1px solid ${C.line2}`, paddingTop: 6 }}>
       <div style={{ flex: "none", padding: "0 2px 4px", fontSize: 11.5, fontWeight: 700, color: C.sub }}>진행 과정 · {past.length}건</div>
-      <div className="ctl-scroll" style={{ flex: "1 1 0", minHeight: 0, display: "flex", flexDirection: "column", paddingRight: 2 }}>
+      <div className="ctl-scroll" style={{ flex: "0 1 auto", minHeight: 0, maxHeight: "30vh", display: "flex", flexDirection: "column", paddingRight: 2 }}>
         {list.map((e, i) => {
           const isNow = e.kind === "now";
           const tone = isNow ? "#C75B00" : EVENT_TONE[e.kind] ?? C.navy;

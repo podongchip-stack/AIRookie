@@ -363,7 +363,7 @@ export type ApprovalActionType =
   // 2026-10-05: 이송 확정 뒤 도착 전에 병원이 수용을 철회 — 그 병원은 이 사건에서 제외, 구급차는 재선택
   | "transport_withdraw";
 
-export type Actor = "hospital" | "paramedic";
+export type Actor = "hospital" | "paramedic" | "dispatcher";
 
 // info-v2(hospital_score)의 거절 로그 수신구(POST /hub/rejection)가 쓰는 4축 어휘
 // (CLAUDE.md "거절 로그" 절, 2026-08-12). 구조적(NO_WARD/NO_DEPARTMENT/NO_EQUIPMENT)
@@ -471,6 +471,15 @@ export interface MciPlan {
   plan: MciPlanItem[];
 }
 
+// hub → 조작한 관제 탭: 개입(존 확장·이송 확정 대행)의 결과(2026-11-01)
+export interface ActionResult {
+  type: "action_result";
+  caseId: string | null;
+  action: string;
+  ok: boolean;
+  reason: string | null;
+}
+
 // hub → 조작한 탭: 조작이 거부됨(2026-10-05). reason "paused" = 시연 일시정지 중
 export interface ActionRefused {
   type: "action_refused";
@@ -574,6 +583,8 @@ export interface DashboardState {
   caseHistory: CaseHistoryItem[];
   // 마지막으로 hub가 거부한 조작(2026-10-05) — 화면이 "현재 시연 일시정지 중입니다." 같은 안내를 잠깐 띄운다
   actionRefused: { at: number; reason: string; caseId: string | null } | null;
+  // 관제 개입(존 확장·이송 확정 대행)의 결과 — hub가 누른 소켓에만 보낸다(2026-11-01)
+  actionResult: { at: number; caseId: string | null; action: string; ok: boolean; reason: string | null } | null;
   // 미선택 통보(2026-10-22) — 병원 화면이 안내를 띄우는 데 쓴다. at은 받은 시각(같은 사건이 또 와도 다시 띄우게).
   selectionReleased: { at: number; caseId: string; confirmedHospitalName: string } | null;
   // 마지막 대량사고 분배 확정 결과(시연 콘솔)
@@ -697,6 +708,8 @@ export interface MapHospital {
   name: string;
   gps: { lat: number; lng: number };
   emergencyLevel?: string | null;
+  // 응급실 전화번호(hub 2026-11-01~, 관제 '전화 확인'용) — 구버전 hub면 없다
+  erPhone?: string | null;
   // 이송 중 부하(TTL 오버레이 건수, hub 2026-10-03~) — 관제 지도에서 환자가 몰리는
   // 병원을 표시해 분산 장치가 작동 중임을 보여준다. 구버전 hub면 필드 자체가 없다.
   inFlightCount?: number;
@@ -962,6 +975,7 @@ export type InboundMessage =
   | CaseMeta
   | CaseHistory
   | ActionRefused
+  | ActionResult
   | SelectionReleased
   | MciAllocated
   | MciPlan

@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { css } from "styled-system/css";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { escapeHtml } from "@/lib/kakao-map-markers";
-import { centerInView, focusInView, inView } from "@/lib/map-view";
+import { centerInView, focusInView } from "@/lib/map-view";
 import {
   C, LEVEL_DEFAULT, LEVEL_DOT, ST_DOT, ST_PILL, ambState, reqLabel, shortAmb, shortHospital, zoneText, type Incident, type St,
 } from "@/lib/control-map";
@@ -21,6 +21,17 @@ import type { AmbulanceSimState, MapOverview } from "@/types/dashboard";
 
 const SEOUL_CENTER = { lat: 37.5565, lng: 126.99 };
 const INITIAL_LEVEL = 8;
+
+/** 두 점을 잇는 완만한 호(2차 베지어, 같은 쪽으로 휜다) — 직선이면 선이 겹쳐 어느 병원으로 가는지 구분이 안 된다 */
+function arcPath(a: { lat: number; lng: number }, b: { lat: number; lng: number }, n = 20): { lat: number; lng: number }[] {
+  const bow = 0.16;
+  const mx = (a.lng + b.lng) / 2 - (b.lat - a.lat) * bow;
+  const my = (a.lat + b.lat) / 2 + (b.lng - a.lng) * bow;
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const t = i / n, u = 1 - t;
+    return { lat: u * u * a.lat + 2 * u * t * my + t * t * b.lat, lng: u * u * a.lng + 2 * u * t * mx + t * t * b.lng };
+  });
+}
 const MOVING = new Set(["dispatching", "transporting", "returning"]);
 
 type HospitalLayer = { overlay: kakao.maps.CustomOverlay; dot: HTMLDivElement; pill: HTMLDivElement; key: string };
@@ -39,9 +50,10 @@ export function ControlMapPanel({
   selected,
   activeTab,
   ambulanceSim,
+  focusNonce = 0,
   hoverHospital,
   hoverAmb,
-  ambInTab,
+  ambVisible,
   alertCaseIds,
   onHoverHospital,
   onHoverAmb,
@@ -53,10 +65,12 @@ export function ControlMapPanel({
   selected: Incident | null;
   activeTab: "all" | St;
   ambulanceSim: Record<string, AmbulanceSimState>;
+  // 사건을 누를 때마다 올라가는 값 — 같은 사건을 다시 눌러도 그 사건으로 다시 맞춘다
+  focusNonce?: number;
   hoverHospital: string;
   hoverAmb: string;
   // 하단 구급차 패널의 탭에 해당하지 않는 구급차는 지도에서 옅게
-  ambInTab: (apid: string) => boolean;
+  ambVisible: (apid: string) => boolean;
   // 확인하지 않은 알림이 걸린 사건 — 그 구급차를 붉은 파동으로 강조(알림 표시는 아이콘 없이 색·파동·글자만)
   alertCaseIds?: ReadonlySet<string>;
   onHoverHospital: (id: string) => void;
@@ -70,6 +84,7 @@ export function ControlMapPanel({
   const hospitalsRef = useRef(new Map<string, HospitalLayer>());
   const ambsRef = useRef(new Map<string, AmbLayer>());
   const pathsRef = useRef(new Map<string, { line: kakao.maps.Polyline; key: string }>());
+  const linksRef = useRef(new Map<string, { line: kakao.maps.Polyline; key: string }>());
   const ringRef = useRef<{ outer: kakao.maps.Circle; inner: kakao.maps.Circle | null; label: kakao.maps.CustomOverlay; key: string } | null>(null);
   // 카카오·DOM 이벤트 핸들러는 한 번 걸어 두고 최신 콜백은 ref로 읽는다
   const cbRef = useRef({ onHoverHospital, onHoverAmb, onSelectCase });
@@ -163,7 +178,7 @@ export function ControlMapPanel({
         const label = reqLabel(req);
         layer.pill.style.cssText =
           "position:absolute;left:0;bottom:11px;transform:translateX(-50%);display:flex;align-items:center;gap:3px;" +
-          "height:17px;padding:0 7px 0 5px;border-radius:9px;border:1.5px solid #fff;color:#fff;font-size:10.5px;" +
+          "height:17px;padding:0 7px 0 5px;border-radius:3px;border:1.5px solid #fff;color:#fff;font-size:10.5px;" +
           `font-weight:700;white-space:nowrap;box-shadow:0 1px 3px rgba(20,30,50,.28);background:${ST_PILL[req.st]};` +
           "font-family:inherit;pointer-events:none;";
         layer.pill.innerHTML = `${PILL_ICON[req.st]}${escapeHtml(on ? `${shortHospital(h.name)} · ${label}` : label)}`;
@@ -181,6 +196,7 @@ export function ControlMapPanel({
   // 사람이 지도를 끌거나 휠로 확대하면 다음 단계가 바뀔 때까지 따라가지 않는다. 자동 시연(가짜) 사건은 고를 때 한 번만 옮긴다.
   const followRef = useRef(true);
   const lastCaseRef = useRef("");
+  const lastNonceRef = useRef(focusNonce);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -196,7 +212,7 @@ export function ControlMapPanel({
   const selSim = selected?.apid ? ambulanceSim[selected.apid] : undefined;
   const confirmedId = selected?.hospitals.find((h) => h.st === "t")?.hospitalId ?? null;
   const focusKey = selected
-    ? `${selected.caseId}|${selSim?.phase ?? ""}|${selected.matched}|${confirmedId ?? ""}|${selected.zone}`
+    ? `${selected.caseId}|${selSim?.phase ?? ""}|${selected.matched}|${confirmedId ?? ""}|${selected.zone}|${focusNonce}`
     : "";
 
   function focusTarget(): { center: { lat: number; lng: number }; others: { lat: number; lng: number }[] } | null {
@@ -206,15 +222,15 @@ export function ControlMapPanel({
     const gpsOf = (id: string) => overview?.hospitals.find((h) => h.hospitalId === id)?.gps ?? null;
     const phase = selSim?.phase;
     const dest = confirmedId ? gpsOf(confirmedId) : null;
+    // 구급차가 보이는 영역 한가운데에 오게 한다 — 나머지(현장·병원)는 구급차 기준으로 다 보이게 줌을 맞춘다
     if (phase === "at_hospital" && dest) return { center: dest, others: [] };
-    if (phase === "transporting" && dest && amb) {
-      return { center: { lat: (amb.lat + dest.lat) / 2, lng: (amb.lng + dest.lng) / 2 }, others: [amb, dest] };
-    }
-    if (phase === "dispatching" && amb) return { center: scene, others: [amb] };
+    if (phase === "transporting" && dest && amb) return { center: amb, others: [dest] };
+    if (phase === "dispatching" && amb) return { center: amb, others: [scene] };
     if (selected.matched && !dest) {
       const requested = selected.hospitals.map((h) => gpsOf(h.hospitalId)).filter((g): g is { lat: number; lng: number } => g != null);
-      return { center: scene, others: requested };
+      return { center: amb ?? scene, others: amb ? [scene, ...requested] : requested };
     }
+    if (amb) return { center: amb, others: [scene] };
     return { center: scene, others: [] };
   }
 
@@ -224,8 +240,13 @@ export function ControlMapPanel({
     if (!map || !el || !selected) return;
     const caseChanged = lastCaseRef.current !== selected.caseId;
     lastCaseRef.current = selected.caseId;
+    const nonceChanged = lastNonceRef.current !== focusNonce;
+    lastNonceRef.current = focusNonce;
     if (selected.fake) {
-      if (caseChanged && selected.center) centerInView(map, el, selected.center);
+      if (caseChanged || nonceChanged) {
+        const target = focusTarget();
+        if (target) focusInView(map, el, target.center, target.others);   // 위치만 옮기지 않고 확대·축소도 맞춘다
+      }
       return;
     }
     followRef.current = true;
@@ -239,9 +260,8 @@ export function ControlMapPanel({
     const map = mapRef.current;
     const el = containerRef.current;
     if (!map || !el || !selected || selected.fake || !followRef.current) return;
-    if (!selSim?.gps || !MOVING.has(selSim.phase) || inView(map, el, selSim.gps)) return;
-    const target = focusTarget();
-    if (target) focusInView(map, el, target.center, target.others);
+    if (!selSim?.gps || !MOVING.has(selSim.phase)) return;
+    centerInView(map, el, selSim.gps);   // 줌은 그대로, 움직이는 구급차만 계속 가운데로
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selSim?.gps?.lat, selSim?.gps?.lng]);
 
@@ -265,7 +285,7 @@ export function ControlMapPanel({
       const size = isSel ? 28 : isInc ? 22 : on ? 24 : 16;
       const filled = st.key !== "b";
       const col = st.key === "t" ? "#168A55" : C.orange;
-      const dim = !isInc && !ambInTab(a.apid) && !on;
+      const dim = !isInc && !ambVisible(a.apid) && !on;  // 숨김(기지 대기가 접힌 상태) — 흐리게가 아니라 아예 안 보이고 클릭도 막는다
       const alerting = !!inc && !!alertCaseIds?.has(inc.caseId);
       const key = `${st.key}|${st.text}|${inc?.num ?? ""}|${isSel}|${on}|${dim}|${alerting}`;
       let layer = ambsRef.current.get(a.apid);
@@ -295,7 +315,7 @@ export function ControlMapPanel({
         const label = isSel || on
           ? `<div style="position:absolute;left:${size / 2 + 6}px;top:-10px;height:20px;display:flex;align-items:center;white-space:nowrap;font-size:11px;font-weight:700;background:#fff;border:1px solid #F2B48F;border-radius:5px;padding:0 8px;color:${C.ink};box-shadow:0 1px 4px rgba(20,30,50,.18)">${escapeHtml(shortAmb(a.name))} <span style="font-weight:500;color:#C7511A;margin-left:4px">· ${escapeHtml(st.text)}</span></div>`
           : "";
-        layer.root.style.cssText = `position:relative;width:0;height:0;opacity:${dim ? 0.22 : 1}`;
+        layer.root.style.cssText = `position:relative;width:0;height:0;opacity:${dim ? 0 : 1};pointer-events:${dim ? "none" : "auto"}`;
         layer.root.title = `${a.name} · ${st.text}${isInc ? ` · 사건 ${inc!.num}` : ""} (시뮬레이션 위치)`;
         layer.root.innerHTML =
           alertRing +
@@ -335,7 +355,7 @@ export function ControlMapPanel({
       pathsRef.current.delete(apid);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, overview?.ambulances, ambulanceSim, incidents, selected?.caseId, hoverAmb, ambInTab, alertCaseIds]);
+  }, [ready, overview?.ambulances, ambulanceSim, incidents, selected?.caseId, hoverAmb, ambVisible, alertCaseIds]);
 
   // ── 선택한 사건의 요청 범위 ──
   useEffect(() => {
@@ -382,17 +402,59 @@ export function ControlMapPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, selected]);
 
+  // ── 선택한 사건 → 요청한 병원 연결선(2026-11-01) — 병원 응답이 어디로 번지는지 한눈에 보이게 호로 잇는다.
+  // 색은 병원 점과 같고(대기 노랑·승인 초록·불가 붉은 점선·확정 진초록 굵게), 확정된 병원이 있으면 나머지는 옅게 둔다.
+  useEffect(() => {
+    const map = ensureMap();
+    if (!map || !overview) return;
+    const { kakao } = window;
+    const links = linksRef.current;
+    // 이송이 시작되면(이송 중·병원 도착) 요청 곡선은 걷고 구급차 이동 경로만 남긴다
+    const tPhase = selected?.apid ? ambulanceSim[selected.apid]?.phase : undefined;
+    const transporting = tPhase === "transporting" || tPhase === "at_hospital";
+    const center = selected && selected.matched && !transporting ? selected.center : null;
+    const anyConfirmed = !!selected?.hospitals.some((h) => h.st === "t");
+    const gpsById = new Map(overview.hospitals.map((h) => [h.hospitalId, h.gps]));
+    const wanted = new Set<string>();
+    if (selected && center) {
+      for (const h of selected.hospitals) {
+        const to = gpsById.get(h.hospitalId);
+        if (!to) continue;
+        wanted.add(h.hospitalId);
+        const on = hoverHospital === h.hospitalId;
+        const dim = anyConfirmed && h.st !== "t";
+        const key = `${selected.caseId}|${h.st}|${on}|${dim}|${center.lat},${center.lng}`;
+        const old = links.get(h.hospitalId);
+        if (old?.key === key) continue;
+        old?.line.setMap(null);
+        const line = new kakao.maps.Polyline({
+          path: arcPath(center, to).map((p) => new kakao.maps.LatLng(p.lat, p.lng)),
+          strokeColor: ST_DOT[h.st],
+          strokeWeight: (h.st === "t" ? 5 : h.st === "a" ? 3.5 : h.st === "w" ? 2 : 1.5) + (on ? 2 : 0),
+          strokeOpacity: dim ? 0.18 : h.st === "r" ? 0.5 : on ? 1 : 0.8,
+          strokeStyle: h.st === "r" ? "shortdash" : h.st === "w" ? "dash" : "solid",
+        });
+        line.setMap(map);
+        links.set(h.hospitalId, { line, key });
+      }
+    }
+    links.forEach((l, id) => {
+      if (wanted.has(id)) return;
+      l.line.setMap(null);
+      links.delete(id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, overview?.hospitals, selected, hoverHospital, ambulanceSim]);
+
   return (
     <section
       className={css({
-        flex: "1 1 0",
-        minWidth: "0",
-        position: "relative",
+        position: "absolute",
+        inset: "0",
+        zIndex: "0",
         overflow: "hidden",
-        borderRadius: "14px",
         backgroundColor: "#F4F1EA",
       })}
-      style={{ border: `1px solid ${C.line}` }}
     >
       <style>{"@keyframes ctlring{0%{transform:scale(.6);opacity:.55}100%{transform:scale(2.4);opacity:0}}"}</style>
       <div

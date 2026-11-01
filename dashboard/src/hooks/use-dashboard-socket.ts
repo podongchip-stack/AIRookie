@@ -77,6 +77,7 @@ const INITIAL_STATE: DashboardState = {
   caseMeta: {},
   caseHistory: [],
   actionRefused: null,
+  actionResult: null,
   selectionReleased: null,
   mciAllocated: null,
   mciPlan: null,
@@ -404,6 +405,9 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
               break;
             case "mci_plan":
               setState((prev) => ({ ...prev, mciPlan: { at: Date.now(), caseIds: parsed.caseIds, plan: parsed.plan } }));
+              break;
+            case "action_result":
+              setState((prev) => ({ ...prev, actionResult: { at: Date.now(), caseId: parsed.caseId, action: parsed.action, ok: parsed.ok, reason: parsed.reason } }));
               break;
             case "action_refused":
               setState((prev) => ({ ...prev, actionRefused: { at: Date.now(), reason: parsed.reason, caseId: parsed.caseId } }));

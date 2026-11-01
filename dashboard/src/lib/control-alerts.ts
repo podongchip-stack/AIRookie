@@ -6,6 +6,8 @@ import type { AmbulancePhase } from "@/types/dashboard";
 export const ALERT_RULES = {
   /** 병원 요청 후 승인 병원이 하나도 없는 채로 이만큼 지나면 주의 */
   noApprovalMin: 3,
+  /** 병원이 수용 승인했는데 구급대원이 이송 확정을 이만큼 안 누르면 주의 + 관제 대행 버튼(2026-11-02, 1분 초안) */
+  confirmDelayMin: 1,
   /** 출동·병원 도착 결과 대기·재선택 대기에 이만큼 머물면 주의 (이송 중은 길 수 있어 제외) */
   stuckMin: 10,
 };
@@ -71,6 +73,9 @@ export function deriveAlerts(incidents: Incident[], now: number, tr: AlertTracke
     if (inc.matched && !hasApproval && !allRejected && inc.phase !== "rerouting" && waitMin >= ALERT_RULES.noApprovalMin) {
       push("noapproval", "warn", "승인 병원 없음", `요청 후 ${Math.floor(waitMin)}분째 · 판단 대기 ${inc.hospitals.filter((h) => h.st === "w").length}곳`);
     }
+    if (isConfirmDelayed(inc, now)) {
+      push("confirmwait", "warn", "승인 후 이송 확정 지연", `수용 승인 ${inc.hospitals.filter((h) => h.st === "a").length}곳 · ${Math.floor((confirmWaitMs(inc, now) ?? 0) / 60_000)}분째 확정 없음`);
+    }
     if (inc.matched && inc.zone >= 2) push(`zone${inc.zone}`, "warn", "요청 범위 확장", `${zoneText(inc.zone)}까지 넓힘`);
 
     const stuckText = inc.phase ? STUCK_PHASES[inc.phase] : undefined;
@@ -82,6 +87,21 @@ export function deriveAlerts(incidents: Incident[], now: number, tr: AlertTracke
     }
   }
   return out.sort((a, b) => LEVEL_RANK[a.level] - LEVEL_RANK[b.level]);
+}
+
+/** 수용 승인 병원은 있는데 이송 확정이 없는 채로 흐른 시간(ms). 첫 승인 응답 시각 기준 — 해당 없으면 null */
+export function confirmWaitMs(inc: Incident, now: number): number | null {
+  if (!inc.matched || inc.hospitals.some((h) => h.st === "t")) return null;
+  const times = inc.hospitals
+    .filter((h) => h.st === "a" && !h.notSelected)
+    .map((h) => Date.parse(h.respondedAt ?? ""))
+    .filter((t) => !Number.isNaN(t));
+  return times.length ? Math.max(0, now - Math.min(...times)) : null;
+}
+/** 승인 후 이송 확정이 confirmDelayMin분 넘게 안 눌렸는가 — 관제 대행 버튼을 여는 기준 */
+export function isConfirmDelayed(inc: Incident, now: number): boolean {
+  const w = confirmWaitMs(inc, now);
+  return w != null && w >= ALERT_RULES.confirmDelayMin * 60_000;
 }
 
 /**

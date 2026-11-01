@@ -6,7 +6,11 @@ export const DEMO_UNIT = {
   tabletCode: "A-SEL0111",
 } as const;
 
+// Pre-KTAS 1~5 하나씩(2026-11-02). key는 DemoConsole의 신고 접수 상황(PATIENT_TEMPLATES)과 같다.
 export const UNIT_SCENARIOS = [
-  { key: "cardiac", title: "강남역 흉통 환자", detail: "62세 남성 · 흉통과 호흡곤란 · 심근경색 의심", spot: { label: "강남역 인근 · 흉통 신고", lat: 37.4979, lng: 127.0276 } },
-  { key: "trauma", title: "역삼역 교통사고", detail: "35세 남성 · 차량 충돌 · 흉부·복부 손상 의심", spot: { label: "역삼역 인근 · 교통사고", lat: 37.5007, lng: 127.0365 } },
+  { key: "arrest", ktas: 1, title: "강남역 심정지", detail: "58세 남성 · 쓰러져 의식·호흡 없음, CPR 후 맥박 회복 · Pre-KTAS 1", spot: { label: "강남역 인근 · 심정지 신고", lat: 37.4979, lng: 127.0276 } },
+  { key: "cardiac", ktas: 2, title: "선릉역 흉통 환자", detail: "62세 남성 · 흉통과 호흡곤란 · 심근경색 의심 · Pre-KTAS 2", spot: { label: "선릉역 인근 · 흉통 신고", lat: 37.5045, lng: 127.049 } },
+  { key: "abdominal", ktas: 3, title: "삼성역 복통 환자", detail: "48세 여성 · 우하복부 통증과 구토 · 충수염 의심 · Pre-KTAS 3", spot: { label: "삼성역 인근 · 복통 신고", lat: 37.5088, lng: 127.0632 } },
+  { key: "mild", ktas: 4, title: "역삼역 발목 염좌", detail: "24세 여성 · 보도 턱에서 발목을 접질림 · Pre-KTAS 4", spot: { label: "역삼역 인근 · 발목 부상 신고", lat: 37.5007, lng: 127.0365 } },
+  { key: "minor", ktas: 5, title: "강남역 손바닥 찰과상", detail: "27세 여성 · 넘어져 손바닥이 쓸림, 출혈 거의 없음 · Pre-KTAS 5", spot: { label: "강남역 인근 · 경미한 부상 신고", lat: 37.4985, lng: 127.0282 } },
 ] as const;
