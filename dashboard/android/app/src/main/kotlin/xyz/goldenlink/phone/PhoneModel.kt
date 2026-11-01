@@ -476,10 +476,10 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         try {
             s.start()
         } catch (t: Throwable) {
-            sendToHub(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
+            val notified = sendToHub(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
                 CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId, cancelled = true)))
             call = null; callRequestId = null
-            error = "마이크를 시작하지 못했습니다: ${t.message}"
+            error = "마이크를 시작하지 못했습니다: ${t.message}" + if (notified) "" else " (hub에 통화 취소를 전하지 못했습니다)"
             return
         }
         session = s
@@ -494,12 +494,16 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
             // 받지 않는 병원을 취소하는 것이라 미응답으로 알린다 — hub가 이 병원을 시도한 것으로 적고 다음 추천을 다시 보낸다
             if (!connectionAction("no_answer")) { show("hub 연결을 확인해 주세요"); return }
             markSkipped(c.caseId, c.hospitalId)
-        } else reopenList = true
+        }
         if (c.phase == LocalCall.Phase.IN_CALL && apid != null) {
-            sendToHub(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
-                CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId, cancelled = true)))
+            // 취소 신호가 못 가면 로컬 통화를 지우지 않는다 — 지우면 병원·관제 화면의 "통화 중"이 남는다
+            if (!sendToHub(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
+                    CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId, cancelled = true)))) {
+                show("hub 연결을 확인해 주세요. 통화 취소를 전하지 못했습니다."); return
+            }
             session?.cancel()
         }
+        if (c.phase != LocalCall.Phase.CONNECTING) reopenList = true
         call = null
         callRequestId = null
         session = null
@@ -512,8 +516,11 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         val apid = apid ?: return
         if (c.phase != LocalCall.Phase.IN_CALL) return
         if (paused) { show("현재 시연 일시정지 중입니다."); return }
-        ambulance?.send(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
-            CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId)))
+        // 종료 신호가 hub에 못 가면 통화를 끝내지 않는다 — 그대로 두면 병원 화면엔 "통화 중"이 남고 요약만 따로 실패한다
+        if (!sendToHub(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
+                CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId)))) {
+            show("hub 연결을 확인해 주세요. 통화를 종료하지 못했습니다."); return
+        }
         val before = results[c.caseId]
         call = c.copy(phase = LocalCall.Phase.ENDED, endedAt = System.currentTimeMillis(), matchVersionAtSend = matchVersion[c.caseId] ?: 0,
             callRoundAtSend = before?.patientInfo?.callRound ?: if (before == null) 0 else 1)
@@ -692,7 +699,8 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
             marks.isEmpty() || !marks.all { it in e.removed }
         }
         if (!sendPatientOverride(null, kept + e.addedLines, null, null, null)) return false
-        if (e.careLines.isNotEmpty()) sendExtraNote("[처치] " + e.careLines.joinToString(" · "))
+        // 처치 전송이 실패하면 "보냄"으로 표시하지 않는다 — 다시 누르면 둘 다 다시 간다
+        if (e.careLines.isNotEmpty() && !sendExtraNote("[처치] " + e.careLines.joinToString(" · "))) return false
         bodySentSignature = e.signature
         return true
     }
