@@ -1,6 +1,7 @@
 package xyz.goldenlink.phone.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -8,6 +9,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -26,6 +28,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import xyz.goldenlink.core.MatchHospital
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -74,6 +79,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -225,7 +231,12 @@ fun PhoneApp(m: PhoneModel) {
                     // 통화 지도는 항상 아래에 깔아 둔다 — 다른 탭·통화 화면에 가려져도 지도를 없애지 않아서, 돌아올 때 다시 불러오느라 느려지지 않는다
                     Waiting(m, mapVisible = top == null)
                     // 그 위의 화면은 겹쳐 바뀌며 서서히 나타나고 사라진다
-                    Crossfade(top, animationSpec = tween(220), label = "screen") { key ->
+                    // 통화 종료 화면(전달됨 · 확인)에서 나갈 때는 서서히 지우지 않고 바로 바꾼다 — 통화가 지워지는 순간 그 화면이
+                    // "정리하는 중"으로 되돌아간 채 220ms 동안 남아 깜빡이고, 지도의 전달 애니메이션이 가려졌다
+                    val lastTop = remember { arrayOfNulls<String>(1) }
+                    val fade = if (lastTop[0] == "ended") snap<Float>() else tween(220)
+                    SideEffect { lastTop[0] = top }
+                    Crossfade(top, animationSpec = fade, label = "screen") { key ->
                         if (key != null) Box(Modifier.fillMaxSize().background(AD.bg)
                             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) { ScreenLayer(m, key) }
                     }
@@ -408,7 +419,7 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean) {
                 onPin = { id -> if (m.onScene && !sentMode && eligible.any { it.hospitalId == id }) tappedId = id }, modifier = Modifier.fillMaxSize())
             Icon(Icons.Filled.MyLocation, "내 위치", tint = AD.navy, modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(44.dp).clip(CircleShape)
                 .background(AD.white.copy(alpha = 0.96f)).border(1.dp, AD.line, CircleShape).clickable { recenter++ }.padding(10.dp))
-            if (!sheetMode) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { overlayPx = it.height }.padding(10.dp).clip(cardShape).background(AD.white.copy(alpha = 0.96f))
+            if (!sheetMode) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().animateContentSize().onSizeChanged { overlayPx = it.height }.padding(10.dp).clip(cardShape).background(AD.white.copy(alpha = 0.96f))
                 .border(1.dp, AD.line, cardShape).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if ((phase == AmbulancePhase.dispatching || phase == AmbulancePhase.transporting || phase == AmbulancePhase.returning) && (sim.path?.size ?: 0) <= 2) {
                     Text("도로 경로를 받지 못했습니다. hub의 경로 API 연결을 확인해 주세요.", fontSize = 11.sp, color = AD.orange)
@@ -437,16 +448,18 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean) {
     }
 
     Box(Modifier.fillMaxSize().clip(cardShape)) {
-        if (sheetMode) {
+        // 지도는 시트가 있든 없든 항상 이 자리에 둔다 — 현장 → 전달로 시트가 사라질 때 지도를 다른 자리로 옮기면
+        // 지도가 지워졌다 새로 만들어져 기본 위치에서 다시 뜬 뒤에야 구급차로 맞춰진다(상황 전파 때 시선이 튀던 원인)
+        run {
             val scope = rememberCoroutineScope()
             val listMax = (LocalConfiguration.current.screenHeightDp * 0.5f).dp
             BottomSheetScaffold(
-                scaffoldState = sheetState, sheetPeekHeight = peek, containerColor = Color.Transparent,
-                sheetContainerColor = AD.white, sheetShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
-                sheetShadowElevation = 8.dp, sheetTonalElevation = 0.dp,
-                sheetDragHandle = { Box(Modifier.padding(top = 8.dp, bottom = 4.dp).size(36.dp, 4.dp).clip(CircleShape).background(AD.control)) },
+                scaffoldState = sheetState, sheetPeekHeight = if (sheetMode) peek else 0.dp, containerColor = Color.Transparent,
+                sheetContainerColor = if (sheetMode) AD.white else Color.Transparent, sheetShape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                sheetShadowElevation = if (sheetMode) 8.dp else 0.dp, sheetTonalElevation = 0.dp, sheetSwipeEnabled = sheetMode,
+                sheetDragHandle = { if (sheetMode) Box(Modifier.padding(top = 8.dp, bottom = 4.dp).size(36.dp, 4.dp).clip(CircleShape).background(AD.control)) },
                 sheetContent = {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (sheetMode) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Pre-KTAS", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AD.navy, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         PreKtasRow(m, onSelect = { tappedId = null; m.requestFirstCall(); scope.launch { sheetState.bottomSheetState.expand() } }, showsLabel = false)
                         // 아래는 펼쳤을 때만 보인다
@@ -486,8 +499,6 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean) {
                     }
                 },
             ) { mapArea() }
-        } else {
-            mapArea()
         }
     }
 }
@@ -708,8 +719,7 @@ private fun TransportPanel(m: PhoneModel) {
                 }
                 if (rerouting) {
                     Text("목적지 병원이 수용할 수 없게 됐습니다", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AD.navy)
-                    Text("구급차 대시보드에서 승인한 다른 병원을 이송 승인하세요. 승인 병원이 없으면 범위를 넓혀 다시 요청합니다.",
-                        fontSize = 12.5.sp, color = AD.ink3)
+                    ReselectList(m)
                 } else {
                     Column {
                         Text("목적지 병원", fontSize = 11.5.sp, color = AD.sub)
@@ -742,6 +752,64 @@ private fun TransportPanel(m: PhoneModel) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** 재선택 — 이송 승인한(지금 보낼 수 있는) 병원이 있으면 바로 보여 주고, 없으면 수용 불가·제외된 병원을 뺀 후보에 다시 전화할 수 있게 한다 */
+@Composable
+private fun ReselectList(m: PhoneModel) {
+    val hospitals = m.result?.hospitals ?: emptyList()
+    val ready = hospitals.filter(::canTransportNow)
+    val skipped = m.caseId?.let { m.skippedHospitals[it] } ?: emptySet()
+    // 수용 불가(병원 거절·병상 없음)·이 사건에서 제외된 병원은 뺀다. 전화를 받지 않은 병원은 남기되 맨 아래로
+    val callable = hospitals.filter { it.status != "rejected" && it.excluded != true && it.unavailableReason == null }
+        .let { all -> all.filterNot { it.hospitalId in skipped } + all.filter { it.hospitalId in skipped } }
+    // 이송 승인을 보낸 뒤 hub가 확정하고 구급차 단계가 이송 중으로 넘어갈 때까지는 승인 병원이 목록에서 빠진다 — 전화 목록으로 바뀌지 않게 붙잡는다
+    val deciding = m.confirmed ?: hospitals.firstOrNull { it.hospitalId == m.pendingConfirmId }
+    if (deciding != null) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CircularProgressIndicator(color = AD.blue, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+            Text("${deciding.name}(으)로 이송을 확정하고 있습니다", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AD.navy)
+        }
+    } else if (ready.isNotEmpty()) {
+        Text("승인한 병원이 있습니다 — 바로 이송 승인하세요", fontSize = 12.5.sp, color = AD.ink3)
+        Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ready.forEach { h ->
+                val requesting = m.pendingConfirmId == h.hospitalId
+                ReselectRow(h, "이송 승인", if (requesting) AD.control else AD.green, enabled = !requesting, icon = Icons.Filled.CheckCircle) { m.approve(h.hospitalId) }
+            }
+        }
+    } else {
+        Text("승인한 병원이 없습니다. 수용 불가 병원을 뺀 후보에게 다시 전화하세요", fontSize = 12.5.sp, color = AD.ink3)
+        if (callable.isEmpty()) {
+            Text("전화할 수 있는 후보가 없습니다. 범위를 넓혀 다시 요청 중입니다.", fontSize = 13.sp, color = AD.orange)
+        } else {
+            val enabled = !m.paused && m.call == null
+            Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                callable.forEach { h ->
+                    ReselectRow(h, "전화", if (enabled) AD.blue else AD.control, enabled = enabled, icon = Icons.Filled.Call,
+                        note = if (h.hospitalId in skipped) "전화 미응답 이력" else null) { m.dial(h.hospitalId, h.name) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReselectRow(h: MatchHospital, label: String, color: Color, enabled: Boolean, icon: ImageVector, note: String? = null, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AD.bg).padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(h.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
+            val dist = (h.roadDistanceKm ?: h.distanceKm).let { "%.1fkm".format(it) } + (h.etaMin ?: h.travelMin)?.let { " · ${it.roundToInt()}분" }.orEmpty()
+            Text(dist, fontSize = 13.sp, color = AD.ink)
+            if (note != null) Text(note, fontSize = 12.sp, color = AD.orange)
+        }
+        Row(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(12.dp)).background(color).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
     }
 }

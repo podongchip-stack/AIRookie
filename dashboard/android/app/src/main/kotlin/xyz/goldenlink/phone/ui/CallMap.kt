@@ -228,19 +228,26 @@ fun CallMap(
     }
     // 여백 — 아래 패널이 가린 만큼 위로 비워, 맞춘 지도가 패널 뒤로 숨지 않게 한다(아이폰 margins와 같다)
     LaunchedEffect(map, bottomOverlayPx, mapHeightPx) {
+        // 패널 높이가 부드럽게 바뀌는 동안 프레임마다 여백을 다시 잡으면 지도가 흔들린다 — 높이가 멈춘 뒤 한 번만
+        delay(150)
         val m = map ?: return@LaunchedEffect
         val side = (44 * dens).toInt()
         m.setPadding(side, (60 * dens).toInt(), side, minOf(bottomOverlayPx + side, (mapHeightPx * 0.7).toInt()))
     }
     // 카메라 — 구성이 바뀔 때만 맞춘다. 다른 탭에 갔다 와도 사용자가 둔 배율을 유지한다.
     // 우선순위는 아이폰과 같다: 이동 경로 > 응답 존(단계 진입·확장 때 한 번) > 현장에서 고른 병원 > 전체
-    LaunchedEffect(map, routeKey, zoneFitKey, sceneKey, deliveryFit != null, pins.map { it.id }, if (routeKey != null) bottomOverlayPx > 0 else bottomOverlayPx) {
+    // 병원 핀은 지도에 그리지 않으므로(위 핀 효과) 병원 목록이 바뀌는 것(상황 전파로 후보 → 응답 병원)은 카메라 조건이 아니다.
+    // 조건에 넣으면 전파 순간 병원들이 들어오게 지도가 순간이동했다가 다시 구급차로 돌아온다
+    val drawnPins = pins.filter { it.kind != MapPin.Kind.HOSPITAL && it.kind != MapPin.Kind.RECOMMENDED }
+    LaunchedEffect(map, routeKey, zoneFitKey, sceneKey, deliveryFit != null, drawnPins.map { it.id }, bottomOverlayPx > 0) {
+        // 전파 한 번에 시트·전달 연출·병원 목록이 거의 동시에 바뀐다 — 잠깐 모아서 마지막 상태로 한 번만 맞춘다
+        delay(80)
         val m = map ?: return@LaunchedEffect
         if (zoneFitKey == null) lastZoneKey = null
-        val id = listOf(routeKey, zoneFitKey, sceneKey, deliveryFit != null, pins.map { it.id }, if (routeKey != null) bottomOverlayPx > 0 else bottomOverlayPx)
+        val id = listOf(routeKey, zoneFitKey, sceneKey, deliveryFit != null, drawnPins.map { it.id }, bottomOverlayPx > 0)
         val saved = lastCamera
         if (saved != null && id == lastFitKey) { m.moveCamera(CameraUpdateFactory.newCenterPosition(saved.first, saved.second)); return@LaunchedEffect }
-        val drawn = pins.filter { it.kind != MapPin.Kind.HOSPITAL && it.kind != MapPin.Kind.RECOMMENDED }.map { it.pos }
+        val drawn = drawnPins.map { it.pos }
         val zoneNew = zoneFitKey != null && zoneFitKey != lastZoneKey
         val points = when {
             // 전달 연출 — 구급차를 정중앙에 두고 모든 병원이 들어오게(병원 반대쪽 점을 대칭으로 더해 범위가 구급차 중심이 되게)
@@ -248,7 +255,7 @@ fun CallMap(
             routeKey != null -> route + drawn
             zoneNew && ambulance != null && zoneKm != null -> circlePoints(ambulance.pos, zoneKm) + drawn
             sceneKey != null && ambulance != null -> listOfNotNull(ambulance.pos, pins.firstOrNull { it.kind == MapPin.Kind.SELECTED }?.pos)
-            else -> pins.map { it.pos } + route
+            else -> drawn + route
         }.map(::ll).distinct()
         when {
             // 전달 연출 앞에서는 순간이동처럼 다시 불러오지 않고, 구급차가 가운데 오도록 부드럽게 옮긴다
