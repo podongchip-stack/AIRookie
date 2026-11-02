@@ -127,9 +127,9 @@ def main() -> None:
         AmbulanceInfo(apid="A_SCENE", name="[테스트] 구급차", gps=GpsPoint(lat=37.5665, lng=126.9780), voicePort=6000,
                       updatedAt="2026-10-01T00:00:00Z")
     )
-    # T001보다 조금 먼, 병상 신뢰도 예측이 붙은 병원 — 빈 병상이 확인되고 rArrive가
-    # 있는 유일한 곳이라 첫 연락 추천을 받아야 한다(T001은 신뢰도 데이터가 없어 제외,
-    # fail-soft 확인). 거리순 정렬 자체는 추천과 무관하게 유지돼야 한다.
+    # T001보다 조금 먼, 병상 신뢰도 예측이 붙은 병원. 첫 연락 순위는 first_call.rank(이동·병상·전문의·도착 유효 확률 +
+    # 다른 구급차 점유)가 정한다(2026-11-03, Pre-KTAS 없음) — 더 가깝고 응급의학과 전문의가 있는 T001이 앞선다.
+    # 신뢰도 데이터가 없는 병원은 그 항만 빠진다(fail-soft).
     app.engine.update_hospital_info(HospitalInfo(
         hospitalId="T_REL", name="[테스트] 신뢰도 병원",
         gps=GpsPoint(lat=37.5750, lng=126.9900), availableBedCount=2, nightDutyAvailable=True,
@@ -148,15 +148,16 @@ def main() -> None:
     assert len(scene) == 1 and scene[0]["hospitals"][0]["hospitalId"] == "T001" and scene[0]["source"] == "rule"
     assert not any(m.get("type") == "scene_candidates" for m in socket.sent), "병원 탭은 현장 후보를 받지 않는다"
     by_id = {h["hospitalId"]: h for h in scene[0]["hospitals"]}
-    assert by_id["T_REL"]["firstCallRecommended"] is True, "신뢰도 있는 빈 병상 병원이 첫 연락 추천을 받아야 한다"
-    assert by_id["T_REL"]["bedReliability"]["rArrive"] > 0.5
-    assert by_id["T001"]["firstCallRecommended"] is False and by_id["T001"]["bedReliability"] is None, \
-        "신뢰도 데이터 없는 병원은 추천 없이 그대로(fail-soft)"
+    assert by_id["T001"]["firstCallRecommended"] is True and by_id["T_REL"]["firstCallRecommended"] is False, \
+        "점수(이동 − 전문의·병상 + 점유)가 가장 낮은 병원이 첫 연락 추천을 받아야 한다"
+    assert by_id["T_REL"]["bedReliability"]["rArrive"] > 0.5 and "병상 2개" in by_id["T_REL"]["firstCallReason"]
+    assert by_id["T001"]["bedReliability"] is None and "도착 유효" not in by_id["T001"]["firstCallReason"], \
+        "신뢰도 데이터 없는 병원은 도착 유효 확률 항만 빠진다(fail-soft)"
     logged = [json.loads(line) for line in decision_log.LOG_PATH.read_text(encoding="utf-8").splitlines()]
     first_call = [e for e in logged if e["eventType"] == "first_call_recommended"]
-    assert len(first_call) == 1 and first_call[0]["payload"]["hospitalId"] == "T_REL", \
+    assert len(first_call) == 1 and first_call[0]["payload"]["hospitalId"] == "T001", \
         "첫 연락 추천이 의사결정 로그에 남아야 한다(적중률 측정 재료)"
-    print("  [확인] 거리순 후보가 구급차 탭에만 전송, T_REL 첫 연락 추천 + 로그 기록, T001은 fail-soft")
+    print("  [확인] 첫 연락 후보가 구급차 탭에만 전송, T001 추천 + 로그 기록, 신뢰도 없는 병원은 fail-soft")
 
     app._dashboard_sockets.difference_update({socket, stranger, ambulance_tab})
     print("\n모든 검사 통과")
