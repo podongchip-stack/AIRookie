@@ -166,7 +166,7 @@ private fun SummaryCard(m: PhoneModel, p: PatientInfo) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 val (bg, fg, label) = severity(p.severityTag)
                 Pill(label, fg, bg, bold = true)
-                p.ktasLevel?.let { Pill("KTAS $it", ktasColor(it), ktasSoft(it), bold = true) }
+                p.ktasLevel?.let { Pill("Pre-KTAS $it", ktasColor(it), ktasSoft(it), bold = true) }
                 val line = listOfNotNull(p.patient, p.chiefComplaint, p.consciousness?.let { "의식 $it" }).joinToString(" · ")
                 if (line.isNotEmpty()) Text(line, fontSize = 12.sp, color = AD.ink3)
             }
@@ -183,7 +183,7 @@ private fun SummaryCard(m: PhoneModel, p: PatientInfo) {
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(AD.chip).padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     prev.forEach { u ->
-                        Text("${u.callRound}차 통화 · ${severity(u.severityTag).third} · ${u.expectedDiagnosis ?: ""}${u.ktasLevel?.let { " · KTAS $it" } ?: ""}",
+                        Text("${u.callRound}차 통화 · ${severity(u.severityTag).third} · ${u.expectedDiagnosis ?: ""}${u.ktasLevel?.let { " · Pre-KTAS $it" } ?: ""}",
                             fontSize = 11.5.sp, color = AD.sub)
                     }
                 }
@@ -254,7 +254,7 @@ private fun SummaryEditDialog(m: PhoneModel, p: PatientInfo, onClose: () -> Unit
                 OutlinedTextField(diagnosis, { diagnosis = it }, label = { Text("예상 병명") }, modifier = Modifier.fillMaxWidth(),
                     supportingText = { if (diagnosis.isBlank()) Text("비울 수 없습니다 — 그대로 두려면 손대지 않아도 됩니다") })
                 OutlinedTextField(symptoms, { symptoms = it }, label = { Text("증상 (쉼표로 구분)") }, modifier = Modifier.fillMaxWidth())
-                Text("KTAS", fontSize = 12.sp, color = AD.sub)
+                Text("Pre-KTAS", fontSize = 12.sp, color = AD.sub)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (k in 0..5) {
                         val on = ktas == k

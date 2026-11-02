@@ -158,7 +158,7 @@ private fun CaseCard(c: CaseRecord, expanded: Boolean, onToggle: () -> Unit, onM
                     Text("${RecordDates.timeOf(c.startedAt)}  ${c.symptom ?: c.expectedDiagnosis ?: "증상 미상"}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy, maxLines = 2)
                     Text(listOfNotNull(c.ambulanceName, "병원 ${c.hospitals.size}곳").joinToString(" · "), fontSize = 12.sp, color = AD.ink3)
                 }
-                c.ktasLevel?.let { Pill("KTAS $it", ktasColor(it), ktasSoft(it), bold = true) }
+                c.ktasLevel?.let { Pill("Pre-KTAS $it", ktasColor(it), ktasSoft(it), bold = true) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (g in ResponseGroup.entries) {

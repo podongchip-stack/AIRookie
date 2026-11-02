@@ -1,5 +1,7 @@
 package xyz.goldenlink.phone
 
+import android.graphics.Color
+import androidx.activity.SystemBarStyle
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
@@ -18,7 +20,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // 상태바 뒤로 지도·연한 배경이 깔리므로 아이콘은 어두운 색으로(흰 아이콘은 연한 배경에서 안 보였다)
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT))
+        // 3버튼 내비게이션 바에 시스템이 덧씌우는 진회색 막(대비 보정)을 끈다 — 앱 배경이 그대로 이어진다
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
         setContent {
             val mic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                 if (!granted) model.error = "마이크 권한이 꺼져 있습니다. 설정 앱에서 켜 주세요."

@@ -98,13 +98,13 @@ fun baseBitmap(d: Float): Bitmap = bitmap(30, 30, d) { u ->
  */
 fun withCaption(icon: Bitmap, caption: String, d: Float): Bitmap {
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 12f * d; typeface = Typeface.DEFAULT_BOLD; color = 0xFF14213D.toInt(); textAlign = Paint.Align.CENTER
+        textSize = 10.5f * d; typeface = Typeface.DEFAULT_BOLD; color = 0xFF14213D.toInt(); textAlign = Paint.Align.CENTER
     }
-    val text = TextUtils.ellipsize(caption, TextPaint(paint), 150f * d, TextUtils.TruncateAt.END).toString()
+    val text = TextUtils.ellipsize(caption, TextPaint(paint), 130f * d, TextUtils.TruncateAt.END).toString()
     val fm = paint.fontMetrics
     val textH = fm.descent - fm.ascent
     val gap = 2f * d
-    val w = maxOf(icon.width.toFloat(), paint.measureText(text) + 12f * d)
+    val w = maxOf(icon.width.toFloat(), paint.measureText(text) + 10f * d)
     val h = icon.height + 2f * (gap + textH)
     val bmp = Bitmap.createBitmap(w.toInt(), h.toInt(), Bitmap.Config.ARGB_8888)
     val c = Canvas(bmp)
