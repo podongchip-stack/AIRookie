@@ -214,3 +214,7 @@ project.yml 변경 후 `xcodegen generate`로 Xcode 프로젝트를 갱신한다
    - `Config/Kakao.local.xcconfig`를 만들어 `KAKAO_NATIVE_APP_KEY = <네이티브 앱 키>` 한 줄(예시 `Config/Kakao.local.xcconfig.example`, 이 파일은 커밋하지 않는다) — 다시 빌드
    - 앱 > 설정 > 카카오맵에 키를 입력하고 [키 저장] — 지도 화면을 다시 열면 적용된다(우선순위가 더 높다)
 3. 인증 실패 코드: 401 키 확인 · 403 번들 ID/카카오맵 사용 설정 · 429 사용량 한도.
+
+## 첫 전화 병원 선택 (2026-11-03 수정)
+
+첫 전화 전에 Pre-KTAS를 수동 선택하지 않고 hub 추천 병원 목록에서 선택한다. `first_call_request`에는 `ktas`를 보내지 않는다. 이 흐름은 최신 develop의 hub가 필요하며, 등급을 필수로 요구하던 구형 hub와는 호환되지 않는다. 통화 후 환자 정보의 Pre-KTAS 표시·수정은 유지한다.

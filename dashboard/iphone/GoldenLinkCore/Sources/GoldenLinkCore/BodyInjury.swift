@@ -48,16 +48,6 @@ public struct BodyEdits: Equatable {
     /// 인계확인서 처치 칸으로 — "좌 다리 부목 고정"
     public var careLines: [String] { fittedCares.flatMap { mark, list in list.map { "\(mark.label) \($0)" } }.sorted() }
 
-    /// 부위에 맞는 처치만 — 다른 기기에서 온 값이나 예전에 적은 값에 맞지 않는 처치(예: 팔에 산소투여)가 있어도 여기서 걸러진다
-    public var fittedCares: [BodyMark: [String]] {
-        var out: [BodyMark: [String]] = [:]
-        for (mark, list) in cares {
-            let kept = list.filter { BodyCare.fits(mark, $0) }
-            if !kept.isEmpty { out[mark] = kept }
-        }
-        return out
-    }
-
     /// hub로 보낼 증상 줄 — 구급대원이 찍은 부위
     public var addedLines: [String] { added.map { $0.label + " 외상(구급대원 확인)" }.sorted() }
 
@@ -84,42 +74,14 @@ public struct BodyEdits: Equatable {
         }
         return v
     }
-}
 
-/// 외상 부위에서 고를 수 있는 처치. 어휘는 voice 처치판(2026-10-29)의 `treat_categories` 28범주이고, 한글 이름은 hub `voice_treatments.py`와
-/// 글자까지 같다 — 통화에서 AI가 뽑은 처치와 대원이 도해에서 고른 처치가 같은 문자열이라 서식·병원 화면에서 겹치지 않는다.
-/// 부위마다 **그 부위에 실제로 하는 처치만** 보인다. 산소·CPR·약물·정맥로처럼 부위에 속하지 않는 전신 처치는 여기에 없다 —
-/// 통화 요약의 처치로는 그대로 인계확인서에 들어간다. 부위별 목록은 전문의 검토 전 초안이다(안드로이드 core/BodyInjury.kt `BodyCare`와 같다).
-public enum BodyCare {
-    /// 28범주 전체(순서는 voice·hub와 같다)
-    public static let all: [(key: String, label: String)] = [
-        ("oxygen", "산소투여"), ("suction", "기도 흡인"), ("foreign_body", "기도 이물 제거"), ("airway_basic", "기본 기도확보"),
-        ("airway_advanced", "전문 기도확보"), ("ventilation", "인공호흡"), ("cpr", "CPR"), ("defib", "AED"),
-        ("iv", "정맥로 확보"), ("fluid", "수액공급"), ("bleeding", "지혈"), ("med_aspirin", "아스피린 투여"),
-        ("med_nitro", "니트로글리세린 투여"), ("med_glucose", "포도당 투여"), ("med_epinephrine", "에피네프린 투여"),
-        ("med_bronchodilator", "기관지확장제 투여"), ("med_other", "기타 약물투여"), ("spinal", "척추 고정"), ("splint", "부목 고정"),
-        ("wound", "상처처치"), ("burn", "화상 처치"), ("irrigation", "세척"), ("cold_pack", "냉찜질"), ("cooling", "냉각"),
-        ("warming", "보온"), ("position", "체위 조절"), ("delivery", "분만 처치"), ("other", "기타 처치"),
-    ]
-
-    private static let common = ["지혈", "상처처치", "화상 처치", "세척", "냉찜질", "체위 조절"]
-    private static let splint = "부목 고정"
-    private static let spinal = "척추 고정"
-    private static let airway = ["기도 흡인", "기도 이물 제거"]
-
-    /// 그 부위에서 고를 수 있는 처치 — 가장 해당되는 것이 앞에 온다
-    public static func optionsFor(_ region: BodyRegion) -> [String] {
-        switch region {
-        case .arm, .hand, .leg, .foot: return [splint] + common
-        case .pelvis: return [splint, spinal] + common
-        case .head, .back: return [spinal] + common
-        case .neck: return [spinal] + airway + common
-        case .face: return airway + common
-        case .chest, .abdomen: return common
+    /// 다른 기기·이전 버전에서 들어온 값도 부위에 맞는 처치만 서식·전달에 사용한다.
+    public var fittedCares: [BodyMark: [String]] {
+        cares.reduce(into: [:]) { result, entry in
+            let fitted = entry.value.filter { BodyCare.fits(entry.key, $0) }
+            if !fitted.isEmpty { result[entry.key] = fitted }
         }
     }
-
-    public static func fits(_ mark: BodyMark, _ label: String) -> Bool { optionsFor(mark.region).contains(label) }
 }
 
 /// 통화 요약의 항목 하나와 그 항목이 가리키는 부위
@@ -456,4 +418,51 @@ public enum BodyGeometry {
         guard contains(outline, q) else { return nil }
         return (back ? hitBack : hitFront).first { contains(region($0, back: back), q) }
     }
+}
+
+/// voice 처치판 28범주와 같은 어휘. 부위별 선택은 규칙 기반이며 전문의 검토 전 초안.
+public enum BodyCare {
+    public struct Item { public let key: String; public let label: String }
+    public static let all: [Item] = [
+        Item(key: "oxygen", label: "산소투여"),
+        Item(key: "suction", label: "기도 흡인"),
+        Item(key: "foreign_body", label: "기도 이물 제거"),
+        Item(key: "airway_basic", label: "기본 기도확보"),
+        Item(key: "airway_advanced", label: "전문 기도확보"),
+        Item(key: "ventilation", label: "인공호흡"),
+        Item(key: "cpr", label: "CPR"),
+        Item(key: "defib", label: "AED"),
+        Item(key: "iv", label: "정맥로 확보"),
+        Item(key: "fluid", label: "수액공급"),
+        Item(key: "bleeding", label: "지혈"),
+        Item(key: "med_aspirin", label: "아스피린 투여"),
+        Item(key: "med_nitro", label: "니트로글리세린 투여"),
+        Item(key: "med_glucose", label: "포도당 투여"),
+        Item(key: "med_epinephrine", label: "에피네프린 투여"),
+        Item(key: "med_bronchodilator", label: "기관지확장제 투여"),
+        Item(key: "med_other", label: "기타 약물투여"),
+        Item(key: "spinal", label: "척추 고정"),
+        Item(key: "splint", label: "부목 고정"),
+        Item(key: "wound", label: "상처처치"),
+        Item(key: "burn", label: "화상 처치"),
+        Item(key: "irrigation", label: "세척"),
+        Item(key: "cold_pack", label: "냉찜질"),
+        Item(key: "cooling", label: "냉각"),
+        Item(key: "warming", label: "보온"),
+        Item(key: "position", label: "체위 조절"),
+        Item(key: "delivery", label: "분만 처치"),
+        Item(key: "other", label: "기타 처치"),
+    ]
+    private static let common = ["지혈", "상처처치", "화상 처치", "세척", "냉찜질", "체위 조절"]
+    public static func optionsFor(_ region: BodyRegion) -> [String] {
+        switch region {
+        case .arm, .hand, .leg, .foot: ["부목 고정"] + common
+        case .pelvis: ["부목 고정", "척추 고정"] + common
+        case .head, .back: ["척추 고정"] + common
+        case .neck: ["척추 고정", "기도 흡인", "기도 이물 제거"] + common
+        case .face: ["기도 흡인", "기도 이물 제거"] + common
+        case .chest, .abdomen: common
+        }
+    }
+    public static func fits(_ mark: BodyMark, _ label: String) -> Bool { optionsFor(mark.region).contains(label) }
 }

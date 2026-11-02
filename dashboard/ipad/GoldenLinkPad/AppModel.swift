@@ -68,9 +68,7 @@ final class AppModel: ObservableObject {
     /// 구급차 소켓을 붙인 시각 — 연결 직후 오는 **따라잡기**(진행 중이던 사건)는 화면을 자동으로 바꾸지 않는다(README의 규칙)
     private var connectedAt: Date?
     @Published var responseLog: [ResponseEvent] = []
-    /// 현장 Pre-KTAS(1~5) — 현장에 도착하면 1이 미리 골라져 있고, 바꾸면 hub가 첫 연락 추천 순서로 후보를 다시 보낸다(현장 화면)
     var needsInitialMapCenter = true
-    @Published var preKtas: Int?
     /// 통화 요약이 후보 병원들에 전달되는 연출(현장 지도 위, SceneScreen) — 끝나면 환자 정보로 넘어간다
     @Published var deliveryShow: DeliveryShow?
 
@@ -126,7 +124,7 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
                 self?.syncRecords()
-                if let self, self.sim?.phase == "on_scene", self.result == nil, self.preKtas != nil { self.requestFirstCall() }
+                if let self, self.sim?.phase == "on_scene", self.result == nil { self.requestFirstCall() }
             }
         }
     }
@@ -187,7 +185,7 @@ final class AppModel: ObservableObject {
     }
 
     private func clearCase() {
-        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil; phaseTimes = [:]; incidentAddress = nil; bodyEdits = BodyEdits(); preKtas = nil; deliveryShow = nil
+        sim = nil; result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []; receivedAt = nil; phaseTimes = [:]; incidentAddress = nil; bodyEdits = BodyEdits(); deliveryShow = nil
     }
 
     // ── 자동 따라가기(monitor 소켓) ──
@@ -237,8 +235,6 @@ final class AppModel: ObservableObject {
             if let m = try? dec.decode(SceneCandidates.self, from: data) {
                 if let c = sim?.caseId, c != m.caseId { return }
                 scene = m
-                // 다른 기기에서 바꾼 Pre-KTAS도 지도와 선택 버튼에 함께 반영한다.
-                preKtas = m.preKtas
             }
         case "ambulance_phase", "ambulance_position":
             if var m = try? dec.decode(AmbulanceSimState.self, from: data), m.apid == apid {
@@ -258,10 +254,10 @@ final class AppModel: ObservableObject {
                     phaseTimes = ["requestedAt": Date()]      // 새 사건 — 시각 칸을 새로 적는다
                     incidentAddress = nil
                     bodyEdits = BodyEdits()
-                    preKtas = nil; deliveryShow = nil
+                    deliveryShow = nil
                     requestScreen(.map)      // 새 출동은 지도에서 시작한다(안드로이드와 같은 흐름)
                 }
-                if m.phase == "on_scene", m.phase != previousPhase || m.caseId != previousCase, preKtas == nil, scene?.preKtasCleared != true, result == nil { preKtas = 1; requestFirstCall() }
+                if m.phase == "on_scene", m.phase != previousPhase || m.caseId != previousCase, result == nil { requestFirstCall() }
                 if m.phase != previousPhase || m.caseId != previousCase { recordPhaseTime(m.phase); if let c = m.caseId { snapshotCase(c) } }
                 if m.incident?.lat != previousIncident?.lat || m.incident?.lng != previousIncident?.lng {
                     incidentAddress = nil
@@ -434,13 +430,12 @@ final class AppModel: ObservableObject {
             .prefix(2).map { $0 }
     }
 
-    // ── 현장 Pre-KTAS · 요약 전달 연출 ──
-    func setPreKtas(_ k: Int) { preKtas = k; requestFirstCall() }
+    // ── 첫 전화 추천 · 요약 전달 연출 ──
 
-    /// hub에 첫 연락 추천 순서를 다시 요청한다 — hub가 scene_candidates를 그 Pre-KTAS 기준으로 다시 보낸다
+    /// 등급 입력 없이 hub의 규칙 기반 첫 연락 추천 목록을 요청한다
     func requestFirstCall() {
-        guard let caseId, let k = preKtas else { return }
-        let body: [String: Any] = ["type": "first_call_request", "caseId": caseId, "ktas": k]
+        guard let caseId else { return }
+        let body: [String: Any] = ["type": "first_call_request", "caseId": caseId]
         guard let data = try? JSONSerialization.data(withJSONObject: body), ambulance?.sendJSON(data) == true else {
             show("hub 연결을 확인해 주세요. 추천 요청을 보내지 못했습니다."); return
         }

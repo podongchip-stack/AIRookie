@@ -2,7 +2,7 @@ import CoreLocation
 import SwiftUI
 
 // [현장] — 현장에 도착해 통화 요약이 오기 전(상황 판단 중)의 화면. 안드로이드·아이폰 현장 지도와 같은 흐름이다(2026-11-02):
-// Pre-KTAS를 고르면(현장 도착 때 1이 미리 골라져 있다) hub가 첫 연락 추천 순서로 후보 병원을 다시 보내고, 통화 요약이 오면
+// 현장에 도착하면 hub가 첫 연락 추천 순서로 후보 병원을 보내고, 통화 요약이 오면
 // 구급차에서 후보 병원들로 요약이 동시에 전달되는 연출을 지도 위에 보여 준 뒤 환자 정보로 넘어간다.
 // 지도는 카카오맵 SDK(KakaoMapView) — 아이폰·안드로이드와 같은 지도다.
 
@@ -149,7 +149,7 @@ private struct DeliveryOverlay: View {
     }
 }
 
-/// 현장 지도 — 안드로이드 [통화] 탭(지도가 바탕)과 같은 흐름이다(2026-11-02). 출동 중엔 현장까지 도로 경로와 ETA, 현장에선 Pre-KTAS → 후보 병원,
+/// 현장 지도 — 안드로이드 [통화] 탭(지도가 바탕)과 같은 흐름이다(2026-11-02). 출동 중엔 현장까지 도로 경로와 ETA, 현장에선 추천 후보 병원,
 /// 요약이 병원에 전달되면 응답 존·병원 응답, 이송 중엔 목적지까지 경로. 왼쪽 패널이 단계마다 바뀌고 오른쪽은 계속 같은 지도다.
 /// 통화만 없다 — 통화는 휴대폰 앱이 한다.
 struct SceneScreen: View {
@@ -161,7 +161,6 @@ struct SceneScreen: View {
 
     private var phase: String { model.sim?.phase ?? "idle" }
     private var candidates: [SceneCandidate] {
-        guard model.preKtas != nil else { return [] }
         let all = model.scene?.hospitals ?? []
         let attempted = Set(model.scene?.callAttempts ?? [])
         return all.filter { !attempted.contains($0.hospitalId) } + all.filter { attempted.contains($0.hospitalId) }
@@ -198,7 +197,6 @@ struct SceneScreen: View {
             sidePanel.frame(width: 380).frame(maxHeight: .infinity, alignment: .top).card(14)
             mapCard
         }
-        .onChange(of: model.preKtas) { _, k in if k == nil { focusId = nil; centerRequest += 1 } }
     }
 
     /// 카메라를 다시 맞추는 때 — 구급차 위치가 1초마다 바뀔 때마다 맞추지 않고, 단계·사건·경로·후보·존·연출이 바뀔 때만
@@ -255,39 +253,22 @@ struct SceneScreen: View {
             if phase == "dispatching" || phase == "returning", (model.sim?.path?.count ?? 0) <= 2 {
                 Text("도로 경로를 받지 못했습니다. hub의 경로 API 연결을 확인해 주세요.").font(.system(size: 11)).foregroundStyle(AD.orange)
             }
-            Text("현장에 도착하면 Pre-KTAS를 고르고 후보 병원을 확인합니다.").font(.system(size: 12)).foregroundStyle(AD.sub)
+            Text("현장에 도착하면 추천 병원 목록을 확인합니다.").font(.system(size: 12)).foregroundStyle(AD.sub)
         }
     }
 
-    /// 현장(전달 전) — Pre-KTAS와 후보 병원
+    /// 현장(전달 전) — hub 추천 후보 병원
     private var scenePanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                ForEach(1...5, id: \.self) { k in
-                    let on = model.preKtas == k
-                    Button { model.setPreKtas(k) } label: {
-                        VStack(spacing: 1) {
-                            Text("\(k)").font(.system(size: 20, weight: .black))
-                            Text("Pre-KTAS").font(.system(size: 9, weight: .semibold))
-                        }
-                        .foregroundStyle(on ? .white : Theme.ktas(k))
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                        .background(on ? Theme.ktas(k) : Theme.ktasSoft(k), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }.buttonStyle(.plain)
-                }
-            }
             HStack {
                 Text("후보 병원 \(candidates.count)곳").font(.system(size: 13, weight: .bold)).foregroundStyle(AD.navy)
                 Spacer()
                 if let s = model.scene, let z = s.zoneActive?.max() { Pill(text: "Zone \(z)", bg: AD.blueSoft, fg: AD.blue, bold: true) }
             }
-            if model.preKtas == nil {
-                Text("Pre-KTAS 등급을 선택해 주세요").font(.system(size: 13)).foregroundStyle(AD.sub)
-            } else if model.scene?.preKtas != model.preKtas {
-                HStack(spacing: 8) { ProgressView(); Text("KTAS 적합 병원을 확인하고 있습니다").font(.system(size: 13)).foregroundStyle(AD.sub) }
-                    .frame(maxWidth: .infinity, minHeight: 80)
+            if model.scene == nil {
+                ProgressView("추천 병원을 확인하고 있습니다")
             } else if candidates.isEmpty {
-                Text("현재 탐색 범위에 KTAS 적합 병원이 없습니다").font(.system(size: 13)).foregroundStyle(AD.sub).frame(maxWidth: .infinity, minHeight: 80)
+                Text("현재 탐색 범위에 후보 병원이 없습니다").font(.system(size: 13)).foregroundStyle(AD.sub).frame(maxWidth: .infinity, minHeight: 80)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {

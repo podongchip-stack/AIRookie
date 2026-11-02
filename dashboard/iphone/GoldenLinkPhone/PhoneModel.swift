@@ -28,16 +28,6 @@ final class PhoneModel {
     var accessRequired = Settings.accessCode.isEmpty
     var apid: String?  // 접근 코드로 정한 소속 구급차
     /// 요약이 병원들에 전달되는 모습을 지도에서 보여 주는 중(안드로이드 DeliveryShow와 같다)
-    final class DeliveryShow {
-        let caseId: String
-        let durationMs: Int
-        let reduceMotion: Bool
-        /// 지도가 준비돼 연출이 실제로 시작된 시각(nil이면 아직) — 지도를 불러오는 동안 연출 시간이 흘러가 버리지 않게 지도가 채운다
-        var readyAt: Date?
-        init(caseId: String, durationMs: Int, reduceMotion: Bool) {
-            self.caseId = caseId; self.durationMs = durationMs; self.reduceMotion = reduceMotion
-        }
-    }
     var deliveryShow: DeliveryShow?
     var identity: IdentityInfo?
 
@@ -75,6 +65,8 @@ final class PhoneModel {
         get { caseId.flatMap { extraNoteDrafts[$0] } ?? "" }
         set { if let caseId { extraNoteDrafts[caseId] = newValue } }
     }
+    var skippedHospitals: [String: Set<String>] = [:]
+    var callHospitalListPresented = false
     var tab: Tab = .call
     var pendingConfirmId: String?  // 이송 승인을 보내고 hub의 확정 응답을 기다리는 병원
     var incidentAddress: String?   // 인계확인서 "출발지 주소" — hub가 좌표를 주소로 바꿔 준다
@@ -215,7 +207,10 @@ final class PhoneModel {
 
     private func handle(_ type: String, _ data: Data) {
         let dec = JSONDecoder()
-        defer { syncLiveCase() }
+        defer {
+            syncLiveCase()
+            if onScene, scene == nil { requestFirstCall() }
+        }
         switch type {
         case "live_case_state", "live_case_error":
             caseEdits.accept(data)
@@ -249,10 +244,6 @@ final class PhoneModel {
             if sim.apid == apid { trackPhase(sim) }
         case "scene_candidates":
             if let s = try? dec.decode(SceneCandidates.self, from: data) {
-                if pendingPreKtasClear == s.caseId {
-                    guard s.preKtasCleared == true else { return }
-                    pendingPreKtasClear = nil
-                }
                 scenes[s.caseId] = s
             }
         case "scene_input_mode":
@@ -266,7 +257,7 @@ final class PhoneModel {
                     if s.state == "calling" { Task { await self.beginConnectedCall() } }
                     if ["no_answer", "cancelled"].contains(s.state) {
                         if s.state == "no_answer" { skippedHospitals[s.caseId, default: []].insert(s.hospitalId ?? "") }
-                        if onScene, preKtas != nil {
+                        if onScene {
                             callHospitalListPresented = true
                         }
                         session?.cancel(); session = nil; call = nil; callRequestId = nil
@@ -325,7 +316,6 @@ final class PhoneModel {
         // 다른 구급차 사건 종료는 현재 보고 있는 목록에 영향을 주지 않는다.
         if self.caseId == caseId {
             callHospitalListPresented = false
-            preKtas = nil
             wantsExtraCall = false
         }
         closeRecord(caseId)
@@ -339,30 +329,6 @@ final class PhoneModel {
         if call?.caseId == caseId, session == nil || call?.phase == .ended { call = nil; session = nil }
     }
 
-    /// 요약이 반영되면 환자 정보로 바로 넘기지 않고, 현장 지도에서 병원들로 전달되는 연출을 먼저 보여 준다.
-    /// 현장이 아니거나(이송 중 추가 통화) 지도에 찍을 병원 좌표가 없으면 연출 없이 바로 넘어간다
-    private func startDeliveryShow(_ caseId: String) {
-        let anyTarget = results[caseId]?.hospitals.contains { hospitalGps[$0.hospitalId] != nil } == true
-        if !onScene || mySim?.gps == nil || !anyTarget || Settings.kakaoNativeAppKey.isEmpty { tab = .patient; return }
-        // 기기의 "동작 줄이기" 설정이면 움직임 없이 병원이 켜진 상태만 잠깐 보여 준다
-        let reduce = UIAccessibility.isReduceMotionEnabled
-        let show = DeliveryShow(caseId: caseId, durationMs: reduce ? 1200 : 2600, reduceMotion: reduce)
-        deliveryShow = show
-        tab = .call
-        // 연출은 지도가 준비된 뒤 시계를 흘려 끝내지만, 지도가 끝내 준비되지 않아도 막히지 않게 여유를 두고 끝낸다
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(show.durationMs + 5_000))
-            if let self, self.deliveryShow === show { self.finishDelivery() }
-        }
-    }
-
-    /// 연출이 끝났거나 구급대원이 눌러 건너뛰었다 — 환자 정보 탭으로
-    func finishDelivery() {
-        guard deliveryShow != nil else { return }
-        deliveryShow = nil
-        tab = .patient
-    }
-
     /// 화면 위 안내를 잠깐(2.5초) 띄운다
     func show(_ text: String) {
         notice = text
@@ -374,19 +340,6 @@ final class PhoneModel {
     }
 
     // MARK: - 통화
-
-    func clearPreKtas() {
-        guard let caseId, onScene, !sent, call == nil else { return }
-        guard !paused else { show("현재 시연 일시정지 중입니다."); return }
-        let body: [String: Any] = ["type": "first_call_request", "caseId": caseId, "ktas": NSNull()]
-        guard let data = try? JSONSerialization.data(withJSONObject: body), ambulance?.sendJSON(data) == true else {
-            show("hub 연결을 확인해 주세요. 등급 선택을 초기화하지 못했습니다."); return
-        }
-        pendingPreKtasClear = caseId
-        preKtas = nil
-        callHospitalListPresented = false
-        sceneMapFocusKey = nil
-    }
 
     func requestFirstCall(noAnswer: String? = nil) {
         guard let caseId else { return }
@@ -504,7 +457,9 @@ final class PhoneModel {
             skippedHospitals[c.caseId, default: []].insert(c.hospitalId)
         }
         if c.phase == .inCall, let apid {
-            _ = ambulance?.send(CallSignalMessage(signal: "call_ended", apid: apid, caseId: c.caseId, hospitalId: c.hospitalId, cancelled: true))
+            guard ambulance?.send(CallSignalMessage(signal: "call_ended", apid: apid, caseId: c.caseId, hospitalId: c.hospitalId, cancelled: true)) == true else {
+                show("hub 연결을 확인해 주세요. 통화 취소를 전하지 못했습니다."); return
+            }
             session?.cancel()
         }
         call = nil
@@ -521,7 +476,9 @@ final class PhoneModel {
             show("현재 시연 일시정지 중입니다.")
             return
         }
-        _ = ambulance?.send(CallSignalMessage(signal: "call_ended", apid: apid, caseId: c.caseId, hospitalId: c.hospitalId))
+        guard ambulance?.send(CallSignalMessage(signal: "call_ended", apid: apid, caseId: c.caseId, hospitalId: c.hospitalId)) == true else {
+            show("hub 연결을 확인해 주세요. 통화를 종료하지 못했습니다."); return
+        }
         call?.phase = .ended
         call?.endedAt = Date()
         call?.matchVersionAtSend = matchVersion[c.caseId] ?? 0
@@ -699,7 +656,7 @@ final class PhoneModel {
             return marks.isEmpty || !marks.allSatisfy { e.removed.contains($0) }
         }
         guard sendPatientOverride(expectedDiagnosis: nil, injuryStatus: kept + e.addedLines, ktasLevel: nil, requiredDepartment: nil, chiefComplaint: nil) else { return false }
-        if !e.careLines.isEmpty { sendExtraNote("[처치] " + e.careLines.joined(separator: " · ")) }
+        if !e.careLines.isEmpty, !sendExtraNote("[처치] " + e.careLines.joined(separator: " · ")) { return false }
         bodySentSignature = e.signature
         return true
     }

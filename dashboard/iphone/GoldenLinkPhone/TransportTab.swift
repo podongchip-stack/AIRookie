@@ -261,7 +261,7 @@ struct TabBar: View {
                                 .background(badge.1, in: Capsule()).padding(.leading, 5)
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .frame(maxWidth: .infinity, minHeight: 44)
                     .background(on ? Color.white : Color.clear, in: Capsule())
                 }
                 .buttonStyle(.plain)
