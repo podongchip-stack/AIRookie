@@ -2,6 +2,13 @@ import Foundation
 
 /// hub 도로 경로에서 현재 위치 이후 구간을 구한다. 지도 재진입 시 지나온 경로로 되돌아가지 않는다.
 public enum RoadRoute {
+    /// position은 경로를 생략한다. 같은 이동 구간에서만 직전 도로 좌표를 유지한다.
+    public static func retainedPath(_ incoming: [[Double]]?, previous: [[Double]]?,
+                                    sameLeg: Bool, positionOnly: Bool) -> [[Double]]? {
+        if let incoming { return incoming }
+        return sameLeg && positionOnly ? previous : nil
+    }
+
     public static func remaining(_ path: [[Double]], latitude: Double, longitude: Double) -> [[Double]] {
         func valid(_ p: [Double]) -> Bool {
             p.count == 2 && p[0].isFinite && p[1].isFinite && (-90...90).contains(p[0]) && (-180...180).contains(p[1])

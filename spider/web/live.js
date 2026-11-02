@@ -6,8 +6,9 @@
 // 않는다(identify뿐). "누가 어디로 가는가"는 hub가 정한 것을 그대로 보여 주고, 거미줄 모델의 선택은 "제안"으로만 겹쳐 그린다.
 // ?apid=<구급차> 로 열면(아이패드 구급차 앱) 그 구급차의 사건·이동만 그린다
 const ONLY_APID = new URLSearchParams(location.search).get('apid') || null;
-const myCases = () => Object.values(HUB.cases).filter(c => !ONLY_APID || c.apid === ONLY_APID);
-const mySims = () => Object.values(HUB.sims).filter(s => !ONLY_APID || s.apid === ONLY_APID);
+let DEMO = { cases: {}, sims: {} };
+const myCases = () => Object.values({ ...DEMO.cases, ...HUB.cases }).filter(c => !ONLY_APID || c.apid === ONLY_APID);
+const mySims = () => Object.values({ ...HUB.sims, ...DEMO.sims }).filter(s => !ONLY_APID || s.apid === ONLY_APID);
 const HUB = { connected: false, url: null, cases: {}, sims: {}, overview: null, log: [], suggest: {}, cond: {}, lastErr: null };
 let hubWs = null, hubRetry = null, hubWanted = false, hubCaseTick = 0, suggestTimer = null, suggestSeq = 0;
 const SEV_K = { high: 2, medium: 3, low: 4 };              // KTAS가 없을 때(예전 voice·매칭 전) 중증도 → 대표 KTAS
@@ -17,6 +18,29 @@ const PHASE_LABEL = { idle: '대기', dispatching: '출동 중', on_scene: '현�
 const STATUS_LABEL = { pending: '판단 대기', approved: '수용 승인', rejected: '수용 불가', confirmed: '이송 확정' };
 const OK_COL = [94, 227, 127], SUG_COL = [127, 255, 212], GRAY = [124, 123, 116];
 
+
+// 관제 페이지가 가진 자동 시연 스냅샷만 iframe에 겹친다. hub로 보내지 않는다.
+window.addEventListener('message', event => {
+  if (window.parent === window || event.source !== window.parent) return;
+  let parentOrigin;
+  try { parentOrigin = new URL(document.referrer).origin; } catch { return; }
+  if (event.origin !== parentOrigin || event.data?.type !== 'goldenlink:auto-demo') return;
+  const { incidents, sims } = event.data;
+  if (!Array.isArray(incidents) || !sims || typeof sims !== 'object') return;
+  const cases = {};
+  const statuses = { w: 'pending', a: 'approved', r: 'rejected', t: 'confirmed' };
+  for (const c of incidents) cases[c.caseId] = {
+    caseId: c.caseId, num: c.num, apid: c.apid, ambulanceName: c.name,
+    severityTag: ({ '중증': 'high', '중등증': 'medium', '경증': 'low' })[c.sev],
+    expectedDiagnosis: c.sym, ambulanceGps: c.center, pre: !c.matched,
+    zoneActive: Array.from({ length: c.zone }, (_, i) => i + 1), zoneBandKm: c.zoneBandKm,
+    hospitals: c.hospitals.map(h => ({ ...h, status: statuses[h.st] })), events: [],
+  };
+  const changed = JSON.stringify(DEMO.cases) !== JSON.stringify(cases);
+  DEMO = { cases, sims };
+  hubCaseTick++;
+  if (changed) { onHubChange(true); scheduleFitAll(); }
+});
 
 // ── 아이패드 구급차 앱(embed + apid): 카메라가 내 사건을 따라간다 ──
 // 출동하면 현장으로, 이송이 확정되면 현장~병원이 다 보이게. 앱 쪽 화면 배치가 바뀌어(병원 리스트가 아래에서 올라옴) 지도 크기가
@@ -229,7 +253,7 @@ function applyOverview(m) {
 // ── 사건 → 화면 재료 ──
 const caseK = c => [1, 2, 3, 4, 5].includes(+c.ktasLevel) ? +c.ktasLevel : (SEV_K[c.severityTag] || 3);
 function casePos(c) {
-  const sim = c.apid ? HUB.sims[c.apid] : null;
+  const sim = c.apid ? (DEMO.sims[c.apid] || HUB.sims[c.apid]) : null;
   if (sim && sim.incident) return sim.incident;
   if (c.ambulanceGps) return c.ambulanceGps;
   return null;
@@ -384,7 +408,7 @@ function liveLayers(t) {
   for (const c of myCases()) {
     const pos = casePos(c); if (!pos) continue;
     const k = caseK(c), kc = kCol(k).slice(0, 3), pz = KTAS_Z[k];
-    const sim = c.apid ? HUB.sims[c.apid] : null;
+    const sim = c.apid ? (DEMO.sims[c.apid] || HUB.sims[c.apid]) : null;
     const confirmed = caseConfirmed(c);
     const arrived = sim && (sim.phase === 'at_hospital' || sim.phase === 'returning') && confirmed;
     if (!arrived) {
@@ -438,7 +462,7 @@ function liveLayers(t) {
   for (const sim of mySims()) {
     // 아이패드 구급차 화면(apid)에선 기지 대기 중인 내 구급차도 보인다 — 어디 있는지가 기준점이다
     if (!sim.gps || !sim.phase || (sim.phase === 'idle' && !(ONLY_APID && sim.apid === ONLY_APID))) continue;
-    const c = sim.caseId ? HUB.cases[sim.caseId] : null;
+    const c = sim.caseId ? (DEMO.cases[sim.caseId] || HUB.cases[sim.caseId]) : null;
     const k = c ? caseK(c) : 5, kc = c ? kCol(k).slice(0, 3) : [200, 200, 200];
     ambs.push({ pos: [sim.gps.lng, sim.gps.lat, 0], col: sim.phase === 'returning' ? GRAY : kc, me: !!ONLY_APID && sim.apid === ONLY_APID });
     const name = (HUB.overview && (HUB.overview.ambulances.find(a => a.apid === sim.apid) || {}).name) || sim.apid;
@@ -517,7 +541,7 @@ function renderLivePanel() {
   const cases = myCases().sort((a, b) => (a.num ?? 1e9) - (b.num ?? 1e9));
   if (!cases.length) { box.innerHTML = `<p class="note" style="margin:0">진행 중인 사건이 없습니다. 구급차 대시보드에서 [이동] → 현장 도착 → 휴대폰 전화 앱으로 통화하면 여기에 뜹니다.</p>`; return; }
   for (const c of cases) {
-    const k = caseK(c), sim = c.apid ? HUB.sims[c.apid] : null, confirmed = caseConfirmed(c), n = caseStatusCounts(c), sug = HUB.suggest[c.caseId];
+    const k = caseK(c), sim = c.apid ? (DEMO.sims[c.apid] || HUB.sims[c.apid]) : null, confirmed = caseConfirmed(c), n = caseStatusCounts(c), sug = HUB.suggest[c.caseId];
     const div = document.createElement('div'); div.className = 'lcase';
     const phase = sim ? (PHASE_LABEL[sim.phase] || sim.phase) : (c.pre ? '매칭 전' : '요청 중');
     div.innerHTML = `
@@ -559,7 +583,7 @@ async function condFor(c) {
 }
 async function refreshSuggest() {
   if (MODE !== 'live' || !$('suggest').checked) return;
-  const cases = myCases().filter(c => casePos(c));
+  const cases = myCases().filter(c => !DEMO.cases[c.caseId] && casePos(c));
   if (!cases.length) { HUB.suggest = {}; renderLivePanel(); return; }
   const seq = ++suggestSeq;
   const patients = [];

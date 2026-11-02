@@ -48,6 +48,7 @@ final class PhoneModel {
     var wantsExtraCall = false  // 현장에서 전달 뒤 [추가 통화]를 눌러 병원 목록을 다시 연 상태
     var tick = 0  // 화면 갱신용(통화 시간·레벨)
 
+    var needsInitialMapCenter = true
     var kakaoCamera: CameraPosition?
     var kakaoFittedPath: [[Double]] = []
     var animatedDeliveries: Set<String> = []
@@ -67,6 +68,8 @@ final class PhoneModel {
     /// 통화 화면 지도의 병원 핀 좌표 — hub map_overview(병원 목록)에서 hospitalId로 찾는다. 현장 후보 메시지엔 좌표가 없다
     var hospitalGps: [String: GPS] = [:]
     /// 현장에서 구급대원이 고른 Pre-KTAS(1~5). 지금은 화면에만 둔다 — hub 전송은 다음 작업(hub와 정하기로 함)
+    // 전화 연결 화면으로 전환되어도 병원 선택 모달 상태는 앱 모델에 보관한다.
+    var callHospitalListPresented = false
     var preKtas: Int?
     var bodyEdits = BodyEdits()       // 외상 도해에서 구급대원이 고친 부위·처치 — 새 사건이면 비운다
     var bodySentSignature = ""        // 마지막으로 병원에 보낸 도해 내용의 지문 — 그 뒤로 또 고쳤는지만 본다
@@ -231,16 +234,22 @@ final class PhoneModel {
             caseEdits.reconnect()
         case "ambulance_phase", "ambulance_position":
             guard let sim = try? dec.decode(AmbulanceSim.self, from: data) else { return }
-            if let path = sim.path { routePaths[sim.apid] = path }
-            else if sims[sim.apid]?.phase != sim.phase || sims[sim.apid]?.caseId != sim.caseId { routePaths[sim.apid] = nil }
+            let previous = sims[sim.apid]
+            routePaths[sim.apid] = RoadRoute.retainedPath(sim.path, previous: routePaths[sim.apid],
+                sameLeg: previous?.caseId == sim.caseId && previous?.phase == sim.phase && previous?.hospitalId == sim.hospitalId,
+                positionOnly: type == "ambulance_position")
             sims[sim.apid] = sim
-            if sim.apid == apid, sim.phase != .on_scene { wantsExtraCall = false }
+            if sim.apid == apid, sim.phase != .on_scene {
+                wantsExtraCall = false
+                callHospitalListPresented = false
+            }
             if sim.apid == apid { trackPhase(sim) }
             if fromMonitor { autoSwitch() }
         case "scene_candidates" where !fromMonitor:
             if let s = try? dec.decode(SceneCandidates.self, from: data) {
                 scenes[s.caseId] = s
-                if s.caseId == caseId, preKtas == nil { preKtas = s.preKtas }
+                // hub가 확정한 최신 선택을 반영해 아이패드와 버튼 상태도 맞춘다.
+                if s.caseId == caseId, let k = s.preKtas { preKtas = k }
             }
         case "scene_input_mode" where !fromMonitor:
             if let s = try? dec.decode(SceneInputMode.self, from: data) {
@@ -252,6 +261,9 @@ final class PhoneModel {
                 if s.requestId == callRequestId, s.caseId == call?.caseId, s.hospitalId == call?.hospitalId {
                     if s.state == "calling" { Task { await self.beginConnectedCall() } }
                     if ["no_answer", "cancelled"].contains(s.state) {
+                        if s.state == "no_answer", onScene, preKtas != nil {
+                            callHospitalListPresented = true
+                        }
                         session?.cancel(); session = nil; call = nil; callRequestId = nil
                         show(s.state == "no_answer" ? "전화 미응답 — 다음 추천 병원을 확인하세요" : "전화 요청이 취소됐습니다")
                     }
@@ -302,6 +314,13 @@ final class PhoneModel {
     }
 
     private func forget(_ caseId: String) {
+        // 시연 초기화의 case_closed가 오면 지도 위 병원 목록도 즉시 닫는다.
+        // 다른 구급차 사건 종료는 현재 보고 있는 목록에 영향을 주지 않는다.
+        if self.caseId == caseId {
+            callHospitalListPresented = false
+            preKtas = nil
+            wantsExtraCall = false
+        }
         closeRecord(caseId)
         results[caseId] = nil
         scenes[caseId] = nil; callStatus[caseId] = nil; hubTranscripts[caseId] = nil; sentCount[caseId] = nil
@@ -597,7 +616,7 @@ final class PhoneModel {
         recordsRev += 1
     }
 
-    private func resetBody() { bodyEdits = BodyEdits(); bodySentSignature = ""; preKtas = nil }
+    private func resetBody() { bodyEdits = BodyEdits(); bodySentSignature = ""; preKtas = nil; callHospitalListPresented = false }
 
     /// 외상 도해에서 고친 것을 한 번에 병원으로 — 부위는 증상(injuryStatus) 칸, 처치는 추가 정보 한 줄(아이패드 BodyInjuryCard.send와 같다)
     @discardableResult

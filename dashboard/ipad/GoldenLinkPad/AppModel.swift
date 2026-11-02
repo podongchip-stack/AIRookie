@@ -69,6 +69,7 @@ final class AppModel: ObservableObject {
     private var connectedAt: Date?
     @Published var responseLog: [ResponseEvent] = []
     /// 현장 Pre-KTAS(1~5) — 현장에 도착하면 1이 미리 골라져 있고, 바꾸면 hub가 첫 연락 추천 순서로 후보를 다시 보낸다(현장 화면)
+    var needsInitialMapCenter = true
     @Published var preKtas: Int?
     /// 통화 요약이 후보 병원들에 전달되는 연출(현장 지도 위, SceneScreen) — 끝나면 환자 정보로 넘어간다
     @Published var deliveryShow: DeliveryShow?
@@ -236,10 +237,14 @@ final class AppModel: ObservableObject {
             if let m = try? dec.decode(SceneCandidates.self, from: data) {
                 if let c = sim?.caseId, c != m.caseId { return }
                 scene = m
-                if preKtas == nil, let k = m.preKtas { preKtas = k }
+                // 다른 기기에서 바꾼 Pre-KTAS도 지도와 선택 버튼에 함께 반영한다.
+                if let k = m.preKtas { preKtas = k }
             }
         case "ambulance_phase", "ambulance_position":
-            if let m = try? dec.decode(AmbulanceSimState.self, from: data), m.apid == apid {
+            if var m = try? dec.decode(AmbulanceSimState.self, from: data), m.apid == apid {
+                m.path = RoadRoute.retainedPath(m.path, previous: sim?.path,
+                    sameLeg: sim?.caseId == m.caseId && sim?.phase == m.phase && sim?.hospitalId == m.hospitalId,
+                    positionOnly: type == "ambulance_position")
                 let previousCase = sim?.caseId
                 let previousPhase = sim?.phase
                 let previousIncident = sim?.incident

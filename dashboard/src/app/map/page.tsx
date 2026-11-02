@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
-import { DEMO_UNIT } from "@/lib/demo-unit";
 import { ControlMapPanel } from "@/components/map/ControlMapPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
@@ -27,7 +25,6 @@ import { useAutoDemo } from "@/lib/auto-demo";
 
 // 관제 지도(2026-10-03 신설, 2026-10-04 디자인 시안 "골든링크 관제"로 전면 개편). hub에 role=monitor로 붙어
 // 사건 요약·구급차 위치만 받는다 — 통화 전문 등 환자 상세는 받지 않는다(증상은 한 줄뿐).
-// 시연 조작을 열면 공통 DemoConsole이 별도 monitor 연결로 기존 시연 명령을 보낸다.
 // 병원 대시보드는 첫 페이지에서 접근 코드로 연다(병원 점에 마우스를 올리면 H-코드가 보인다).
 //
 // 왼쪽: 진행 중인 사건(중증도 → 시작 순) · 선택한 사건의 요청 병원(탭: 판단 대기/수용 불가/수용 승인)
@@ -37,13 +34,8 @@ import { useAutoDemo } from "@/lib/auto-demo";
 // 3D 거미줄(spider/serve.py, 포트 2700) 실시간 화면. 배포 도메인에선 같은 호스트의 /spider/ 아래로 열려 있고,
 // 로컬 개발(3000)에선 NEXT_PUBLIC_SPIDER_URL(예: http://localhost:2700/spider/)로 덮어쓴다.
 // 거미줄 파일(spider/web)을 고치면 SPIDER_BUILD와 spider/web/index.html의 ?v=를 같이 올린다 — 공개 도메인이 .js를 4시간 캐시해서 주소가 바뀌어야 새 파일을 받는다.
-const SPIDER_BUILD = "20261101c";
+const SPIDER_BUILD = "20261102a";
 const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? "/spider/"}?mode=live&embed=1&v=${SPIDER_BUILD}`;
-
-const DemoConsole = dynamic(() => import("@/components/control/DemoConsole").then((module) => module.DemoConsole), {
-  ssr: false,
-  loading: () => <div role="status" style={{ padding: 24 }}>시연 조작을 불러오는 중…</div>,
-});
 
 type MapView = "2d" | "3d";
 type Tab = "all" | St;
@@ -80,10 +72,6 @@ export default function MonitorMapPage() {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen?.();
   }, []);
-  const [consoleOpen, setConsoleOpen] = useState(false);
-  // 닫아도 컴포넌트는 유지해 작성 중 입력·대량사고 대기열·재생 타이머를 보존한다.
-  const [consoleMounted, setConsoleMounted] = useState(false);
-  const [, setConsoleApid] = useState<string | null>(null);
   const [showReject, setShowReject] = useState(false);
   // 사건별로 마지막으로 본 시각 — 그 뒤의 병원 응답이 "새 N"
   const [seenAt, setSeenAt] = useState<Record<string, number>>({});
@@ -101,9 +89,16 @@ export default function MonitorMapPage() {
     }),
     [state.monitorCases, state.caseMeta, state.preAlerts, state.ambulanceSim, overview],
   );
-  // 자동 시연(2026-10-06) — 콘솔로 실제 시연을 하지 않는 동안(실제 사건이 없을 때)만 이 화면 안에서 가짜 사건을 돌린다.
+  // 자동 시연(2026-10-06) — 실제 사건이 없을 때만 이 화면 안에서 가짜 사건을 돌린다.
   // hub·다른 대시보드·로그와 무관하고, 실제 사건이 생기면 가짜 사건은 바로 모두 사라진다(lib/auto-demo.ts).
-  const demo = useAutoDemo(realIncidents.length === 0 && !consoleMounted, overview, state.ambulanceSim);
+  const demo = useAutoDemo(realIncidents.length === 0, overview, state.ambulanceSim);
+  const demoSnapshot = useRef(demo);
+  useEffect(() => { demoSnapshot.current = demo; }, [demo]);
+  const pushDemo = useCallback(() => {
+    spiderRef.current?.contentWindow?.postMessage({ type: "goldenlink:auto-demo", ...demoSnapshot.current },
+      new URL(SPIDER_URL, window.location.href).origin);
+  }, []);
+  useEffect(() => { if (view === "3d") pushDemo(); }, [demo, view, pushDemo]);
   const incidents = useMemo(() => [...realIncidents, ...demo.incidents], [realIncidents, demo.incidents]);
   const ambulanceSim = useMemo(() => ({ ...state.ambulanceSim, ...demo.sims }), [state.ambulanceSim, demo.sims]);
   const selected = incidents.find((i) => i.caseId === selId) ?? incidents[0] ?? null;
@@ -113,19 +108,11 @@ export default function MonitorMapPage() {
   const selectCase = useCallback((caseId: string) => {
     setFocusNonce((n) => n + 1);
     setSelId(caseId);
-    const apid = realIncidents.find((incident) => incident.caseId === caseId)?.apid;
-    if (apid) setConsoleApid(apid);
     setTab("all");
     setSeenAt((prev) => ({ ...prev, [caseId]: Date.now() }));
-  }, [realIncidents]);
+  }, []);
 
-  const selectConsoleAmbulance = useCallback((apid: string | null) => {
-    setConsoleApid(apid);
-    const incident = realIncidents.find((item) => item.apid === apid);
-    if (incident) selectCase(incident.caseId);
-  }, [realIncidents, selectCase]);
-
-  // 콘솔로 새 실제 사건이 생기면 그 사건을 바로 고른다 — 지도도 그 사건 단계에 맞춰 자동으로 맞춰진다(ControlMapPanel)
+  // 새 실제 사건이 생기면 그 사건을 바로 고른다 — 지도도 그 사건 단계에 맞춰 자동으로 맞춰진다(ControlMapPanel)
   const knownRealRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     const ids = realIncidents.map((i) => i.caseId);
@@ -336,18 +323,6 @@ export default function MonitorMapPage() {
             <div style={{ width: 1, height: 16, background: "#CDD3DA" }} />
             <div style={{ fontSize: 13, color: C.ink3 }}>관제 지도 · 병원·구급차 실시간 위치</div>
             <div style={{ flex: "1 1 0" }} />
-            <button type="button" aria-expanded={consoleOpen} aria-controls="map-demo-console"
-              onClick={() => {
-                setConsoleMounted(true);
-                if (!consoleOpen) {
-                  const incident = realIncidents.find((item) => item.apid === DEMO_UNIT.apid);
-                  if (incident) selectCase(incident.caseId);
-                }
-                setConsoleOpen((open) => !open);
-              }}
-              style={{ ...tab2Style, minHeight: 40, background: consoleOpen ? C.navy : "#E8EEF8", color: consoleOpen ? "#fff" : C.navy }}>
-              {consoleOpen ? "관제 목록으로" : "시연 조작"}
-            </button>
             <button type="button" aria-label="지난 사건 보기" onClick={() => setShowPast(true)} style={toolBtnStyle}>
               지난 사건 <b style={{ fontWeight: 900 }}>오늘 {past.length}</b>
             </button>
@@ -411,17 +386,9 @@ export default function MonitorMapPage() {
         </div>
         <style>{"@keyframes ctlbl{0%,100%{opacity:1}50%{opacity:.3}}.ctl-live{animation:ctlbl 1.6s infinite}@keyframes ctlnew{0%,100%{background:#fff}50%{background:#FFD9D5}}.ctl-new{animation:ctlnew 1s ease-in-out 10;border-color:#D93025!important}.ctl-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C5CCD6 transparent}.ctl-scroll::-webkit-scrollbar{width:6px}.ctl-scroll::-webkit-scrollbar-thumb{background:#C5CCD6;border-radius:3px}"}</style>
 
-        <style>{`
-          .monitor-console-pane{flex:0 0 min(760px,56%);min-width:0;min-height:0;overflow:hidden;border:1px solid ${C.line};border-radius:6px;background:${C.bg}}
-          @media(max-width:1100px){
-            .monitor-workspace--control{flex-direction:column}
-            .monitor-workspace--control .monitor-console-pane{flex:0 0 55%;width:100%}
-            .monitor-workspace--control .monitor-ambulance-panel{display:none!important}
-          }
-        `}</style>
-        <div className={`monitor-workspace${consoleOpen ? " monitor-workspace--control" : ""}`} style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 16 }}>
+        <div className="monitor-workspace" style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 16 }}>
           {/* 왼쪽: 진행 중인 사건 · 지난 사건 · 선택한 사건의 병원 */}
-          <aside data-map-cover="left" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, alignSelf: "flex-start", maxHeight: "100%", display: consoleOpen ? "none" : "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+          <aside data-map-cover="left" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, alignSelf: "flex-start", maxHeight: "100%", display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
             <Glass dark={dark} style={{ ...cardStyle, flex: "none", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>진행 중인 사건 {incidents.length}건</div>
@@ -599,7 +566,7 @@ export default function MonitorMapPage() {
           </aside>
 
           {/* 오른쪽: 구급차 — 왼쪽 칼럼(사건 목록·사건 상세)과 짝으로 양쪽에 둬 지도를 가운데로 열어 둔다(2026-11-01) */}
-          <aside data-map-cover="right" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, marginLeft: "auto", alignSelf: "flex-start", maxHeight: "100%", display: consoleOpen ? "none" : "flex", flexDirection: "column", minHeight: 0 }}>
+          <aside data-map-cover="right" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, marginLeft: "auto", alignSelf: "flex-start", maxHeight: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
             <Glass dark={dark} style={{ ...cardStyle, flex: "0 1 auto", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>구급차 {ambRows.length}대</div>
@@ -660,19 +627,13 @@ export default function MonitorMapPage() {
             </Glass>
           </aside>
 
-          {consoleMounted && (
-            <section id="map-demo-console" aria-label="시연 조작" className="monitor-console-pane" style={{ display: consoleOpen ? "flex" : "none" }}>
-              <DemoConsole embedded activeApid={DEMO_UNIT.apid} onAmbulanceChange={selectConsoleAmbulance} />
-            </section>
-          )}
-
           {/* 오른쪽: 지도 + 하단 구급차 패널. 3D 보기 중에도 2D 지도는 숨기기만 해서 다시 켜도 지도가 초기화되지 않는다 */}
           {view === "3d" && (
             <iframe
               ref={spiderRef}
               title="3D 거미줄"
               src={SPIDER_URL}
-              onLoad={() => { setTimeout(focusSelected, 400); pushInsets(); }}
+              onLoad={() => { pushDemo(); setTimeout(focusSelected, 400); pushInsets(); }}
               style={{ position: "absolute", inset: 0, zIndex: 0, width: "100%", height: "100%", border: 0, background: "#0a1024" }}
             />
           )}

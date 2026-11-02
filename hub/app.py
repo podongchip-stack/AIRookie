@@ -517,6 +517,29 @@ def _feed_followup_vitals(voice: VoiceCallSummaryMessage, result) -> None:
     ))
 
 
+@app.post("/demo/route")
+def demo_route():
+    """화면 내부 자동 시연용 도로 조회. 실제 사건/로그를 만들지 않는다."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        origin = GpsPoint(**payload["origin"])
+        dest = GpsPoint(**payload["dest"])
+    except (KeyError, TypeError, ValidationError):
+        return jsonify({"error": "invalid coordinates"}), 400
+    if not all(-90 <= p.lat <= 90 and -180 <= p.lng <= 180 for p in (origin, dest)):
+        return jsonify({"error": "invalid coordinates"}), 400
+    if haversine_km(origin.lat, origin.lng, dest.lat, dest.lng) > 50:
+        return jsonify({"error": "demo trip too long"}), 400
+    with _geocode_lock:
+        now = time.time()
+        _geocode_calls[:] = [t for t in _geocode_calls if now - t < 60]
+        if len(_geocode_calls) >= GEOCODE_PER_MIN:
+            return jsonify({"error": "rate limited"}), 429
+        _geocode_calls.append(now)
+    route = router.route(origin, dest) if router else None
+    return jsonify({**(route or {"path": None}), "source": "rule"}), 200
+
+
 @app.get("/route")
 def get_route():
     """대시보드 지도용 도로 경로(2026-09-24). caseId의 구급차 위치 → hospitalId 병원까지

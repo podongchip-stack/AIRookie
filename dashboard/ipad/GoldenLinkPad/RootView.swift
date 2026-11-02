@@ -67,7 +67,8 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.2), value: model.notice)
         .sheet(isPresented: $showSettings) { SettingsView().environmentObject(model) }
         .fullScreenCover(isPresented: $showSurvival) { SurvivalModelScreen(isPresented: $showSurvival).environmentObject(model) }
-        // 앱을 켜면 [지도]부터        .onAppear { screenRaw = Screen.map.rawValue; model.start() }
+        // 앱을 켜면 [지도]부터 시작하고 hub 실시간 연결을 연다.
+        .onAppear { screenRaw = Screen.map.rawValue; model.start() }
         // 자동 전환: 음성 요약 첫 도착 → 환자 정보 → 이송 확정 → 이송. 언제든 상단바로 직접 바꿀 수 있다
         .onReceive(NotificationCenter.default.publisher(for: .switchScreen)) { n in
             guard let raw = n.userInfo?["screen"] as? String else { return }

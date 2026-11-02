@@ -38,6 +38,7 @@ interface FakeCase {
   zone: number;
   nextResponseAt: number;
   dest: LatLng | null;
+  road?: { phase: Phase; path: [number, number][]; at: number };
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -63,7 +64,9 @@ function hospitalsWithin(overview: MapOverview, scene: LatLng, zone: number, alr
 
 /** 한 단계 진행 — 끝난 사건이면 null */
 function advance(c: FakeCase, now: number, overview: MapOverview): FakeCase | null {
-  const elapsed = now - c.phaseAt;
+  const moving = ["dispatching", "transporting", "returning"].includes(c.phase);
+  if (moving && c.road?.phase !== c.phase) return c;
+  const elapsed = now - (moving ? c.road!.at : c.phaseAt);
   const next = (phase: Phase, patch: Partial<FakeCase> = {}): FakeCase => ({ ...c, ...patch, phase, phaseAt: now });
   switch (c.phase) {
     case "dispatching":
@@ -114,21 +117,24 @@ function advance(c: FakeCase, now: number, overview: MapOverview): FakeCase | nu
 }
 
 function positionOf(c: FakeCase, now: number): { gps: LatLng; path: [number, number][] | null } {
-  const t = (now - c.phaseAt) / (DUR[c.phase as keyof typeof DUR] ?? 1);
-  const line = (a: LatLng, b: LatLng): [number, number][] => [[a.lat, a.lng], [b.lat, b.lng]];
   const dest = c.dest ?? c.scene;
-  switch (c.phase) {
-    case "dispatching":
-      return { gps: lerp(c.base, c.scene, t), path: line(c.base, c.scene) };
-    case "transporting":
-      return { gps: lerp(c.scene, dest, t), path: line(c.scene, dest) };
-    case "at_hospital":
-      return { gps: dest, path: null };
-    case "returning":
-      return { gps: lerp(dest, c.base, t), path: line(dest, c.base) };
-    default:
-      return { gps: c.scene, path: null };
+  const origin = c.phase === "dispatching" ? c.base : c.phase === "returning" ? dest : c.scene;
+  if (["dispatching", "transporting", "returning"].includes(c.phase)) {
+    if (c.road?.phase !== c.phase) return { gps: origin, path: null };
+    const path = c.road.path;
+    const lengths = path.slice(1).map((p, i) => haversineKm(
+      { lat: path[i][0], lng: path[i][1] }, { lat: p[0], lng: p[1] }));
+    const t = Math.min(1, Math.max(0, (now - c.road.at) / DUR[c.phase as keyof typeof DUR]));
+    let remaining = lengths.reduce((a, b) => a + b, 0) * t;
+    for (let i = 0; i < lengths.length; i++) {
+      if (remaining <= lengths[i] || i === lengths.length - 1) {
+        return { gps: lerp({ lat: path[i][0], lng: path[i][1] },
+          { lat: path[i + 1][0], lng: path[i + 1][1] }, lengths[i] ? remaining / lengths[i] : 1), path };
+      }
+      remaining -= lengths[i];
+    }
   }
+  return { gps: c.phase === "at_hospital" ? dest : c.scene, path: null };
 }
 
 const SIM_PHASE: Record<Phase, AmbulanceSimState["phase"]> = {
@@ -160,6 +166,9 @@ export function useAutoDemo(
   useEffect(() => {
     if (!active) return;
     casesRef.current = []; // 다시 켜질 때는 지난 가짜 사건을 버리고 새로 시작한다
+    let cancelled = false;
+    const pending = new Set<string>();
+    const retryAt = new Map<string, number>();
     const tick = () => {
       const t = Date.now();
       const { overview: ov, realSim: sims } = inputRef.current;
@@ -188,13 +197,34 @@ export function useAutoDemo(
             }];
           }
         }
+        for (const c of next) {
+          if (!["dispatching", "transporting", "returning"].includes(c.phase) || c.road?.phase === c.phase) continue;
+          const key = `${c.caseId}:${c.phase}`;
+          if (pending.has(key) || t < (retryAt.get(key) ?? 0)) continue;
+          pending.add(key);
+          const origin = c.phase === "dispatching" ? c.base : c.phase === "returning" ? c.dest ?? c.scene : c.scene;
+          const dest = c.phase === "dispatching" ? c.scene : c.phase === "returning" ? c.base : c.dest ?? c.scene;
+          void (async () => {
+            try {
+              const r = await fetch("/api/demo/route", { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ origin, dest }), signal: AbortSignal.timeout(18000) });
+              const data = await r.json();
+              if (!r.ok || !Array.isArray(data.path) || data.path.length < 2
+                || !data.path.every((p: number[]) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite))) return;
+              if (cancelled) return;
+              casesRef.current = casesRef.current.map(v => v.caseId === c.caseId && v.phase === c.phase
+                ? { ...v, road: { phase: c.phase, path: data.path, at: Date.now() } } : v);
+            } catch { /* 도로 조회 실패 시 정차한 채 재시도한다. */ }
+            finally { pending.delete(key); retryAt.set(key, Date.now() + 10000); }
+          })();
+        }
         casesRef.current = next;
         setCases(next);
       }
     };
     tick();
     const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
+    return () => { cancelled = true; clearInterval(timer); };
   }, [active]);
 
   const incidents: Incident[] = [];

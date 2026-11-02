@@ -228,9 +228,9 @@ struct CallMapScreen: View {
     @Environment(PhoneModel.self) private var m
     @State private var tappedId: String?
     @State private var callCardHeight: CGFloat = 0
-    @State private var showCallHospitals = false
 
     var body: some View {
+        @Bindable var m = m
         guard let sim = m.mySim, let ambulanceGps = sim.gps else { return AnyView(EmptyView()) }
         let phase = m.phase
         let sentMode = m.onScene && m.sent && !m.wantsExtraCall
@@ -291,7 +291,7 @@ struct CallMapScreen: View {
                         PreKtasRow(onSelect: {
                             tappedId = nil
                             m.requestFirstCall()
-                            showCallHospitals = true
+                            m.callHospitalListPresented = true
                         })
                     } else {
                         HStack(spacing: 8) {
@@ -313,7 +313,7 @@ struct CallMapScreen: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         )
-        .sheet(isPresented: $showCallHospitals) {
+        .sheet(isPresented: $m.callHospitalListPresented) {
             NavigationStack {
                 VStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -339,7 +339,7 @@ struct CallMapScreen: View {
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 Button {
-                                    showCallHospitals = false
+                                    m.callHospitalListPresented = false
                                     Task { await m.dial(h) }
                                 } label: {
                                     Label("전화", systemImage: "phone.fill")
@@ -368,7 +368,7 @@ struct CallMapScreen: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    ToolbarItem(placement: .confirmationAction) { Button("닫기") { showCallHospitals = false } }
+                    ToolbarItem(placement: .confirmationAction) { Button("닫기") { m.callHospitalListPresented = false } }
                 }
             }
             .presentationDetents([.medium, .large])

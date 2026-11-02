@@ -148,6 +148,7 @@ private struct DeliveryOverlay: View {
 /// 통화만 없다 — 통화는 휴대폰 앱이 한다.
 struct SceneScreen: View {
     @EnvironmentObject private var model: AppModel
+    @State private var centerRequest = 0
     @State private var focusId: String?
     @State private var projector: MapProjector?
     @State private var mapMessage: String? = "카카오맵을 불러오는 중…"
@@ -161,14 +162,13 @@ struct SceneScreen: View {
     private var baseCoord: CLLocationCoordinate2D? { model.sim?.base?.coordinate }
     private var zoneKm: Double? { sent && phase == "on_scene" ? 5.0 * Double(model.result?.zoneActive?.max() ?? 1) : nil }
 
-    /// 도로 경로 — 남은 구간만. 경로가 없으면 출동 중에 한해 직선
+    /// hub가 준 도로 경로의 남은 구간. 경로가 없으면 임의의 직선을 만들지 않는다.
     private var route: [CLLocationCoordinate2D] {
         guard let sim = model.sim, let a = sim.gps else { return [] }
         if let path = sim.path {
             let rest = RoadRoute.remaining(path, latitude: a.lat, longitude: a.lng)
             if rest.count >= 2 { return rest.map { .init(latitude: $0[0], longitude: $0[1]) } }
         }
-        if phase == "dispatching", let i = sim.incident { return [a.coordinate, i.coordinate] }
         return []
     }
     private var etaMin: Int? { model.sim?.etaSec.map { max(1, Int(ceil($0 / 60))) } }
@@ -389,12 +389,12 @@ struct SceneScreen: View {
     private var roadPath: [[Double]] {
         guard let a = model.sim?.gps else { return [] }
         if let path = model.sim?.path { let rest = RoadRoute.remaining(path, latitude: a.lat, longitude: a.lng); if rest.count >= 2 { return rest } }
-        if phase == "dispatching", let i = model.sim?.incident { return [[a.lat, a.lng], [i.lat, i.lng]] }
         return []
     }
 
     private var mapCard: some View {
-        KakaoMapView(pins: pins, routePath: roadPath, zoneRadiusKm: zoneKm, fitKey: fitKey.joined(separator: "|"), fitPoints: fitPoints,
+        KakaoMapView(pins: pins, routePath: roadPath, zoneRadiusKm: zoneKm, fitKey: fitKey.joined(separator: "|"), fitPoints: fitPoints, centerRequest: centerRequest,
+                     initialCenter: model.needsInitialMapCenter, onInitialCenter: { model.needsInitialMapCenter = false },
                      onPin: { id in if candidates.contains(where: { $0.hospitalId == id }) { focusId = id } },
                      onProjector: { projector = $0 }, onMessage: { mapMessage = $0 })
             .id(Settings.kakaoNativeAppKey)
@@ -409,6 +409,21 @@ struct SceneScreen: View {
                     DeliveryOverlay(show: show, from: from, targets: deliveryTargets,
                                     project: { c in p.point(lat: c.latitude, lng: c.longitude) }, onSkip: { model.finishDelivery() })
                 }
+            }
+            .overlay(alignment: .topTrailing) {
+                Button { centerRequest += 1 } label: {
+                    Label("내 위치", systemImage: "location.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AD.blue)
+                        .padding(.horizontal, 16).frame(minHeight: 44)
+                        .background(.white, in: Capsule()).shadow(radius: 3)
+                }
+                .buttonStyle(.plain)
+                .padding(12)
+                .disabled(mapMessage != nil || !(model.sim?.gps.map {
+                    $0.lat.isFinite && $0.lng.isFinite && (-90...90).contains($0.lat) && (-180...180).contains($0.lng)
+                } ?? false))
+                .accessibilityHint("현재 구급차 위치로 지도를 이동합니다")
             }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AD.line, lineWidth: 1))

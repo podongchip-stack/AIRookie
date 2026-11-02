@@ -12,6 +12,38 @@ struct MapPin: Identifiable, Equatable {
     let kind: Kind
 }
 
+
+/// SDK의 PoiText 하나가 한 줄이다. 긴 이름은 폭에 맞춰 나누고 원문을 모두 보존한다.
+private enum MapNodeLabel {
+    static func texts(for pin: MapPin) -> [PoiText] {
+        guard !pin.name.isEmpty else { return [] }
+        guard pin.kind != .incident && pin.kind != .base else { return [PoiText(text: pin.name, styleIndex: 0)] }
+        let font = UIFont.systemFont(ofSize: 20)
+        let width: CGFloat = 160
+        var lines: [String] = []
+        for paragraph in pin.name.components(separatedBy: .newlines) {
+            var rest = paragraph.trimmingCharacters(in: .whitespaces)
+            while !rest.isEmpty {
+                var end = rest.startIndex
+                while end < rest.endIndex {
+                    let next = rest.index(after: end)
+                    let measured = (String(rest[..<next]) as NSString).size(withAttributes: [.font: font]).width
+                    if measured > width && end > rest.startIndex { break }
+                    end = next
+                }
+                // 가능하면 단어 사이에서 줄을 바꾸되, 공백 없는 긴 병원명도 잘라 표시한다.
+                if end < rest.endIndex, let space = rest[..<end].lastIndex(of: " "),
+                   rest.distance(from: rest.startIndex, to: space) >= rest.distance(from: rest.startIndex, to: end) / 2 {
+                    end = space
+                }
+                lines.append(String(rest[..<end]).trimmingCharacters(in: .whitespaces))
+                rest = String(rest[end...]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return lines.map { PoiText(text: $0, styleIndex: 0) }
+    }
+}
+
 private extension GPS {
     var mapPoint: MapPoint { MapPoint(longitude: lng, latitude: lat) }
     var validMapPoint: Bool { lat.isFinite && lng.isFinite && (-90...90).contains(lat) && (-180...180).contains(lng) }
@@ -53,9 +85,12 @@ struct CallMapView: View {
             .overlay(alignment: .topTrailing) {
                 Button { centerRequest += 1 } label: {
                     Label("내 위치", systemImage: "location.fill")
-                        .font(.system(size: 13, weight: .semibold)).padding(12)
+                        .font(.system(size: 13, weight: .semibold)).padding(.horizontal, 16).frame(minHeight: 44)
                         .background(.white, in: Capsule()).shadow(radius: 3)
-                }.padding(12).disabled(!pins.contains { $0.kind == .ambulance })
+                }
+                .padding(12)
+                .disabled(mapMessage != nil || !pins.contains { $0.kind == .ambulance && $0.pos.validMapPoint })
+                .accessibilityHint("현재 구급차 위치로 지도를 이동합니다")
             }
     }
 }
@@ -94,7 +129,8 @@ private struct KakaoCallMap: UIViewRepresentable {
         private var ambulanceLayer: LabelLayer?
         private var zoneLayer: ShapeLayer?
         private var pulseShape: MapPolygonShape?
-        private var routeLayer: RouteLayer?
+        private var routeLayer: ShapeLayer?
+        private var roadLine: MapPolylineShape?
         private var pois: [String: Poi] = [:]
         private var priorPins: [String: MapPin] = [:]
         private var priorStyles: [String: String] = [:]
@@ -134,9 +170,10 @@ private struct KakaoCallMap: UIViewRepresentable {
             stopped = true; pulseTask?.cancel(); pulseTask = nil
             observers.forEach(NotificationCenter.default.removeObserver); observers = []
             if let map { input.model.kakaoCamera = CameraUpdate.make(mapView: map).cameraPosition }
+            roadLine = nil
             map?.eventDelegate = nil
             controller?.pauseEngine(); controller?.resetEngine(); controller?.delegate = nil
-            pois = [:]; priorPins = [:]; priorStyles = [:]; pinLayer = nil; ambulanceLayer = nil; pulseShape = nil; zoneLayer = nil; map = nil; controller = nil
+            pois = [:]; priorPins = [:]; priorStyles = [:]; pinLayer = nil; ambulanceLayer = nil; pulseShape = nil; zoneLayer = nil; routeLayer = nil; map = nil; controller = nil
         }
         private func setAppActive(_ active: Bool) {
             guard !stopped else { return }
@@ -182,7 +219,9 @@ private struct KakaoCallMap: UIViewRepresentable {
                     let scale = max(kind == .ambulance ? 0.75 : 0.6, min(1.35, pow(1.18, Double(level - 15))))
                     let size = CGFloat(kind == .ambulance ? 22.4 : 21) * scale
                     let icon = PoiIconStyle(symbol: Self.marker(kind: kind, color: color, size: size))
-                    let fontSize = UInt(max(9, min(12, (11 * scale).rounded())))
+                    let baseFontSize = max(9, min(12, (11 * scale).rounded()))
+                    let nameScale = kind == .incident || kind == .base ? 1.0 : 1.5
+                    let fontSize = UInt((baseFontSize * nameScale).rounded())
                     let text = PoiTextStyle(textLineStyles: [PoiTextLineStyle(textStyle: TextStyle(fontSize: fontSize, fontColor: UIColor(AD.navy), strokeThickness: 2, strokeColor: .white))])
                     text.textLayouts = [.bottom]
                     return PerLevelPoiStyle(iconStyle: icon, textStyle: text, level: level)
@@ -202,9 +241,13 @@ private struct KakaoCallMap: UIViewRepresentable {
             shapes.addPolylineStyleSet(PolylineStyleSet(styleSetID: "zone-outline", styles: [CGFloat(0.9), 0.72].map { alpha in
                 PolylineStyle(styles: [PerLevelPolylineStyle(bodyColor: purple.withAlphaComponent(alpha), bodyWidth: 3, level: 0)])
             }, capType: .round))
-            let routes = view.getRouteManager()
-            routes.addRouteStyleSet(RouteStyleSet(styleID: "road", styles: [RouteStyle(styles: [PerLevelRouteStyle(width: 5, color: UIColor(AD.blue), strokeWidth: 1, strokeColor: .white, level: 0)])]))
-            routeLayer = routes.addRouteLayer(layerID: "route", zOrder: 10)
+            // hub의 도로 꼭짓점을 생략 없이 그려 짧은 도로·회전 구간도 표시한다.
+            shapes.addPolylineStyleSet(PolylineStyleSet(styleSetID: "road-line", styles: [
+                PolylineStyle(styles: [PerLevelPolylineStyle(bodyColor: UIColor(AD.blue), bodyWidth: 6,
+                    strokeColor: .white, strokeWidth: 2, level: 0)]),
+            ], capType: .round))
+            routeLayer = shapes.addShapeLayer(layerID: "road-line", zOrder: 100)
+            routeLayer?.visible = true
             message(nil); scheduleRender()
         }
         nonisolated func authenticationFailed(_ errorCode: Int, desc: String) {
@@ -268,12 +311,12 @@ private struct KakaoCallMap: UIViewRepresentable {
                         }
                     }
                     if priorPins[pin.id]?.name != pin.name || priorStyles[pin.id] != style {
-                        poi.changeTextAndStyle(texts: pin.name.isEmpty ? [] : [PoiText(text: pin.name, styleIndex: 0)], styleID: style)
+                        poi.changeTextAndStyle(texts: MapNodeLabel.texts(for: pin), styleID: style)
                     }
                 } else {
                     let options = PoiOptions(styleID: style, poiID: pin.id)
                     options.clickable = true; options.rank = pin.kind == .ambulance ? 30 : pin.kind == .selected ? 20 : 10
-                    if !pin.name.isEmpty { options.addText(PoiText(text: pin.name, styleIndex: 0)) }
+                    for text in MapNodeLabel.texts(for: pin) { options.addText(text) }
                     pois[pin.id] = layer.addPoi(option: options, at: pin.pos.mapPoint)
                     pois[pin.id]?.show()
                 }
@@ -282,12 +325,22 @@ private struct KakaoCallMap: UIViewRepresentable {
             }
             let routeChanged = input.routePath != priorRoute
             if routeChanged {
-                routeLayer?.clearAllRoutes()
                 let points = routePoints
                 if points.count > 1 {
-                    let options = RouteOptions(routeID: "road", styleID: "road", zOrder: 0)
-                    options.segments = [RouteSegment(points: points, styleIndex: 0)]
-                    routeLayer?.addRoute(option: options)?.show()
+                    let lines = [MapPolyline(line: points, styleIndex: 0)]
+                    if let roadLine {
+                        roadLine.changeStyleAndData(styleID: "road-line", lines: lines)
+                        roadLine.show()
+                    } else {
+                        let options = MapPolylineShapeOptions(shapeID: "road", styleID: "road-line", zOrder: 0)
+                        options.polylines = lines
+                        roadLine = routeLayer?.addMapPolylineShape(options)
+                        roadLine?.show()
+                    }
+                    routeLayer?.visible = true
+                } else {
+                    routeLayer?.clearAllShapes()
+                    roadLine = nil
                 }
                 priorRoute = input.routePath
             }
@@ -295,7 +348,21 @@ private struct KakaoCallMap: UIViewRepresentable {
             if map.margins != insets { map.setMargins(insets) }
             let ambulance = visible.first { $0.kind == .ambulance }
             if input.responseZone == nil, input.model.responseMapFocusKey != nil { input.model.responseMapFocusKey = nil }
-            if input.centerRequest != lastCenter, let ambulance {
+            if input.model.needsInitialMapCenter, let ambulance {
+                // 최초 GPS 수신까지 기다렸다가 한 번만 구급차를 중앙에 놓는다.
+                map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, zoomLevel: 15, mapView: map))
+                input.model.needsInitialMapCenter = false
+                lastCenter = input.centerRequest
+                firstCamera = false
+                input.model.routeFitRequest = nil
+                input.model.kakaoFittedPath = input.routePath
+                if let zone = input.responseZone {
+                    input.model.responseMapFocusKey = "\(input.model.caseId ?? "")-\(zone.radiusKm)"
+                }
+                if let key = input.sceneFocusKey, let hospital = visible.first(where: { $0.kind == .selected }) {
+                    input.model.sceneMapFocusKey = "\(key)-\(hospital.pos)-\(container.bounds.size)-\(input.bottomOverlayHeight)"
+                }
+            } else if input.centerRequest != lastCenter, let ambulance {
                 map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, mapView: map))
                 lastCenter = input.centerRequest
             } else if [.dispatching, .transporting, .returning].contains(input.model.phase),
