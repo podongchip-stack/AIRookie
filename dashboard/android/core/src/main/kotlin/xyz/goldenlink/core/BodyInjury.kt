@@ -32,7 +32,11 @@ data class BodyEdits(
     val cares: Map<BodyMark, List<String>> = emptyMap(),
 ) {
     /** 인계확인서 처치 칸으로 — "좌 다리 부목 고정" */
-    val careLines: List<String> get() = cares.flatMap { (mark, list) -> list.map { "${mark.label} $it" } }.sorted()
+    val careLines: List<String> get() = fittedCares.flatMap { (mark, list) -> list.map { "${mark.label} $it" } }.sorted()
+
+    /** 부위에 맞는 처치만 — 다른 기기에서 온 값이나 예전에 적은 값에 맞지 않는 처치(예: 팔에 산소투여)가 있어도 여기서 걸러진다 */
+    val fittedCares: Map<BodyMark, List<String>>
+        get() = cares.mapValues { (mark, list) -> list.filter { BodyCare.fits(mark, it) } }.filterValues { it.isNotEmpty() }
 
     /** hub로 보낼 증상 줄 — 구급대원이 찍은 부위 */
     val addedLines: List<String> get() = added.map { it.label + " 외상(구급대원 확인)" }.sorted()
@@ -40,7 +44,7 @@ data class BodyEdits(
     val isEmpty: Boolean get() = added.isEmpty() && removed.isEmpty() && careLines.isEmpty()
 
     /** 고친 부위 수(한 부위에 외상·처치를 같이 적어도 한 곳) */
-    val markCount: Int get() = (added + removed + cares.filterValues { it.isNotEmpty() }.keys).size
+    val markCount: Int get() = (added + removed + fittedCares.keys).size
 
     /** 지금 내용의 지문 — 보낸 뒤 또 바뀌었는지만 본다 */
     val signature: String
@@ -51,17 +55,52 @@ data class BodyEdits(
         if (on) copy(
             removed = if (fromCall) removed - mark else removed,
             added = if (fromCall) added else added + mark,
-            cares = if (careList.isEmpty()) cares - mark else cares + (mark to careList),
+            cares = careList.filter { BodyCare.fits(mark, it) }.let { fitted -> if (fitted.isEmpty()) cares - mark else cares + (mark to fitted) },
         ) else copy(
             removed = if (fromCall) removed + mark else removed,
             added = if (fromCall) added else added - mark,
             cares = cares - mark,
         )
+}
 
-    companion object {
-        /** 현장에서 손으로 적던 것들 — 서식의 처치 칸으로 분류되는 말로 둔다(`Handover.care`) */
-        val careOptions = listOf("지혈", "드레싱", "부목 고정", "경추보호대", "척추 고정", "냉찜질", "창상 세척", "산소 투여", "정맥로 확보")
+/**
+ * 외상 부위에서 고를 수 있는 처치. 어휘는 voice 처치판(2026-10-29)의 `treat_categories` 28범주이고, 한글 이름은 hub `voice_treatments.py`와
+ * 글자까지 같다 — 통화에서 AI가 뽑은 처치와 대원이 도해에서 고른 처치가 같은 문자열이라 서식·병원 화면에서 겹치지 않는다(`BodyCareTest`가 hub와 대조).
+ *
+ * 부위마다 **그 부위에 실제로 하는 처치만** 보인다. 산소·CPR·약물·정맥로처럼 부위에 속하지 않는 전신 처치는 여기에 없다 —
+ * 통화 요약의 처치로는 그대로 인계확인서에 들어간다. 부위별 목록은 전문의 검토 전 초안이다.
+ */
+object BodyCare {
+    class Item(val key: String, val label: String)
+
+    /** 28범주 전체(순서는 voice·hub와 같다) */
+    val all: List<Item> = listOf(
+        Item("oxygen", "산소투여"), Item("suction", "기도 흡인"), Item("foreign_body", "기도 이물 제거"), Item("airway_basic", "기본 기도확보"),
+        Item("airway_advanced", "전문 기도확보"), Item("ventilation", "인공호흡"), Item("cpr", "CPR"), Item("defib", "AED"),
+        Item("iv", "정맥로 확보"), Item("fluid", "수액공급"), Item("bleeding", "지혈"), Item("med_aspirin", "아스피린 투여"),
+        Item("med_nitro", "니트로글리세린 투여"), Item("med_glucose", "포도당 투여"), Item("med_epinephrine", "에피네프린 투여"),
+        Item("med_bronchodilator", "기관지확장제 투여"), Item("med_other", "기타 약물투여"), Item("spinal", "척추 고정"), Item("splint", "부목 고정"),
+        Item("wound", "상처처치"), Item("burn", "화상 처치"), Item("irrigation", "세척"), Item("cold_pack", "냉찜질"), Item("cooling", "냉각"),
+        Item("warming", "보온"), Item("position", "체위 조절"), Item("delivery", "분만 처치"), Item("other", "기타 처치"),
+    )
+
+    // 어느 부위에나 하는 처치
+    private val common = listOf("지혈", "상처처치", "화상 처치", "세척", "냉찜질", "체위 조절")
+    private const val SPLINT = "부목 고정"
+    private const val SPINAL = "척추 고정"
+    private val airway = listOf("기도 흡인", "기도 이물 제거")
+
+    /** 그 부위에서 고를 수 있는 처치 — 가장 해당되는 것이 앞에 온다 */
+    fun optionsFor(region: BodyRegion): List<String> = when (region) {
+        BodyRegion.ARM, BodyRegion.HAND, BodyRegion.LEG, BodyRegion.FOOT -> listOf(SPLINT) + common
+        BodyRegion.PELVIS -> listOf(SPLINT, SPINAL) + common
+        BodyRegion.HEAD, BodyRegion.BACK -> listOf(SPINAL) + common
+        BodyRegion.NECK -> listOf(SPINAL) + airway + common
+        BodyRegion.FACE -> airway + common
+        BodyRegion.CHEST, BodyRegion.ABDOMEN -> common
     }
+
+    fun fits(mark: BodyMark, label: String): Boolean = label in optionsFor(mark.region)
 }
 
 /** 통화 요약의 항목 하나와 그 항목이 가리키는 부위 */

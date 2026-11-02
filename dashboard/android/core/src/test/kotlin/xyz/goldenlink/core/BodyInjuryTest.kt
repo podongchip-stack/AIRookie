@@ -96,4 +96,48 @@ class BodyInjuryTest {
         assertEquals(setOf(head), off.removed)
         assertTrue(off.applied(head, true, emptyList(), fromCall = true).removed.isEmpty())
     }
+
+    @Test
+    fun careOptionsFitTheRegion() {
+        // 팔다리·골반은 부목, 머리·목·등·골반은 척추 고정, 얼굴·목은 기도 처치, 가슴·배는 공통만
+        for (r in listOf(BodyRegion.ARM, BodyRegion.HAND, BodyRegion.LEG, BodyRegion.FOOT, BodyRegion.PELVIS)) assertTrue("부목 고정" in BodyCare.optionsFor(r))
+        for (r in listOf(BodyRegion.HEAD, BodyRegion.NECK, BodyRegion.BACK, BodyRegion.PELVIS)) assertTrue("척추 고정" in BodyCare.optionsFor(r))
+        for (r in listOf(BodyRegion.FACE, BodyRegion.NECK)) assertTrue("기도 흡인" in BodyCare.optionsFor(r) && "기도 이물 제거" in BodyCare.optionsFor(r))
+        assertFalse("부목 고정" in BodyCare.optionsFor(BodyRegion.CHEST))
+        assertFalse("척추 고정" in BodyCare.optionsFor(BodyRegion.ARM))
+        // 전신 처치는 어느 부위에도 없다
+        val systemic = listOf("산소투여", "정맥로 확보", "CPR", "AED", "수액공급", "인공호흡", "보온", "냉각", "분만 처치", "아스피린 투여", "기본 기도확보")
+        for (r in BodyRegion.entries) for (t in systemic) assertFalse(t in BodyCare.optionsFor(r), "$r $t")
+        // 모든 선택지는 28범주 어휘 안에 있다
+        val all = BodyCare.all.map { it.label }.toSet()
+        for (r in BodyRegion.entries) assertTrue(all.containsAll(BodyCare.optionsFor(r)))
+        assertEquals(28, BodyCare.all.size)
+    }
+
+    @Test
+    fun misfitCaresAreDropped() {
+        val arm = mk(BodyRegion.ARM, BodySide.LEFT)
+        // 팔에 산소투여·척추 고정은 맞지 않아 적용 때 걸러진다
+        val e = BodyEdits().applied(arm, true, listOf("부목 고정", "산소투여", "척추 고정", "지혈"), fromCall = false)
+        assertEquals(listOf("좌 팔 부목 고정", "좌 팔 지혈"), e.careLines)
+        // 이미 들어와 있던 값(다른 기기·예전 값)도 읽을 때 걸러진다
+        val stale = BodyEdits(added = setOf(arm), cares = mapOf(arm to listOf("산소 투여", "정맥로 확보", "부목 고정")))
+        assertEquals(listOf("좌 팔 부목 고정"), stale.careLines)
+        assertEquals(1, stale.markCount)
+        val onlyMisfit = BodyEdits(cares = mapOf(arm to listOf("산소 투여")))
+        assertTrue(onlyMisfit.isEmpty)
+        assertEquals(0, onlyMisfit.markCount)
+    }
+
+    @Test
+    fun vocabularyMatchesHub() {
+        // hub/voice_treatments.py의 한글 이름과 글자까지 같아야 AI가 뽑은 처치와 겹치지 않는다. 저장소 밖에서 돌리면 건너뛴다
+        val file = java.io.File("../../../hub/voice_treatments.py")
+        org.junit.jupiter.api.Assumptions.assumeTrue(file.exists())
+        val text = file.readText(Charsets.UTF_8)
+        val start = text.indexOf("['산소투여'")
+        val end = text.indexOf("'기타 처치']") + "'기타 처치']".length
+        val hub = Regex("'([^']+)'").findAll(text.substring(start, end)).map { it.groupValues[1] }.toList()
+        assertEquals(hub, BodyCare.all.map { it.label })
+    }
 }

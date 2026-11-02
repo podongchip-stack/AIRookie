@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import xyz.goldenlink.core.BodyCare
 import xyz.goldenlink.core.BodyEdits
 import xyz.goldenlink.core.BodyGeometry
 import xyz.goldenlink.core.BodyMark
@@ -86,7 +87,7 @@ private class BodyView(p: PatientInfo, e: BodyEdits) {
             put(mark, maxOf(get(mark) ?: InjuryTier.LOW, InjuryRisk.tier(injury.text, mark.region)))
         }
         for (mark in e.added) {
-            val text = (listOf("외상") + (e.cares[mark] ?: emptyList())).joinToString(" ")
+            val text = (listOf("외상") + (e.fittedCares[mark] ?: emptyList())).joinToString(" ")
             put(mark, maxOf(get(mark) ?: InjuryTier.LOW, InjuryRisk.tier(text, mark.region)))
         }
     }
@@ -102,7 +103,7 @@ private class BodyView(p: PatientInfo, e: BodyEdits) {
     fun text(mark: BodyMark, e: BodyEdits): String {
         var texts = located.filter { mark in it.marks }.map { it.text }
         if (texts.isEmpty()) texts = listOf("외상(구급대원 확인)")
-        texts = texts + (e.cares[mark] ?: emptyList()).map { "처치 $it" }
+        texts = texts + (e.fittedCares[mark] ?: emptyList()).map { "처치 $it" }
         return texts.joinToString(" · ")
     }
 }
@@ -122,7 +123,7 @@ fun BodyPage(m: PhoneModel, p: PatientInfo) {
                     Column(Modifier.weight(1f)) {
                         Text("외상 부위", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
                     }
-                    p.ktasLevel?.let { Pill("KTAS $it", ktasColor(it), ktasSoft(it), bold = true) }
+                    p.ktasLevel?.let { Pill("Pre-KTAS $it", ktasColor(it), ktasSoft(it), bold = true) }
                     if (v.tiers.isNotEmpty()) Pill("${v.tiers.size}곳", AD.red, AD.redSoft, bold = true)
                     FaceSwitch(back, v) { back = it; tapped = null }
                 }
@@ -271,7 +272,7 @@ private fun SendBar(m: PhoneModel) {
 private fun BodyEditDialog(m: PhoneModel, mark: BodyMark, v: BodyView, onClose: () -> Unit) {
     val fromCall = mark in v.callMarks
     var on by remember { mutableStateOf(v.tiers.containsKey(mark)) }
-    val cares = remember { mutableStateListOf<String>().apply { addAll(m.bodyEdits.cares[mark] ?: emptyList()) } }
+    val cares = remember { mutableStateListOf<String>().apply { addAll(m.bodyEdits.fittedCares[mark] ?: emptyList()) } }
     val sharedBase = remember { m.caseEdits.fields }  // 연 시점의 공유 값 — 다른 기기가 그사이 같은 부위를 고쳤는지 비교하는 기준
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.safeDrawingPadding().padding(12.dp).clip(cardShape).background(AD.white).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -290,14 +291,17 @@ private fun BodyEditDialog(m: PhoneModel, mark: BodyMark, v: BodyView, onClose: 
                 }
             }
             if (on) {
+                // 이 부위에 실제로 하는 처치만 보인다(산소·약물·정맥로 같은 전신 처치는 부위가 아니라 통화 요약으로 들어간다)
+                Text("이 부위에 한 처치", fontSize = 11.5.sp, color = AD.sub)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (o in BodyEdits.careOptions) {
+                    for (o in BodyCare.optionsFor(mark.region)) {
                         val sel = o in cares
                         Text(o, fontSize = 12.5.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium, color = if (sel) Color.White else AD.ink3,
                             modifier = Modifier.clip(CircleShape).background(if (sel) AD.blue else AD.chip)
                                 .clickable { if (sel) cares.remove(o) else cares.add(o) }.padding(horizontal = 12.dp, vertical = 7.dp))
                     }
                 }
+                Text("부위별 처치 목록은 전문의 검토 전 초안입니다", fontSize = 11.sp, color = AD.muted)
             }
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(AD.blue)
                 .clickable { m.bodyEdits = m.bodyEdits.applied(mark, on, cares.toList(), fromCall); m.shareBody(mark, sharedBase); onClose() },

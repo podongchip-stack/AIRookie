@@ -26,6 +26,7 @@ import xyz.goldenlink.core.ActionRefused
 import xyz.goldenlink.core.AmbulancePhase
 import xyz.goldenlink.core.AmbulanceSim
 import xyz.goldenlink.core.ApprovalAction
+import xyz.goldenlink.core.BodyCare
 import xyz.goldenlink.core.BodyEdits
 import xyz.goldenlink.core.BodyMark
 import xyz.goldenlink.core.BodyRegion
@@ -840,7 +841,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     fun shareBody(mark: BodyMark, base: Map<String, String>) {
         val id = caseId ?: return
         val key = "b:" + mark.region.label + ":" + when (mark.side) { BodySide.LEFT -> "좌"; BodySide.RIGHT -> "우"; BodySide.UNKNOWN -> "" }
-        val value = SharedBodyValue(mark in bodyEdits.added, mark in bodyEdits.removed, bodyEdits.cares[mark] ?: emptyList())
+        val value = SharedBodyValue(mark in bodyEdits.added, mark in bodyEdits.removed, bodyEdits.fittedCares[mark] ?: emptyList())
         caseEdits.submit(id, mapOf(key to hubJson.encodeToString(SharedBodyValue.serializer(), value)), base)
     }
 
@@ -855,7 +856,9 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
             val mark = BodyMark(region, when (parts[2]) { "좌" -> BodySide.LEFT; "우" -> BodySide.RIGHT; else -> BodySide.UNKNOWN })
             if (value.added) added = added + mark
             if (value.removed) removed = removed + mark
-            if (value.cares.isNotEmpty()) cares = cares + (mark to value.cares)
+            // 부위에 맞지 않는 처치(예전 값·다른 기기 값)는 받지 않는다
+            val kept = value.cares.filter { BodyCare.fits(mark, it) }
+            if (kept.isNotEmpty()) cares = cares + (mark to kept)
         }
         bodyEdits = BodyEdits(added, removed, cares)
     }
