@@ -68,7 +68,7 @@ const BASE={
     layers:[{id:'b',type:'raster',source:'b',paint:{'raster-brightness-max':.45,'raster-saturation':-.6,'raster-contrast':.15}}]},
   esri:{version:8,sources:{b:{type:'raster',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'],tileSize:256,maxzoom:16,attribution:'Esri, HERE, Garmin, © OpenStreetMap contributors'}},layers:[{id:'b',type:'raster',source:'b'}]},
   osm:{version:8,sources:{b:{type:'raster',tiles:['https://tile.openstreetmap.de/{z}/{x}/{y}.png'],tileSize:256,maxzoom:18,attribution:'© OpenStreetMap contributors (openstreetmap.de)'}},layers:[{id:'b',type:'raster',source:'b',paint:{'raster-brightness-max':.42,'raster-saturation':-.7,'raster-contrast':.15}}]}};
-const {DeckGL, ColumnLayer, ScatterplotLayer, LineLayer, PathLayer, PolygonLayer, TripsLayer, TextLayer, SimpleMeshLayer} = deck;
+const {DeckGL, ColumnLayer, ScatterplotLayer, LineLayer, PathLayer, PolygonLayer, TripsLayer, TextLayer, SimpleMeshLayer, IconLayer} = deck;
 // 병원 표시 방식: sphere(3D 구만) / node(공중 노드+줄기) / beams(빛기둥)
 let HMODE='node';   // 기본은 공중 노드(2026-10-15 요청) — 버튼으로 3D 구·빛기둥으로 바꿀 수 있다
 // 단위 구 메시 (SimpleMeshLayer용) — 외부 의존 없이 직접 만든다

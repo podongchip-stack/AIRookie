@@ -17,6 +17,67 @@ const PHASE_LABEL = { idle: '대기', dispatching: '출동 중', on_scene: '현�
 const STATUS_LABEL = { pending: '판단 대기', approved: '수용 승인', rejected: '수용 불가', confirmed: '이송 확정' };
 const OK_COL = [94, 227, 127], SUG_COL = [127, 255, 212], GRAY = [124, 123, 116];
 
+// ── 지도 아이콘(아이패드 embed 전용, 2026-11-03) — 안드로이드·아이폰 통화 지도와 같은 그림·같은 크기 규격 ──
+// 그림은 안드로이드 MapIcons.kt의 구급차(위에서 본 모양 + 지붕 경광등이 빨강↔파랑으로 깜빡임)·병원(파란 사각형 + 십자)·
+// 사건 현장(빨간 경고판)·센터(회색 집)를 캔버스로 옮긴 것이고, 그림의 긴 변을 26px로 고정한다(줌에 따라 안 변함).
+// 구급차는 안드로이드처럼 진행 방향으로 돌지는 않는다(기울인 3D 지도에서 방향 회전은 어긋나 보인다) — 모양·색·크기·깜빡임만 맞춘다.
+// PC 브라우저 화면(embed 아님)은 기존 거미줄 표시 그대로다.
+const MAP_ICON_PX = 26, ICON_SCALE = 4, ICON_PAD = 1.5;
+const mapIconCache = {};
+function mapIcon(kind, variant) {
+  const key = kind + (variant === undefined ? '' : ':' + variant);
+  if (mapIconCache[key]) return mapIconCache[key];
+  // 각 그림이 차지하는 영역(글리프 좌표) — 긴 변이 26px이 되도록 높이를 정한다
+  const spec = { ambulance: { x: 6.5, y: 5, w: 27, h: 54 }, hospital: { x: 3, y: 3, w: 26, h: 26 }, incident: { x: 13, y: 13, w: 34, h: 31 }, base: { x: 3, y: 4, w: 24, h: 22 } }[kind];
+  const cw = Math.ceil((spec.w + 2 * ICON_PAD) * ICON_SCALE), ch = Math.ceil((spec.h + 2 * ICON_PAD) * ICON_SCALE);
+  const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+  const g = cv.getContext('2d');
+  g.scale(ICON_SCALE, ICON_SCALE); g.translate(ICON_PAD - spec.x, ICON_PAD - spec.y);
+  const RED = '#D93025', WHITE = '#FFFFFF';
+  const rr = (x, y, w, h, r, fill, stroke, lw) => {
+    g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);   // roundRect는 iOS 16부터라 없으면 각진 사각형으로
+    if (fill) { g.fillStyle = fill; g.fill(); }
+    if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw || 1; g.stroke(); }
+  };
+  const poly = (pts, fill, stroke, lw) => {
+    g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.closePath();
+    g.fillStyle = fill; g.fill();
+    if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw || 1; g.lineJoin = 'round'; g.stroke(); }
+  };
+  if (kind === 'ambulance') {
+    const beaconOn = variant === 1;
+    const red = beaconOn ? '#FF3B30' : '#7A2623', blue = beaconOn ? '#2A4C80' : '#3B8CFF';
+    rr(9, 5, 22, 54, 7, '#F8FAFD', '#B4BDCA', 1);
+    rr(9.6, 33, 1.4, 22, 0, RED); rr(29, 33, 1.4, 22, 0, RED);
+    poly([[12, 21], [13.5, 11], [26.5, 11], [28, 21]], '#27364A');
+    rr(6.5, 17, 2.5, 5, 1, '#8F9AAA'); rr(31, 17, 2.5, 5, 1, '#8F9AAA');
+    g.beginPath(); g.arc(beaconOn ? 15 : 25, 27.5, 8, 0, Math.PI * 2); g.fillStyle = beaconOn ? 'rgba(255,59,48,0.33)' : 'rgba(59,140,255,0.33)'; g.fill();
+    rr(11, 25, 9, 5, 1.5, red); rr(20, 25, 9, 5, 1.5, blue);
+    rr(15.5, 43.6, 9, 3, 0, RED); rr(18.5, 40.6, 3, 9, 0, RED);
+    rr(12, 54, 16, 0.8, 0, '#C9D0DA');
+    rr(11, 56, 3, 2, 0, RED); rr(26, 56, 3, 2, 0, RED);
+  } else if (kind === 'hospital') {
+    rr(3, 3, 26, 26, 6, variant || '#1F4E9C', WHITE, 1.5);
+    rr(8.5, 13.5, 15, 5, 0, WHITE); rr(13.5, 8.5, 5, 15, 0, WHITE);
+  } else if (kind === 'incident') {
+    poly([[30, 13], [47, 44], [13, 44]], RED, WHITE, 2);
+    rr(28.4, 24, 3.2, 11, 1.6, WHITE);
+    g.beginPath(); g.arc(30, 39.5, 1.9, 0, Math.PI * 2); g.fillStyle = WHITE; g.fill();
+  } else if (kind === 'base') {
+    poly([[15, 4], [27, 14], [23, 14], [23, 26], [7, 26], [7, 14], [3, 14]], '#5A6676', WHITE, 1.5);
+    rr(12, 18, 6, 8, 0, WHITE);
+  }
+  const icon = { url: cv.toDataURL('image/png'), width: cw, height: ch, anchorX: cw / 2, anchorY: ch / 2, size: MAP_ICON_PX * ch / (Math.max(spec.w, spec.h) * ICON_SCALE) };
+  mapIconCache[key] = icon;
+  return icon;
+}
+const isEmbedMap = () => document.body.classList.contains('embed');
+function iconLayer(id, data, kind, variant, extra) {
+  const icon = mapIcon(kind, variant);
+  return new IconLayer({ id, data, getPosition: d => d.pos, getIcon: () => icon, getSize: icon.size, sizeUnits: 'pixels', billboard: true,
+    parameters: { depthTest: false }, ...(extra || {}) });
+}
+
 
 // ── 아이패드 구급차 앱(embed + apid): 카메라가 내 사건을 따라간다 ──
 // 출동하면 현장으로, 이송이 확정되면 현장~병원이 다 보이게. 앱 쪽 화면 배치가 바뀌어(병원 리스트가 아래에서 올라옴) 지도 크기가
@@ -381,6 +442,7 @@ function liveLayers(t) {
   const hs = HS(), pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350), air = $('air').checked;
   const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [], bestTexts = [];
   const top = h => [h.lng, h.lat, ZH(h.z) * hs];
+  const EMB = isEmbedMap(), destIcons = [], baseIcons = [];   // 아이패드 embed: 목적지 병원·센터 아이콘(안드로이드와 같은 핀 정책)
   for (const c of myCases()) {
     const pos = casePos(c); if (!pos) continue;
     const k = caseK(c), kc = kCol(k).slice(0, 3), pz = KTAS_Z[k];
@@ -405,7 +467,7 @@ function liveLayers(t) {
       let col, w, a;
       if (st === 'confirmed') { col = kc; w = 3; a = 240; }
       else { col = OK_COL; w = isBest ? 3 : 1.8; a = isBest ? 235 : 170; }
-      if (st === 'confirmed' && sim && sim.path && (sim.phase === 'transporting' || sim.phase === 'at_hospital')) {
+      if (st === 'confirmed' && sim && sim.path && (sim.phase === 'transporting' || (sim.phase === 'at_hospital' && !EMB))) {
         // 확정 병원으로는 hub(카카오 내비)가 준 실제 이송 경로를 그린다 — 지나온 구간 회색, 남은 구간 KTAS 색
         const sp = splitPath(sim.path, sim.gps || pos);
         if (sp.done.length > 1) donePaths.push({ path: sp.done });
@@ -413,6 +475,8 @@ function liveLayers(t) {
       } else if (!arrived) {
         lines.push({ a: [pos.lng, pos.lat, 0], b: [h.lng, h.lat, 0], col: [...col, a], w });
       }
+      // 이송 중·도착·재선택 중에는 목적지(확정) 병원에 병원 아이콘을 둔다 — 안드로이드 통화 지도와 같다
+      if (EMB && st === 'confirmed' && sim && (sim.phase === 'transporting' || sim.phase === 'at_hospital' || sim.phase === 'rerouting')) destIcons.push({ pos: [h.lng, h.lat, 0] });
       if (air && !arrived) {
         airLines.push({ a: [pos.lng, pos.lat, ZH(pz) * hs], b: top(h), col: [...col, st === 'pending' ? 35 : a], w: st === 'pending' ? 0.8 : w });
       }
@@ -442,6 +506,7 @@ function liveLayers(t) {
     const k = c ? caseK(c) : 5, kc = c ? kCol(k).slice(0, 3) : [200, 200, 200];
     ambs.push({ pos: [sim.gps.lng, sim.gps.lat, 0], col: sim.phase === 'returning' ? GRAY : kc, me: !!ONLY_APID && sim.apid === ONLY_APID });
     const name = (HUB.overview && (HUB.overview.ambulances.find(a => a.apid === sim.apid) || {}).name) || sim.apid;
+    if (EMB && sim.base && (sim.phase === 'dispatching' || sim.phase === 'returning')) baseIcons.push({ pos: [sim.base.lng, sim.base.lat, 0] });
     ambTexts.push({ pos: [sim.gps.lng, sim.gps.lat, 0], name: shortUnit(name), phase: sim.phase, paused: sim.paused, me: !!ONLY_APID && sim.apid === ONLY_APID });
     if (sim.path && (sim.phase === 'dispatching' || sim.phase === 'returning' || sim.phase === 'rerouting')) {
       const sp = splitPath(sim.path, sim.gps);
@@ -479,7 +544,8 @@ function liveLayers(t) {
   L.push(new ScatterplotLayer({ id: 'lv-occ', data: occ, radiusUnits: 'meters', getRadius: 290 + pulse * 60, getPosition: d => top(d.h), getFillColor: [79, 209, 255, 0], stroked: true, getLineColor: [79, 209, 255, 200], lineWidthMinPixels: 2, parameters: { depthTest: false }, updateTriggers: { getRadius: [animTick] } }));
   L.push(new TextLayer({ id: 'lv-occ-txt', data: occLabels, getPosition: d => top(d.h), getText: d => d.label, getSize: 12, characterSet: 'auto', getColor: [79, 209, 255, 255], getPixelOffset: [0, -36], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
   L.push(new ScatterplotLayer({ id: 'lv-light-glow', data: lights, radiusUnits: 'meters', getRadius: 160 + pulse * 40, getPosition: d => d.pos, getFillColor: d => [...kCol(d.k).slice(0, 3), 90], parameters: ADD, updateTriggers: { getRadius: [animTick] } }));
-  L.push(new ScatterplotLayer({ id: 'lv-light', data: lights, radiusUnits: 'meters', getRadius: 45, radiusMinPixels: 4, getPosition: d => d.pos, getFillColor: d => kCol(d.k), stroked: true, getLineColor: [255, 255, 255, 230], lineWidthMinPixels: 1.5, parameters: { depthTest: false } }));
+  if (EMB) L.push(iconLayer('lv-light', lights, 'incident'));   // 사건 현장: 빨간 경고판(KTAS 색은 아래 번짐 원이 그대로 알린다)
+  else L.push(new ScatterplotLayer({ id: 'lv-light', data: lights, radiusUnits: 'meters', getRadius: 45, radiusMinPixels: 4, getPosition: d => d.pos, getFillColor: d => kCol(d.k), stroked: true, getLineColor: [255, 255, 255, 230], lineWidthMinPixels: 1.5, parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-light-txt', data: lightLabels, getPosition: d => d.pos, getText: d => d.text, getSize: 12, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, -16], fontFamily: css('--mono'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
   // 이송 중 더 나은 병원(앱이 보낸 것) — 내 구급차 화면에서만
   if (ONLY_APID && BETTER.length) {
@@ -493,7 +559,12 @@ function liveLayers(t) {
   const NK = zoomK();
   L.push(new ScatterplotLayer({ id: 'lv-amb-glow', data: ambs, radiusUnits: 'pixels', getRadius: d => (d.me ? 22 : 11) * (1 + 0.25 * pulse), getPosition: d => d.pos, getFillColor: d => d.me ? [79, 209, 255, 110] : [...d.col, 110], parameters: ADD, updateTriggers: { getRadius: [animTick], getPosition: [performance.now() | 0] } }));
   L.push(new ScatterplotLayer({ id: 'lv-amb-ring', data: ambs.filter(d => d.me), radiusUnits: 'pixels', getRadius: 13 + 10 * pulse, getPosition: d => d.pos, getFillColor: [0, 0, 0, 0], stroked: true, getLineColor: [79, 209, 255, Math.round(230 * (1 - pulse))], lineWidthUnits: 'pixels', getLineWidth: 2, parameters: { depthTest: false }, updateTriggers: { getRadius: [animTick], getLineColor: [animTick], getPosition: [performance.now() | 0] } }));
-  L.push(new ScatterplotLayer({ id: 'lv-amb', data: ambs, radiusUnits: 'pixels', getRadius: d => (d.me ? 9 : 5.5) * Math.max(0.8, NK), getPosition: d => d.pos, getFillColor: [255, 255, 255, 255], stroked: true, getLineColor: d => d.me ? [79, 209, 255, 255] : [...d.col, 255], lineWidthUnits: 'pixels', getLineWidth: d => d.me ? 3.5 : 2.5, parameters: { depthTest: false }, updateTriggers: { getRadius: [Math.round(VIEW.zoom * 10)], getPosition: [performance.now() | 0] } }));
+  if (EMB) {
+    // 구급차: 위에서 본 구급차 그림 26px 고정, 경광등이 번갈아 깜빡인다(안드로이드와 같은 주기 — 애니메이션 틱의 짝·홀)
+    L.push(iconLayer('lv-amb', ambs, 'ambulance', (animTick | 0) % 2, { updateTriggers: { getIcon: [animTick], getPosition: [performance.now() | 0] } }));
+    L.push(iconLayer('lv-base', baseIcons, 'base'));
+    L.push(iconLayer('lv-dest', destIcons, 'hospital', '#1F4E9C'));
+  } else L.push(new ScatterplotLayer({ id: 'lv-amb', data: ambs, radiusUnits: 'pixels', getRadius: d => (d.me ? 9 : 5.5) * Math.max(0.8, NK), getPosition: d => d.pos, getFillColor: [255, 255, 255, 255], stroked: true, getLineColor: d => d.me ? [79, 209, 255, 255] : [...d.col, 255], lineWidthUnits: 'pixels', getLineWidth: d => d.me ? 3.5 : 2.5, parameters: { depthTest: false }, updateTriggers: { getRadius: [Math.round(VIEW.zoom * 10)], getPosition: [performance.now() | 0] } }));
   L.push(new TextLayer({ id: 'lv-amb-txt', data: ambLabels, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [242, 241, 236, 255], getPixelOffset: [0, 16], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false }, updateTriggers: { getPosition: [performance.now() | 0] } }));
   return L;
 }
