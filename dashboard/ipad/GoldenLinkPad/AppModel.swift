@@ -238,7 +238,7 @@ final class AppModel: ObservableObject {
                 if let c = sim?.caseId, c != m.caseId { return }
                 scene = m
                 // 다른 기기에서 바꾼 Pre-KTAS도 지도와 선택 버튼에 함께 반영한다.
-                if let k = m.preKtas { preKtas = k }
+                preKtas = m.preKtas
             }
         case "ambulance_phase", "ambulance_position":
             if var m = try? dec.decode(AmbulanceSimState.self, from: data), m.apid == apid {
@@ -261,7 +261,7 @@ final class AppModel: ObservableObject {
                     preKtas = nil; deliveryShow = nil
                     requestScreen(.map)      // 새 출동은 지도에서 시작한다(안드로이드와 같은 흐름)
                 }
-                if m.phase == "on_scene", m.phase != previousPhase || m.caseId != previousCase, preKtas == nil, result == nil { preKtas = 1; requestFirstCall() }
+                if m.phase == "on_scene", m.phase != previousPhase || m.caseId != previousCase, preKtas == nil, scene?.preKtasCleared != true, result == nil { preKtas = 1; requestFirstCall() }
                 if m.phase != previousPhase || m.caseId != previousCase { recordPhaseTime(m.phase); if let c = m.caseId { snapshotCase(c) } }
                 if m.incident?.lat != previousIncident?.lat || m.incident?.lng != previousIncident?.lng {
                     incidentAddress = nil

@@ -167,6 +167,7 @@ public struct SceneCandidates: Decodable, Equatable {
     /// 도착 시간순(hub가 정한 순서 그대로 쓴다)
     public let hospitals: [SceneCandidate]
     public let preKtas: Int?
+    public let preKtasCleared: Bool?
     public let callAttempts: [String]?
     public let firstCallExhausted: Bool?
     public let reportedSymptom: String?

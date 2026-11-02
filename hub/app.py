@@ -1073,9 +1073,17 @@ def _apply_first_call(ws, payload):
         _send_to_socket(ws, {"type": "first_call_error", "message": "현재 구급대 사건이 아닙니다"}, "첫 통화")
         return
     k = payload.get("ktas")
-    if type(k) is not int or k not in range(1, 6) or _case_paused(case_id):
+    clearing = "ktas" in payload and k is None
+    if _case_paused(case_id) or (not clearing and (type(k) is not int or k not in range(1, 6))):
         return
     previous = _case_scene.get(case_id, {})
+    if clearing:
+        _first_call_coordinator.release(case_id)
+        _case_recommended.pop(case_id, None)
+        _case_scene[case_id] = {**previous, "preKtas": None, "preKtasCleared": True}
+        gps = previous.get("ambulanceGps")
+        _send_scene_candidates(case_id, apid, GpsPoint(**gps) if gps else None)
+        return
     if previous.get("preKtas") != k:
         _first_call_coordinator.release(case_id)
     attempts = list(previous.get("callAttempts", []))
@@ -1089,7 +1097,7 @@ def _apply_first_call(ws, payload):
             decision_log.log_decision("first_call_no_answer", {"caseId": case_id, "hospitalId": hid, "source": "rule"})
     # 원래 현장 좌표를 유지하며 재연결/KTAS 변경에도 미응답 이력을 보존한다.
     gps = previous.get("ambulanceGps")
-    _case_scene[case_id] = {**previous, "preKtas": k, "callAttempts": attempts}
+    _case_scene[case_id] = {**previous, "preKtas": k, "preKtasCleared": False, "callAttempts": attempts}
     _send_scene_candidates(case_id, apid, GpsPoint(**gps) if gps else None)
 
 
@@ -1161,7 +1169,7 @@ def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None 
         "ambulanceGpsFallback": fallback,
         "zoneActive": list(range(1, zone + 1)),
         "hospitals": hospitals,
-        "preKtas": k, "callAttempts": attempts,
+        "preKtas": k, "preKtasCleared": previous.get("preKtasCleared", False), "callAttempts": attempts,
         "firstCallExhausted": k is not None and not any(h.get("firstCallRecommended") for h in hospitals),
         "reportedSymptom": pre.get("reportedSymptom"),
         "reportedSeverity": reported_severity,

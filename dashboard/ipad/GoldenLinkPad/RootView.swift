@@ -22,37 +22,42 @@ struct RootView: View {
                 TopBar(showSurvival: $showSurvival, showSettings: $showSettings, screenRaw: $screenRaw)
                 CaseEditStatusView(sync: model.caseEdits, onlyPending: true)
                 callBanner
-                if screen == .records {
-                    // [기록] — 사건이 없어도 지난 사건 기록은 본다(2026-11-02)
-                    RecordsView()
-                } else if screen == .map {
-                    // [지도](2026-11-02) — 안드로이드 [통화] 탭과 같은 흐름: 출동 경로 → 현장 Pre-KTAS·후보 → 요약 전달 연출 → 응답·이송. 통화만 없다
-                    if model.hasIncident { SceneScreen() } else { IdleWaitingCard() }
-                } else if !model.hasIncident {
-                    // 출동도 사건도 전혀 없는 평상시(2026-10-29) — 탭을 골라도 보여줄 게 없으니 대기 화면 하나로 통일
-                    IdleWaitingCard()
-                } else if screen == .transport {
-                    TransportScreen()
-                } else if let hold = stageHold {
-                    // 현장으로 가는 중·현장 확인 중엔 아직 채울 환자 정보가 없다(2026-10-28) —
-                    // 빈 서식을 보여주지 않고 지금 뭘 하는 단계인지만 크게 띄운다
-                    StageHoldCard(hold: hold)
-                } else {
-                    // [환자 정보] — 왼쪽은 예전과 같은 통화 요약·구조화(+추가 정보), 오른쪽은 외상 부위 그림
-                    GeometryReader { g in
-                        HStack(alignment: .top, spacing: 14) {
-                            // 통화 요약 칸은 사건이 없어도 자리에 둔다(2026-10-27) — 통화가 시작되면 바로 채워진다.
-                            // 인계확인서는 사건이 생긴 뒤에만(채울 값이 없으면 빈 서식만 남는다)
-                            VStack(spacing: 8) {
-                                CallSummaryCard(fill: !model.hasIncident,
-                                                fitMax: model.hasIncident ? g.size.height * 0.45 : nil)
-                                if model.hasIncident { HandoverCard() }
+                ZStack {
+                    if model.hasIncident { SceneScreen() }
+                    Group {
+                        if screen == .records {
+                            // [기록] — 사건이 없어도 지난 사건 기록은 본다(2026-11-02)
+                            RecordsView()
+                        } else if screen == .map {
+                            if !model.hasIncident { IdleWaitingCard() }
+                        } else if !model.hasIncident {
+                            // 출동도 사건도 전혀 없는 평상시(2026-10-29) — 탭을 골라도 보여줄 게 없으니 대기 화면 하나로 통일
+                            IdleWaitingCard()
+                        } else if screen == .transport {
+                            TransportScreen()
+                        } else if let hold = stageHold {
+                            // 현장으로 가는 중·현장 확인 중엔 아직 채울 환자 정보가 없다(2026-10-28) —
+                            // 빈 서식을 보여주지 않고 지금 뭘 하는 단계인지만 크게 띄운다
+                            StageHoldCard(hold: hold)
+                        } else {
+                            // [환자 정보] — 왼쪽은 예전과 같은 통화 요약·구조화(+추가 정보), 오른쪽은 외상 부위 그림
+                            GeometryReader { g in
+                                HStack(alignment: .top, spacing: 14) {
+                                    // 통화 요약 칸은 사건이 없어도 자리에 둔다(2026-10-27) — 통화가 시작되면 바로 채워진다.
+                                    // 인계확인서는 사건이 생긴 뒤에만(채울 값이 없으면 빈 서식만 남는다)
+                                    VStack(spacing: 8) {
+                                        CallSummaryCard(fill: !model.hasIncident,
+                                                        fitMax: model.hasIncident ? g.size.height * 0.45 : nil)
+                                        if model.hasIncident { HandoverCard() }
+                                    }
+                                    .frame(width: g.size.width >= 1000 ? 360 : 320, height: g.size.height)
+                                    BodyInjuryCard()
+                                }
                             }
-                            .frame(width: g.size.width >= 1000 ? 360 : 320, height: g.size.height)
-                            BodyInjuryCard()
                         }
-                    }
+                    }.background(screen == .map ? Color.clear : AD.bg)
                 }
+
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
 

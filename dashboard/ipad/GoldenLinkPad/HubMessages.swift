@@ -191,6 +191,7 @@ struct SceneCandidate: Codable, Identifiable {
 }
 
 struct SceneCandidates: Codable {
+    var callAttempts: [String]?
     var caseId: String
     var apid: String?
     var zoneActive: [Int]?
@@ -198,6 +199,7 @@ struct SceneCandidates: Codable {
     var reportedSymptom: String?
     var reportedSeverity: String?
     var preKtas: Int?
+    var preKtasCleared: Bool?
 }
 
 struct AmbulanceSimState: Codable {

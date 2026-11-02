@@ -7,11 +7,14 @@ import SwiftUI
 // 지도는 카카오맵 SDK(KakaoMapView) — 아이폰·안드로이드와 같은 지도다.
 
 /// 요약 전달 연출 — 지도 위에서 구급차 → 병원마다 곡선이 거의 동시에 그려지고 이름 칩이 뜬다. 병원이 많으면 앞의 8곳만 그리고 숫자는 전체를 센다
-struct DeliveryShow {
+final class DeliveryShow {
     let caseId: String
     let durationMs: Double
     let reduceMotion: Bool
-    let startedAt = Date()
+    var startedAt: Date?
+    init(caseId: String, durationMs: Double, reduceMotion: Bool) {
+        self.caseId = caseId; self.durationMs = durationMs; self.reduceMotion = reduceMotion
+    }
 }
 
 enum DeliveryTimeline {
@@ -60,6 +63,8 @@ struct DeliveryTarget: Identifiable {
     let coordinate: CLLocationCoordinate2D
 }
 
+
+
 private extension GpsPoint { var coordinate: CLLocationCoordinate2D { .init(latitude: lat, longitude: lng) } }
 
 /// 지도 위에 덮는 연출 — 화면을 누르면 건너뛴다
@@ -72,7 +77,7 @@ private struct DeliveryOverlay: View {
 
     var body: some View {
         TimelineView(.animation) { ctx in
-            let t = ctx.date.timeIntervalSince(show.startedAt) * 1000
+            let t = ctx.date.timeIntervalSince(show.startedAt ?? ctx.date) * 1000
             Canvas { gc, _ in
                 guard let a = project(from) else { return }
                 let glow = show.reduceMotion ? 0 : 1 - min(t / 900, 1)
@@ -138,6 +143,7 @@ private struct DeliveryOverlay: View {
             }
             .onChange(of: t >= show.durationMs) { _, over in if over { onSkip() } }
         }
+        .onAppear { if show.startedAt == nil { show.startedAt = Date() } }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSkip)
     }
@@ -154,7 +160,12 @@ struct SceneScreen: View {
     @State private var mapMessage: String? = "카카오맵을 불러오는 중…"
 
     private var phase: String { model.sim?.phase ?? "idle" }
-    private var candidates: [SceneCandidate] { model.scene?.hospitals ?? [] }
+    private var candidates: [SceneCandidate] {
+        guard model.preKtas != nil else { return [] }
+        let all = model.scene?.hospitals ?? []
+        let attempted = Set(model.scene?.callAttempts ?? [])
+        return all.filter { !attempted.contains($0.hospitalId) } + all.filter { attempted.contains($0.hospitalId) }
+    }
     private var sent: Bool { model.result != nil }
     private var inTransport: Bool { ["transporting", "at_hospital", "rerouting"].contains(phase) }
     private var incident: CLLocationCoordinate2D? { model.sim?.incident?.coordinate }
@@ -187,11 +198,12 @@ struct SceneScreen: View {
             sidePanel.frame(width: 380).frame(maxHeight: .infinity, alignment: .top).card(14)
             mapCard
         }
+        .onChange(of: model.preKtas) { _, k in if k == nil { focusId = nil; centerRequest += 1 } }
     }
 
     /// 카메라를 다시 맞추는 때 — 구급차 위치가 1초마다 바뀔 때마다 맞추지 않고, 단계·사건·경로·후보·존·연출이 바뀔 때만
     private var fitKey: [String] {
-        [phase, model.sim?.caseId ?? "", "\(model.sim?.path?.count ?? 0)", "\(candidates.count)", "\(model.result?.hospitals.count ?? 0)",
+        [phase, model.sim?.caseId ?? "", "\(model.sim?.path?.count ?? 0)",
          "\(zoneKm ?? 0)", model.deliveryShow == nil ? "-" : "show", model.confirmed?.hospitalId ?? "", focusId ?? ""]
     }
 
@@ -250,8 +262,6 @@ struct SceneScreen: View {
     /// 현장(전달 전) — Pre-KTAS와 후보 병원
     private var scenePanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("환자 상태에 맞는 Pre-KTAS를 고르면 첫 연락 추천 순서가 바로 바뀝니다. 통화 요약이 오면 후보 병원 전체에 동시에 전달됩니다.")
-                .font(.system(size: 12)).foregroundStyle(AD.sub).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 ForEach(1...5, id: \.self) { k in
                     let on = model.preKtas == k
@@ -271,7 +281,9 @@ struct SceneScreen: View {
                 Spacer()
                 if let s = model.scene, let z = s.zoneActive?.max() { Pill(text: "Zone \(z)", bg: AD.blueSoft, fg: AD.blue, bold: true) }
             }
-            if model.scene?.preKtas != model.preKtas {
+            if model.preKtas == nil {
+                Text("Pre-KTAS 등급을 선택해 주세요").font(.system(size: 13)).foregroundStyle(AD.sub)
+            } else if model.scene?.preKtas != model.preKtas {
                 HStack(spacing: 8) { ProgressView(); Text("KTAS 적합 병원을 확인하고 있습니다").font(.system(size: 13)).foregroundStyle(AD.sub) }
                     .frame(maxWidth: .infinity, minHeight: 80)
             } else if candidates.isEmpty {
@@ -280,7 +292,7 @@ struct SceneScreen: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(candidates) { h in
-                            SceneRow(h: h, on: h.hospitalId == focusId).onTapGesture { focusId = h.hospitalId }
+                            SceneRow(h: h, on: h.hospitalId == focusId, attempted: model.scene?.callAttempts?.contains(h.hospitalId) == true).onTapGesture { focusId = h.hospitalId }
                         }
                     }
                 }
@@ -367,7 +379,10 @@ struct SceneScreen: View {
     private var fitPoints: [GpsPoint] {
         var pts: [GpsPoint] = []
         if let a = model.sim?.gps { pts.append(a) }
-        if model.deliveryShow != nil { pts += deliveryTargets.map { GpsPoint(lat: $0.coordinate.latitude, lng: $0.coordinate.longitude) } }
+        if model.deliveryShow != nil, let a = model.sim?.gps {
+            let targets = deliveryTargets.map { GpsPoint(lat: $0.coordinate.latitude, lng: $0.coordinate.longitude) }
+            pts += targets + targets.map { GpsPoint(lat: 2 * a.lat - $0.lat, lng: 2 * a.lng - $0.lng) }
+        }
         else if let id = focusId, let g = candidates.first(where: { $0.hospitalId == id })?.gps, phase == "on_scene", !sent { pts.append(g) }
         else if inTransport {
             if let d = model.confirmed, let g = d.gps ?? candidates.first(where: { $0.hospitalId == d.hospitalId })?.gps { pts.append(g) }
@@ -405,7 +420,7 @@ struct SceneScreen: View {
                 }
             }
             .overlay {
-                if let show = model.deliveryShow, let from = ambulance, let p = projector {
+                if let show = model.deliveryShow, let from = ambulance, let p = projector, mapMessage == nil {
                     DeliveryOverlay(show: show, from: from, targets: deliveryTargets,
                                     project: { c in p.point(lat: c.latitude, lng: c.longitude) }, onSkip: { model.finishDelivery() })
                 }
@@ -443,12 +458,14 @@ private extension Array {
 private struct SceneRow: View {
     let h: SceneCandidate
     let on: Bool
+    var attempted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(h.name).font(.system(size: 14, weight: .bold)).foregroundStyle(AD.navy).lineLimit(1)
                 Spacer(minLength: 4)
+                if attempted { Text("전화 미응답 이력").font(.caption).foregroundStyle(AD.orange) }
                 if h.firstCallRecommended == true { Pill(text: "첫 연락 추천", bg: AD.greenSoft, fg: AD.green, bold: true) }
             }
             HStack(spacing: 8) {

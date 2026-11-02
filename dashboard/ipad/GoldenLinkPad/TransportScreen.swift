@@ -268,22 +268,26 @@ struct ReselectBanner: View {
                 }
             } else if !ready.isEmpty {
                 Text("승인한 병원이 있습니다 — 바로 이송 승인하세요").font(.system(size: 12.5)).foregroundStyle(AD.ink3)
-                ForEach(ready.prefix(4)) { h in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(h.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(AD.navy).lineLimit(1)
-                            Text(h.etaMin.map { "도착 \($0)분" } ?? "\(String(format: "%.1f", h.roadDistanceKm ?? h.distanceKm))km")
-                                .font(.system(size: 12)).foregroundStyle(AD.ink3)
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(ready) { h in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(h.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(AD.navy).lineLimit(1)
+                                    Text(h.etaMin.map { "도착 \($0)분" } ?? "\(String(format: "%.1f", h.roadDistanceKm ?? h.distanceKm))km")
+                                        .font(.system(size: 12)).foregroundStyle(AD.ink3)
+                                }
+                                Spacer()
+                                Button { model.approve(h.hospitalId) } label: {
+                                    Text("이송 승인").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                                        .padding(.horizontal, 14).frame(minHeight: 34).background(AD.green).clipShape(Capsule())
+                                }.buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(AD.greenSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        Spacer()
-                        Button { model.approve(h.hospitalId) } label: {
-                            Text("이송 승인").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
-                                .padding(.horizontal, 14).frame(minHeight: 34).background(AD.green).clipShape(Capsule())
-                        }.buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(AD.greenSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
+                }.frame(maxHeight: 240)
             } else {
                 Text("승인한 병원이 없습니다. 수용 불가 병원은 빼고 후보 병원의 응답을 기다리는 중입니다 — 범위가 필요하면 자동으로 넓혀 다시 요청합니다.")
                     .font(.system(size: 12.5)).foregroundStyle(AD.orange).fixedSize(horizontal: false, vertical: true)

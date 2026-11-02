@@ -23,6 +23,33 @@ class FirstCallTests(KtasDispatchTests):
         self.app._handle_first_call(ws, {"caseId":"case", "ktas":5})
         self.assertEqual(ws.sent[-1]["type"], "first_call_error")
 
+    def test_clear_selection_syncs_both_devices_and_preserves_attempts(self):
+        self.engine.update_hospital_info(hospital("L"))
+        self.app._case_scene.clear()
+        phone = self.connect("ambulance", "A")
+        tablet = self.connect("ambulance", "A")
+        self.app._handle_first_call(phone, {"caseId": "case", "ktas": 4})
+        self.app._case_scene["case"]["callAttempts"] = ["L"]
+        self.app._handle_first_call(phone, {"caseId": "case", "ktas": None})
+        for device in (phone, tablet):
+            scene = device.sent[-1]
+            self.assertEqual(scene["type"], "scene_candidates")
+            self.assertIsNone(scene["preKtas"])
+            self.assertTrue(scene["preKtasCleared"])
+            self.assertEqual(scene["callAttempts"], ["L"])
+            self.assertFalse(any(h.get("firstCallRecommended") for h in scene["hospitals"]))
+        self.assertNotIn("case", self.app._case_recommended)
+        self.app._handle_first_call(tablet, {"caseId": "case", "ktas": 3})
+        self.assertEqual(phone.sent[-1]["preKtas"], 3)
+        self.assertFalse(phone.sent[-1]["preKtasCleared"])
+
+    def test_missing_ktas_does_not_clear_selection(self):
+        self.app._case_scene.clear()
+        phone = self.connect("ambulance", "A")
+        self.app._handle_first_call(phone, {"caseId": "case", "ktas": 4})
+        self.app._handle_first_call(phone, {"caseId": "case"})
+        self.assertEqual(self.app._case_scene["case"]["preKtas"], 4)
+
     def test_expands_for_ktas_and_exhausted_candidates(self):
         self.engine.update_hospital_info(hospital("near", em=5))
         self.engine.update_hospital_info(hospital("far", "권역응급의료센터", lat=37.66, em=10))

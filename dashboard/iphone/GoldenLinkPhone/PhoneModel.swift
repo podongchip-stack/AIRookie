@@ -67,10 +67,13 @@ final class PhoneModel {
     var incidentAddress: String?   // 인계확인서 "출발지 주소" — hub가 좌표를 주소로 바꿔 준다
     /// 통화 화면 지도의 병원 핀 좌표 — hub map_overview(병원 목록)에서 hospitalId로 찾는다. 현장 후보 메시지엔 좌표가 없다
     var hospitalGps: [String: GPS] = [:]
-    /// 현장에서 구급대원이 고른 Pre-KTAS(1~5). 지금은 화면에만 둔다 — hub 전송은 다음 작업(hub와 정하기로 함)
-    // 전화 연결 화면으로 전환되어도 병원 선택 모달 상태는 앱 모델에 보관한다.
+    /// 현장 Pre-KTAS(1~5)는 hub 규칙 기반 추천 요청에 사용한다.
+    // 전화 연결 화면을 오가도 현장 시트의 펼침 상태를 보관한다.
     var callHospitalListPresented = false
+    var skippedHospitals: [String: Set<String>] = [:]
+    var deliveryShow: DeliveryShow?
     var preKtas: Int?
+    private var pendingPreKtasClear: String?
     var bodyEdits = BodyEdits()       // 외상 도해에서 구급대원이 고친 부위·처치 — 새 사건이면 비운다
     var bodySentSignature = ""        // 마지막으로 병원에 보낸 도해 내용의 지문 — 그 뒤로 또 고쳤는지만 본다
     /// 인계확인서 시각 칸 — 출동 단계가 바뀐 그 순간. hub는 단계만 보내고 시각은 안 보내므로 앱이 기억한다
@@ -212,7 +215,10 @@ final class PhoneModel {
 
     private func handle(_ type: String, _ data: Data, fromMonitor: Bool) {
         let dec = JSONDecoder()
-        defer { if !fromMonitor { syncLiveCase() } }
+        defer {
+            if !fromMonitor { syncLiveCase() }
+            if onScene, preKtas == nil, scene?.preKtasCleared != true, pendingPreKtasClear != caseId { preKtas = 1; requestFirstCall() }
+        }
         switch type {
         case "live_case_state" where !fromMonitor, "live_case_error" where !fromMonitor:
             caseEdits.accept(data)
@@ -247,9 +253,16 @@ final class PhoneModel {
             if fromMonitor { autoSwitch() }
         case "scene_candidates" where !fromMonitor:
             if let s = try? dec.decode(SceneCandidates.self, from: data) {
+                if pendingPreKtasClear == s.caseId {
+                    guard s.preKtasCleared == true else { return }
+                    pendingPreKtasClear = nil
+                }
                 scenes[s.caseId] = s
                 // hub가 확정한 최신 선택을 반영해 아이패드와 버튼 상태도 맞춘다.
-                if s.caseId == caseId, let k = s.preKtas { preKtas = k }
+                if s.caseId == caseId {
+                    preKtas = s.preKtas
+                    if s.preKtasCleared == true { callHospitalListPresented = false }
+                }
             }
         case "scene_input_mode" where !fromMonitor:
             if let s = try? dec.decode(SceneInputMode.self, from: data) {
@@ -261,7 +274,8 @@ final class PhoneModel {
                 if s.requestId == callRequestId, s.caseId == call?.caseId, s.hospitalId == call?.hospitalId {
                     if s.state == "calling" { Task { await self.beginConnectedCall() } }
                     if ["no_answer", "cancelled"].contains(s.state) {
-                        if s.state == "no_answer", onScene, preKtas != nil {
+                        if s.state == "no_answer" { skippedHospitals[s.caseId, default: []].insert(s.hospitalId ?? "") }
+                        if onScene, preKtas != nil {
                             callHospitalListPresented = true
                         }
                         session?.cancel(); session = nil; call = nil; callRequestId = nil
@@ -279,7 +293,7 @@ final class PhoneModel {
                 let firstForCase = results[m.caseId] == nil
                 results[m.caseId] = m
                 let settled = liveSince.map { Date().timeIntervalSince($0) > 3 } ?? true
-                if settled, firstForCase, (m.patientInfo?.callRound ?? 1) <= 1, phase != .transporting { tab = .patient }
+                if settled, firstForCase, (m.patientInfo?.callRound ?? 1) <= 1, phase != .transporting { startDeliveryShow(m.caseId) }
                 let confirmedId = m.hospitals.first { $0.status == "confirmed" }?.hospitalId
                 if let p = pendingConfirmId, p == confirmedId { pendingConfirmId = nil }
                 sentCount[m.caseId] = m.hospitals.count
@@ -290,7 +304,7 @@ final class PhoneModel {
                 // 병원 응답·주기 갱신만으로는 callRound가 늘지 않으므로 통화 처리를 닫지 않는다.
                 if call?.caseId == m.caseId, delivered {
                     dismissEnded()
-                    tab = .patient
+                    if firstForCase { startDeliveryShow(m.caseId) } else { tab = .patient }
                 }
             }
         case "action_refused" where !fromMonitor:
@@ -323,6 +337,8 @@ final class PhoneModel {
         }
         closeRecord(caseId)
         results[caseId] = nil
+        skippedHospitals[caseId] = nil
+        if deliveryShow?.caseId == caseId { deliveryShow = nil }
         scenes[caseId] = nil; callStatus[caseId] = nil; hubTranscripts[caseId] = nil; sentCount[caseId] = nil
         matchVersion[caseId] = nil; destinations[caseId] = nil; sceneInputMode[caseId] = nil
         transportInputMode[caseId] = nil
@@ -350,6 +366,19 @@ final class PhoneModel {
 
     // MARK: - 통화
 
+    func clearPreKtas() {
+        guard let caseId, onScene, !sent, call == nil else { return }
+        guard !paused else { show("현재 시연 일시정지 중입니다."); return }
+        let body: [String: Any] = ["type": "first_call_request", "caseId": caseId, "ktas": NSNull()]
+        guard let data = try? JSONSerialization.data(withJSONObject: body), ambulance?.sendJSON(data) == true else {
+            show("hub 연결을 확인해 주세요. 등급 선택을 초기화하지 못했습니다."); return
+        }
+        pendingPreKtasClear = caseId
+        preKtas = nil
+        callHospitalListPresented = false
+        sceneMapFocusKey = nil
+    }
+
     func requestFirstCall(noAnswer: String? = nil) {
         guard let caseId, let k = preKtas else { return }
         var body: [String: Any] = ["type": "first_call_request", "caseId": caseId, "ktas": k]
@@ -357,6 +386,34 @@ final class PhoneModel {
         guard let data = try? JSONSerialization.data(withJSONObject: body), ambulance?.sendJSON(data) == true else {
             show("hub 연결을 확인해 주세요. 추천 요청을 보내지 못했습니다."); return
         }
+    }
+
+    func isSkipped(_ h: SceneCandidate) -> Bool {
+        guard let caseId else { return false }
+        return skippedHospitals[caseId, default: []].contains(h.hospitalId) || scene?.callAttempts?.contains(h.hospitalId) == true
+    }
+    var sceneHospitals: [SceneCandidate] {
+        let all = scene?.hospitals ?? []
+        return all.filter { !isSkipped($0) } + all.filter { isSkipped($0) }
+    }
+    private func startDeliveryShow(_ id: String) {
+        guard deliveryShow?.caseId != id else { return }
+        guard onScene, mySim?.gps != nil, results[id]?.hospitals.contains(where: { hospitalGps[$0.hospitalId] != nil }) == true,
+              !Settings.kakaoNativeAppKey.isEmpty else { tab = .patient; return }
+        let show = DeliveryShow(caseId: id, durationMs: UIAccessibility.isReduceMotionEnabled ? 1200 : 2600,
+                                reduceMotion: UIAccessibility.isReduceMotionEnabled)
+        deliveryShow = show
+        callHospitalListPresented = false
+        tab = .call
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(show.durationMs) + 5000))
+            if self?.deliveryShow?.caseId == id { self?.finishDelivery() }
+        }
+    }
+    func finishDelivery() {
+        guard deliveryShow != nil else { return }
+        deliveryShow = nil
+        tab = .patient
     }
 
     var callRequestId: String?
@@ -371,7 +428,9 @@ final class PhoneModel {
 
     func noAnswerNext() {
         guard call?.phase == .connecting else { return }
-        if !connectionAction("no_answer") { show("hub 연결을 확인해 주세요") }
+        guard connectionAction("no_answer"), let c = call else { show("hub 연결을 확인해 주세요"); return }
+        skippedHospitals[c.caseId, default: []].insert(c.hospitalId)
+        callHospitalListPresented = true
     }
 
     /// 현장 병원 목록에서 고른 병원과 통화
@@ -432,7 +491,8 @@ final class PhoneModel {
     func cancelCall() {
         guard let c = call else { return }
         if c.phase == .connecting {
-            if !connectionAction("cancel") { show("hub 연결을 확인해 주세요"); return }
+            if !connectionAction("no_answer") { show("hub 연결을 확인해 주세요"); return }
+            skippedHospitals[c.caseId, default: []].insert(c.hospitalId)
         }
         if c.phase == .inCall, let apid {
             _ = ambulance?.send(CallSignalMessage(signal: "call_ended", apid: apid, caseId: c.caseId, hospitalId: c.hospitalId, cancelled: true))
@@ -440,6 +500,8 @@ final class PhoneModel {
         }
         call = nil
         session = nil
+        callRequestId = nil
+        callHospitalListPresented = true
         show("통화를 취소했습니다 — 전달하지 않았습니다")
     }
 
@@ -616,7 +678,7 @@ final class PhoneModel {
         recordsRev += 1
     }
 
-    private func resetBody() { bodyEdits = BodyEdits(); bodySentSignature = ""; preKtas = nil; callHospitalListPresented = false }
+    private func resetBody() { pendingPreKtasClear = nil; deliveryShow = nil; bodyEdits = BodyEdits(); bodySentSignature = ""; preKtas = nil; callHospitalListPresented = false }
 
     /// 외상 도해에서 고친 것을 한 번에 병원으로 — 부위는 증상(injuryStatus) 칸, 처치는 추가 정보 한 줄(아이패드 BodyInjuryCard.send와 같다)
     @discardableResult

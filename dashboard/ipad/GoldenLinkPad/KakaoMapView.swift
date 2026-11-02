@@ -53,7 +53,7 @@ private extension GpsPoint {
 
 /// 지도 좌표 → 화면 점. SDK에는 화면 → 지도 변환(getPosition)만 있어서, 화면 두 모서리를 지도 좌표로 바꿔 둔 뒤 거꾸로 푼다
 /// (경도는 선형, 위도는 메르카토르). 기울이거나 돌리지 않은 지도 기준이고 도시 규모에서 오차는 1px 안팎이다.
-struct MapProjector {
+struct MapProjector: Equatable {
     let size: CGSize
     let lng0: Double, lng1: Double
     let mercY0: Double, mercY1: Double
@@ -134,6 +134,11 @@ struct KakaoMapView: UIViewRepresentable {
         private var renderScheduled = false
         private var foreground = true
         private var observers: [NSObjectProtocol] = []
+        private var lastProjector: MapProjector?
+        private var markerTask: Task<Void, Never>?
+        private var markerFrame = 0
+        private var heading = 0
+
         private static var initializedKey = ""
         // 관제 지도 dashboard/src/lib/control-map.ts의 C.zone과 같은 보라색
         private static var zoneColor: UIColor { UIColor(red: 123 / 255, green: 77 / 255, blue: 1, alpha: 1) }
@@ -157,7 +162,7 @@ struct KakaoMapView: UIViewRepresentable {
             ]
         }
         func stop() {
-            stopped = true
+            stopped = true; markerTask?.cancel(); markerTask = nil
             observers.forEach(NotificationCenter.default.removeObserver); observers = []
             roadLine = nil
             map?.eventDelegate = nil
@@ -198,18 +203,30 @@ struct KakaoMapView: UIViewRepresentable {
                 default: color = UIColor(AD.navy)
                 }
                 // 구급차 아이콘은 기존 대비 50% 확대. 스타일은 지도 줌 레벨에 맞춰 고른다
-                let styles = [0, 12, 13, 14, 15, 16, 17].map { level -> PerLevelPoiStyle in
-                    let scale = max(kind == .ambulance ? 0.75 : 0.6, min(1.35, pow(1.18, Double(level - 15))))
-                    let size = CGFloat(kind == .ambulance ? 22.4 * 1.5 : 21) * scale * 1.15   // 아이패드는 화면이 커서 조금 키운다
-                    let icon = PoiIconStyle(symbol: Self.marker(kind: kind, color: color, size: size))
-                    let baseFontSize = max(9, min(13, (12 * scale).rounded()))
-                    let nameScale = kind == .incident || kind == .base ? 1.0 : 1.5
-                    let fontSize = UInt((baseFontSize * nameScale).rounded())
-                    let text = PoiTextStyle(textLineStyles: [PoiTextLineStyle(textStyle: TextStyle(fontSize: fontSize, fontColor: UIColor(AD.navy), strokeThickness: 2, strokeColor: .white))])
-                    text.textLayouts = [.bottom]
-                    return PerLevelPoiStyle(iconStyle: icon, textStyle: text, level: level)
+                for variant in 0..<(kind == .ambulance ? 48 : 1) {
+                    let styles = [0, 12, 13, 14, 15, 16, 17].map { level -> PerLevelPoiStyle in
+                        let scale = max(kind == .ambulance ? 0.75 : 0.6, min(1.35, pow(1.18, Double(level - 15))))
+                        let size = CGFloat(kind == .ambulance ? 22.4 * 1.5 : 21) * scale * 1.15   // 아이패드는 화면이 커서 조금 키운다
+                        let icon = PoiIconStyle(symbol: Self.marker(kind: kind, color: color, size: size, heading: Double(variant / 2) * 15, beacon: variant % 2 == 0))
+                        let baseFontSize = max(9, min(13, (12 * scale).rounded()))
+                        let nameScale = kind == .incident || kind == .base ? 1.0 : 1.5
+                        let fontSize = UInt((baseFontSize * nameScale).rounded())
+                        let text = PoiTextStyle(textLineStyles: [PoiTextLineStyle(textStyle: TextStyle(fontSize: fontSize, fontColor: UIColor(AD.navy), strokeThickness: 2, strokeColor: .white))])
+                        text.textLayouts = [.bottom]
+                        return PerLevelPoiStyle(iconStyle: icon, textStyle: text, level: level)
+                    }
+                    manager.addPoiStyle(PoiStyle(styleID: kind == .ambulance ? "ambulance-\(variant)" : kind.rawValue, styles: styles))
                 }
-                manager.addPoiStyle(PoiStyle(styleID: kind.rawValue, styles: styles))
+            }
+            markerTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
+                    guard let self, !self.stopped else { return }
+                    if self.foreground {
+                        self.markerFrame = (self.markerFrame + 1) % 2
+                        self.scheduleRender()
+                    }
+                }
             }
             let shapes = view.getShapeManager()
             zoneLayer = shapes.addShapeLayer(layerID: "response-zone", zOrder: 1)
@@ -260,7 +277,10 @@ struct KakaoMapView: UIViewRepresentable {
         private func publishProjector() {
             guard !stopped, let map, let size = container?.bounds.size, size.width > 0 else { return }
             let a = map.getPosition(.zero).wgsCoord, b = map.getPosition(CGPoint(x: size.width, y: size.height)).wgsCoord
-            input.onProjector(MapProjector(a: (a.latitude, a.longitude), b: (b.latitude, b.longitude), size: size))
+            let next = MapProjector(a: (a.latitude, a.longitude), b: (b.latitude, b.longitude), size: size)
+            guard next != lastProjector else { return }
+            lastProjector = next
+            input.onProjector(next)
         }
 
         func scheduleRender() {
@@ -280,9 +300,16 @@ struct KakaoMapView: UIViewRepresentable {
                 let layer = pois[id]?.layerID == "ambulance-foreground" ? ambulanceLayer : pinLayer
                 layer.removePoi(poiID: id); pois[id] = nil; priorPins[id] = nil; priorStyles[id] = nil
             }
+            if let pin = visible.first(where: { $0.kind == .ambulance }), let before = priorPins[pin.id] {
+                let dy = pin.pos.lat - before.pos.lat
+                let dx = (pin.pos.lng - before.pos.lng) * cos(pin.pos.lat * .pi / 180)
+                if hypot(dx, dy) > 0.000001 {
+                    heading = (Int(((atan2(dx, dy) * 180 / .pi + 360) / 15).rounded()) % 24)
+                }
+            }
             for pin in visible {
                 let layer = pin.kind == .ambulance ? ambulanceLayer : pinLayer
-                let style = pin.kind.rawValue
+                let style = pin.kind == .ambulance ? "ambulance-\(heading * 2 + markerFrame)" : pin.kind.rawValue
                 if let poi = pois[pin.id] {
                     if priorPins[pin.id]?.pos != pin.pos { poi.moveAt(pin.pos.mapPoint, duration: pin.kind == .ambulance ? 200 : 0) }
                     if priorPins[pin.id]?.name != pin.name || priorStyles[pin.id] != style {
@@ -361,7 +388,12 @@ struct KakaoMapView: UIViewRepresentable {
         private func fit(_ points: [MapPoint]) {
             guard let map, !points.isEmpty else { return }
             if points.count == 1 { map.moveCamera(CameraUpdate.make(target: points[0], zoomLevel: 15, mapView: map)) }
-            else { map.moveCamera(CameraUpdate.make(area: AreaRect(points: points), levelLimit: 17)) }
+            else {
+                let update = CameraUpdate.make(area: AreaRect(points: points), levelLimit: 17)
+                if input.fitKey.contains("|show|") && !UIAccessibility.isReduceMotionEnabled {
+                    map.animateCamera(cameraUpdate: update, options: CameraAnimationOptions(autoElevation: false, consecutive: false, durationInMillis: 550))
+                } else { map.moveCamera(update) }
+            }
             // 카메라가 옮겨진 뒤 변환기를 다시 만든다(연출 위치가 어긋나지 않게)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.publishProjector() }
         }
@@ -381,7 +413,7 @@ struct KakaoMapView: UIViewRepresentable {
         }
 
         /// 병원·구급차는 사각 박스+십자가(구급차는 주황), 사건 현장은 마름모 느낌표, 센터는 건물
-        private static func marker(kind: MapPin.Kind, color: UIColor, size: CGFloat) -> UIImage {
+        private static func marker(kind: MapPin.Kind, color: UIColor, size: CGFloat, heading: Double = 0, beacon: Bool = true) -> UIImage {
             UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { context in
                 context.cgContext.scaleBy(x: size / 28, y: size / 28)
                 func box(_ rect: CGRect, color: UIColor, radius: CGFloat = 0) {
@@ -393,10 +425,22 @@ struct KakaoMapView: UIViewRepresentable {
                     box(CGRect(x: x, y: y + (length - thickness) / 2, width: length, height: thickness), color: .white)
                 }
                 switch kind {
-                case .hospital, .recommended, .selected, .ambulance, .approved, .rejected:
+                case .hospital, .recommended, .selected, .approved, .rejected:
                     box(CGRect(x: 0, y: 0, width: 28, height: 28), color: .white, radius: 6)
                     box(CGRect(x: 2, y: 2, width: 24, height: 24), color: color, radius: 4)
                     cross(x: 6, y: 6, length: 16, thickness: 5)
+                case .ambulance:
+                    context.cgContext.translateBy(x: 14, y: 14)
+                    context.cgContext.rotate(by: heading * .pi / 180)
+                    context.cgContext.translateBy(x: -14, y: -14)
+                    box(CGRect(x: 6, y: 1, width: 16, height: 26), color: .white, radius: 4)
+                    box(CGRect(x: 8, y: 4, width: 12, height: 6), color: UIColor(AD.navy), radius: 2)
+                    box(CGRect(x: 6, y: 16, width: 2, height: 8), color: .systemRed)
+                    box(CGRect(x: 20, y: 16, width: 2, height: 8), color: .systemRed)
+                    box(CGRect(x: 8, y: 12, width: 6, height: 3), color: beacon ? .systemRed : .systemRed.withAlphaComponent(0.35), radius: 1)
+                    box(CGRect(x: 14, y: 12, width: 6, height: 3), color: beacon ? .systemBlue.withAlphaComponent(0.35) : .systemBlue, radius: 1)
+                    box(CGRect(x: 10, y: 20, width: 8, height: 2), color: .systemRed)
+                    box(CGRect(x: 13, y: 17, width: 2, height: 8), color: .systemRed)
                 case .base:
                     box(CGRect(x: 1, y: 1, width: 26, height: 26), color: .white, radius: 4)
                     box(CGRect(x: 3, y: 3, width: 22, height: 22), color: color, radius: 3)
