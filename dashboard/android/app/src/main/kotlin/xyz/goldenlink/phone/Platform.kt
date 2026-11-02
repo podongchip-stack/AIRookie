@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
@@ -53,9 +54,10 @@ class Settings(context: Context) : KeyValueStore {
         get() = p.getString("hubBase", "https://app.rookie-goldenlink.xyz")!!
         set(v) = p.edit().putString("hubBase", v).apply()
 
-    /** 구급차 ID(SEL0001~) 또는 "auto"(출동하는 구급차를 자동으로 따라감 — 웹 P-AUTO) */
+    /** 소속 구급차 ID(SEL0001~) — 첫 실행의 접근 코드 입력으로 정한다. 비어 있으면 아직 코드를 입력하지 않은 것
+     *  (예전 버전의 "auto" 설정은 비운 것으로 본다 — 자동 전환은 없앴다) */
     var apid: String
-        get() = p.getString("apid", "auto")!!
+        get() = p.getString("apid", "")!!.takeUnless { it.equals("auto", ignoreCase = true) } ?: ""
         set(v) = p.edit().putString("apid", v).apply()
 
     /** true: 기기 안에서 STT·MF_BERT(온디바이스). false: 웹과 같이 음성을 hub로 보내 중앙 voice가 처리 */
@@ -153,8 +155,15 @@ class HubSocket(
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) = onMessage(webSocket, bytes.utf8())
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = lost(webSocket)
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = lost(webSocket)
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                // 끊긴 이유를 남긴다 — 화면에는 "재연결 중"만 보여 원인을 알 수 없었다(주소·망·서버 거절 구분)
+                Log.w("GoldenLink", "hub 연결 실패 $role/$id → ${request.url} : ${t.javaClass.simpleName} ${t.message} (HTTP ${response?.code})")
+                lost(webSocket)
+            }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.w("GoldenLink", "hub 연결 종료 $role/$id code=$code reason=$reason")
+                lost(webSocket)
+            }
         })
     }
 

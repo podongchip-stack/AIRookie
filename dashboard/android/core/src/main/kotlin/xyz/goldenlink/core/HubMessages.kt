@@ -44,11 +44,10 @@ data class CallConnectionMessage(
     val type: String = "call_connection",
 )
 
-/** 현장 Pre-KTAS를 고르면 hub가 KTAS 적합 후보를 추천순으로 다시 보낸다(scene_candidates). noAnswerHospitalId는 미응답 이력 */
+/** 첫 통화 추천을 다시 요청한다 — hub가 후보를 추천순으로 다시 보낸다(scene_candidates). noAnswerHospitalId는 미응답 이력 */
 @Serializable
 data class FirstCallRequest(
     val caseId: String,
-    val ktas: Int,
     val noAnswerHospitalId: String? = null,
     val type: String = "first_call_request",
 )
@@ -143,7 +142,6 @@ data class SceneCandidates(
     /** 도착 시간순(hub가 정한 순서 그대로 쓴다) */
     val hospitals: List<SceneCandidate> = emptyList(),
     /** 이 후보 목록이 어느 Pre-KTAS 기준인지 — 앱이 고른 값과 다르면 아직 hub 응답을 기다리는 중 */
-    val preKtas: Int? = null,
     /** 전화가 안 받아 다음 병원으로 넘어간 병원들 */
     val callAttempts: List<String>? = null,
     val firstCallExhausted: Boolean? = null,

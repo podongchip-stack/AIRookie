@@ -77,8 +77,21 @@ private var lastZoneKey: Any? = null
 
 private fun ll(g: GPS) = LatLng.from(g.lat, g.lng)
 
-/** 구급차 그림 크기 배율 — 72dp 상자에 차를 그려 지도 위에서 너무 컸다 */
-private const val AMBULANCE_ICON_SCALE = 0.68f
+/**
+ * 지도 아이콘 크기 규격(아이폰·안드로이드 공통, 2026-11-03) — 그림의 긴 변을 26dp(pt)로 고정한다. 줌에 따라 바뀌지 않는다.
+ * 그림마다 캔버스 안에서 실제로 차지하는 긴 변이 달라(구급차 54, 현장 34, 센터 24, 병원 26) 그만큼 배율을 줘서 맞춘다.
+ * 아이폰 CallMapView.swift의 marker()가 같은 그림·같은 크기를 쓴다 — 한쪽을 고치면 다른 쪽도.
+ */
+private const val MAP_ICON_DP = 26f
+private fun iconDensity(kind: MapPin.Kind, dens: Float): Float {
+    val glyph = when (kind) {
+        MapPin.Kind.AMBULANCE -> 54f
+        MapPin.Kind.INCIDENT -> 34f
+        MapPin.Kind.BASE -> 24f
+        else -> 26f
+    }
+    return dens * MAP_ICON_DP / glyph
+}
 
 @Composable
 fun CallMap(
@@ -193,10 +206,10 @@ fun CallMap(
             }
             val labelStyles = styles.getOrPut("$key|${p.name}") {
                 val icon = when (p.kind) {
-                    MapPin.Kind.AMBULANCE -> ambulanceBitmap(dens * AMBULANCE_ICON_SCALE, beaconOn = frame % 2 == 0, headingDeg = markerHeading.toFloat())
-                    MapPin.Kind.INCIDENT -> incidentBitmap(dens, frame)
-                    MapPin.Kind.BASE -> baseBitmap(dens)
-                    else -> hospitalBitmap(dens, 0xFF1F4E9C.toInt())
+                    MapPin.Kind.AMBULANCE -> ambulanceBitmap(iconDensity(p.kind, dens), beaconOn = frame % 2 == 0, headingDeg = markerHeading.toFloat())
+                    MapPin.Kind.INCIDENT -> incidentBitmap(iconDensity(p.kind, dens), frame)
+                    MapPin.Kind.BASE -> baseBitmap(iconDensity(p.kind, dens))
+                    else -> hospitalBitmap(iconDensity(p.kind, dens), 0xFF1F4E9C.toInt())
                 }
                 // 이름은 지도 라벨 글자가 아니라 그림 안에 넣는다 — 아이콘 중심이 정확히 좌표(길 위)에 오게
                 LabelStyles.from(LabelStyle.from(if (p.name.isBlank()) icon else withCaption(icon, p.name, dens)).setAnchorPoint(0.5f, 0.5f))

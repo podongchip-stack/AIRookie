@@ -77,6 +77,45 @@ class CaseEditSyncTest {
         assertTrue(sync.fields.isEmpty())
     }
 
+    private fun error(sync: CaseEditSync, code: String, id: String?, caseId: String = "case") {
+        val value = buildJsonObject {
+            put("type", JsonPrimitive("live_case_error")); put("caseId", JsonPrimitive(caseId)); put("error", JsonPrimitive(code))
+            if (id != null) put("requestId", JsonPrimitive(id))
+        }
+        sync.accept(value.toString())
+    }
+
+    @Test
+    fun hubErrorsAreHandledByReasonAndUnsendableEditsAreDropped() {
+        val sync = CaseEditSync(store)
+        sync.activate("case", "A", scope, send = send)
+        state(sync, emptyMap(), 1)
+        // 일시정지·저장소 오류는 대기열을 그대로 두고 이유만 알린다
+        sync.submit("case", mapOf("h:notes" to "기록"), emptyMap())
+        error(sync, "paused", lastRequestId())
+        assertTrue(sync.hasPending("case")); assertTrue(sync.status.contains("일시정지"))
+        error(sync, "storage_unavailable", lastRequestId())
+        assertTrue(sync.hasPending("case")); assertTrue(sync.status.contains("저장소"))
+        // 지금 보는 사건이 not_owner면 hub가 아직 모르는 것일 수 있어 다시 시도한다(지우지 않는다)
+        error(sync, "not_owner", lastRequestId())
+        assertTrue(sync.hasPending("case")); assertTrue(sync.status.contains("알지 못합니다"))
+        // 형식이 맞지 않는 수정은 다시 보내도 같아서 지운다
+        error(sync, "invalid_patch", lastRequestId())
+        assertFalse(sync.hasPending("case")); assertTrue(sync.status.contains("형식"))
+    }
+
+    @Test
+    fun editsOfAClosedCaseAreDroppedWhenTheHubDoesNotOwnItAnymore() {
+        val sync = CaseEditSync(store)
+        sync.activate("case", "A", scope, send = send)
+        state(sync, emptyMap(), 1)
+        sync.submit("case", mapOf("h:notes" to "기록"), emptyMap())
+        val id = lastRequestId()
+        sync.activate("next", "A", scope, send = send)   // 사건이 바뀌었다 — 이전 사건의 수정은 티켓으로만 재전송된다
+        error(sync, "not_owner", id)
+        assertFalse(sync.hasPending("case"))
+    }
+
     @Test
     fun persistedOfflineEditsReplayAndStayWithTheirCase() {
         val first = CaseEditSync(store)

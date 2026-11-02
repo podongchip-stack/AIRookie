@@ -49,7 +49,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Lock
@@ -231,6 +233,42 @@ fun nowEverySecond(): Long {
 
 @Composable
 fun PhoneApp(m: PhoneModel) {
+    if (m.accessRequired) AccessCodeEntry(m) else PhoneMain(m)
+}
+
+/** 첫 실행(또는 [접근 코드 변경] 뒤)의 구급대 접근 코드 입력 — 아이폰 AccessCodeEntry와 같은 화면·규칙 */
+@Composable
+private fun AccessCodeEntry(m: PhoneModel) {
+    var code by remember { mutableStateOf("") }
+    var hub by remember { mutableStateOf(m.settings.hubBase) }
+    var showHub by remember { mutableStateOf(false) }
+    MaterialTheme(colorScheme = lightColorScheme(primary = AD.blue, background = AD.bg, surface = AD.white)) {
+        Column(Modifier.fillMaxSize().background(AD.bg).safeDrawingPadding().verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp).padding(top = 64.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Text("골든링크", fontSize = 28.sp, fontWeight = FontWeight.Black, color = AD.navy)
+            Text("구급대 접근 코드", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AD.ink)
+            Text("소속 구급대 코드를 입력하면 해당 구급대의 사건과 이송 정보를 확인합니다.", fontSize = 14.sp, color = AD.sub)
+            OutlinedTextField(code, { code = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                label = { Text("접근 코드") }, placeholder = { Text("예: P-SEL0111") },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { m.submitAccess(code, hub) }))
+            m.accessError?.let { Text(it, fontSize = 13.sp, color = AD.red) }
+            val enabled = !m.accessChecking && code.isNotBlank()
+            Box(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp)).background(if (enabled) AD.blue else AD.gray)
+                .clickable(enabled = enabled) { m.submitAccess(code, hub) }, contentAlignment = Alignment.Center) {
+                Text(if (m.accessChecking) "구급대 확인 중…" else "입장", color = AD.white, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+            Text("시연: 역삼119안전센터 구급 1\n휴대폰 P-SEL0111 · 태블릿 A-SEL0111", fontSize = 13.sp, color = AD.sub)
+            Text(if (showHub) "서버 연결 설정 ▲" else "서버 연결 설정 ▼", fontSize = 14.sp, color = AD.ink3,
+                modifier = Modifier.clickable { showHub = !showHub })
+            if (showHub) OutlinedTextField(hub, { hub = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                label = { Text("hub 주소") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+        }
+    }
+}
+
+@Composable
+private fun PhoneMain(m: PhoneModel) {
     var showSettings by remember { mutableStateOf(false) }
     MaterialTheme(colorScheme = lightColorScheme(primary = AD.blue, background = AD.bg, surface = AD.white)) {
         Box(Modifier.fillMaxSize().background(AD.bg)) {
@@ -314,7 +352,7 @@ private fun Header(m: PhoneModel, onSettings: () -> Unit) {
                     withStyle(SpanStyle(color = AD.navy)) { append("골든") }
                     withStyle(SpanStyle(color = AD.blue)) { append("링크") }
                 }, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 1)
-                Pill(m.identity?.name ?: m.apid ?: (if (m.autoFollow) "자동 전환 대기" else "구급대 미지정"), AD.ink3, AD.white, bold = true, modifier = Modifier.weight(1f, fill = false))
+                Pill(m.identity?.name ?: m.apid ?: "구급대 미지정", AD.ink3, AD.white, bold = true, modifier = Modifier.weight(1f, fill = false))
             }
             ConnectionDot(m.connection)
             val inCall = m.call != null && m.call?.phase != PhoneModel.LocalCall.Phase.ENDED
@@ -380,7 +418,7 @@ private fun Waiting(m: PhoneModel, mapVisible: Boolean, topInset: Dp) {
 
 // ── 지도 화면 (통화 탭 기본) ──
 
-/** 지도가 배경. 출동 중엔 현장까지 선과 ETA, 현장에선 Pre-KTAS → hub가 추천한 KTAS 적합 병원 목록 → 전화, 병원 응답 중엔 활성 존 */
+/** 지도가 배경. 출동 중엔 현장까지 선과 ETA, 현장에선 hub가 추천한 병원 목록 → 전화, 병원 응답 중엔 활성 존 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
@@ -392,10 +430,9 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
     // 현장 후보는 hub 도착 시간순 — 전달된 뒤에는 실제로 정보가 간 병원(매칭 결과)을 쓴다
     val ordered = scene.filter { it.firstCallRecommended == true && !m.isSkipped(it) } + scene.filter { it.firstCallRecommended != true || m.isSkipped(it) }
     var tappedId by remember(m.caseId) { mutableStateOf<String?>(null) }
-    // KTAS 적합 여부는 hub 규칙(목록이 고른 Pre-KTAS 기준일 때만) — 그 안에서 hub가 추천한 병원이 첫 연락 대상
-    val eligible = if (m.preKtas != null && m.scene?.preKtas == m.preKtas) scene else emptyList()
-    val nearest = eligible.firstOrNull { it.firstCallRecommended == true && !m.isSkipped(it) }
-    val target = eligible.firstOrNull { it.hospitalId == tappedId } ?: nearest
+    // 목록은 hub 첫 연락 규칙(이동·병상·전문의·도착 유효 확률 + 다른 구급차 점유) 그대로 — hub가 추천한 병원이 첫 연락 대상
+    val nearest = scene.firstOrNull { it.firstCallRecommended == true && !m.isSkipped(it) }
+    val target = scene.firstOrNull { it.hospitalId == tappedId } ?: nearest
 
     val hospitals: List<Pair<String, String>> =
         if (sentMode) m.result?.hospitals?.map { it.hospitalId to it.name } ?: emptyList() else if (m.onScene) ordered.map { it.hospitalId to it.name } else emptyList()
@@ -408,8 +445,8 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
         if (incidentLive) sim.incident?.let { add(MapPin("incident", if (phase == AmbulancePhase.dispatching) "사건 현장" else "", it, MapPin.Kind.INCIDENT)) }
         // 센터(출동 출발지·복귀 목적지) — 출동 중과 복귀 중에만
         if (phase == AmbulancePhase.dispatching || phase == AmbulancePhase.returning) sim.base?.let { add(MapPin("base", "센터", it, MapPin.Kind.BASE)) }
-        // 이송 중엔 목적지(확정) 병원만 — 이름 칩과 함께
-        if (m.inTransport) m.destination?.let { d -> m.hospitalGps[d.hospitalId]?.let { add(MapPin(d.hospitalId, d.name, it, MapPin.Kind.SELECTED)) } }
+        // 이송 중과 병원에 도착했을 때는 목적지(확정) 병원만 — 이름 칩과 함께(도착하면 구급차 핀은 없고 이 병원 핀으로 지도가 맞춰진다)
+        if (m.inTransport || phase == AmbulancePhase.at_hospital) m.destination?.let { d -> m.hospitalGps[d.hospitalId]?.let { add(MapPin(d.hospitalId, d.name, it, MapPin.Kind.SELECTED)) } }
         for ((id, name) in hospitals) {
             val gps = m.hospitalGps[id] ?: continue
             add(MapPin(id, name, gps, when {
@@ -420,8 +457,12 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
         }
     }
 
-    // 도로 경로 — hub 카카오 길찾기에서 남은 구간만. 경로가 없으면 출동 중에 한해 직선으로 대신한다
-    val route: List<GPS> = run {
+    // 이동 중(출동·이송·복귀)인지 — 도로 경로와 카메라 맞춤이 이 값을 따른다
+    val moving = phase == AmbulancePhase.dispatching || phase == AmbulancePhase.transporting || phase == AmbulancePhase.returning
+    // 도로 경로 — hub 카카오 길찾기에서 남은 구간만. 경로가 없으면 출동 중에 한해 직선으로 대신한다.
+    // 이동 중이 아니면(병원·기지에 도착했거나 대기) 그리지 않는다 — 도착한 자리에 남은 마지막 구간이 파란 선으로 보이고,
+    // 카메라가 그 아주 짧은 선에 맞춰 크게 확대되던 문제
+    val route: List<GPS> = if (!moving) emptyList() else run {
         val path = sim.path
         val rest = if (path != null) RoadRoute.remaining(path, ambulanceGps.lat, ambulanceGps.lng).map { GPS(it[0], it[1]) } else emptyList()
         if (rest.size >= 2) rest else sim.incident?.takeIf { phase == AmbulancePhase.dispatching }?.let { listOf(ambulanceGps, it) } ?: emptyList()
@@ -432,7 +473,6 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
     var overlayPx by remember { mutableIntStateOf(0) }
     // 카메라를 다시 맞추는 때(아이폰과 같다): 출동·이송·복귀 중엔 사건·병원·도로 경로가 바뀔 때, 현장에선 응답 존이 생기거나 넓어질 때,
     // 그 뒤엔 전화할 병원을 바꿀 때
-    val moving = phase == AmbulancePhase.dispatching || phase == AmbulancePhase.transporting || phase == AmbulancePhase.returning
     val routeKey: Any? = if (moving) listOf(phase, sim.caseId, sim.hospitalId, sim.path?.size, sim.path?.lastOrNull()) else null
     // 내비게이션 시점 — 출동·이송·복귀 중 도로 경로가 있으면 기본으로 켠다. [경로 전체] 버튼으로 일반 지도와 오간다(단계가 바뀌면 다시 내비 시점)
     val restPoints = route.map { listOf(it.lat, it.lng) }
@@ -448,9 +488,9 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
     val navTurn = if (navigate) RoadRoute.nextTurn(restPoints) else null
     val navRemainM = if (navigate) RoadRoute.lengthM(restPoints) else 0.0
     val zoneFitKey: Any? = if (zoneKm != null) listOf(m.caseId, zoneKm) else null
-    val sceneKey: Any? = if (m.onScene && !sentMode && target != null) listOf(m.caseId, m.preKtas, target.hospitalId) else null
+    val sceneKey: Any? = if (m.onScene && !sentMode && target != null) listOf(m.caseId, target.hospitalId) else null
 
-    // 현장(전달 전)에는 Pre-KTAS 시트가 항상 떠 있다 — 접힌 채로는 Pre-KTAS 줄만 보이고, 위로 끌거나 숫자를 누르면 병원 목록이 펼쳐진다
+    // 현장(전달 전)에는 병원 리스트 시트가 항상 떠 있다 — 접힌 채로는 제목만 보이고, 위로 끌면 병원 목록이 펼쳐진다
     val sheetMode = m.onScene && !sentMode
     // 이송 중에는 목적지 병원 카드를 지도 위 고정 카드가 아니라 위로 끌어올리는 시트로 둔다 — 접어 두면 지도가 넓게 보인다
     val transportSheet = m.inTransport
@@ -478,7 +518,7 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
                 active = visible, topOverlayPx = with(LocalDensity.current) { (topInset + (if (navigate) 96.dp else 12.dp)).roundToPx() }, navigate = navigate, navSession = navSession, navSpeedHintMps = navSpeedHint, onNavReady = { readySession = navSession },
                 deliveryFit = if (show != null && deliveryTargets.isNotEmpty()) listOf(ambulanceGps) + deliveryTargets.map { it.gps } else null,
                 overlay = if (show != null && deliveryTargets.isNotEmpty()) { project -> DeliveryOverlay(show, ambulanceGps, deliveryTargets, project) { m.finishDelivery() } } else null,
-                onPin = { id -> if (m.onScene && !sentMode && eligible.any { it.hospitalId == id }) tappedId = id }, modifier = Modifier.fillMaxSize())
+                onPin = { id -> if (m.onScene && !sentMode && scene.any { it.hospitalId == id }) tappedId = id }, modifier = Modifier.fillMaxSize())
             // 내비 시점이 가능하면 [경로 전체 보기] ↔ [내비 시점] 전환, 아니면 [내 위치]
             val toggle = navAvailable
             Icon(if (!toggle) Icons.Filled.MyLocation else if (navigate) Icons.Filled.Map else Icons.Filled.Navigation,
@@ -538,20 +578,19 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
                 sheetDragHandle = { if (anySheet) Box(Modifier.padding(top = 8.dp, bottom = 4.dp).size(36.dp, 4.dp).clip(CircleShape).background(AD.control)) },
                 sheetContent = {
                     if (sheetMode) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Pre-KTAS", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AD.navy, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-                        PreKtasRow(m, onSelect = { tappedId = null; m.requestFirstCall(); scope.launch { sheetState.bottomSheetState.expand() } }, showsLabel = false)
+                        Text("병원 리스트", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         // 아래는 펼쳤을 때만 보인다
-                        Text("병원 리스트 · hub 추천순 · 다른 사건의 연락·이송을 반영합니다", fontSize = 12.sp, color = AD.sub)
+                        Text("hub 추천순 · 이동·병상·전문의·도착 유효 확률과 다른 사건의 연락·이송을 반영합니다", fontSize = 12.sp, color = AD.sub)
                         if (m.wantsExtraCall) Text("추가 통화 닫기", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AD.ink3,
                             modifier = Modifier.clickable { m.wantsExtraCall = false })
                         when {
-                            m.scene?.preKtas != m.preKtas -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                            m.scene == null -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     CircularProgressIndicator(color = AD.blue, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
-                                    Text("KTAS 적합 병원을 확인하고 있습니다", fontSize = 13.sp, color = AD.sub)
+                                    Text("추천 병원을 확인하고 있습니다", fontSize = 13.sp, color = AD.sub)
                                 }
                             }
-                            scene.isEmpty() -> Text("현재 탐색 범위에 KTAS 적합 병원이 없습니다", fontSize = 14.sp, color = AD.sub,
+                            scene.isEmpty() -> Text("현재 탐색 범위에 병원이 없습니다", fontSize = 14.sp, color = AD.sub,
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), textAlign = TextAlign.Center)
                             else -> LazyColumn(Modifier.heightIn(max = listMax), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(scene, key = { it.hospitalId }) { h ->
@@ -560,7 +599,7 @@ private fun CallMapScreen(m: PhoneModel, visible: Boolean, topInset: Dp) {
                                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text((if (h.firstCallRecommended == true && !m.isSkipped(h)) "추천 · " else "") + h.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.navy)
                                             Text(distanceText(h), fontSize = 14.sp, color = AD.ink)
-                                            Text(h.firstCallReason ?: "선택한 KTAS 적합 후보", fontSize = 12.sp, color = AD.sub)
+                                            Text(h.firstCallReason ?: "추천 후보", fontSize = 12.sp, color = AD.sub)
                                             if (m.isSkipped(h)) Text("전화 미응답 이력", fontSize = 12.sp, color = AD.orange)
                                         }
                                         val enabled = !m.sceneCallBlocked && !m.paused && m.call == null
@@ -639,20 +678,6 @@ private fun distanceText(h: SceneCandidate): String {
     val road = h.roadDistanceKm
     val dist = if (road != null) "%.1fkm".format(road) else "직선 %.1fkm".format(h.distanceKm)
     return h.etaMin?.let { "$dist · ETA ${it.roundToInt()}분" } ?: dist
-}
-
-/** 현장에서 구급대원이 먼저 매기는 Pre-KTAS(1~5) 선택 — 고르면(같은 등급을 다시 눌러도) hub에 알려 KTAS 적합 병원 목록을 연다 */
-@Composable
-private fun PreKtasRow(m: PhoneModel, onSelect: () -> Unit = {}, showsLabel: Boolean = true) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (showsLabel) Text("Pre-KTAS", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AD.navy, modifier = Modifier.padding(end = 4.dp))
-        for (k in 1..5) {
-            val on = m.preKtas == k
-            Text("$k", fontSize = 16.sp, fontWeight = FontWeight.Black, color = if (on) Color.White else ktasColor(k), textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (on) ktasColor(k) else ktasSoft(k))
-                    .clickable { m.preKtas = k; onSelect() }.padding(vertical = 11.dp))
-        }
-    }
 }
 
 // ── 통화 중 ──
@@ -981,8 +1006,7 @@ private fun ConnectionDot(state: HubSocket.State) {
 private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
     val s = m.settings
     var hub by remember { mutableStateOf(s.hubBase) }
-    var apid by remember { mutableStateOf(s.apid) }
-    var recordToken by remember { mutableStateOf(m.recordAccess.token(s.apid.trim().uppercase().ifEmpty { "auto" })) }
+    var recordToken by remember { mutableStateOf(m.recordAccess.token(s.apid.trim().uppercase())) }
     var onDevice by remember { mutableStateOf(s.onDevice) }
     var rms by remember { mutableStateOf(s.silenceRms) }
     var hold by remember { mutableStateOf(s.holdSec) }
@@ -995,7 +1019,6 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
                 Spacer(Modifier.weight(1f))
                 Text("적용", color = AD.blue, fontWeight = FontWeight.Bold, modifier = Modifier.clickable {
                     s.hubBase = hub
-                    s.apid = apid.trim().ifEmpty { "auto" }
                     if (!m.recordAccess.save(recordToken, s.apid.trim().uppercase())) return@clickable
                     s.onDevice = onDevice
                     s.silenceRms = rms
@@ -1009,14 +1032,18 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
                 OutlinedTextField(hub, { hub = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("https://app.rookie-goldenlink.xyz 또는 http://<PC IP>:5001") })
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(apid, { apid = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    label = { Text("구급차 ID (SEL0001 또는 auto)") },
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("구급대 코드: P-${s.apid.trim().uppercase()}", fontWeight = FontWeight.SemiBold, color = AD.ink, modifier = Modifier.weight(1f))
+                    Text("접근 코드 변경", color = AD.blue, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.clickable {
+                        m.resetAccess()
+                        onClose()
+                    })
+                }
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(recordToken, { recordToken = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     label = { Text("기록 동기화 키 (운영자 발급)") }, visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-                Text("과거 기록은 같은 구급차 ID와 동기화 키가 있어야 내려받습니다. auto 모드 대신 소속 구급차 ID를 지정해 주세요.", fontSize = 11.sp, color = AD.sub)
+                Text("과거 기록은 같은 구급차 ID와 동기화 키가 있어야 내려받습니다.", fontSize = 11.sp, color = AD.sub)
             }
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {

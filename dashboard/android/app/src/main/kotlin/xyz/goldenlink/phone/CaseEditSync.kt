@@ -118,7 +118,7 @@ class CaseEditSync(private val store: KeyValueStore) {
         if (state.caseId != active && queue.none { it.requestId == state.requestId }) return
         if (state.error != null) {
             sent = null
-            status = if (state.error == "paused") "일시정지 해제 후 수정이 동기화됩니다." else "수정 동기화 실패 · 재연결 시 재시도합니다."
+            handleError(state)
             return
         }
         val values = state.fields ?: return
@@ -168,6 +168,26 @@ class CaseEditSync(private val store: KeyValueStore) {
         }
         project()
         if (conflicts.isEmpty()) flush()
+    }
+
+    /** hub가 거절한 이유별로 다르게 다룬다 — 영영 안 들어갈 수정은 대기열에서 치워야 "동기화 실패" 안내가 계속 남지 않는다 */
+    private fun handleError(state: State) {
+        when (state.error) {
+            "paused" -> status = "일시정지 해제 후 수정이 동기화됩니다."
+            // 이 구급대 사건이 아니거나 끝난 사건(보관 증표도 없음) — 다시 보내도 같은 답이라 그 사건의 대기 수정을 지운다.
+            // 지금 보는 사건이면 hub가 아직 사건을 모르는 것일 수 있어(재시작 직후 등) 지우지 않고 다시 시도한다
+            "not_owner" -> if (state.caseId != active) {
+                queue.removeAll { it.caseId == state.caseId }; persist(); project()
+                status = "끝난 사건의 수정은 동기화할 수 없어 지웠습니다."
+            } else status = "hub가 이 사건을 알지 못합니다 · 재연결하면 다시 시도합니다."
+            // 형식이 맞지 않거나 너무 큰 수정 — 다시 보내도 같다
+            "invalid_patch" -> {
+                queue.removeAll { it.requestId == state.requestId }; persist(); project()
+                status = "수정 내용이 형식에 맞지 않아 보내지 못했습니다(그 수정은 지웠습니다)."
+            }
+            "storage_unavailable" -> status = "hub 저장소 오류 · 잠시 뒤 다시 시도합니다."
+            else -> status = "수정 동기화 실패(${state.error}) · 재연결 시 재시도합니다."
+        }
     }
 
     fun resolve(useMine: Boolean) {
