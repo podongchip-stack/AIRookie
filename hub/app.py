@@ -1072,20 +1072,9 @@ def _apply_first_call(ws, payload):
     if role != "ambulance" or not case_id or engine.get_case_apid(case_id) != apid:
         _send_to_socket(ws, {"type": "first_call_error", "message": "현재 구급대 사건이 아닙니다"}, "첫 통화")
         return
-    k = payload.get("ktas")
-    clearing = "ktas" in payload and k is None
-    if _case_paused(case_id) or (not clearing and (type(k) is not int or k not in range(1, 6))):
+    if _case_paused(case_id):
         return
     previous = _case_scene.get(case_id, {})
-    if clearing:
-        _first_call_coordinator.release(case_id)
-        _case_recommended.pop(case_id, None)
-        _case_scene[case_id] = {**previous, "preKtas": None, "preKtasCleared": True}
-        gps = previous.get("ambulanceGps")
-        _send_scene_candidates(case_id, apid, GpsPoint(**gps) if gps else None)
-        return
-    if previous.get("preKtas") != k:
-        _first_call_coordinator.release(case_id)
     attempts = list(previous.get("callAttempts", []))
     hid = payload.get("noAnswerHospitalId")
     if hid:
@@ -1095,21 +1084,34 @@ def _apply_first_call(ws, payload):
         if hid not in attempts:
             attempts.append(hid)
             decision_log.log_decision("first_call_no_answer", {"caseId": case_id, "hospitalId": hid, "source": "rule"})
-    # 원래 현장 좌표를 유지하며 재연결/KTAS 변경에도 미응답 이력을 보존한다.
+    # 원래 현장 좌표를 유지하며 재연결에도 미응답 이력을 보존한다.
     gps = previous.get("ambulanceGps")
-    _case_scene[case_id] = {**previous, "preKtas": k, "preKtasCleared": False, "callAttempts": attempts}
+    _case_scene[case_id] = {**previous, "callAttempts": attempts}
     _send_scene_candidates(case_id, apid, GpsPoint(**gps) if gps else None)
 
 
-def _send_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None = None) -> None:
+def _send_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None = None, cascade: bool = True) -> None:
     # 추천 계산과 의향 반영을 직렬화해 동시 요청의 중복 추천을 줄인다.
     with _first_call_lock:
-        _build_scene_candidates(case_id, apid, scene_gps)
+        changed = _build_scene_candidates(case_id, apid, scene_gps)
+        if not (cascade and changed):
+            return
+        # 이 사건의 추천 병원이 바뀌면 그 병원의 점유가 달라졌으니, 아직 통화 전인 다른 구급차 사건의 목록도 바로 다시 계산해 보낸다
+        # (구급차가 다시 요청할 때까지 기다리면 두 폰이 같은 병원을 추천받은 채로 남는다). 연쇄 갱신은 한 번만 — 서로 추천을 뺏고
+        # 뺏기는 순환을 막으려고 다시 계산하는 쪽은 또 다른 쪽을 부르지 않는다.
+        for other_id, scene in list(_case_scene.items()):
+            if other_id == case_id or not isinstance(scene, dict) or not scene.get("hospitals"):
+                continue
+            other_apid = scene.get("apid") or engine.get_case_apid(other_id)
+            if not other_apid or engine.get_case_result(other_id) is not None:
+                continue   # 이미 요약이 병원들에 전달된 사건은 추천 단계가 끝났다
+            gps = scene.get("ambulanceGps")
+            _build_scene_candidates(other_id, other_apid, GpsPoint(**gps) if gps else None)
 
 
-def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None = None) -> None:
-    """환자 정보가 오기 전, 후보를 그 구급차 탭에만 보낸다(2026-10-01). 규칙 기반(거리 +
-    신고 중증도 가산)이고 진료과 매칭·승인은 아직 없어서, 병원 탭에는 보내지 않는다.
+def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None = None) -> bool:
+    """환자 정보가 오기 전, 후보를 그 구급차 탭에만 보낸다(2026-10-01). 규칙 기반(이동·병상·전문의·
+    도착 유효 확률 + 다른 구급차 점유, first_call.rank)이고 진료과 매칭·승인은 아직 없어서, 병원 탭에는 보내지 않는다.
 
     2026-10-04: **출동 지령 즉시**에도 보낸다(scene_gps = 사고 현장 좌표) — 1차 신고에서
     증상·중증도를 이미 아는데 가추천이 현장 도착까지 기다릴 이유가 없다. 기준점은 구급차
@@ -1120,46 +1122,44 @@ def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None 
     else:
         gps, fallback = _resolve_ambulance_gps(case_id)
     zone = engine.resolve_start_zone(gps)
-    # 신고 접수 1차 증상(2026-10-04)이 있으면 첫 통화 순위에 중증도 가산(권역/지역센터 분)을
-    # 반영하고, 전화 앱 머리에 "신고: 흉통(중증)"을 띄울 재료로 같이 보낸다.
+    # 신고 접수 1차 증상(2026-10-04)은 순위에 쓰지 않는다(시민 신고라 임상 근거가 약하다, 2026-11-03) —
+    # 전화 앱 머리에 "신고: 흉통(중증)"을 띄울 재료로만 같이 보낸다.
     pre = _pre_alerts.get(case_id) or {}
     reported_severity = pre.get("reportedSeverity")
-    hospitals = engine.build_zone_candidates(gps, max_zone=zone, reported_severity=reported_severity)
+    hospitals = engine.build_zone_candidates(gps, max_zone=zone)
     previous = _case_scene.get(case_id, {})
-    k = previous.get("preKtas")
     attempts = previous.get("callAttempts", [])
     attempted_rows = []
-    if k in range(1, 6):
-        now_mono = time.monotonic()
-        with _sockets_lock:
-            calls = list(_case_call.values())
-        results = engine.list_case_results()
-        active_ids = set(_case_scene) | {r.caseId for r in results}
-        # 완료 사건은 남아 있는 캐시가 있어도 부하에서 제외한다.
-        active_ids = set(engine.list_open_case_ids())
-        transport_etas = {}
-        if sim is not None:
-            for r in results:
-                state = sim.state(r.apid) if r.apid else None
-                if state and state.get("caseId") == r.caseId and state.get("phase") == "transporting" and state.get("etaSec") is not None:
-                    for h in r.hospitals:
-                        if h.status == "confirmed": transport_etas[r.caseId, h.hospitalId] = state["etaSec"] / 60
-        loads = _first_call_coordinator.pressure(case_id, active_ids, calls, results, now_mono, transport_etas)
-        while True:
-            fresh, attempted_rows = first_call.rank(hospitals, k, attempts, loads)
-            if fresh or zone >= 10:
-                hospitals = fresh + attempted_rows
-                # 통화 요청·통화 중에는 현재 선택을 유지한다.
-                current = next((c for c in calls if c.get("caseId") == case_id and c.get("state") in ("ringing", "calling")), None)
-                stable_id = current.get("hospitalId") if current else None
-                stable = next((h for h in fresh if h["hospitalId"] == stable_id), None)
-                if stable:
-                    for h in hospitals: h["firstCallRecommended"] = h is stable
-                chosen = next((h for h in hospitals if h.get("firstCallRecommended")), None)
-                _first_call_coordinator.remember(case_id, chosen["hospitalId"] if chosen else None, now_mono)
-                break
-            zone += 1
-            hospitals = engine.build_zone_candidates(gps, max_zone=zone, reported_severity=reported_severity)
+    now_mono = time.monotonic()
+    with _sockets_lock:
+        calls = list(_case_call.values())
+    results = engine.list_case_results()
+    active_ids = set(_case_scene) | {r.caseId for r in results}
+    # 완료 사건은 남아 있는 캐시가 있어도 부하에서 제외한다.
+    active_ids = set(engine.list_open_case_ids())
+    transport_etas = {}
+    if sim is not None:
+        for r in results:
+            state = sim.state(r.apid) if r.apid else None
+            if state and state.get("caseId") == r.caseId and state.get("phase") == "transporting" and state.get("etaSec") is not None:
+                for h in r.hospitals:
+                    if h.status == "confirmed": transport_etas[r.caseId, h.hospitalId] = state["etaSec"] / 60
+    loads = _first_call_coordinator.pressure(case_id, active_ids, calls, results, now_mono, transport_etas)
+    while True:
+        fresh, attempted_rows = first_call.rank(hospitals, attempts, loads)
+        if fresh or zone >= 10:
+            hospitals = fresh + attempted_rows
+            # 통화 요청·통화 중에는 현재 선택을 유지한다.
+            current = next((c for c in calls if c.get("caseId") == case_id and c.get("state") in ("ringing", "calling")), None)
+            stable_id = current.get("hospitalId") if current else None
+            stable = next((h for h in fresh if h["hospitalId"] == stable_id), None)
+            if stable:
+                for h in hospitals: h["firstCallRecommended"] = h is stable
+            chosen = next((h for h in hospitals if h.get("firstCallRecommended")), None)
+            _first_call_coordinator.remember(case_id, chosen["hospitalId"] if chosen else None, now_mono)
+            break
+        zone += 1
+        hospitals = engine.build_zone_candidates(gps, max_zone=zone)
 
     payload = {
         "type": "scene_candidates",
@@ -1169,8 +1169,8 @@ def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None 
         "ambulanceGpsFallback": fallback,
         "zoneActive": list(range(1, zone + 1)),
         "hospitals": hospitals,
-        "preKtas": k, "preKtasCleared": previous.get("preKtasCleared", False), "callAttempts": attempts,
-        "firstCallExhausted": k is not None and not any(h.get("firstCallRecommended") for h in hospitals),
+        "callAttempts": attempts,
+        "firstCallExhausted": not any(h.get("firstCallRecommended") for h in hospitals),
         "reportedSymptom": pre.get("reportedSymptom"),
         "reportedSeverity": reported_severity,
         "source": "rule",
@@ -1178,6 +1178,7 @@ def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None 
     # 첫 연락 추천(2026-10-03)을 의사결정 로그에 남긴다 — 추천 병원이 실제 첫 통화·수용으로
     # 이어졌는지(적중률)를 나중에 승인 액션·거절 로그와 대조해 셀 수 있는 유일한 재료라서다.
     recommended = next((h for h in hospitals if h.get("firstCallRecommended")), None)
+    changed = (recommended["hospitalId"] if recommended is not None else None) != _case_recommended.get(case_id)
     if recommended is not None:
         _case_recommended[case_id] = recommended["hospitalId"]
         decision_log.log_decision("first_call_recommended", {
@@ -1195,6 +1196,7 @@ def _build_scene_candidates(case_id: str, apid: str, scene_gps: GpsPoint | None 
         targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and id_ == apid]
     for ws in targets:
         _send_to_socket(ws, payload, "현장 후보")
+    return changed
 
 
 # ── 중앙 voice·통화 상태 (2026-10-03) ───────────────────────────────────────
@@ -1352,9 +1354,8 @@ def _handle_call_connection(ws, payload):
                 if hid not in attempts: attempts.append(hid)
                 _case_scene[cid] = {**previous, "callAttempts":attempts}
                 decision_log.log_decision("first_call_no_answer", {"caseId":cid,"hospitalId":hid,"source":"rule"})
-                if previous.get("preKtas"):
-                    gps = previous.get("ambulanceGps")
-                    _send_scene_candidates(cid, apid, GpsPoint(**gps) if gps else None)
+                gps = previous.get("ambulanceGps")
+                _send_scene_candidates(cid, apid, GpsPoint(**gps) if gps else None)
 
 
 def _relay_call_signal(signal: CallSignal, ws=None) -> None:

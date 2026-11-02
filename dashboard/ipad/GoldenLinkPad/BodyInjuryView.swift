@@ -34,27 +34,70 @@ struct BodyEdits {
     /// 부위별 처치
     var cares: [BodyMark: [String]] = [:]
 
-    /// 현장에서 손으로 적던 것들 — 서식의 처치 칸으로 분류되는 말로 둔다(`Handover.care`)
-    static let careOptions = ["지혈", "드레싱", "부목 고정", "경추보호대", "척추 고정", "냉찜질", "창상 세척", "산소 투여", "정맥로 확보"]
+    /// 부위에 맞는 처치만 — 다른 기기에서 온 값이나 예전에 적은 값에 맞지 않는 처치(예: 팔에 산소투여)가 있어도 여기서 걸러진다
+    var fittedCares: [BodyMark: [String]] {
+        var out: [BodyMark: [String]] = [:]
+        for (mark, list) in cares {
+            let kept = list.filter { BodyCare.fits(mark, $0) }
+            if !kept.isEmpty { out[mark] = kept }
+        }
+        return out
+    }
 
     static func label(_ m: BodyMark) -> String {
         (m.side == .unknown ? "" : m.side.rawValue + " ") + m.region.rawValue
     }
     /// 인계확인서 처치 칸으로 — "좌 다리 부목 고정"
     var careLines: [String] {
-        cares.flatMap { mark, list in list.map { "\(BodyEdits.label(mark)) \($0)" } }.sorted()
+        fittedCares.flatMap { mark, list in list.map { "\(BodyEdits.label(mark)) \($0)" } }.sorted()
     }
     /// hub로 보낼 증상 줄 — 구급대원이 찍은 부위
     var addedLines: [String] { added.map { BodyEdits.label($0) + " 외상(구급대원 확인)" }.sorted() }
     var isEmpty: Bool { added.isEmpty && removed.isEmpty && careLines.isEmpty }
     /// 고친 부위 수(한 부위에 외상·처치를 같이 적어도 한 곳)
-    var markCount: Int { Set(added).union(removed).union(cares.filter { !$0.value.isEmpty }.keys).count }
+    var markCount: Int { Set(added).union(removed).union(fittedCares.keys).count }
     /// 지금 내용의 지문 — 보낸 뒤 또 바뀌었는지만 본다
     var signature: String {
         (added.map { "+" + BodyEdits.label($0) }.sorted()
             + removed.map { "-" + BodyEdits.label($0) }.sorted()
             + careLines).joined(separator: "|")
     }
+}
+
+/// 외상 부위에서 고를 수 있는 처치. 어휘는 voice 처치판(2026-10-29)의 `treat_categories` 28범주이고, 한글 이름은 hub `voice_treatments.py`와
+/// 글자까지 같다 — 통화에서 AI가 뽑은 처치와 대원이 도해에서 고른 처치가 같은 문자열이라 서식·병원 화면에서 겹치지 않는다.
+/// 부위마다 **그 부위에 실제로 하는 처치만** 보인다. 산소·CPR·약물·정맥로처럼 부위에 속하지 않는 전신 처치는 여기에 없다 —
+/// 통화 요약의 처치로는 그대로 인계확인서에 들어간다. 부위별 목록은 전문의 검토 전 초안이다(안드로이드 core/BodyInjury.kt `BodyCare`와 같다).
+enum BodyCare {
+    /// 28범주 전체(순서는 voice·hub와 같다)
+    static let all: [(key: String, label: String)] = [
+        ("oxygen", "산소투여"), ("suction", "기도 흡인"), ("foreign_body", "기도 이물 제거"), ("airway_basic", "기본 기도확보"),
+        ("airway_advanced", "전문 기도확보"), ("ventilation", "인공호흡"), ("cpr", "CPR"), ("defib", "AED"),
+        ("iv", "정맥로 확보"), ("fluid", "수액공급"), ("bleeding", "지혈"), ("med_aspirin", "아스피린 투여"),
+        ("med_nitro", "니트로글리세린 투여"), ("med_glucose", "포도당 투여"), ("med_epinephrine", "에피네프린 투여"),
+        ("med_bronchodilator", "기관지확장제 투여"), ("med_other", "기타 약물투여"), ("spinal", "척추 고정"), ("splint", "부목 고정"),
+        ("wound", "상처처치"), ("burn", "화상 처치"), ("irrigation", "세척"), ("cold_pack", "냉찜질"), ("cooling", "냉각"),
+        ("warming", "보온"), ("position", "체위 조절"), ("delivery", "분만 처치"), ("other", "기타 처치"),
+    ]
+
+    private static let common = ["지혈", "상처처치", "화상 처치", "세척", "냉찜질", "체위 조절"]
+    private static let splint = "부목 고정"
+    private static let spinal = "척추 고정"
+    private static let airway = ["기도 흡인", "기도 이물 제거"]
+
+    /// 그 부위에서 고를 수 있는 처치 — 가장 해당되는 것이 앞에 온다
+    static func optionsFor(_ region: BodyRegion) -> [String] {
+        switch region {
+        case .arm, .hand, .leg, .foot: return [splint] + common
+        case .pelvis: return [splint, spinal] + common
+        case .head, .back: return [spinal] + common
+        case .neck: return [spinal] + airway + common
+        case .face: return airway + common
+        case .chest, .abdomen: return common
+        }
+    }
+
+    static func fits(_ mark: BodyMark, _ label: String) -> Bool { optionsFor(mark.region).contains(label) }
 }
 
 struct MappedInjury: Identifiable, Hashable {
@@ -631,7 +674,7 @@ struct BodyInjuryCard: View {
         }
         // 구급대원이 눌러 찍은 부위 — 적은 처치까지 같이 보고 등급을 매긴다(규칙은 통화 항목과 같다)
         for mark in model.bodyEdits.added {
-            let text = (["외상"] + (model.bodyEdits.cares[mark] ?? [])).joined(separator: " ")
+            let text = (["외상"] + (model.bodyEdits.fittedCares[mark] ?? [])).joined(separator: " ")
             out[mark] = max(out[mark] ?? .low, InjuryRisk.tier(text, region: mark.region))
         }
         return out
@@ -662,7 +705,7 @@ struct BodyInjuryCard: View {
         return marked.keys.filter { BodyShape.visible($0.region, back: back) }.map { mark in
             var texts = located.filter { $0.marks.contains(mark) }.map(\.text)
             if texts.isEmpty { texts = ["외상(구급대원 확인)"] }
-            texts += (model.bodyEdits.cares[mark] ?? []).map { "처치 " + $0 }
+            texts += (model.bodyEdits.fittedCares[mark] ?? []).map { "처치 " + $0 }
             return Callout(mark: mark, n: numbers[mark] ?? 0, title: BodyEdits.label(mark),
                            text: texts.joined(separator: " · "), tier: marked[mark] ?? .low)
         }
@@ -680,7 +723,7 @@ struct BodyInjuryCard: View {
                     Text("부위를 눌러 고치거나 처치를 적습니다").font(.system(size: 11)).foregroundStyle(AD.muted)
                     faceSwitch
                 }
-                if let k = patient?.ktasLevel { Pill(text: "KTAS \(k)", bg: Theme.ktasSoft(k), fg: Theme.ktas(k), bold: true) }
+                if let k = patient?.ktasLevel { Pill(text: "Pre-KTAS \(k)", bg: Theme.ktasSoft(k), fg: Theme.ktas(k), bold: true) }
                 if !tiers.isEmpty { Pill(text: "\(tiers.count)곳", bg: AD.redSoft, fg: AD.red, bold: true) }
                 if !model.bodyEdits.isEmpty { Pill(text: "구급대원 수정", bg: AD.orangeSoft, fg: AD.orange, bold: true) }
             }
@@ -797,7 +840,7 @@ struct BodyInjuryCard: View {
                     .gesture(SpatialTapGesture().onEnded { v in
                         guard let m = BodyShape.hit(v.location, CGSize(width: figW, height: figH), back: back) else { return }
                         draftOn = tiers[m] != nil
-                        draftCares = model.bodyEdits.cares[m] ?? []
+                        draftCares = model.bodyEdits.fittedCares[m] ?? []
                         sharedBase = model.caseEdits.fields
                         withAnimation(.easeOut(duration: 0.15)) { tapped = m }
                     })
@@ -876,7 +919,8 @@ struct BodyInjuryCard: View {
             }
             if draftOn {
                 Text("이 부위에 한 처치").font(.system(size: 11.5)).foregroundStyle(AD.muted)
-                FlowChips(options: BodyEdits.careOptions, selected: $draftCares)
+                FlowChips(options: BodyCare.optionsFor(m.region), selected: $draftCares)
+                Text("부위별 처치 목록은 전문의 검토 전 초안입니다").font(.system(size: 11)).foregroundStyle(AD.muted)
             }
             HStack(spacing: 8) {
                 // 여기서는 보내지 않는다(2026-10-28) — 부위마다 보내면 병원에 쪽지가 여러 장 가고 "구급대원 확인" 도장도
@@ -907,7 +951,8 @@ struct BodyInjuryCard: View {
         var e = model.bodyEdits
         if draftOn {
             if callMarks.contains(m) { e.removed.remove(m) } else { e.added.insert(m) }
-            e.cares[m] = draftCares.isEmpty ? nil : draftCares
+            let fitted = draftCares.filter { BodyCare.fits(m, $0) }
+            e.cares[m] = fitted.isEmpty ? nil : fitted
         } else {
             if callMarks.contains(m) { e.removed.insert(m) } else { e.added.remove(m) }
             e.cares[m] = nil

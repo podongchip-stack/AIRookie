@@ -46,7 +46,17 @@ public struct BodyEdits: Equatable {
     }
 
     /// 인계확인서 처치 칸으로 — "좌 다리 부목 고정"
-    public var careLines: [String] { cares.flatMap { mark, list in list.map { "\(mark.label) \($0)" } }.sorted() }
+    public var careLines: [String] { fittedCares.flatMap { mark, list in list.map { "\(mark.label) \($0)" } }.sorted() }
+
+    /// 부위에 맞는 처치만 — 다른 기기에서 온 값이나 예전에 적은 값에 맞지 않는 처치(예: 팔에 산소투여)가 있어도 여기서 걸러진다
+    public var fittedCares: [BodyMark: [String]] {
+        var out: [BodyMark: [String]] = [:]
+        for (mark, list) in cares {
+            let kept = list.filter { BodyCare.fits(mark, $0) }
+            if !kept.isEmpty { out[mark] = kept }
+        }
+        return out
+    }
 
     /// hub로 보낼 증상 줄 — 구급대원이 찍은 부위
     public var addedLines: [String] { added.map { $0.label + " 외상(구급대원 확인)" }.sorted() }
@@ -54,7 +64,7 @@ public struct BodyEdits: Equatable {
     public var isEmpty: Bool { added.isEmpty && removed.isEmpty && careLines.isEmpty }
 
     /// 고친 부위 수(한 부위에 외상·처치를 같이 적어도 한 곳)
-    public var markCount: Int { Set(added).union(removed).union(cares.filter { !$0.value.isEmpty }.keys).count }
+    public var markCount: Int { Set(added).union(removed).union(fittedCares.keys).count }
 
     /// 지금 내용의 지문 — 보낸 뒤 또 바뀌었는지만 본다
     public var signature: String {
@@ -66,16 +76,50 @@ public struct BodyEdits: Equatable {
         var v = self
         if on {
             if fromCall { v.removed.remove(mark) } else { v.added.insert(mark) }
-            if careList.isEmpty { v.cares.removeValue(forKey: mark) } else { v.cares[mark] = careList }
+            let fitted = careList.filter { BodyCare.fits(mark, $0) }
+            if fitted.isEmpty { v.cares.removeValue(forKey: mark) } else { v.cares[mark] = fitted }
         } else {
             if fromCall { v.removed.insert(mark) } else { v.added.remove(mark) }
             v.cares.removeValue(forKey: mark)
         }
         return v
     }
+}
 
-    /// 현장에서 손으로 적던 것들 — 서식의 처치 칸으로 분류되는 말로 둔다(`Handover.care`)
-    public static let careOptions = ["지혈", "드레싱", "부목 고정", "경추보호대", "척추 고정", "냉찜질", "창상 세척", "산소 투여", "정맥로 확보"]
+/// 외상 부위에서 고를 수 있는 처치. 어휘는 voice 처치판(2026-10-29)의 `treat_categories` 28범주이고, 한글 이름은 hub `voice_treatments.py`와
+/// 글자까지 같다 — 통화에서 AI가 뽑은 처치와 대원이 도해에서 고른 처치가 같은 문자열이라 서식·병원 화면에서 겹치지 않는다.
+/// 부위마다 **그 부위에 실제로 하는 처치만** 보인다. 산소·CPR·약물·정맥로처럼 부위에 속하지 않는 전신 처치는 여기에 없다 —
+/// 통화 요약의 처치로는 그대로 인계확인서에 들어간다. 부위별 목록은 전문의 검토 전 초안이다(안드로이드 core/BodyInjury.kt `BodyCare`와 같다).
+public enum BodyCare {
+    /// 28범주 전체(순서는 voice·hub와 같다)
+    public static let all: [(key: String, label: String)] = [
+        ("oxygen", "산소투여"), ("suction", "기도 흡인"), ("foreign_body", "기도 이물 제거"), ("airway_basic", "기본 기도확보"),
+        ("airway_advanced", "전문 기도확보"), ("ventilation", "인공호흡"), ("cpr", "CPR"), ("defib", "AED"),
+        ("iv", "정맥로 확보"), ("fluid", "수액공급"), ("bleeding", "지혈"), ("med_aspirin", "아스피린 투여"),
+        ("med_nitro", "니트로글리세린 투여"), ("med_glucose", "포도당 투여"), ("med_epinephrine", "에피네프린 투여"),
+        ("med_bronchodilator", "기관지확장제 투여"), ("med_other", "기타 약물투여"), ("spinal", "척추 고정"), ("splint", "부목 고정"),
+        ("wound", "상처처치"), ("burn", "화상 처치"), ("irrigation", "세척"), ("cold_pack", "냉찜질"), ("cooling", "냉각"),
+        ("warming", "보온"), ("position", "체위 조절"), ("delivery", "분만 처치"), ("other", "기타 처치"),
+    ]
+
+    private static let common = ["지혈", "상처처치", "화상 처치", "세척", "냉찜질", "체위 조절"]
+    private static let splint = "부목 고정"
+    private static let spinal = "척추 고정"
+    private static let airway = ["기도 흡인", "기도 이물 제거"]
+
+    /// 그 부위에서 고를 수 있는 처치 — 가장 해당되는 것이 앞에 온다
+    public static func optionsFor(_ region: BodyRegion) -> [String] {
+        switch region {
+        case .arm, .hand, .leg, .foot: return [splint] + common
+        case .pelvis: return [splint, spinal] + common
+        case .head, .back: return [spinal] + common
+        case .neck: return [spinal] + airway + common
+        case .face: return airway + common
+        case .chest, .abdomen: return common
+        }
+    }
+
+    public static func fits(_ mark: BodyMark, _ label: String) -> Bool { optionsFor(mark.region).contains(label) }
 }
 
 /// 통화 요약의 항목 하나와 그 항목이 가리키는 부위

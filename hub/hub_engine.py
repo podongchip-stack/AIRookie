@@ -49,7 +49,6 @@ from schema import (
 )
 from scoring import (
     calibrate_min_per_km,
-    expertise_bonus_min,
     final_score,
     load_penalty_min,
     occupancy_penalty_min,
@@ -1355,9 +1354,7 @@ class HubEngine:
                                                        "cause": "ktas_no_eligible", "source": "rule"})
         return zone
 
-    def build_zone_candidates(
-        self, ambulance_gps: GpsPoint, max_zone: int = 1, reported_severity: str | None = None
-    ) -> list[dict]:
+    def build_zone_candidates(self, ambulance_gps: GpsPoint, max_zone: int = 1) -> list[dict]:
         """1단계: voice 정보가 도착하기 전, GPS+병원 정보만으로 존 기반 후보 리스트를
         만들어 보관해둔다. 진료과 매칭 없이 거리만으로 정렬한 중간 상태를 반환한다.
 
@@ -1386,16 +1383,7 @@ class HubEngine:
             eta = etas.get(info.hospitalId)
             return eta[0] / 60.0 if eta is not None else distance * min_per_km
 
-        # 신고 접수 1차 중증도가 있으면(2026-10-04, 시연 콘솔의 reportedSeverity) 정렬에
-        # 매칭과 같은 '분' 가산을 적용한다 — 중증 의심이면 권역 −5분·지역센터 −2분, 경증은
-        # 센터 +3분(센터 보존). 환자 정보(통화) 전이지만 신고 중증도는 상황실이 이미 아는
-        # 값이라, "이동시간만 보던" 첫 통화 순위를 반 발짝 당긴다. 없으면 기존 그대로.
-        def order_min_of(pair: tuple) -> float:
-            info, _ = pair
-            bonus, _reasons = expertise_bonus_min(None, info.emergencyLevel, reported_severity)
-            return travel_min_of(pair) - bonus
-
-        candidates.sort(key=order_min_of if reported_severity else travel_min_of)
+        candidates.sort(key=travel_min_of)
         rows: list[dict] = []
         best_index: int | None = None
         best_r_arrive = 0.0

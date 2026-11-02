@@ -225,6 +225,7 @@ struct SceneCard: View {
                 if let lvl = h.emergencyLevel, lvl.hasSuffix("센터") { Pill(text: lvl) }
                 Spacer(minLength: 0)
             }.lineLimit(1)
+            if let reason = h.firstCallReason { Text(reason).font(.system(size: 11.5)).foregroundStyle(AD.sub).lineLimit(2) }
             if let lv = live {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("AI · 지금 유효 \(BedReliability.pct(lv.authority)) → 도착 시 \(BedReliability.pct(lv.rArrive))\(lv.ageSec.map { " · 정보 \(Labels.age($0))" } ?? "")")

@@ -32,7 +32,7 @@ private struct BodyView {
             t[mark] = max(t[mark] ?? .low, InjuryRisk.tier(injury.text, mark.region))
         } }
         for mark in e.added {
-            let text = (["외상"] + (e.cares[mark] ?? [])).joined(separator: " ")
+            let text = (["외상"] + (e.fittedCares[mark] ?? [])).joined(separator: " ")
             t[mark] = max(t[mark] ?? .low, InjuryRisk.tier(text, mark.region))
         }
         tiers = t
@@ -45,7 +45,7 @@ private struct BodyView {
     func text(_ mark: BodyMark, _ e: BodyEdits) -> String {
         var texts = located.filter { $0.marks.contains(mark) }.map(\.text)
         if texts.isEmpty { texts = ["외상(구급대원 확인)"] }
-        texts += (e.cares[mark] ?? []).map { "처치 \($0)" }
+        texts += (e.fittedCares[mark] ?? []).map { "처치 \($0)" }
         return texts.joined(separator: " · ")
     }
 }
@@ -64,7 +64,7 @@ struct BodyPage: View {
                     HStack(spacing: 6) {
                         Text("외상 부위").font(.system(size: 16, weight: .bold)).foregroundStyle(AD.navy)
                         Spacer()
-                        if let k = p.ktasLevel { Pill(text: "KTAS \(k)", fg: ktasColor(k), bg: ktasSoft(k), bold: true) }
+                        if let k = p.ktasLevel { Pill(text: "Pre-KTAS \(k)", fg: ktasColor(k), bg: ktasSoft(k), bold: true) }
                         if !v.tiers.isEmpty { Pill(text: "\(v.tiers.count)곳", fg: AD.red, bg: AD.redSoft, bold: true) }
                         faceSwitch(v)
                     }
@@ -265,14 +265,18 @@ private struct BodyEditSheet: View {
                 }
             }
             if on {
-                FlowLayout(spacing: 6) {
-                    ForEach(BodyEdits.careOptions, id: \.self) { o in
-                        let sel = cares.contains(o)
-                        Text(o).font(.system(size: 12.5, weight: sel ? .bold : .medium)).foregroundStyle(sel ? .white : AD.ink3)
-                            .padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(sel ? AD.blue : AD.chip, in: Capsule())
-                            .onTapGesture { if sel { cares.removeAll { $0 == o } } else { cares.append(o) } }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("이 부위에 한 처치").font(.system(size: 11.5)).foregroundStyle(AD.muted)
+                    FlowLayout(spacing: 6) {
+                        ForEach(BodyCare.optionsFor(mark.region), id: \.self) { o in
+                            let sel = cares.contains(o)
+                            Text(o).font(.system(size: 12.5, weight: sel ? .bold : .medium)).foregroundStyle(sel ? .white : AD.ink3)
+                                .padding(.horizontal, 12).padding(.vertical, 7)
+                                .background(sel ? AD.blue : AD.chip, in: Capsule())
+                                .onTapGesture { if sel { cares.removeAll { $0 == o } } else { cares.append(o) } }
+                        }
                     }
+                    Text("부위별 처치 목록은 전문의 검토 전 초안입니다").font(.system(size: 11)).foregroundStyle(AD.muted)
                 }
             }
             Button {
@@ -287,7 +291,7 @@ private struct BodyEditSheet: View {
         .padding(16)
         .onAppear {
             on = v.tiers[mark] != nil
-            cares = m.bodyEdits.cares[mark] ?? []
+            cares = m.bodyEdits.fittedCares[mark] ?? []
             sharedBase = m.caseEdits.fields
         }
     }

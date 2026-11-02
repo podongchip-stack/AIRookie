@@ -1,10 +1,11 @@
-// 한 구급대에 기기를 고정해 진행하는 시연. 좌표·시나리오는 가상, 레지스트리는 실제 등록 ID.
-export const DEMO_UNIT = {
-  apid: "SEL0111",
-  name: "역삼119안전센터 구급 1",
-  phoneCode: "P-SEL0111",
-  tabletCode: "A-SEL0111",
-} as const;
+// 구급대 둘(같은 역삼119안전센터 소속)에 기기를 나눠 고정해 진행하는 시연(2026-11-03). 좌표·시나리오는 가상, 레지스트리는 실제 등록 ID.
+// defaultScenario는 UNIT_SCENARIOS의 key — 두 사건의 중증도가 달라 첫 전화 추천 순위가 다르게 나오는 조합이 기본이다.
+export const DEMO_UNITS = [
+  { apid: "SEL0111", name: "역삼119안전센터 구급 1", short: "구급 1", phoneCode: "P-SEL0111", tabletCode: "A-SEL0111", defaultScenario: "cardiac" },
+  { apid: "SEL0112", name: "역삼119안전센터 구급 2", short: "구급 2", phoneCode: "P-SEL0112", tabletCode: "A-SEL0112", defaultScenario: "mild" },
+] as const;
+
+export const DEMO_UNIT = DEMO_UNITS[0];
 
 // Pre-KTAS 1~5 하나씩(2026-11-02). key는 DemoConsole의 신고 접수 상황(PATIENT_TEMPLATES)과 같다.
 export const UNIT_SCENARIOS = [

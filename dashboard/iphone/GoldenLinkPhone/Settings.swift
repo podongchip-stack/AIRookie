@@ -33,9 +33,13 @@ enum Settings {
         return id
     }
 
-    /// 구급차 ID(SEL0001~) 또는 "auto"(출동하는 구급차를 자동으로 따라감 — 웹 P-AUTO)
+    /// 소속 구급차 ID(SEL0001~) — 첫 실행의 접근 코드 입력으로 정한다. 비어 있으면 아직 코드를 입력하지 않은 것
+    /// (예전 버전의 "auto" 설정은 비운 것으로 본다 — 자동 전환은 없앴다)
     static var apid: String {
-        get { UserDefaults.standard.string(forKey: "apid") ?? "auto" }
+        get {
+            let value = UserDefaults.standard.string(forKey: "apid") ?? ""
+            return value.lowercased() == "auto" ? "" : value
+        }
         set { UserDefaults.standard.set(newValue, forKey: "apid") }
     }
 

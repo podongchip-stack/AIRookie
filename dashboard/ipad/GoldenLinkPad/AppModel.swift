@@ -529,7 +529,7 @@ extension AppModel {
         let r = mark.region
         let side = mark.side == .left ? "좌" : mark.side == .right ? "우" : ""
         let key = "b:" + r.rawValue + ":" + side
-        let body = SharedBodyValue(added: bodyEdits.added.contains(mark), removed: bodyEdits.removed.contains(mark), cares: bodyEdits.cares[mark] ?? [])
+        let body = SharedBodyValue(added: bodyEdits.added.contains(mark), removed: bodyEdits.removed.contains(mark), cares: bodyEdits.fittedCares[mark] ?? [])
         guard let data = try? JSONEncoder().encode(body), let value = String(data: data, encoding: .utf8) else { return }
         _ = caseEdits.submit(caseId: id, changes: [key: value], base: base)
     }
@@ -543,7 +543,8 @@ extension AppModel {
             let mark = BodyMark(region: region, side: side)
             if value.added { edits.added.insert(mark) }
             if value.removed { edits.removed.insert(mark) }
-            if !value.cares.isEmpty { edits.cares[mark] = value.cares }
+            let fitted = value.cares.filter { BodyCare.fits(mark, $0) }
+            if !fitted.isEmpty { edits.cares[mark] = fitted }
         }
         bodyEdits = edits
     }

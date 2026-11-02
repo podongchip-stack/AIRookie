@@ -1,3 +1,4 @@
+import UIKit
 import Foundation
 import GoldenLinkCore
 import Observation
@@ -25,7 +26,19 @@ final class PhoneModel {
     }
     let caseEdits = CaseEditSync()
     var accessRequired = Settings.accessCode.isEmpty
-    var apid: String?  // 지금 보는 구급차. 자동 전환 모드면 바뀐다
+    var apid: String?  // 접근 코드로 정한 소속 구급차
+    /// 요약이 병원들에 전달되는 모습을 지도에서 보여 주는 중(안드로이드 DeliveryShow와 같다)
+    final class DeliveryShow {
+        let caseId: String
+        let durationMs: Int
+        let reduceMotion: Bool
+        /// 지도가 준비돼 연출이 실제로 시작된 시각(nil이면 아직) — 지도를 불러오는 동안 연출 시간이 흘러가 버리지 않게 지도가 채운다
+        var readyAt: Date?
+        init(caseId: String, durationMs: Int, reduceMotion: Bool) {
+            self.caseId = caseId; self.durationMs = durationMs; self.reduceMotion = reduceMotion
+        }
+    }
+    var deliveryShow: DeliveryShow?
     var identity: IdentityInfo?
 
     // hub가 알려 준 상태
@@ -67,13 +80,6 @@ final class PhoneModel {
     var incidentAddress: String?   // 인계확인서 "출발지 주소" — hub가 좌표를 주소로 바꿔 준다
     /// 통화 화면 지도의 병원 핀 좌표 — hub map_overview(병원 목록)에서 hospitalId로 찾는다. 현장 후보 메시지엔 좌표가 없다
     var hospitalGps: [String: GPS] = [:]
-    /// 현장 Pre-KTAS(1~5)는 hub 규칙 기반 추천 요청에 사용한다.
-    // 전화 연결 화면을 오가도 현장 시트의 펼침 상태를 보관한다.
-    var callHospitalListPresented = false
-    var skippedHospitals: [String: Set<String>] = [:]
-    var deliveryShow: DeliveryShow?
-    var preKtas: Int?
-    private var pendingPreKtasClear: String?
     var bodyEdits = BodyEdits()       // 외상 도해에서 구급대원이 고친 부위·처치 — 새 사건이면 비운다
     var bodySentSignature = ""        // 마지막으로 병원에 보낸 도해 내용의 지문 — 그 뒤로 또 고쳤는지만 본다
     /// 인계확인서 시각 칸 — 출동 단계가 바뀐 그 순간. hub는 단계만 보내고 시각은 안 보내므로 앱이 기억한다
@@ -104,31 +110,25 @@ final class PhoneModel {
     }
 
     let models = ModelStore()
-    private var monitor: HubSocket?
     private var mapSocket: HubSocket?
     private var ambulance: HubSocket?
     private var noticeTask: Task<Void, Never>?
 
-    var autoFollow: Bool { Settings.apid.lowercased() == "auto" }
-
     func start() {
         stop()
-        if autoFollow {
-            monitor = HubSocket(role: "monitor", id: "phone-auto", onMessage: { [weak self] t, d in self?.handle(t, d, fromMonitor: true) },
-                                onState: { [weak self] s in if self?.ambulance == nil { self?.connection = s } })
-        } else {
-            follow(Settings.apid)
-            // 병원 좌표(map_overview)만 받는 읽기 전용 소켓 — 다른 메시지는 거른다(구급차 위치가 초당 전 차량분 오므로 해석하지 않는다)
-            mapSocket = HubSocket(role: "monitor", id: "phone-map", onMessage: { [weak self] t, d in
-                if t == "map_overview" { self?.handle(t, d, fromMonitor: true) }
-            }, onState: { _ in })
-        }
+        let id = Settings.apid.trimmingCharacters(in: .whitespaces).uppercased()
+        guard !id.isEmpty else { return }  // 접근 코드를 입력하기 전엔 어디에도 연결하지 않는다
+        follow(id)
+        // 병원 좌표(map_overview)만 받는 읽기 전용 소켓 — 다른 메시지는 거른다(구급차 위치가 초당 전 차량분 오므로 해석하지 않는다)
+        mapSocket = HubSocket(role: "monitor", id: "phone-map", onMessage: { [weak self] t, d in
+            if t == "map_overview" { self?.handle(t, d) }
+        }, onState: { _ in })
         recordSyncTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
                 self?.syncRecords()
                 self?.caseEdits.tick()
-                if let self, self.onScene, self.call == nil, !self.sent, self.preKtas != nil { self.requestFirstCall() }
+                if let self, self.onScene, self.call == nil, !self.sent { self.requestFirstCall() }
             }
         }
         // 모델이 없으면 조용히 서버 음성 인식으로 동작한다(2026-10-05 요청)
@@ -139,7 +139,6 @@ final class PhoneModel {
 
     func stop() {
         recordSyncTask?.cancel(); recordSyncTask = nil; recordRequest = nil
-        monitor?.close(); monitor = nil
         mapSocket?.close(); mapSocket = nil
         ambulance?.close(); ambulance = nil
         apid = nil
@@ -156,9 +155,10 @@ final class PhoneModel {
         recordSyncStatus = "기록 연결 대기 중"
         identity = nil
         wantsExtraCall = false
+        deliveryShow = nil
         trackedSim = nil; phaseTimes = [:]; incidentAddress = nil; pendingConfirmId = nil; resetBody()
         guard let newApid else { return }
-        ambulance = HubSocket(role: "ambulance", id: newApid, onMessage: { [weak self] t, d in self?.handle(t, d, fromMonitor: false) },
+        ambulance = HubSocket(role: "ambulance", id: newApid, onMessage: { [weak self] t, d in self?.handle(t, d) },
                               onState: { [weak self] s in self?.connection = s })
     }
 
@@ -213,28 +213,25 @@ final class PhoneModel {
 
     // MARK: - hub 메시지
 
-    private func handle(_ type: String, _ data: Data, fromMonitor: Bool) {
+    private func handle(_ type: String, _ data: Data) {
         let dec = JSONDecoder()
-        defer {
-            if !fromMonitor { syncLiveCase() }
-            if onScene, preKtas == nil, scene?.preKtasCleared != true, pendingPreKtasClear != caseId { preKtas = 1; requestFirstCall() }
-        }
+        defer { syncLiveCase() }
         switch type {
-        case "live_case_state" where !fromMonitor, "live_case_error" where !fromMonitor:
+        case "live_case_state", "live_case_error":
             caseEdits.accept(data)
         case "call_connection_error":
             if call?.phase == .connecting { call = nil; callRequestId = nil; show("현재 단계에서는 전화할 수 없습니다") }
         case "first_call_error":
             show("첫 통화 추천 요청을 처리하지 못했습니다. 현재 사건을 확인해 주세요.")
         case "records_changed":
-            if !fromMonitor { syncRecords() }
+            syncRecords()
         case "record_sync_result", "record_import_result", "record_handover_result", "record_error":
-            if !fromMonitor { handleRecordReply(type, data) }
+            handleRecordReply(type, data)
         case "map_overview":
             if let m = try? dec.decode(MapOverview.self, from: data) {
                 for h in m.hospitals { hospitalGps[h.hospitalId] = h.gps }
             }
-        case "identity_info" where !fromMonitor:
+        case "identity_info":
             identity = try? dec.decode(IdentityInfo.self, from: data)
             syncLiveCase()
             caseEdits.reconnect()
@@ -250,25 +247,19 @@ final class PhoneModel {
                 callHospitalListPresented = false
             }
             if sim.apid == apid { trackPhase(sim) }
-            if fromMonitor { autoSwitch() }
-        case "scene_candidates" where !fromMonitor:
+        case "scene_candidates":
             if let s = try? dec.decode(SceneCandidates.self, from: data) {
                 if pendingPreKtasClear == s.caseId {
                     guard s.preKtasCleared == true else { return }
                     pendingPreKtasClear = nil
                 }
                 scenes[s.caseId] = s
-                // hub가 확정한 최신 선택을 반영해 아이패드와 버튼 상태도 맞춘다.
-                if s.caseId == caseId {
-                    preKtas = s.preKtas
-                    if s.preKtasCleared == true { callHospitalListPresented = false }
-                }
             }
-        case "scene_input_mode" where !fromMonitor:
+        case "scene_input_mode":
             if let s = try? dec.decode(SceneInputMode.self, from: data) {
                 if s.stage == "transport" { transportInputMode[s.caseId] = s.mode } else { sceneInputMode[s.caseId] = s.mode }
             }
-        case "call_status" where !fromMonitor:
+        case "call_status":
             if let s = try? dec.decode(CallStatus.self, from: data) {
                 callStatus[s.caseId] = s
                 if s.requestId == callRequestId, s.caseId == call?.caseId, s.hospitalId == call?.hospitalId {
@@ -283,9 +274,9 @@ final class PhoneModel {
                     }
                 }
             }
-        case "call_transcript" where !fromMonitor:
+        case "call_transcript":
             if let l = try? dec.decode(CallTranscriptLine.self, from: data), let c = l.caseId { hubTranscripts[c, default: []].append(l) }
-        case "match_result" where !fromMonitor:
+        case "match_result":
             if let m = try? dec.decode(MatchResult.self, from: data) {
                 if let apid, let a = m.apid, a != apid { return }  // 다른 구급차 사건
                 // 자동 전환: 이 사건의 매칭 결과가 처음 오면(=음성 요약 도착, 추가 통화 회차 제외) 환자 정보로,
@@ -293,7 +284,9 @@ final class PhoneModel {
                 let firstForCase = results[m.caseId] == nil
                 results[m.caseId] = m
                 let settled = liveSince.map { Date().timeIntervalSince($0) > 3 } ?? true
-                if settled, firstForCase, (m.patientInfo?.callRound ?? 1) <= 1, phase != .transporting { startDeliveryShow(m.caseId) }
+                // 이 기기에서 건 통화의 요약은 아래 delivered 분기에서 연출한다(여기서 먼저 넘기지 않는다).
+                // 시연 콘솔 등 다른 곳에서 들어온 요약도 같은 전달 연출을 보여 준 뒤 환자 정보로 넘어간다
+                if settled, firstForCase, (m.patientInfo?.callRound ?? 1) <= 1, phase != .transporting, call?.caseId != m.caseId { startDeliveryShow(m.caseId) }
                 let confirmedId = m.hospitals.first { $0.status == "confirmed" }?.hospitalId
                 if let p = pendingConfirmId, p == confirmedId { pendingConfirmId = nil }
                 sentCount[m.caseId] = m.hospitals.count
@@ -304,10 +297,10 @@ final class PhoneModel {
                 // 병원 응답·주기 갱신만으로는 callRound가 늘지 않으므로 통화 처리를 닫지 않는다.
                 if call?.caseId == m.caseId, delivered {
                     dismissEnded()
-                    if firstForCase { startDeliveryShow(m.caseId) } else { tab = .patient }
+                    startDeliveryShow(m.caseId)
                 }
             }
-        case "action_refused" where !fromMonitor:
+        case "action_refused":
             if let r = try? dec.decode(ActionRefused.self, from: data) {
                 pendingConfirmId = nil
                 show(r.reason == "paused" ? "현재 시연 일시정지 중입니다."
@@ -318,7 +311,7 @@ final class PhoneModel {
             }
         case "case_closed":
             if let c = try? dec.decode(CaseClosed.self, from: data) { forget(c.caseId) }
-        case "case_sync" where !fromMonitor:
+        case "case_sync":
             if let s = try? dec.decode(CaseSync.self, from: data) {
                 for id in Set(scenes.keys).union(sentCount.keys).union(results.keys).subtracting(s.caseIds) { forget(id) }
             }
@@ -342,16 +335,32 @@ final class PhoneModel {
         scenes[caseId] = nil; callStatus[caseId] = nil; hubTranscripts[caseId] = nil; sentCount[caseId] = nil
         matchVersion[caseId] = nil; destinations[caseId] = nil; sceneInputMode[caseId] = nil
         transportInputMode[caseId] = nil
+        if deliveryShow?.caseId == caseId { deliveryShow = nil }
         if call?.caseId == caseId, session == nil || call?.phase == .ended { call = nil; session = nil }
     }
 
-    /// 웹 PhoneAutoFollow와 같은 규칙: 사건이 진행 중인 구급차로 넘어가되, 지금 보는 구급차의 사건이 진행 중이면 넘어가지 않는다
-    private func autoSwitch() {
-        func active(_ s: AmbulanceSim?) -> Bool { s?.caseId != nil && s?.phase != .idle && s?.phase != .returning }
-        if let apid, active(sims[apid]) || sims[apid]?.phase == .returning { return }
-        if call != nil && call?.phase != .ended { return }  // 통화 중 화면 전환 방지
-        let next = sims.values.filter { active($0) }.map(\.apid).sorted().first
-        if next != nil || apid != nil { follow(next) }
+    /// 요약이 반영되면 환자 정보로 바로 넘기지 않고, 현장 지도에서 병원들로 전달되는 연출을 먼저 보여 준다.
+    /// 현장이 아니거나(이송 중 추가 통화) 지도에 찍을 병원 좌표가 없으면 연출 없이 바로 넘어간다
+    private func startDeliveryShow(_ caseId: String) {
+        let anyTarget = results[caseId]?.hospitals.contains { hospitalGps[$0.hospitalId] != nil } == true
+        if !onScene || mySim?.gps == nil || !anyTarget || Settings.kakaoNativeAppKey.isEmpty { tab = .patient; return }
+        // 기기의 "동작 줄이기" 설정이면 움직임 없이 병원이 켜진 상태만 잠깐 보여 준다
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let show = DeliveryShow(caseId: caseId, durationMs: reduce ? 1200 : 2600, reduceMotion: reduce)
+        deliveryShow = show
+        tab = .call
+        // 연출은 지도가 준비된 뒤 시계를 흘려 끝내지만, 지도가 끝내 준비되지 않아도 막히지 않게 여유를 두고 끝낸다
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(show.durationMs + 5_000))
+            if let self, self.deliveryShow === show { self.finishDelivery() }
+        }
+    }
+
+    /// 연출이 끝났거나 구급대원이 눌러 건너뛰었다 — 환자 정보 탭으로
+    func finishDelivery() {
+        guard deliveryShow != nil else { return }
+        deliveryShow = nil
+        tab = .patient
     }
 
     /// 화면 위 안내를 잠깐(2.5초) 띄운다
@@ -380,8 +389,8 @@ final class PhoneModel {
     }
 
     func requestFirstCall(noAnswer: String? = nil) {
-        guard let caseId, let k = preKtas else { return }
-        var body: [String: Any] = ["type": "first_call_request", "caseId": caseId, "ktas": k]
+        guard let caseId else { return }
+        var body: [String: Any] = ["type": "first_call_request", "caseId": caseId]
         if let noAnswer { body["noAnswerHospitalId"] = noAnswer }
         guard let data = try? JSONSerialization.data(withJSONObject: body), ambulance?.sendJSON(data) == true else {
             show("hub 연결을 확인해 주세요. 추천 요청을 보내지 못했습니다."); return
@@ -678,7 +687,7 @@ final class PhoneModel {
         recordsRev += 1
     }
 
-    private func resetBody() { pendingPreKtasClear = nil; deliveryShow = nil; bodyEdits = BodyEdits(); bodySentSignature = ""; preKtas = nil; callHospitalListPresented = false }
+    private func resetBody() { bodyEdits = BodyEdits(); bodySentSignature = "" }
 
     /// 외상 도해에서 고친 것을 한 번에 병원으로 — 부위는 증상(injuryStatus) 칸, 처치는 추가 정보 한 줄(아이패드 BodyInjuryCard.send와 같다)
     @discardableResult
@@ -842,7 +851,7 @@ extension PhoneModel {
         let r = mark.region
         let side = mark.side == .left ? "좌" : mark.side == .right ? "우" : ""
         let key = "b:" + r.label + ":" + side
-        let body = SharedBodyValue(added: bodyEdits.added.contains(mark), removed: bodyEdits.removed.contains(mark), cares: bodyEdits.cares[mark] ?? [])
+        let body = SharedBodyValue(added: bodyEdits.added.contains(mark), removed: bodyEdits.removed.contains(mark), cares: bodyEdits.fittedCares[mark] ?? [])
         guard let data = try? JSONEncoder().encode(body), let value = String(data: data, encoding: .utf8) else { return }
         _ = caseEdits.submit(caseId: id, changes: [key: value], base: base)
     }
@@ -856,7 +865,8 @@ extension PhoneModel {
             let mark = BodyMark(region, side)
             if value.added { edits.added.insert(mark) }
             if value.removed { edits.removed.insert(mark) }
-            if !value.cares.isEmpty { edits.cares[mark] = value.cares }
+            let fitted = value.cares.filter { BodyCare.fits(mark, $0) }
+            if !fitted.isEmpty { edits.cares[mark] = fitted }
         }
         bodyEdits = edits
     }

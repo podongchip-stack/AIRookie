@@ -120,7 +120,7 @@ private struct SummaryCard: View {
                 let sv = severity(p.severityTag)
                 HStack(spacing: 6) {
                     Pill(text: sv.2, fg: sv.1, bg: sv.0, bold: true)
-                    if let k = p.ktasLevel { Pill(text: "KTAS \(k)", fg: ktasColor(k), bg: ktasSoft(k), bold: true) }
+                    if let k = p.ktasLevel { Pill(text: "Pre-KTAS \(k)", fg: ktasColor(k), bg: ktasSoft(k), bold: true) }
                     let line = [p.patient, p.chiefComplaint, p.consciousness.map { "의식 \($0)" }].compactMap { $0 }.joined(separator: " · ")
                     if !line.isEmpty { Text(line).font(.system(size: 12)).foregroundStyle(AD.ink3) }
                 }
@@ -133,7 +133,7 @@ private struct SummaryCard: View {
                 if let prev = p.previousCalls, !prev.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(prev) { u in
-                            Text("\(u.callRound)차 통화 · \(severity(u.severityTag).2) · \(u.expectedDiagnosis ?? "")" + (u.ktasLevel.map { " · KTAS \($0)" } ?? ""))
+                            Text("\(u.callRound)차 통화 · \(severity(u.severityTag).2) · \(u.expectedDiagnosis ?? "")" + (u.ktasLevel.map { " · Pre-KTAS \($0)" } ?? ""))
                                 .font(.system(size: 11.5)).foregroundStyle(AD.sub)
                         }
                     }
@@ -240,7 +240,7 @@ private struct SummaryEditSheet: View {
                     }
                     Card {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("KTAS").font(.system(size: 12)).foregroundStyle(AD.sub)
+                            Text("Pre-KTAS").font(.system(size: 12)).foregroundStyle(AD.sub)
                             HStack(spacing: 6) {
                                 ForEach(0...5, id: \.self) { k in
                                     let on = ktas == k

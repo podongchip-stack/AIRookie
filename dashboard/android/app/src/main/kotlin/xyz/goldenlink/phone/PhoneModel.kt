@@ -19,9 +19,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import okhttp3.Request
+import xyz.goldenlink.core.AccessCode
 import xyz.goldenlink.core.ActionRefused
 import xyz.goldenlink.core.AmbulancePhase
 import xyz.goldenlink.core.AmbulanceSim
@@ -76,7 +78,11 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
 
     // 연결
     var connection by mutableStateOf(HubSocket.State.CONNECTING)
-    var apid by mutableStateOf<String?>(null)  // 지금 보는 구급차. 자동 전환 모드면 바뀐다
+    var apid by mutableStateOf<String?>(null)  // 접근 코드로 정한 소속 구급차
+    /** 접근 코드를 아직 입력하지 않았다 — 앱은 코드 입력 화면만 보인다(아이폰과 같음) */
+    var accessRequired by mutableStateOf(settings.apid.isBlank())
+    var accessChecking by mutableStateOf(false)
+    var accessError by mutableStateOf<String?>(null)
     var identity by mutableStateOf<IdentityInfo?>(null)
 
     // hub가 알려 준 상태
@@ -111,8 +117,6 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     var incidentAddress by mutableStateOf<String?>(null)   // 인계확인서 "출발지 주소" — hub가 좌표를 주소로 바꿔 준다
     /** 통화 화면 지도의 병원 핀 좌표 — hub map_overview(병원 목록)에서 hospitalId로 찾는다. 현장 후보 메시지엔 좌표가 없다 */
     val hospitalGps = mutableStateMapOf<String, GPS>()
-    /** 현장에서 구급대원이 고른 Pre-KTAS(1~5). 지금은 화면에만 둔다 — hub 전송은 다음 작업(hub와 정하기로 함) */
-    var preKtas by mutableStateOf<Int?>(null)
     /** 통화 요약이 병원들에 전달되는 모습을 지도에서 보여 주는 중 — 끝나면(또는 눌러서 건너뛰면) 환자 정보 탭으로 넘어간다 */
     /** 전화를 걸었다가 받지 않아 취소한 병원(사건별) — 병원 리스트 맨 아래로 내린다. hub의 미응답 이력(callAttempts)이 늦게 와도 바로 반영되게 앱에서도 기억한다 */
     val skippedHospitals = mutableStateMapOf<String, Set<String>>()
@@ -154,34 +158,28 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     /** 같은 구급대의 휴대폰·태블릿이 인계확인서·외상 도해 수정을 공유한다 */
     val caseEdits = CaseEditSync(settings)
     val models = ModelStore(File(app.getExternalFilesDir(null), "models"))
-    private var monitor: HubSocket? = null
     private var mapSocket: HubSocket? = null
     private var ambulance: HubSocket? = null
     private var noticeJob: Job? = null
     private var tickJob: Job? = null
     private var callRequestId: String? = null  // 지금 보낸 전화 연결 요청 — hub의 call_status가 내 요청에 대한 것인지 가린다
 
-    val autoFollow: Boolean get() = settings.apid.trim().lowercase() == "auto"
-
     init { start() }
 
     fun start() {
         stop()
-        if (autoFollow) {
-            monitor = HubSocket(settings.wsUrl, "monitor", "phone-auto", { t, d -> handle(t, d, fromMonitor = true) },
-                { s -> if (ambulance == null) onConnectionState(s) })
-        } else {
-            follow(settings.apid.trim().uppercase())
-            // 병원 좌표(map_overview)만 받는 읽기 전용 소켓 — 다른 메시지는 거른다(구급차 위치가 초당 전 차량분 오므로 해석하지 않는다)
-            mapSocket = HubSocket(settings.wsUrl, "monitor", "phone-map", { t, d -> if (t == "map_overview") handle(t, d, fromMonitor = true) }, { })
-        }
-        // 15초마다: 기록 동기화 재시도 · 기기 간 수정 재전송 · (현장에서 Pre-KTAS를 골랐는데 아직 전화 전이면) hub 추천 갱신(다른 사건의 연락·이송 반영)
+        val id = settings.apid.trim().uppercase()
+        if (id.isEmpty()) return  // 접근 코드를 입력하기 전엔 어디에도 연결하지 않는다
+        follow(id)
+        // 병원 좌표(map_overview)만 받는 읽기 전용 소켓 — 다른 메시지는 거른다(구급차 위치가 초당 전 차량분 오므로 해석하지 않는다)
+        mapSocket = HubSocket(settings.wsUrl, "monitor", "phone-map", { t, d -> if (t == "map_overview") handle(t, d) }, { })
+        // 15초마다: 기록 동기화 재시도 · 기기 간 수정 재전송 · (현장에서 아직 전화 전이면) hub 추천 갱신(다른 사건의 연락·이송 반영)
         tickJob = viewModelScope.launch {
             while (true) {
                 delay(15_000)
                 syncRecords()
                 caseEdits.tick()
-                if (onScene && call == null && !sent && preKtas != null) requestFirstCall()
+                if (onScene && call == null && !sent) requestFirstCall(quiet = true)
             }
         }
         // 모델이 없으면 조용히 서버 음성 인식으로 동작한다(아이폰과 같은 2026-10-05 요청)
@@ -190,7 +188,6 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() {
         tickJob?.cancel(); tickJob = null; recordRequest = null
-        monitor?.close(); monitor = null
         mapSocket?.close(); mapSocket = null
         ambulance?.close(); ambulance = null
         apid = null
@@ -198,6 +195,43 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() { stop() }
+
+    /** 접근 코드를 hub `/identity`로 확인하고 맞으면 이 구급대에 연결한다 — 아이폰 AccessCodeEntry와 같은 규칙 */
+    fun submitAccess(code: String, hub: String) {
+        if (accessChecking) return
+        val id = AccessCode.ambulanceId(code)
+        if (id == null) { accessError = "P-SEL0111 형식의 구급대 접근 코드를 입력하세요."; return }
+        val base = hub.trim().trimEnd('/')
+        if (!(base.startsWith("http://") || base.startsWith("https://")) || base.substringAfter("://").isBlank()) {
+            accessError = "서버 주소를 확인하세요."; return
+        }
+        accessChecking = true; accessError = null
+        viewModelScope.launch {
+            val failure = withContext(Dispatchers.IO) {
+                runCatching {
+                    HubSocket.client.newCall(Request.Builder().url("$base/identity?role=ambulance&id=$id").build()).execute().use { r ->
+                        if (!r.isSuccessful) "서버에서 구급대를 확인하지 못했습니다."
+                        else {
+                            val o = hubJson.parseToJsonElement(r.body!!.string()).jsonObject
+                            val known = (o["known"] as? JsonPrimitive)?.booleanOrNull == true
+                            if (known && (o["id"] as? JsonPrimitive)?.contentOrNull == id) null else "등록되지 않은 구급대 코드입니다."
+                        }
+                    }
+                }.getOrElse { "서버에 연결하지 못했습니다. 네트워크와 서버 주소를 확인한 뒤 다시 시도하세요." }
+            }
+            accessChecking = false
+            accessError = failure
+            if (failure == null) { settings.hubBase = base; settings.apid = id; accessRequired = false; start() }
+        }
+    }
+
+    /** 설정의 [접근 코드 변경] — 연결을 끊고 코드 입력 화면으로 돌아간다 */
+    fun resetAccess() {
+        stop()
+        settings.apid = ""
+        accessError = null
+        accessRequired = true
+    }
 
     private fun follow(newApid: String?) {
         if (newApid == apid) return
@@ -212,7 +246,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         deliveryShow = null
         trackedSim = null; phaseTimes.clear(); incidentAddress = null; pendingConfirmId = null; resetBody()
         if (newApid == null) return
-        ambulance = HubSocket(settings.wsUrl, "ambulance", newApid, { t, d -> handle(t, d, fromMonitor = false) }, { s -> onConnectionState(s) })
+        ambulance = HubSocket(settings.wsUrl, "ambulance", newApid, { t, d -> handle(t, d) }, { s -> onConnectionState(s) })
     }
 
     private fun onConnectionState(s: HubSocket.State) {
@@ -289,14 +323,14 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
 
     // ── hub 메시지 ──
 
-    private fun handle(type: String, text: String, fromMonitor: Boolean) {
+    private fun handle(type: String, text: String) {
         runCatching {
             when (type) {
-                "live_case_state", "live_case_error" -> if (!fromMonitor) caseEdits.accept(text)
-                "records_changed" -> if (!fromMonitor) syncRecords()
-                "record_sync_result", "record_import_result", "record_handover_result", "record_error" -> if (!fromMonitor) handleRecordReply(type, text)
+                "live_case_state", "live_case_error" -> caseEdits.accept(text)
+                "records_changed" -> syncRecords()
+                "record_sync_result", "record_import_result", "record_handover_result", "record_error" -> handleRecordReply(type, text)
                 "map_overview" -> hubJson.decodeFromString(MapOverview.serializer(), text).hospitals.forEach { hospitalGps[it.hospitalId] = it.gps }
-                "identity_info" -> if (!fromMonitor) {
+                "identity_info" -> {
                     identity = hubJson.decodeFromString(IdentityInfo.serializer(), text)
                     syncLiveCase()
                     caseEdits.reconnect()
@@ -308,20 +342,18 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     val sim = if (decoded.path == null && prev != null && prev.caseId == decoded.caseId) decoded.copy(path = prev.path, base = decoded.base ?: prev.base) else decoded
                     sims[sim.apid] = sim
                     if (sim.apid == apid && sim.phaseEnum != AmbulancePhase.on_scene) wantsExtraCall = false
-                    if (sim.apid == apid) { trackPhase(sim); ensureDefaultPreKtas() }
-                    if (fromMonitor) autoSwitch()
+                    if (sim.apid == apid) trackPhase(sim)
                 }
                 "call_connection_error" -> if (call?.phase == LocalCall.Phase.CONNECTING) { call = null; callRequestId = null; show("현재 단계에서는 전화할 수 없습니다") }
                 "first_call_error" -> show("첫 통화 추천 요청을 처리하지 못했습니다. 현재 사건을 확인해 주세요.")
-                "scene_candidates" -> if (!fromMonitor) hubJson.decodeFromString(SceneCandidates.serializer(), text).let {
+                "scene_candidates" -> hubJson.decodeFromString(SceneCandidates.serializer(), text).let {
                     scenes[it.caseId] = it
-                    Log.i("GoldenLink", "scene_candidates case=${it.caseId} 내 사건=${it.caseId == caseId} preKtas=${it.preKtas} 내 선택=$preKtas 병원=${it.hospitals.size}")
-                    if (it.caseId == caseId && preKtas == null) preKtas = it.preKtas
+                    Log.i("GoldenLink", "scene_candidates case=${it.caseId} 내 사건=${it.caseId == caseId} 병원=${it.hospitals.size}")
                 }
-                "scene_input_mode" -> if (!fromMonitor) hubJson.decodeFromString(SceneInputMode.serializer(), text).let {
+                "scene_input_mode" -> hubJson.decodeFromString(SceneInputMode.serializer(), text).let {
                     if (it.stage == "transport") transportInputMode[it.caseId] = it.mode else sceneInputMode[it.caseId] = it.mode
                 }
-                "call_status" -> if (!fromMonitor) hubJson.decodeFromString(CallStatus.serializer(), text).let { s ->
+                "call_status" -> hubJson.decodeFromString(CallStatus.serializer(), text).let { s ->
                     callStatus[s.caseId] = s
                     val c = call
                     // 내 전화 요청에 대한 상태만 따른다 — 관제가 받으면(calling) 그때 녹음을 시작한다
@@ -334,12 +366,12 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
-                "call_transcript" -> if (!fromMonitor) {
+                "call_transcript" -> {
                     val l = hubJson.decodeFromString(CallTranscriptLine.serializer(), text)
                     val c = l.caseId
                     if (c != null) hubTranscripts[c] = (hubTranscripts[c] ?: emptyList()) + l
                 }
-                "match_result" -> if (!fromMonitor) {
+                "match_result" -> {
                     val m = hubJson.decodeFromString(MatchResult.serializer(), text)
                     if (apid != null && m.apid != null && m.apid != apid) return@runCatching  // 다른 구급차 사건
                     // 자동 전환: 이 사건의 매칭 결과가 처음 오면(=음성 요약 도착, 추가 통화 회차 제외) 환자 정보로,
@@ -360,7 +392,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     // 병원 응답·주기 갱신만으로는 callRound가 늘지 않으므로 통화 처리를 닫지 않는다.
                     if (call?.caseId == m.caseId && delivered) { dismissEnded(); startDeliveryShow(m.caseId) }
                 }
-                "action_refused" -> if (!fromMonitor) {
+                "action_refused" -> {
                     val r = hubJson.decodeFromString(ActionRefused.serializer(), text)
                     pendingConfirmId = null
                     show(when (r.reason) {
@@ -372,14 +404,14 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     if (call?.phase == LocalCall.Phase.CONNECTING) call = null
                 }
                 "case_closed" -> forget(hubJson.decodeFromString(CaseClosed.serializer(), text).caseId)
-                "case_sync" -> if (!fromMonitor) {
+                "case_sync" -> {
                     val ids = hubJson.decodeFromString(CaseSync.serializer(), text).caseIds.toSet()
                     for (id in (scenes.keys + sentCount.keys + results.keys) - ids) forget(id)
                 }
                 else -> Unit  // 모르는 type은 버린다
             }
         }.onFailure { Log.w("GoldenLink", "hub 메시지($type) 처리 실패", it) }
-        if (!fromMonitor) syncLiveCase()
+        syncLiveCase()
     }
 
     private fun forget(caseId: String) {
@@ -393,15 +425,6 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         if (call?.caseId == caseId && (session == null || call?.phase == LocalCall.Phase.ENDED)) { call = null; session = null }
     }
 
-    /** 웹 PhoneAutoFollow와 같은 규칙: 사건이 진행 중인 구급차로 넘어가되, 지금 보는 구급차의 사건이 진행 중이면 넘어가지 않는다 */
-    private fun autoSwitch() {
-        fun active(s: AmbulanceSim?) = s?.caseId != null && s.phaseEnum != AmbulancePhase.idle && s.phaseEnum != AmbulancePhase.returning
-        if (apid != null && active(sims[apid])) return
-        if (call != null && call?.phase != LocalCall.Phase.ENDED) return  // 통화 중 화면 전환 방지
-        val next = sims.values.filter { active(it) }.map { it.apid }.sorted().firstOrNull()
-        if (next != null || apid != null) follow(next)
-    }
-
     /** 화면 위 안내를 잠깐(2.5초) 띄운다 */
     fun show(text: String) {
         notice = text
@@ -411,21 +434,13 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
 
     // ── 통화 ──
 
-    /** 현장 Pre-KTAS를 hub에 알리면 KTAS 적합 후보를 추천순으로 다시 보낸다(scene_candidates). 미응답 병원이 있으면 함께 알린다 */
+    /** 첫 통화 추천을 hub에 다시 요청한다 — 다른 구급차의 연락·이송을 반영한 후보를 추천순으로 다시 보낸다(scene_candidates) */
     fun requestFirstCall(quiet: Boolean = false) {
         val id = caseId ?: return
-        val k = preKtas ?: return
-        Log.i("GoldenLink", "first_call_request case=$id ktas=$k 소켓연결=${ambulance?.isOpen}")
-        if (!sendToHub(hubJson.encodeToJsonElement(FirstCallRequest.serializer(), FirstCallRequest(id, k))) && !quiet) {
+        Log.i("GoldenLink", "first_call_request case=$id 소켓연결=${ambulance?.isOpen}")
+        if (!sendToHub(hubJson.encodeToJsonElement(FirstCallRequest.serializer(), FirstCallRequest(id))) && !quiet) {
             show("hub 연결을 확인해 주세요. 추천 요청을 보내지 못했습니다.")
         }
-    }
-
-    /** 현장에 도착하면 Pre-KTAS 1이 미리 골라져 있다 — 고르지 않아도 병원 목록이 바로 채워진다. 연결이 아직이면 15초 주기 재요청이 이어서 보낸다 */
-    private fun ensureDefaultPreKtas() {
-        if (!onScene || preKtas != null) return
-        preKtas = 1
-        requestFirstCall(quiet = true)
     }
 
     private fun connectionAction(operation: String): Boolean {
@@ -689,7 +704,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         if (old.archiveVersion == null && !old.closed) { records.upsert(old.copy(closed = true, updatedAt = System.currentTimeMillis())); recordsRev++ }
     }
 
-    private fun resetBody() { bodyEdits = BodyEdits(); bodySentSignature = ""; preKtas = null }
+    private fun resetBody() { bodyEdits = BodyEdits(); bodySentSignature = "" }
 
     /** 외상 도해에서 고친 것을 한 번에 병원으로 — 부위는 증상(injuryStatus) 칸, 처치는 추가 정보 한 줄(아이패드 BodyInjuryCard.send와 같다) */
     fun sendBodyEdits(): Boolean {
