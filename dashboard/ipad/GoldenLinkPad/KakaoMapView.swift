@@ -125,6 +125,7 @@ struct KakaoMapView: UIViewRepresentable {
         private var priorPins: [String: MapPin] = [:]
         private var priorStyles: [String: String] = [:]
         private var priorRoute: [[Double]] = []
+        private var soloAmbulanceFocus: String?
         private var zoneSignature: String?
         private var didInitialCenter = false
         private var lastCenterRequest = 0
@@ -323,6 +324,10 @@ struct KakaoMapView: UIViewRepresentable {
             let insets = UIEdgeInsets(top: 60, left: 60, bottom: 60, right: 60)
             if map.margins != insets { map.setMargins(insets) }
             updateZone()
+            let ambulanceOnly = !visible.contains {
+                [.hospital, .recommended, .selected, .approved, .rejected].contains($0.kind)
+            }
+            if !ambulanceOnly { soloAmbulanceFocus = nil }
             if input.initialCenter && !didInitialCenter,
                let ambulance = visible.first(where: { $0.kind == .ambulance }) {
                 map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, zoomLevel: 15, mapView: map))
@@ -334,6 +339,14 @@ struct KakaoMapView: UIViewRepresentable {
                     guard let self, !self.stopped else { return }
                     self.input.onInitialCenter()
                 }
+            } else if ambulanceOnly, let ambulance = visible.first(where: { $0.kind == .ambulance }) {
+                // 병원 없는 출동·현장 확인 단계에서는 경로 전체 대신 구급차를 중앙에 둔다.
+                let key = "\(input.fitKey)-\(ambulance.pos)-\(container.bounds.size)"
+                if soloAmbulanceFocus != key {
+                    map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, mapView: map))
+                    soloAmbulanceFocus = key
+                }
+                lastFitKey = input.fitKey
             } else if lastFitKey != input.fitKey {
                 lastFitKey = input.fitKey
                 fit(input.fitPoints.filter(\.valid).map(\.mapPoint))

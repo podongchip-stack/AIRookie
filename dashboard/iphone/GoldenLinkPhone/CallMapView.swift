@@ -135,6 +135,7 @@ private struct KakaoCallMap: UIViewRepresentable {
         private var priorPins: [String: MapPin] = [:]
         private var priorStyles: [String: String] = [:]
         private var priorRoute: [[Double]] = []
+        private var soloAmbulanceFocus: String?
         private var animatedReturnPath: [[Double]]?
         private var firstCamera = true
         private var lastCenter = 0
@@ -347,6 +348,9 @@ private struct KakaoCallMap: UIViewRepresentable {
             let insets = UIEdgeInsets(top: 60, left: 44, bottom: min(input.bottomOverlayHeight + 44, container.bounds.height * 0.7), right: 44)
             if map.margins != insets { map.setMargins(insets) }
             let ambulance = visible.first { $0.kind == .ambulance }
+            // 센터·사고 현장·도로 경로는 병원 후보가 아니다. 병원이 없으면 구급차를 중심으로 따라간다.
+            let ambulanceOnly = !visible.contains { [.hospital, .recommended, .selected].contains($0.kind) }
+            if !ambulanceOnly { soloAmbulanceFocus = nil }
             if input.responseZone == nil, input.model.responseMapFocusKey != nil { input.model.responseMapFocusKey = nil }
             if input.model.needsInitialMapCenter, let ambulance {
                 // 최초 GPS 수신까지 기다렸다가 한 번만 구급차를 중앙에 놓는다.
@@ -365,6 +369,15 @@ private struct KakaoCallMap: UIViewRepresentable {
             } else if input.centerRequest != lastCenter, let ambulance {
                 map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, mapView: map))
                 lastCenter = input.centerRequest
+            } else if ambulanceOnly, let ambulance {
+                let key = "\(input.model.phase)-\(ambulance.pos)-\(container.bounds.size)-\(input.bottomOverlayHeight)"
+                if soloAmbulanceFocus != key || firstCamera {
+                    map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, mapView: map))
+                    soloAmbulanceFocus = key
+                }
+                firstCamera = false
+                input.model.routeFitRequest = nil
+                input.model.kakaoFittedPath = input.routePath
             } else if [.dispatching, .transporting, .returning].contains(input.model.phase),
                       input.model.routeFitRequest != nil || (routeChanged && input.routePath != input.model.kakaoFittedPath) {
                 let points = routePoints + visible.filter { [.ambulance, .incident, .base, .selected].contains($0.kind) }.map { $0.pos.mapPoint }
