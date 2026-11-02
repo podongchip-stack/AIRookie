@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { DEMO_UNIT } from "@/lib/demo-unit";
+import { DEMO_UNITS } from "@/lib/demo-unit";
 import { css } from "styled-system/css";
 import { inputStyle, primaryButtonStyle, secondaryButtonStyle } from "@/components/ui/button-styles";
 
@@ -91,9 +91,12 @@ export default function Home() {
       </div>
 
       <div style={{ maxWidth: 360, textAlign: "center", fontSize: 14, color: "#4A5565", lineHeight: 1.8 }}>
-        <strong>{DEMO_UNIT.name} 시연</strong><br />
-        아이패드: <b>{DEMO_UNIT.tabletCode}</b> · 아이폰: <b>{DEMO_UNIT.phoneCode}</b><br />
-        두 기기에서 각자의 코드를 입력하면 같은 구급대 사건을 봅니다.
+        {DEMO_UNITS.map((unit) => (
+          <span key={unit.apid}>
+            <strong>{unit.name}</strong> · 휴대폰 <b>{unit.phoneCode}</b> · 아이패드 <b>{unit.tabletCode}</b><br />
+          </span>
+        ))}
+        같은 구급대 코드를 입력한 기기끼리 같은 사건을 봅니다.
       </div>
       <form
         onSubmit={handleSubmit}
