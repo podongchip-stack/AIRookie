@@ -77,6 +77,9 @@ private var lastZoneKey: Any? = null
 
 private fun ll(g: GPS) = LatLng.from(g.lat, g.lng)
 
+/** 구급차 그림 크기 배율 — 72dp 상자에 차를 그려 지도 위에서 너무 컸다 */
+private const val AMBULANCE_ICON_SCALE = 0.68f
+
 @Composable
 fun CallMap(
     pins: List<MapPin>, route: List<GPS>, onPin: (String) -> Unit, modifier: Modifier = Modifier,
@@ -93,14 +96,16 @@ fun CallMap(
     deliveryFit: List<GPS>? = null,
     /** 지도가 화면에 보이는가 — 다른 화면에 가려져 있으면 파동·깜빡임 같은 반복 그리기를 멈춘다(지도는 지우지 않고 그대로 둔다) */
     active: Boolean = true,
+    /** 지도 위쪽을 가리는 것(헤더·내비 배너)의 높이(px) — 지도는 화면 맨 위부터 깔리므로 카메라 맞춤이 이 아래 영역을 쓴다 */
+    topOverlayPx: Int = 0,
     /** 내비게이션 시점 — 구급차를 화면 아래쪽에 두고 진행 방향이 위가 되게 지도를 돌려 따라간다. 지도 조작은 잠근다 */
     navigate: Boolean = false,
     /** 내비게이션 한 번의 구간을 가르는 값(단계·사건). 값이 새로 바뀌면 로딩 후 바로 내비 시점으로, 같으면 지금 카메라에서 이어 간다 */
     navSession: Any? = null,
     /** 구급차의 처음 속도 추정(m/s) — hub ETA·배속으로 구한 값. 위치 변화로 속도를 재기 전에도 배율을 맞추려고 쓴다 */
     navSpeedHintMps: Double? = null,
-    /** 내비 시점이 준비되는 동안 true — 멀리 있던 지도를 구급차 위치로 옮기는 장면을 가리려고 화면이 로딩을 띄운다 */
-    onNavLoading: (Boolean) -> Unit = {},
+    /** 내비 시점이 준비되면(새 구간이면 로딩을 걷을 때) 부른다 — 화면은 이때까지 로딩으로 지도를 옮기는 장면을 가린다 */
+    onNavReady: () -> Unit = {},
     /** 지도 위에 얹는 그림 — 좌표를 화면 위치로 바꾸는 함수를 받는다(카메라가 움직이면 같이 따라간다) */
     overlay: (@Composable (project: (GPS) -> Offset?) -> Unit)? = null,
 ) {
@@ -176,7 +181,9 @@ fun CallMap(
     val live = remember(map) { HashMap<String, LiveLabel>() }
     LaunchedEffect(map, pins, frame, markerHeading) {
         val layer = map?.labelManager?.layer ?: return@LaunchedEffect
-        val wanted = pins.filter { it.kind != MapPin.Kind.HOSPITAL && it.kind != MapPin.Kind.RECOMMENDED }.associateBy { it.id }
+        // 내비 시점에서는 내 구급차 이름표를 달지 않는다(화면 한가운데 내 차에 이름이 붙어 있을 이유가 없다)
+        val wanted = pins.filter { it.kind != MapPin.Kind.HOSPITAL && it.kind != MapPin.Kind.RECOMMENDED }
+            .map { if (navigate && it.kind == MapPin.Kind.AMBULANCE) it.copy(name = "") else it }.associateBy { it.id }
         for ((id, e) in live.toMap()) if (id !in wanted) { layer.remove(e.label); live.remove(id) }
         for (p in wanted.values) {
             val key = when (p.kind) {
@@ -186,7 +193,7 @@ fun CallMap(
             }
             val labelStyles = styles.getOrPut("$key|${p.name}") {
                 val icon = when (p.kind) {
-                    MapPin.Kind.AMBULANCE -> ambulanceBitmap(dens, beaconOn = frame % 2 == 0, headingDeg = markerHeading.toFloat())
+                    MapPin.Kind.AMBULANCE -> ambulanceBitmap(dens * AMBULANCE_ICON_SCALE, beaconOn = frame % 2 == 0, headingDeg = markerHeading.toFloat())
                     MapPin.Kind.INCIDENT -> incidentBitmap(dens, frame)
                     MapPin.Kind.BASE -> baseBitmap(dens)
                     else -> hospitalBitmap(dens, 0xFF1F4E9C.toInt())
@@ -242,7 +249,7 @@ fun CallMap(
         }
     }
     // 여백 — 아래 패널이 가린 만큼 위로 비워, 맞춘 지도가 패널 뒤로 숨지 않게 한다(아이폰 margins와 같다)
-    LaunchedEffect(map, bottomOverlayPx, mapHeightPx, navigate) {
+    LaunchedEffect(map, bottomOverlayPx, mapHeightPx, navigate, topOverlayPx) {
         // 패널 높이가 부드럽게 바뀌는 동안 프레임마다 여백을 다시 잡으면 지도가 흔들린다 — 높이가 멈춘 뒤 한 번만
         delay(150)
         val m = map ?: return@LaunchedEffect
@@ -250,13 +257,13 @@ fun CallMap(
             // 위(안내 배너)와 아래(상태 카드)를 뺀 보이는 영역 안에서 구급차가 위에서 70% 되는 곳에 오게 한다.
             // 지도 중심 = 패딩을 뺀 영역의 한가운데이므로, 위쪽 패딩을 그만큼 키운다
             val bottom = minOf(bottomOverlayPx, (mapHeightPx * 0.55).toInt())
-            val banner = (mapHeightPx * 0.16).toInt()
+            val banner = topOverlayPx
             val vehicleY = banner + (0.7 * (mapHeightPx - bottom - banner)).toInt()
             m.setPadding(0, maxOf(0, 2 * vehicleY - mapHeightPx + bottom), 0, bottom)
             return@LaunchedEffect
         }
         val side = (44 * dens).toInt()
-        m.setPadding(side, (60 * dens).toInt(), side, minOf(bottomOverlayPx + side, (mapHeightPx * 0.7).toInt()))
+        m.setPadding(side, maxOf((60 * dens).toInt(), topOverlayPx), side, minOf(bottomOverlayPx + side, (mapHeightPx * 0.7).toInt()))
     }
     // 카메라 — 구성이 바뀔 때만 맞춘다. 다른 탭에 갔다 와도 사용자가 둔 배율을 유지한다.
     // 우선순위는 아이폰과 같다: 이동 경로 > 응답 존(단계 진입·확장 때 한 번) > 현장에서 고른 병원 > 전체
@@ -303,7 +310,7 @@ fun CallMap(
     val latestRoute = rememberUpdatedState(route)
     val latestSpeedHint = rememberUpdatedState(navSpeedHintMps)
     val lastNavSession = remember { arrayOfNulls<Any>(1) }
-    val loadingCallback = rememberUpdatedState(onNavLoading)
+    val readyCallback = rememberUpdatedState(onNavReady)
     LaunchedEffect(map, navigate) {
         val m = map ?: return@LaunchedEffect
         m.setGestureEnable(GestureType.Pan, !navigate); m.setGestureEnable(GestureType.Zoom, !navigate)
@@ -340,7 +347,7 @@ fun CallMap(
         val far = freshSession || cp == null || first == null || Math.hypot((first.lng - cp.position.longitude) * 111_320.0 * Math.cos(Math.toRadians(first.lat)),
             (first.lat - cp.position.latitude) * 110_540.0) > 800.0
         nav.begin(if (far) null else cp)
-        if (far) loadingCallback.value(true)
+        if (!far) readyCallback.value()
         var revealAt = if (far) System.nanoTime() + 900_000_000L else 0L
         var last = 0L
         while (true) {
@@ -352,7 +359,7 @@ fun CallMap(
             m.moveCamera(CameraUpdateFactory.newCameraPosition(f.toCameraPosition()))
             live["ambulance"]?.label?.moveTo(LatLng.from(f.lat, f.lng))
             // 첫 그림이 나간 뒤 지도 타일이 그려질 시간을 조금 주고 로딩을 걷는다
-            if (revealAt != 0L && System.nanoTime() >= revealAt) { revealAt = 0L; loadingCallback.value(false) }
+            if (revealAt != 0L && System.nanoTime() >= revealAt) { revealAt = 0L; readyCallback.value() }
         }
     }
     // [내 위치] — 배율은 그대로 두고 내 구급차를 가운데로
