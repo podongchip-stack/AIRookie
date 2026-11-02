@@ -73,7 +73,9 @@ struct RecordsTab: View {
                     .padding(.bottom, 8)
                 }
             }
-            .sheet(isPresented: $picking) { datePicker(dates: dates, selected: date) }
+            .sheet(isPresented: $picking) {
+                RecordDatePickerSheet(dates: dates, current: date, onPick: { selected = $0; picking = false }, onCancel: { picking = false })
+            }
             .sheet(item: $responseLog) { c in
                 CaseResponseLog(c: c)
             }
@@ -86,17 +88,56 @@ struct RecordsTab: View {
                 .frame(width: 40, height: 40).background(AD.chip, in: Circle())
         }.buttonStyle(.plain).disabled(!enabled)
     }
+}
 
-    private func datePicker(dates: [String], selected current: String) -> some View {
+/// 기록 날짜 선택 — 안드로이드와 같은 달력 + [취소]/[선택]. 기록이 있는 날짜만 고를 수 있다
+/// (안드로이드는 기록 없는 날을 눌러지지 않게 막지만, 여기서는 범위만 좁히고 [선택]에서 기록 없는 날이면 안내한다)
+private struct RecordDatePickerSheet: View {
+    let dates: [String]
+    let current: String
+    let onPick: (String) -> Void
+    let onCancel: () -> Void
+    @State private var pick: Date
+    @State private var warning = false
+
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    init(dates: [String], current: String, onPick: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.dates = dates; self.current = current; self.onPick = onPick; self.onCancel = onCancel
+        _pick = State(initialValue: Self.formatter.date(from: current) ?? Date())
+    }
+
+    var body: some View {
+        let all = dates.compactMap { Self.formatter.date(from: $0) }
+        let low = all.min() ?? pick
+        let high = max(all.max() ?? pick, low)
         NavigationStack {
-            List(dates.reversed(), id: \.self) { d in
-                Button { selected = d; picking = false } label: {
-                    HStack { Text(d); Spacer(); if d == current { Image(systemName: "checkmark").foregroundStyle(AD.blue) } }
+            VStack(spacing: 12) {
+                DatePicker("", selection: $pick, in: low...high, displayedComponents: .date)
+                    .datePickerStyle(.graphical).labelsHidden().tint(AD.blue)
+                if warning {
+                    Text("기록이 있는 날짜만 선택할 수 있습니다").font(.system(size: 12)).foregroundStyle(AD.red)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .onChange(of: pick) { _, _ in warning = false }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("취소", action: onCancel) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("선택") {
+                        let text = Self.formatter.string(from: pick)
+                        if dates.contains(text) { onPick(text) } else { warning = true }
+                    }
                 }
             }
-            .navigationTitle("날짜 선택")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { picking = false } } }
         }
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -118,7 +159,7 @@ private struct CaseCard: View {
                             .font(.system(size: 12)).foregroundStyle(AD.ink3)
                     }
                     Spacer()
-                    if let k = c.ktasLevel { Pill(text: "KTAS \(k)", fg: ktasColor(k), bg: ktasSoft(k), bold: true) }
+                    if let k = c.ktasLevel { Pill(text: "Pre-KTAS \(k)", fg: ktasColor(k), bg: ktasSoft(k), bold: true) }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onToggle)

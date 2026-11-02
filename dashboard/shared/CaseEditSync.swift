@@ -85,7 +85,8 @@ import SwiftUI
               state.apid == nil || state.apid == unit else { return }
         guard state.caseId == active || queue.contains(where: { $0.requestId == state.requestId }) else { return }
         if let error = state.error {
-            sent = nil; status = error == "paused" ? "일시정지 해제 후 수정이 동기화됩니다." : "수정 동기화 실패 · 재연결 시 재시도합니다."
+            sent = nil
+            handleError(error, state)
             return
         }
         guard let values = state.fields else { return }
@@ -135,6 +136,31 @@ import SwiftUI
         project()
         if conflicts.isEmpty { flush() }
     }
+    /// hub가 거절한 이유별로 다르게 다룬다 — 영영 안 들어갈 수정은 대기열에서 치워야 "동기화 실패" 안내가 계속 남지 않는다
+    private func handleError(_ error: String, _ state: State) {
+        switch error {
+        case "paused":
+            status = "일시정지 해제 후 수정이 동기화됩니다."
+        case "not_owner":
+            // 이 구급대 사건이 아니거나 끝난 사건(보관 증표도 없음) — 다시 보내도 같은 답이라 그 사건의 대기 수정을 지운다.
+            // 지금 보는 사건이면 hub가 아직 사건을 모르는 것일 수 있어(재시작 직후 등) 지우지 않고 다시 시도한다
+            if state.caseId != active {
+                queue.removeAll { $0.caseId == state.caseId }; persist(); project()
+                status = "끝난 사건의 수정은 동기화할 수 없어 지웠습니다."
+            } else {
+                status = "hub가 이 사건을 알지 못합니다 · 재연결하면 다시 시도합니다."
+            }
+        case "invalid_patch":
+            // 형식이 맞지 않거나 너무 큰 수정 — 다시 보내도 같다
+            queue.removeAll { $0.requestId == state.requestId }; persist(); project()
+            status = "수정 내용이 형식에 맞지 않아 보내지 못했습니다(그 수정은 지웠습니다)."
+        case "storage_unavailable":
+            status = "hub 저장소 오류 · 잠시 뒤 다시 시도합니다."
+        default:
+            status = "수정 동기화 실패(" + error + ") · 재연결 시 재시도합니다."
+        }
+    }
+
     func resolve(useMine: Bool) {
         guard let state = conflictState, let i = queue.firstIndex(where: { $0.requestId == state.requestId }), !conflicts.isEmpty else { return }
         if useMine { queue[i].base = state.fields ?? [:]; queue[i].requestId = UUID().uuidString }

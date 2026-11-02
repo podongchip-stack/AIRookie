@@ -55,6 +55,19 @@ import Foundation
         let legacyState: [String:Any] = ["caseId":"legacy","apid":"A","fields":[:],"version":1,"epoch":"e","ticket":"legacy-ticket","handoverRevision":0]
         legacy.accept(try! JSONSerialization.data(withJSONObject:legacyState))
         assert(legacy.handover == ["notes":"오프라인 갱신","agency":"기존 소속"])
+        // hub 오류는 이유별로 다룬다 — 일시정지·저장소 오류·지금 보는 사건의 not_owner는 대기열을 두고, 형식 오류와 끝난 사건의 not_owner는 지운다
+        let errors = CaseEditSync()
+        errors.activate(caseId:"case",apid:"A",server:scope + "-errors",send:send)
+        errors.accept(try! JSONSerialization.data(withJSONObject:["caseId":"case","apid":"A","fields":[:],"version":1,"epoch":"e","ticket":"t"] as [String:Any]))
+        errors.submit(caseId:"case",changes:["h:notes":"기록"],base:[:])
+        let errorID = sent.last!["requestId"] as! String
+        func fail(_ code: String, _ caseId: String = "case") {
+            errors.accept(try! JSONSerialization.data(withJSONObject:["caseId":caseId,"error":code,"requestId":errorID] as [String:Any]))
+        }
+        fail("paused"); assert(errors.hasPending("case"))
+        fail("storage_unavailable"); assert(errors.hasPending("case"))
+        fail("not_owner"); assert(errors.hasPending("case"))
+        fail("invalid_patch"); assert(!errors.hasPending("case"))
         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.contains(scope) { UserDefaults.standard.removeObject(forKey:key) }
         print("Client checks passed: merge, null reset, conflict, pending projection, closed-case retry, persisted offline replay, case isolation")
     }

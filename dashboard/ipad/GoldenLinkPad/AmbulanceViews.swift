@@ -64,7 +64,7 @@ struct CallSummaryCard: View {
                 HStack(spacing: 6) {
                     let sev = Theme.severity(p.severityTag)
                     Pill(text: sev.label, bg: sev.bg, fg: sev.fg, bold: true)
-                    if let k = p.ktasLevel { Pill(text: "KTAS \(k)", bg: Theme.ktasSoft(k), fg: Theme.ktas(k), bold: true) }
+                    if let k = p.ktasLevel { Pill(text: "Pre-KTAS \(k)", bg: Theme.ktasSoft(k), fg: Theme.ktas(k), bold: true) }
                     Text([p.patient, p.chiefComplaint, p.consciousness.map { "의식 \($0)" }].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 12)).foregroundStyle(AD.ink3).lineLimit(2)
                 }
@@ -77,7 +77,7 @@ struct CallSummaryCard: View {
                 if let prev = p.previousCalls, !prev.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(prev) { u in
-                            Text("\(u.callRound)차 통화 · \(Theme.severity(u.severityTag).label) · \(u.expectedDiagnosis ?? "")\(u.ktasLevel.map { " · KTAS \($0)" } ?? "")")
+                            Text("\(u.callRound)차 통화 · \(Theme.severity(u.severityTag).label) · \(u.expectedDiagnosis ?? "")\(u.ktasLevel.map { " · Pre-KTAS \($0)" } ?? "")")
                                 .font(.system(size: 11.5)).foregroundStyle(AD.sub)
                         }
                     }
@@ -204,8 +204,8 @@ struct CallSummaryEditSheet: View {
                     }
                 }
                 Section("증상 (쉼표로 구분)") { TextField("예: 흉통, 호흡 곤란", text: $symptoms) }
-                Section("KTAS") {
-                    Picker("KTAS", selection: $ktas) {
+                Section("Pre-KTAS") {
+                    Picker("Pre-KTAS", selection: $ktas) {
                         Text("—").tag(0)
                         ForEach(1...5, id: \.self) { Text("\($0)").tag($0) }
                     }

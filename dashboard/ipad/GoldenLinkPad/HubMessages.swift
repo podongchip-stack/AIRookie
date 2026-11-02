@@ -185,6 +185,8 @@ struct SceneCandidate: Codable, Identifiable {
     var bedCountUnknown: Bool?
     var bedReliability: BedReliabilityMatch?
     var firstCallRecommended: Bool?
+    /// 첫 연락 순위의 이유(이동·진행 부하·병상·전문의·도착 유효 확률, hub 규칙) — 휴대폰 앱 병원 리스트와 같은 문구
+    var firstCallReason: String?
     var emergencyLevel: String?
     var specialties: [SceneSpecialty]?
     var id: String { hospitalId }

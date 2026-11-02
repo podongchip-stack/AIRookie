@@ -207,6 +207,7 @@ struct TransportScreen: View {
                 else { StatBox(label: "AI 도착 시 유효", value: "—", bg: AD.chip, fg: AD.ink3) }
                 StatBox(label: "전문의", value: doctors > 0 ? "\(doctors)명" : "—", bg: AD.chip, fg: AD.ink3, valueColor: AD.navy)
             }
+            if let reason = h.firstCallReason { Text(reason).font(.system(size: 11.5)).foregroundStyle(AD.sub).lineLimit(2) }
             Text("통화가 끝나면 hub 순위·병원 응답으로 바뀝니다").font(.system(size: 11.5)).foregroundStyle(AD.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

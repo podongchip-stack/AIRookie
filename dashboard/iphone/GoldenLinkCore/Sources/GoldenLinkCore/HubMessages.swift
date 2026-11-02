@@ -149,24 +149,11 @@ public struct SceneCandidate: Decodable, Equatable, Identifiable {
     }
 }
 
-public extension SceneCandidate {
-    /// hub의 규칙 기반 적합 후보만 거리순으로 선택. 정보 미제공은 적합으로 추정하지 않는다.
-    static func firstCallCandidates(_ hospitals: [SceneCandidate], ktas: Int?) -> [SceneCandidate] {
-        guard let ktas, (1...5).contains(ktas) else { return [] }
-        return hospitals.filter { $0.supportedKtas?.contains(ktas) == true }.sorted {
-            let left = $0.roadDistanceKm ?? $0.distanceKm
-            let right = $1.roadDistanceKm ?? $1.distanceKm
-            return left == right ? $0.hospitalId < $1.hospitalId : left < right
-        }
-    }
-}
-
 public struct SceneCandidates: Decodable, Equatable {
     public let caseId: String
     public let apid: String
     /// 도착 시간순(hub가 정한 순서 그대로 쓴다)
     public let hospitals: [SceneCandidate]
-    public let preKtas: Int?
     public let callAttempts: [String]?
     public let firstCallExhausted: Bool?
     public let reportedSymptom: String?
