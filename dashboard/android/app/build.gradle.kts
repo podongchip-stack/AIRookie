@@ -46,6 +46,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("io.getstream:stream-webrtc-android:1.3.10")  // 실제 통화(WebRTC) — Google libwebrtc의 org.webrtc 패키지 그대로(2026-11-04)
     implementation("com.kakao.maps.open:android:2.12.19")  // 카카오맵 SDK v2 — 통화 화면의 후보 병원 지도
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))

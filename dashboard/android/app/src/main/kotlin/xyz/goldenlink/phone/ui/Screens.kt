@@ -54,6 +54,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.CheckCircle
@@ -84,6 +85,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -130,6 +132,7 @@ import xyz.goldenlink.core.SceneCandidate
 import xyz.goldenlink.phone.CallSession
 import xyz.goldenlink.phone.CaseEditSync
 import androidx.compose.ui.graphics.graphicsLayer
+import xyz.goldenlink.phone.HospitalModel
 import xyz.goldenlink.phone.HubSocket
 import xyz.goldenlink.phone.PhoneModel
 import kotlin.math.PI
@@ -232,8 +235,19 @@ fun nowEverySecond(): Long {
 // ── 루트 ──
 
 @Composable
-fun PhoneApp(m: PhoneModel) {
-    if (m.accessRequired) AccessCodeEntry(m) else PhoneMain(m)
+fun PhoneApp(m: PhoneModel, hospital: HospitalModel) {
+    when {
+        m.accessRequired -> AccessCodeEntry(m)
+        // 병원 접근 코드(H-<hpid>)로 들어왔으면 구급대 화면 대신 수신 전화 화면(병원 모드, 2026-11-04)
+        m.hospitalId.isNotBlank() -> {
+            DisposableEffect(m.hospitalId) {
+                hospital.start()
+                onDispose { hospital.stop() }
+            }
+            HospitalApp(hospital, onChangeCode = { m.resetAccess() })
+        }
+        else -> PhoneMain(m)
+    }
 }
 
 /** 첫 실행(또는 [접근 코드 변경] 뒤)의 구급대 접근 코드 입력 — 아이폰 AccessCodeEntry와 같은 화면·규칙 */
@@ -246,17 +260,18 @@ private fun AccessCodeEntry(m: PhoneModel) {
         Column(Modifier.fillMaxSize().background(AD.bg).safeDrawingPadding().verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp).padding(top = 64.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("골든링크", fontSize = 28.sp, fontWeight = FontWeight.Black, color = AD.navy)
-            Text("구급대 접근 코드", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AD.ink)
-            Text("소속 구급대 코드를 입력하면 해당 구급대의 사건과 이송 정보를 확인합니다.", fontSize = 14.sp, color = AD.sub)
+            Text("접근 코드", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AD.ink)
+            Text("구급대 코드(P-…)를 입력하면 해당 구급대의 사건과 이송 정보를 확인하고, 병원 코드(H-…)를 입력하면 구급대의 전화를 받는 병원 모드로 들어갑니다.",
+                fontSize = 14.sp, color = AD.sub)
             OutlinedTextField(code, { code = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                label = { Text("접근 코드") }, placeholder = { Text("예: P-SEL0111") },
+                label = { Text("접근 코드") }, placeholder = { Text("예: P-SEL0111 · H-A1100017") },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = { m.submitAccess(code, hub) }))
             m.accessError?.let { Text(it, fontSize = 13.sp, color = AD.red) }
             val enabled = !m.accessChecking && code.isNotBlank()
             Box(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp)).background(if (enabled) AD.blue else AD.gray)
                 .clickable(enabled = enabled) { m.submitAccess(code, hub) }, contentAlignment = Alignment.Center) {
-                Text(if (m.accessChecking) "구급대 확인 중…" else "입장", color = AD.white, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(if (m.accessChecking) "코드 확인 중…" else "입장", color = AD.white, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
             Text("시연: 역삼119안전센터 구급 1\n휴대폰 P-SEL0111 · 태블릿 A-SEL0111", fontSize = 13.sp, color = AD.sub)
             Text(if (showHub) "서버 연결 설정 ▲" else "서버 연결 설정 ▼", fontSize = 14.sp, color = AD.ink3,
@@ -705,15 +720,19 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
         }
         Card(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("실시간 자막", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy)
+                Text(if (call.webrtc) "실제 통화" else "실시간 자막", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy)
                 Spacer(Modifier.weight(1f))
-                Pill("AI · Qwen3-ASR", AD.blue, AD.blueSoft)
+                if (!call.webrtc) Pill("AI · Qwen3-ASR", AD.blue, AD.blueSoft)
             }
             Spacer(Modifier.height(8.dp))
             val lines = m.transcriptLines
             val state = rememberLazyListState()
             LaunchedEffect(lines.size) { if (lines.isNotEmpty()) state.animateScrollToItem(lines.size - 1) }
-            if (lines.isEmpty()) {
+            if (call.webrtc) {
+                // 실제 통화(WebRTC, 2026-11-04): 음성은 병원 앱과 직접 주고받고, 이 통화 동안은 음성 인식·요약이 연결돼 있지 않다(다음 단계)
+                Text(if (connecting) "병원 앱이 받으면 음성 연결을 확인한 뒤 통화가 시작됩니다."
+                    else "병원 담당자와 통화 중입니다. 이 통화는 음성 인식·요약에 연결돼 있지 않습니다.", fontSize = 13.sp, color = AD.muted)
+            } else if (lines.isEmpty()) {
                 Text(if (connecting) "병원 응답 대기 중입니다. 연결 후 녹음이 시작됩니다." else "말이 끊길 때마다 인식된 문장이 여기에 뜹니다.", fontSize = 13.sp, color = AD.muted)
             }
             LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -723,25 +742,29 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
                 }
             }
         }
-        if (connecting) Text("미응답 · 다음 병원", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.orange, textAlign = TextAlign.Center,
+        if (connecting && !call.webrtc) Text("미응답 · 다음 병원", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AD.orange, textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().clickable { m.noAnswerNext() }.padding(vertical = 4.dp))
-        // [취소]는 아무것도 보내지 않고, [전송]을 눌러야만 음성을 처리해 병원에 보낸다
+        // [취소]는 아무것도 보내지 않고, [통화 종료]([전송])를 눌러야만 음성을 처리한다. 현장 첫 통화는 끝낸 뒤 이송확정/이송불가를 고른다
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.weight(1f).height(72.dp).clip(cardShape).background(AD.redSoft).border(2.dp, AD.red, cardShape)
                 .clickable { m.cancelCall() }, horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Cancel, null, tint = AD.red, modifier = Modifier.size(28.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("취소", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AD.red)
+                Text(if (call.webrtc && !connecting) "통화 종료" else "취소", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AD.red)
             }
-            Row(Modifier.weight(1f).height(72.dp).clip(cardShape).background(if (connecting) AD.control else AD.blue)
+            // 실제 통화는 종료 버튼 하나다(요약·이송 판단이 없다) — 병원 앱이 받기 전엔 [취소], 통화 중엔 [통화 종료]
+            if (!call.webrtc) Row(Modifier.weight(1f).height(72.dp).clip(cardShape).background(if (connecting) AD.control else AD.blue)
                 .clickable(enabled = !connecting) { m.sendCall() }, horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.AutoMirrored.Filled.Send, null, tint = Color.White, modifier = Modifier.size(26.dp))
+                if (call.followup) Icon(Icons.AutoMirrored.Filled.Send, null, tint = Color.White, modifier = Modifier.size(26.dp))
+                else Icon(Icons.Filled.CallEnd, null, tint = Color.White, modifier = Modifier.size(26.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("전송", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(if (call.followup) "전송" else "통화 종료", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
-        Text("취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다",
+        Text(if (call.webrtc) "실제 통화입니다 · 종료하면 통화만 끝나고 요약·이송 판단은 만들어지지 않습니다"
+            else if (call.followup) "취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다"
+            else "취소하면 아무것도 전달되지 않습니다 · 통화를 끝낸 뒤 이송확정·이송불가를 고릅니다 (그때까지 요약은 병원에 가지 않습니다)",
             fontSize = 10.5.sp, color = AD.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
     }
 }
@@ -772,9 +795,15 @@ private fun EndedView(m: PhoneModel) {
     val now = nowEverySecond()
     // 서버 음성 인식(모델 없음)은 결과가 hub 매칭으로만 온다 — 90초 넘게 안 오면 말이 인식되지 않은 것으로 본다
     val serverWaitOver = !m.models.ready || !m.settings.onDevice || m.session == null || stage == CallSession.Stage.Sent
-    val timedOut = sent == null && serverWaitOver && (m.call?.endedAt?.let { now - it > 90_000 } ?: false)
+    // 현장 첫 통화는 구급대원이 이송 여부를 고른 뒤부터 센다 — 판단 전엔 요약이 hub에 붙잡혀 있는 게 정상이다(2026-11-04)
+    val waitingSince = if (followup) m.call?.endedAt else m.call?.decidedAt
+    val timedOut = sent == null && serverWaitOver && (waitingSince?.let { now - it > 90_000 } ?: false)
     val failed = stage is CallSession.Stage.Failed
     val finished = sent != null || timedOut || stage == CallSession.Stage.NoSpeech || failed
+    // 현장 첫 통화는 끝난 뒤 이송확정/이송불가를 고른다(2026-11-04) — 요약이 만들어지지 못한 경우엔 고를 것이 없다
+    val decision = m.call?.decision
+    val awaiting = !followup && decision == null && sent == null && !timedOut && stage != CallSession.Stage.NoSpeech && !failed
+    val confirming = decision == "confirm" && sent == null
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
         Card(border = if (sent != null) AD.green else AD.line, borderWidth = if (sent != null) 2.dp else 1.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -785,16 +814,39 @@ private fun EndedView(m: PhoneModel) {
                         Text(when {
                             sent != null -> if (followup) "환자 정보에 덧붙여 ${sent}곳에 전달됐습니다" else "후보 병원 ${sent}곳에 전달됐습니다"
                             timedOut -> "전달되지 않았습니다"
+                            awaiting -> "통화가 끝났습니다 — 이송 여부를 선택하세요"
+                            confirming -> "${hospital}(으)로 이송 확정 중…"
                             else -> stageTitle(stage)
                         }, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = AD.navy)
                         Text("${if (followup) "추가 통화" else "통화"}: $hospital", fontSize = 12.sp, color = AD.sub)
                     }
                 }
-                // 진행 단계 — 음성 인식(AI) → 구조화(AI) → 병원 전달(규칙)
+                if (awaiting) {
+                    // [이송확정]은 통화한 병원으로 바로 출발하고 요약은 그 병원에만 간다. [이송불가]는 요약을 존 안 다른 후보 병원 전체에 동시에 전달한다
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(Modifier.weight(1f).height(72.dp).clip(cardShape).background(AD.green).clickable { m.decideTransport(true) },
+                            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.CheckCircle, null, tint = Color.White, modifier = Modifier.size(26.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("이송확정", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                        Row(Modifier.weight(1f).height(72.dp).clip(cardShape).background(AD.redSoft).border(2.dp, AD.red, cardShape)
+                            .clickable { m.decideTransport(false) }, horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Cancel, null, tint = AD.red, modifier = Modifier.size(26.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("이송불가", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AD.red)
+                        }
+                    }
+                    Text("이송확정: $hospital(으)로 바로 출발합니다 · 요약은 이 병원에만 전달됩니다\n이송불가: 요약을 존 안 다른 후보 병원 전체에 동시에 전달합니다",
+                        fontSize = 11.5.sp, color = AD.sub)
+                }
+                // 진행 단계 — 음성 인식(AI) → 구조화(AI) → 병원 전달(규칙). 판단 전에는 전달 단계가 시작되지 않는다
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     StepRow("남은 음성 인식", "AI", stepState(0, stage, sent))
                     StepRow("환자 정보 구조화 (MF_BERT)", "AI", stepState(1, stage, sent))
-                    StepRow("존 안 후보 병원에 동시 전달", "규칙", stepState(2, stage, sent))
+                    StepRow(if (confirming) "통화 병원에 요약 전달 · 이송 확정" else "존 안 후보 병원에 동시 전달", "규칙",
+                        if (awaiting) Step.PENDING else stepState(2, stage, sent))
                 }
                 if (stage is CallSession.Stage.Failed) Text(stage.reason, fontSize = 12.sp, color = AD.red)
                 if (timedOut) Text("인식된 말이 없었거나 음성 인식 서버에 닿지 않았습니다. 다시 걸 수 있습니다.", fontSize = 12.sp, color = AD.red)
@@ -1008,6 +1060,7 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
     var hub by remember { mutableStateOf(s.hubBase) }
     var recordToken by remember { mutableStateOf(m.recordAccess.token(s.apid.trim().uppercase())) }
     var onDevice by remember { mutableStateOf(s.onDevice) }
+    var realCall by remember { mutableStateOf(s.realCall) }
     var rms by remember { mutableStateOf(s.silenceRms) }
     var hold by remember { mutableStateOf(s.holdSec) }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -1021,6 +1074,7 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
                     s.hubBase = hub
                     if (!m.recordAccess.save(recordToken, s.apid.trim().uppercase())) return@clickable
                     s.onDevice = onDevice
+                    s.realCall = realCall
                     s.silenceRms = rms
                     s.holdSec = hold
                     m.start()
@@ -1047,11 +1101,19 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
             }
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("실제 통화(WebRTC)", modifier = Modifier.weight(1f), color = AD.ink)
+                    Switch(realCall, { realCall = it }, colors = SwitchDefaults.colors(checkedTrackColor = AD.blue))
+                }
+                Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 앱(안드로이드 병원 모드)과 연결되는 실제 음성 통화가 됩니다. " +
+                    "이 통화 동안은 음성 인식·요약이 연결돼 있지 않습니다(다음 단계).", fontSize = 11.5.sp, color = AD.sub)
+            }
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("기기 안에서 음성 인식·구조화", modifier = Modifier.weight(1f), color = AD.ink)
                     Switch(onDevice, { onDevice = it }, colors = SwitchDefaults.colors(checkedTrackColor = AD.blue))
                 }
                 Text("끄면 웹 전화 앱처럼 음성을 hub로 보내 중앙 voice가 처리합니다. 켜면 음성은 기기 밖으로 나가지 않고, " +
-                    "[전송]을 누를 때 구조화된 요약만 hub로 보냅니다(공개 도메인 가능).", fontSize = 11.5.sp, color = AD.sub)
+                    "통화를 끝낼 때 구조화된 요약만 hub로 보냅니다(공개 도메인 가능).", fontSize = 11.5.sp, color = AD.sub)
                 val missing = m.models.missingFiles()
                 if (onDevice && missing.isNotEmpty()) {
                     Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

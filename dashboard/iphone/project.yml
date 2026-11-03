@@ -13,6 +13,9 @@ packages:
     exactVersion: 2.12.19
   GoldenLinkCore:
     path: GoldenLinkCore
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git   # 실제 통화(WebRTC, 2026-11-04) — Google libwebrtc 무수정 빌드(iOS 15+)
+    exactVersion: 156.0.0
   speech-swift:
     path: Vendor/speech-swift   # setup.sh가 받아 float 디코더 패치를 적용한다
 
@@ -35,6 +38,8 @@ targets:
       - package: KakaoMapsSDK
         product: KakaoMapsSDK-SPM
       - package: GoldenLinkCore
+      - package: WebRTC
+        product: WebRTC
       - package: speech-swift
         product: Qwen3ASR
     settings:

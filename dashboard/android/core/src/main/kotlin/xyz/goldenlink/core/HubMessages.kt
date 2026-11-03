@@ -16,7 +16,13 @@ val hubJson = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefa
 // ── 앱 -> hub ──
 
 @Serializable
-data class IdentifyMessage(val role: String, val id: String, val type: String = "identify")
+data class IdentifyMessage(
+    val role: String,
+    val id: String,
+    /** 실제 통화(WebRTC) 수신이 가능한 병원 앱이면 true(2026-11-04) — hub가 이 기기에만 수신 전화를 울린다. null이면 보내지 않는다 */
+    val callCapable: Boolean? = null,
+    val type: String = "identify",
+)
 
 @Serializable
 data class CallSignalMessage(
@@ -29,7 +35,18 @@ data class CallSignalMessage(
     val timestamp: String = isoNow(),
     /** hub 스키마가 Literal["phone","tablet"] — 다른 값이면 신호 전체가 거부된다 */
     val device: String = "phone",
+    /** 첫 통화 판단 대기(2026-11-04): call_ended와 함께 true면 hub가 요약을 병원에 보내지 않고 붙잡아 두었다가 [CallDecisionMessage]로 처리한다. null이면 보내지 않는다 */
+    val awaitDecision: Boolean? = null,
     val type: String = "call_signal",
+)
+
+/** 첫 통화를 마친 구급대원의 판단(2026-11-04) — decision: "confirm"(통화 병원으로 이송 확정, 요약은 그 병원에만) | "reject"(통화 병원은 불가, 요약을 존 전체에) | "cancel"(판단 없이 닫기) */
+@Serializable
+data class CallDecisionMessage(
+    val caseId: String,
+    val decision: String,
+    val timestamp: String = isoNow(),
+    val type: String = "call_decision",
 )
 
 /** 전화 연결 요청(2026-10-05 hub 중재) — request는 병원 쪽(관제)이 받아 응답할 때까지 "연결 중", 응답하면 hub가 call_started를 중계한다.

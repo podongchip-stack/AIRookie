@@ -19,6 +19,8 @@ import type {
   DashboardIdentityInfo,
   DashboardState,
   DemoMode,
+  MapViewMode,
+  MapViewMessage,
   DispatchCommand,
   DispatchTarget,
   HospitalInfoConfirm,
@@ -78,6 +80,8 @@ const INITIAL_STATE: DashboardState = {
   caseHistory: [],
   actionRefused: null,
   actionResult: null,
+  mapCommand: null,
+  alternatives: {},
   selectionReleased: null,
   mciAllocated: null,
   mciPlan: null,
@@ -368,6 +372,12 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
             case "case_closed":
               applyCaseClosed(parsed.caseId);
               break;
+            case "map_view":
+              setState((prev) => ({
+                ...prev,
+                mapCommand: { seq: (prev.mapCommand?.seq ?? 0) + 1, view: parsed.view ?? null, fullscreen: parsed.fullscreen ?? null, panel: parsed.panel ?? null, standby: parsed.standby ?? null },
+              }));
+              break;
             case "map_overview":
               applyMapOverview(parsed);
               break;
@@ -408,6 +418,9 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
               break;
             case "action_result":
               setState((prev) => ({ ...prev, actionResult: { at: Date.now(), caseId: parsed.caseId, action: parsed.action, ok: parsed.ok, reason: parsed.reason } }));
+              break;
+            case "case_alternatives":
+              setState((prev) => ({ ...prev, alternatives: { ...prev.alternatives, [parsed.caseId]: { at: Date.now(), hospitals: parsed.hospitals } } }));
               break;
             case "action_refused":
               setState((prev) => ({ ...prev, actionRefused: { at: Date.now(), reason: parsed.reason, caseId: parsed.caseId } }));
@@ -674,6 +687,22 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
+  // 관제 [대체 병원 제안 확인](2026-11-03) — hub가 이 사건이 이미 요청한 병원을 뺀 새 후보를 계산해 이 소켓에만 돌려준다
+  const sendAlternativesRequest = useCallback((caseId: string): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "case_alternatives_request", caseId, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
+  // 관제 [이 병원으로 이송 지시](2026-11-03) — 병원 승인 없이 관제가 직접 이 병원으로 이송을 확정한다. 결과는 action_result로 돌아온다
+  const sendDirectTransport = useCallback((caseId: string, hospitalId: string): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "direct_transport", caseId, hospitalId, timestamp: new Date().toISOString() }));
+    return true;
+  }, []);
+
   // 대량사고 [분배 확정](2026-10-05) — hub가 중증부터 사건마다 승인 병원 중 순위 1위로 이송 확정한다(부하 페널티 반영)
   const sendMciAllocate = useCallback((caseIds: string[]): boolean => {
     const socket = socketRef.current;
@@ -700,6 +729,14 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
+  // 관제 지도 원격 조작(2026-11-03) — 콘솔에서 2D/3D·전체 화면을 바꾼다. hub가 관제 지도 화면에 전한다
+  const sendMapView = useCallback((command: Omit<MapViewMessage, "type">): boolean => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "map_view", ...command }));
+    return true;
+  }, []);
+
   // 시연 영상 모드 전환(2026-10-06) — hub가 연결된 모든 화면에 알린다(이 화면도 그 알림으로 바뀐다)
   const sendDemoMode = useCallback((mode: DemoMode): boolean => {
     const socket = socketRef.current;
@@ -716,7 +753,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
-  return { state, connectionMode, sendCallConnection, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendPatientOverride, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
+  return { state, connectionMode, sendCallConnection, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendPatientOverride, sendSimCommand, sendTransportVitals, sendZoneExpand, sendAlternativesRequest, sendDirectTransport, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode, sendMapView };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.

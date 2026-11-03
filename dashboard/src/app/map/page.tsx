@@ -47,7 +47,7 @@ const LEGEND_LEVELS: [string, string][] = [
 ];
 
 export default function MonitorMapPage() {
-  const { state, connectionMode, sendZoneExpand, sendAction } = useDashboardSocket({ role: "monitor", id: "map" });
+  const { state, connectionMode, sendZoneExpand, sendAlternativesRequest, sendDirectTransport, sendAction } = useDashboardSocket({ role: "monitor", id: "map" });
   const overview = state.mapOverview;
   const [now, setNow] = useState(() => Date.now());
   const [selId, setSelId] = useState<string>("");
@@ -72,7 +72,28 @@ export default function MonitorMapPage() {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen?.();
   }, []);
+  // 시연 콘솔의 원격 조작(2026-11-03) — 2D/3D는 바로 따른다. 전체 화면은 브라우저가 사용자 조작 없이는 막으므로 먼저 시도하고,
+  // 막히면 이 화면에 눌러 달라는 안내를 띄운다(콘솔에서 보낸 요청이 조용히 사라지지 않게).
+  const [fullscreenAsk, setFullscreenAsk] = useState(false);
+  const mapCommand = state.mapCommand;
+  useEffect(() => {
+    if (!mapCommand) return;
+    if (mapCommand.view) setView(mapCommand.view);
+    if (mapCommand.fullscreen === "exit") {
+      setFullscreenAsk(false);
+      if (document.fullscreenElement) void document.exitFullscreen();
+    } else if (mapCommand.fullscreen === "enter" && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().then(() => setFullscreenAsk(false)).catch(() => setFullscreenAsk(true));
+    }
+  }, [mapCommand]);
   const [showReject, setShowReject] = useState(false);
+  useEffect(() => {
+    if (!mapCommand) return;
+    if (mapCommand.panel === "past") { setShowReject(false); setShowPast(true); }
+    else if (mapCommand.panel === "reject") { setShowPast(false); setShowReject(true); }
+    else if (mapCommand.panel === "close") { setShowPast(false); setShowReject(false); }
+    if (mapCommand.standby) setStandbyOnMap(mapCommand.standby === "on");
+  }, [mapCommand]);
   // 사건별로 마지막으로 본 시각 — 그 뒤의 병원 응답이 "새 N"
   const [seenAt, setSeenAt] = useState<Record<string, number>>({});
   const [mountedAt] = useState(() => Date.now());
@@ -308,6 +329,15 @@ export default function MonitorMapPage() {
     <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: C.bg, color: C.ink, whiteSpace: "nowrap" }}>
       {/* 시연 영상 모드(2026-10-06) — 관제 지도는 ijs.mp4를 반복 재생(2026-10-08, /verify/stage 순환 없음) */}
       <DemoVideoOverlay src="/demo-videos/ijs.mp4" />
+      {fullscreenAsk && !fullscreen && (
+        <button
+          type="button"
+          onClick={() => { setFullscreenAsk(false); toggleFullscreen(); }}
+          style={{ position: "absolute", top: 70, left: "50%", transform: "translateX(-50%)", zIndex: 50, ...toolBtnStyle, background: C.navy, color: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,.3)" }}
+        >
+          시연 콘솔이 전체 화면을 요청했습니다 — 눌러서 켜기
+        </button>
+      )}
       <div style={{ position: "absolute", inset: 0, boxSizing: "border-box", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {/* 헤더 + 범례 */}
         <Glass as="header" dark={dark} data-map-cover="top" style={{ position: "relative", zIndex: 10, flex: "none", borderRadius: 6, padding: "12px 20px", gap: 10 }}>
@@ -481,7 +511,7 @@ export default function MonitorMapPage() {
 
                     <CaseStatusSummary inc={selected} now={now} />
 
-                    {(isTransportStalled(selected, now) || isConfirmDelayed(selected, now)) && <HandlingActions key={selected.caseId} dispatchOnly={!isTransportStalled(selected, now)} notice={resultNotice(state, selected.caseId, now)} onZoneExpand={() => sendZoneExpand(selected.caseId)}
+                    {(isTransportStalled(selected, now) || isConfirmDelayed(selected, now)) && <HandlingActions key={selected.caseId} dispatchOnly={!isTransportStalled(selected, now)} notice={resultNotice(state, selected.caseId, now)} onZoneExpand={() => sendZoneExpand(selected.caseId)} onAlternatives={() => sendAlternativesRequest(selected.caseId)} onDirect={(h) => sendDirectTransport(selected.caseId, h.hospitalId)} alternatives={state.alternatives[selected.caseId] ?? null} phoneOf={(hospitalId) => overview?.hospitals.find((o) => o.hospitalId === hospitalId)?.erPhone ?? null}
                     waiting={selected.hospitals.filter((h) => h.st === "w").map((h) => ({
                       hospitalId: h.hospitalId, name: h.name,
                       phone: overview?.hospitals.find((o) => o.hospitalId === h.hospitalId)?.erPhone ?? null,

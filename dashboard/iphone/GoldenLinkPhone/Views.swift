@@ -492,10 +492,17 @@ struct InCallView: View {
             Card {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("실시간 자막").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
+                        Text(call.webrtc ? "실제 통화" : "실시간 자막").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
                         Spacer()
-                        Pill(text: "AI · Qwen3-ASR", fg: AD.blue, bg: AD.blueSoft)
+                        if !call.webrtc { Pill(text: "AI · Qwen3-ASR", fg: AD.blue, bg: AD.blueSoft) }
                     }
+                    if call.webrtc {
+                        // 실제 통화(WebRTC, 2026-11-04): 음성은 병원 앱과 직접 주고받고, 이 통화 동안은 음성 인식·요약이 연결돼 있지 않다(다음 단계)
+                        Text(connecting ? "병원 앱이 받으면 음성 연결을 확인한 뒤 통화가 시작됩니다."
+                             : "병원 담당자와 통화 중입니다. 이 통화는 음성 인식·요약에 연결돼 있지 않습니다.")
+                            .font(.system(size: 13)).foregroundStyle(AD.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
                     ScrollViewReader { proxy in
                         ScrollView {
                             VStack(alignment: .leading, spacing: 6) {
@@ -515,20 +522,21 @@ struct InCallView: View {
                         }
                         .onChange(of: m.transcriptLines.count) { _, n in withAnimation { proxy.scrollTo(n - 1, anchor: .bottom) } }
                     }
+                    }
                 }
             }
             .frame(maxHeight: .infinity)
 
-            if m.call?.phase == .connecting {
+            if m.call?.phase == .connecting, !call.webrtc {
                 Button("미응답 · 다음 병원") { m.noAnswerNext() }
                     .font(.system(size: 16, weight: .bold)).foregroundStyle(AD.orange)
             }
-            // [취소]는 아무것도 보내지 않고, [전송]을 눌러야만 음성을 처리해 병원에 보낸다(2026-10-05)
+            // [취소]는 아무것도 보내지 않고, [통화 종료]([전송])를 눌러야만 음성을 처리한다. 현장 첫 통화는 끝낸 뒤 이송확정/이송불가를 고른다(2026-11-04)
             HStack(spacing: 10) {
                 Button { m.cancelCall() } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 26, weight: .bold))
-                        Text("취소").font(.system(size: 19, weight: .bold))
+                        Text(call.webrtc && !connecting ? "통화 종료" : "취소").font(.system(size: 19, weight: .bold))
                     }
                     .frame(maxWidth: .infinity, minHeight: 72)
                     .contentShape(Rectangle())
@@ -537,10 +545,12 @@ struct InCallView: View {
                     .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(AD.red, lineWidth: 2))
                 }
                 .buttonStyle(.plain)
+                // 실제 통화는 종료 버튼 하나다(요약·이송 판단이 없다) — 병원 앱이 받기 전엔 [취소], 통화 중엔 [통화 종료]
+                if !call.webrtc {
                 Button { m.sendCall() } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: "paperplane.fill").font(.system(size: 24, weight: .bold))
-                        Text("전송").font(.system(size: 19, weight: .bold))
+                        Image(systemName: m.call?.followup == true ? "paperplane.fill" : "phone.down.fill").font(.system(size: 24, weight: .bold))
+                        Text(m.call?.followup == true ? "전송" : "통화 종료").font(.system(size: 19, weight: .bold))
                     }
                     .frame(maxWidth: .infinity, minHeight: 72)
                     .contentShape(Rectangle())
@@ -549,8 +559,12 @@ struct InCallView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(connecting)
+                }
             }
-            Text("취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다")
+            Text(call.webrtc ? "실제 통화입니다 · 종료하면 통화만 끝나고 요약·이송 판단은 만들어지지 않습니다"
+                 : m.call?.followup == true
+                 ? "취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다"
+                 : "취소하면 아무것도 전달되지 않습니다 · 통화를 끝낸 뒤 이송확정·이송불가를 고릅니다 (그때까지 요약은 병원에 가지 않습니다)")
                 .font(.system(size: 10.5)).foregroundStyle(AD.muted).multilineTextAlignment(.center)
         }
     }
@@ -591,8 +605,14 @@ struct EndedView: View {
         // 서버 음성 인식(모델 없음)은 결과가 hub 매칭으로만 온다 — 90초 넘게 안 오면 말이 인식되지 않은 것으로 본다
         let serverWaitOver = Settings.onDevice == false || m.session == nil || stage == .sent
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
-        let timedOut = sent == nil && serverWaitOver && (m.call?.endedAt.map { ctx.date.timeIntervalSince($0) > 90 } ?? false)
+        // 현장 첫 통화는 구급대원이 이송 여부를 고른 뒤부터 센다 — 판단 전엔 요약이 hub에 붙잡혀 있는 게 정상이다(2026-11-04)
+        let waitingSince = followup ? m.call?.endedAt : m.call?.decidedAt
+        let timedOut = sent == nil && serverWaitOver && (waitingSince.map { ctx.date.timeIntervalSince($0) > 90 } ?? false)
         let finished = sent != nil || timedOut || stage == .noSpeech || isFailed(stage)
+        // 현장 첫 통화는 끝난 뒤 이송확정/이송불가를 고른다 — 요약이 만들어지지 못한 경우엔 고를 것이 없다
+        let decision = m.call?.decision
+        let awaiting = !followup && decision == nil && sent == nil && !timedOut && stage != .noSpeech && !isFailed(stage)
+        let confirming = decision == "confirm" && sent == nil
         VStack(spacing: 12) {
             Spacer(minLength: 0)
             Card(border: sent == 0 ? AD.orange : sent != nil ? AD.green : AD.line, borderWidth: sent != nil ? 2 : 1) {
@@ -604,16 +624,50 @@ struct EndedView: View {
                             .symbolEffect(.pulse, isActive: sent == nil)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(sent.map { $0 == 0 ? "전달할 병원이 없습니다" : followup ? "환자 정보에 덧붙여 \($0)곳에 전달됐습니다" : "후보 병원 \($0)곳에 전달됐습니다" }
-                                 ?? (timedOut ? "전달되지 않았습니다" : stageTitle(stage)))
+                                 ?? (timedOut ? "전달되지 않았습니다"
+                                     : awaiting ? "통화가 끝났습니다 — 이송 여부를 선택하세요"
+                                     : confirming ? "\(hospital)(으)로 이송 확정 중…"
+                                     : stageTitle(stage)))
                                 .font(.system(size: 17, weight: .bold)).foregroundStyle(AD.navy)
                             Text("\(followup ? "추가 통화" : "통화"): \(hospital)").font(.system(size: 12)).foregroundStyle(AD.sub)
                         }
                     }
-                    // 진행 단계 — 음성 인식(AI) → 구조화(AI) → 병원 전달(규칙)
+                    if awaiting {
+                        // [이송확정]은 통화한 병원으로 바로 출발하고 요약은 그 병원에만 간다. [이송불가]는 요약을 존 안 다른 후보 병원 전체에 동시에 전달한다
+                        HStack(spacing: 10) {
+                            Button { m.decideTransport(confirm: true) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "checkmark.circle.fill").font(.system(size: 24, weight: .bold))
+                                    Text("이송확정").font(.system(size: 19, weight: .bold))
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 72)
+                                .contentShape(Rectangle())
+                                .foregroundStyle(.white)
+                                .background(AD.green, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            Button { m.decideTransport(confirm: false) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "xmark.circle.fill").font(.system(size: 24, weight: .bold))
+                                    Text("이송불가").font(.system(size: 19, weight: .bold))
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 72)
+                                .contentShape(Rectangle())
+                                .foregroundStyle(AD.red)
+                                .background(AD.redSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(AD.red, lineWidth: 2))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Text("이송확정: \(hospital)(으)로 바로 출발합니다 · 요약은 이 병원에만 전달됩니다\n이송불가: 요약을 존 안 다른 후보 병원 전체에 동시에 전달합니다")
+                            .font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                    }
+                    // 진행 단계 — 음성 인식(AI) → 구조화(AI) → 병원 전달(규칙). 판단 전에는 전달 단계가 시작되지 않는다
                     VStack(alignment: .leading, spacing: 8) {
                         StepRow(title: "남은 음성 인식", source: "AI", state: stepState(0, stage: stage, sent: sent))
                         StepRow(title: "환자 정보 구조화 (MF_BERT)", source: "AI", state: stepState(1, stage: stage, sent: sent))
-                        StepRow(title: "존 안 후보 병원에 동시 전달", source: "규칙", state: stepState(2, stage: stage, sent: sent))
+                        StepRow(title: confirming ? "통화 병원에 요약 전달 · 이송 확정" : "존 안 후보 병원에 동시 전달", source: "규칙",
+                                state: awaiting ? .pending : stepState(2, stage: stage, sent: sent))
                     }
                     if case let .failed(reason)? = stage {
                         Text(reason).font(.system(size: 12)).foregroundStyle(AD.red)
@@ -823,6 +877,7 @@ struct SettingsView: View {
     @State private var kakaoKey = Settings.kakaoNativeAppKey
     @State private var hub = Settings.hubBase
     @State private var onDevice = Settings.onDevice
+    @State private var realCall = Settings.realCall
     @State private var rms = Double(Settings.silenceRMS)
     @State private var hold = Settings.holdSec
 
@@ -838,6 +893,7 @@ struct SettingsView: View {
                     Settings.hubBase = hub
                     guard RecordAccess.save(recordToken, apid: Settings.apid) else { return }
                     Settings.onDevice = onDevice
+                    Settings.realCall = realCall
                     Settings.silenceRMS = Float(rms)
                     Settings.holdSec = hold
                     onApply()
@@ -862,11 +918,22 @@ struct SettingsView: View {
             Card {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
+                        Text("실제 통화(WebRTC)").foregroundStyle(AD.ink)
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: $realCall).labelsHidden().tint(AD.blue)
+                    }
+                    Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 앱(안드로이드 병원 모드)과 연결되는 실제 음성 통화가 됩니다. 이 통화 동안은 음성 인식·요약이 연결돼 있지 않습니다(다음 단계).")
+                        .font(.system(size: 11.5)).foregroundStyle(AD.sub)
+                }
+            }
+            Card {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
                         Text("기기 안에서 음성 인식·구조화").foregroundStyle(AD.ink)
                         Spacer(minLength: 8)
                         Toggle("", isOn: $onDevice).labelsHidden().tint(AD.blue)
                     }
-                    Text("끄면 웹 전화 앱처럼 음성을 hub로 보내 중앙 voice가 처리합니다. 켜면 음성은 기기 밖으로 나가지 않고, [전송]을 누를 때 구조화된 요약만 hub로 보냅니다(공개 도메인 가능).")
+                    Text("끄면 웹 전화 앱처럼 음성을 hub로 보내 중앙 voice가 처리합니다. 켜면 음성은 기기 밖으로 나가지 않고, 통화를 끝낼 때 구조화된 요약만 hub로 보냅니다(공개 도메인 가능).")
                         .font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 }
             }

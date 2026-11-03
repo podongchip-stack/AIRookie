@@ -60,6 +60,20 @@ class Settings(context: Context) : KeyValueStore {
         get() = p.getString("apid", "")!!.takeUnless { it.equals("auto", ignoreCase = true) } ?: ""
         set(v) = p.edit().putString("apid", v).apply()
 
+    /** 병원 모드의 병원 ID(E-Gen hpid) — 접근 코드 `H-<hpid>`로 정한다. 비어 있지 않으면 이 앱은 구급대 화면 대신 수신 전화 화면을 쓴다(2026-11-04) */
+    var hospitalId: String
+        get() = p.getString("hospitalId", "")!!
+        set(v) = p.edit().putString("hospitalId", v).apply()
+
+    /** true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(병원 앱이 받는다). false: 예전 시연 연출 통화. 실제 통화 중에는 STT·요약이 연결돼 있지 않다(3단계) */
+    var realCall: Boolean
+        get() = p.getBoolean("realCall", false)
+        set(v) = p.edit().putBoolean("realCall", v).apply()
+
+    /** 이 설치본의 기기 식별자(진단용, 인증이 아니다) — 처음 쓸 때 만들어 보관한다 */
+    val deviceId: String
+        get() = p.getString("deviceId", null) ?: java.util.UUID.randomUUID().toString().also { p.edit().putString("deviceId", it).apply() }
+
     /** true: 기기 안에서 STT·MF_BERT(온디바이스). false: 웹과 같이 음성을 hub로 보내 중앙 voice가 처리 */
     var onDevice: Boolean
         get() = p.getBoolean("onDevice", true)
@@ -114,6 +128,8 @@ class HubSocket(
     private val id: String,
     private val onMessage: (type: String, text: String) -> Unit,
     private val onState: (State) -> Unit,
+    /** 병원 앱(실제 통화 수신 가능)이면 true — identify에 실어 hub가 이 기기에만 수신 전화를 울리게 한다 */
+    private val callCapable: Boolean = false,
 ) {
     enum class State { CONNECTING, LIVE, RECONNECTING }
 
@@ -144,7 +160,8 @@ class HubSocket(
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isOpen = true
-                webSocket.send(hubJson.encodeToString(IdentifyMessage.serializer(), IdentifyMessage(role, id)))
+                webSocket.send(hubJson.encodeToString(IdentifyMessage.serializer(),
+                    IdentifyMessage(role, id, callCapable = if (callCapable) true else null)))
                 main.post { if (webSocket === ws) { retryDelayMs = 1000; onState(State.LIVE) } }
             }
 

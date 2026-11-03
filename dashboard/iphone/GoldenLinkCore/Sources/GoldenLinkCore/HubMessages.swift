@@ -23,11 +23,25 @@ public struct CallSignalMessage: Encodable {
     public let device = "phone"
     /// 통화 취소(2026-10-05): call_ended와 함께 true면 hub·voice가 이 통화 음성을 처리·전달하지 않는다. nil이면 보내지 않는다
     public let cancelled: Bool?
+    /// 첫 통화 판단 대기(2026-11-04): call_ended와 함께 true면 hub가 요약을 병원에 보내지 않고 붙잡아 두었다가 `CallDecisionMessage`로 처리한다. nil이면 보내지 않는다
+    public let awaitDecision: Bool?
 
     public init(signal: String, apid: String, caseId: String, hospitalId: String?, cancelled: Bool? = nil,
-                timestamp: String = isoNow()) {
+                awaitDecision: Bool? = nil, timestamp: String = isoNow()) {
         self.signal = signal; self.apid = apid; self.caseId = caseId; self.hospitalId = hospitalId
-        self.cancelled = cancelled; self.timestamp = timestamp
+        self.cancelled = cancelled; self.awaitDecision = awaitDecision; self.timestamp = timestamp
+    }
+}
+
+/// 첫 통화를 마친 구급대원의 판단(2026-11-04) — decision: "confirm"(통화 병원으로 이송 확정, 요약은 그 병원에만) |
+/// "reject"(통화 병원은 불가, 요약을 존 전체에) | "cancel"(판단 없이 닫기). hub/schema.py CallDecision과 같은 모양
+public struct CallDecisionMessage: Encodable {
+    public let type = "call_decision"
+    public let caseId: String
+    public let decision: String
+    public let timestamp: String
+    public init(caseId: String, decision: String, timestamp: String = isoNow()) {
+        self.caseId = caseId; self.decision = decision; self.timestamp = timestamp
     }
 }
 
