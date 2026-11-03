@@ -25,7 +25,9 @@ export function usePauseToast(
     setMessage(refused.reason === "paused" ? PAUSED_MESSAGE
       : refused.reason === "already_arrived"
         ? "이미 병원에 도착해 이송 병원을 바꿀 수 없습니다. 현재 병원의 수용 불가 처리 후 다시 선택해 주세요."
-        : "지금은 이 조작을 할 수 없습니다.");
+        : refused.reason === "dispatcher_pending"
+          ? "관제 판단 대기 중입니다. 상황실이 이송 병원을 지정합니다."
+          : "지금은 이 조작을 할 수 없습니다.");
     setShownAt(refused.at);
   }
   const [seenNotice, setSeenNotice] = useState<number | null>(notice?.at ?? null);

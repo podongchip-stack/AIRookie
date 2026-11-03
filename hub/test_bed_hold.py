@@ -24,6 +24,7 @@ os.environ.setdefault("HUB_STATE_PATH", str(Path(_TMP.name) / "hub_state.json"))
 import hub_engine  # noqa: E402
 from hub_engine import BED_HOLD_GRACE_MIN, BED_HOLD_MAX_AFTER_ARRIVAL_MIN, HubEngine  # noqa: E402
 from schema import ApprovalAction, GpsPoint, HospitalInfo, Specialty  # noqa: E402
+from test_real_hospitals import real_capability  # noqa: E402
 from test_acceptance_messages import SCENE, _FakeMatcher, _voice  # noqa: E402
 
 T0 = datetime(2026, 10, 8, 3, 0, tzinfo=timezone.utc)
@@ -44,7 +45,7 @@ def _hospital(hpid: str, lat: float, beds: int) -> HospitalInfo:
     return HospitalInfo(
         hospitalId=hpid, name=f"[테스트] {hpid}", gps=GpsPoint(lat=lat, lng=126.9780),
         availableBedCount=beds, nightDutyAvailable=True,
-        specialties=[Specialty(department="흉부외과", doctorCount=0)],
+        **real_capability("강북삼성병원", [Specialty(department="흉부외과", doctorCount=0)]),
         updatedAt="2026-10-08T00:00:00Z", bedsByType={"ER_ADULT": beds},
     )
 

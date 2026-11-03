@@ -14,6 +14,7 @@ import type { CaseHistoryItem } from "@/types/dashboard";
 import { useCaseArchive } from "@/hooks/use-case-archive";
 import { useControlAlerts } from "@/hooks/use-control-alerts";
 import { RejectionStatsModal } from "@/components/map/RejectionStatsModal";
+import { AssignmentModal } from "@/components/map/AssignmentModal";
 import { AlertStack, topAlertOf, useAlertTabTitle } from "@/components/map/ControlAlerts";
 import { ARCHIVE_MOCK, daysAgo, type ArchiveResult } from "@/lib/case-archive";
 import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
@@ -30,7 +31,7 @@ import { useAutoDemo } from "@/lib/auto-demo";
 // 3D 거미줄(spider/serve.py, 포트 2700) 실시간 화면. 배포 도메인에선 같은 호스트의 /spider/ 아래로 열려 있고,
 // 로컬 개발(3000)에선 NEXT_PUBLIC_SPIDER_URL(예: http://localhost:2700/spider/)로 덮어쓴다.
 // 거미줄 파일(spider/web)을 고치면 SPIDER_BUILD와 spider/web/index.html의 ?v=를 같이 올린다 — 공개 도메인이 .js를 4시간 캐시해서 주소가 바뀌어야 새 파일을 받는다.
-const SPIDER_BUILD = "20261103-calm1";
+const SPIDER_BUILD = "20261104-ktas1";
 const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? (process.env.NODE_ENV === "development" ? "/spider/index.html" : "/spider/")}?mode=live&embed=1&v=${SPIDER_BUILD}`;
 
 type MapView = "2d" | "3d";
@@ -43,7 +44,20 @@ const LEGEND_LEVELS: [string, string][] = [
 ];
 
 export default function MonitorMapPage() {
-  const { state, connectionMode } = useDashboardSocket({ role: "monitor", id: "map" });
+  const { state, connectionMode, sendAction } = useDashboardSocket({ role: "monitor", id: "map" });
+  // 상황실 배정 요청(2026-11-04) — hub가 1순위 수용 병원 겹침 + 여력 부족을 묶어 보낸다. 새 묶음이 생기면 모달을 자동으로 연다.
+  const assignmentGroups = state.assignmentGroups;
+  const assignmentCount = assignmentGroups.reduce((n, g) => n + g.caseIds.length, 0);
+  const [showAssign, setShowAssign] = useState(false);
+  const assignKey = assignmentGroups.map((g) => `${g.hospitalId}:${g.caseIds.join(",")}`).join("|");
+  const [seenAssignKey, setSeenAssignKey] = useState("");
+  if (assignKey !== seenAssignKey) {  // 렌더 중 이전 값과 비교 — 묶음이 새로 생기거나 바뀌면 열고, 없어지면 닫는다
+    setSeenAssignKey(assignKey);
+    setShowAssign(assignKey !== "");
+  }
+  const dispatchTo = useCallback((caseId: string, hospitalId: string) => {
+    sendAction({ caseId, action: "final_approval", hospital_id: hospitalId, actor: "dispatcher", timestamp: new Date().toISOString() });
+  }, [sendAction]);
   const overview = state.mapOverview;
   const [now, setNow] = useState(() => Date.now());
   const [selId, setSelId] = useState<string>("");
@@ -307,6 +321,11 @@ export default function MonitorMapPage() {
             <button type="button" aria-label="지난 사건 보기" onClick={() => setShowPast(true)} style={toolBtnStyle}>
               지난 사건 <b style={{ fontWeight: 900 }}>오늘 {past.length}</b>
             </button>
+            {assignmentCount > 0 && (
+              <button type="button" onClick={() => setShowAssign(true)} style={{ ...toolBtnStyle, background: "#D93025", borderColor: "#D93025", color: "#fff", fontWeight: 900 }}>
+                배정 요청 {assignmentCount}건
+              </button>
+            )}
             <button type="button" onClick={() => setShowReject(true)} style={toolBtnStyle}>거절 사유 통계</button>
             <button type="button" aria-pressed={fullscreen} onClick={toggleFullscreen} style={toolBtnStyle}>{fullscreen ? "전체 화면 종료" : "전체 화면"}</button>
             <div role="tablist" aria-label="지도 보기" style={{ display: "flex", gap: 4 }}>
@@ -557,6 +576,7 @@ export default function MonitorMapPage() {
       </div>
 
       {showReject && <RejectionStatsModal onClose={() => setShowReject(false)} />}
+      {showAssign && assignmentCount > 0 && <AssignmentModal groups={assignmentGroups} onClose={() => setShowAssign(false)} onDispatch={dispatchTo} />}
       {showPast && (
         <PastModal today={past} onClose={() => setShowPast(false)} />
       )}

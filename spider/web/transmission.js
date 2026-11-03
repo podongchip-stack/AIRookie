@@ -2,13 +2,9 @@
 (function (root) {
   const DURATION = 1800, HOLD = 9000, STEPS = 40;
   function eligible(c, h) {
-    const k = c.ktasLevel;
-    const suitability = h.ktasSuitability;
-    if (suitability && Number.isFinite(k)) {
-      const hospitalKtas = suitability.hospitalKtas;
-      if (suitability.eligible === false || (Number.isFinite(hospitalKtas) && hospitalKtas !== k)) return false;
-      if (suitability.effectiveCapacity < suitability.requiredCapacity) return false;
-    }
+    // hub 전달 규칙과 같게: 확인된 사실로 처치할 수 없는 병원(confirmedBlock)만 뺀다. 정보가 없거나 추정상 모자란 병원,
+    // 등급이 높은 병원은 받는다(hospitalKtas는 표시용).
+    if (h.ktasSuitability?.confirmedBlock) return false;
     return !c.pre && !(c.hospitals || []).some(x => x.status === 'confirmed') &&
       (c.zoneActive || []).includes(h.zone) && ['pending', 'approved'].includes(h.status) &&
       !h.excluded && !h.notSelected && !h.unavailableReason &&

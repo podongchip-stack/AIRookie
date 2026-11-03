@@ -36,16 +36,9 @@ test('reduced motion shows complete connections without travelling points or arr
  assert.deepEqual(b.path.at(-1),target());assert.equal(b.active,false);assert.equal(b.arrival,null);
 });
 
-test('patient KTAS cap blocks lower-capacity hospital threads even if a stale message lists them', () => {
- const t=new Tracker();
- const c={...scene([hospital('fit',{ktasSuitability:{hospitalKtas:2,requiredCapacity:3,effectiveCapacity:3,eligible:true}}),hospital('low',{ktasSuitability:{hospitalKtas:3,requiredCapacity:3,effectiveCapacity:2.8,eligible:false}})]),ktasLevel:2};
- t.sync([c],0);
- assert.deepEqual(t.frame(c,origin,target,1000,false).map(x=>x.hospitalId),['fit']);
-});
-
-test('exact KTAS excludes both higher and lower representative hospital levels', () => {
- const t=new Tracker(), c={...scene([1,2,3].map(k=>hospital('K'+k,{ktasSuitability:{hospitalKtas:k,patientKtas:2,requiredCapacity:3,effectiveCapacity:5-k,eligible:k===2}}))),ktasLevel:2};
- t.sync([c],0);assert.deepEqual(t.frame(c,origin,target,1000,false).map(x=>x.hospitalId),['K2']);
+test('only confirmed blocks are skipped; higher-capacity and estimated-short hospitals still receive', () => {
+ const t=new Tracker(), c={...scene([1,2,3].map(k=>hospital('K'+k,{ktasSuitability:{hospitalKtas:k,patientKtas:2,requiredCapacity:3,effectiveCapacity:5-k,eligible:k<=2,confirmedBlock:null}})).concat([hospital('NOANGIO',{ktasSuitability:{eligible:false,confirmedBlock:'혈관조영 미운영'}})])),ktasLevel:2};
+ t.sync([c],0);assert.deepEqual(t.frame(c,origin,target,1000,false).map(x=>x.hospitalId),['K1','K2','K3']);
 });
 
 test('a single packet finishes once and does not repeat after two seconds', () => {

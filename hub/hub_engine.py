@@ -1957,12 +1957,18 @@ class HubEngine:
         if confirmed:
             return None
 
+        read_zone = max_zone
         max_zone = self._dispatch_zone(voice, ambulance_gps, max_zone)
         result, group = self._compute_result(voice, ambulance_gps, max_zone, gps_fallback)
 
         with self._lock:
             if case_id not in self._case_voice:
                 return None  # 계산하는 사이 정리됨
+            # 계산하는 사이 존 확장·새 통화 요약이 들어왔으면 이 결과는 낡았다 — 덮어쓰면 넓힌 존이 옛 존으로 돌아가
+            # 그 존 병원(이미 수용했어도)이 후보에서 사라졌다(2026-11-04, 작업 스레드 재계산 ↔ 도착 후 수용 불가 확장 경쟁).
+            # 버려도 다음 주기 재계산이 새 값으로 다시 돈다.
+            if self._case_max_zone.get(case_id, 1) != read_zone or self._case_voice.get(case_id) is not voice:
+                return None
             self._case_results[case_id] = result
             self._case_max_zone[case_id] = max_zone
             self._case_group[case_id] = group

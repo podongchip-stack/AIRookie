@@ -12,13 +12,19 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 # delivery가 모듈 로드 시점에 HUB_REJECTION_URL을 기본 인자로 바인딩하므로,
 # app을 import하기 전에 스텁 주소로 덮어써야 한다.
 _STUB_PORT = 5599
 os.environ["HUB_REJECTION_URL"] = f"http://127.0.0.1:{_STUB_PORT}/hub/rejection"
+# 실제 상태 파일·의사결정 로그(해시 체인)를 건드리지 않게 임시 경로로 돌린다 — 예전엔 돌릴 때마다 실로그에 쌓였다(2026-11-04)
+_TMP = tempfile.TemporaryDirectory()
+os.environ["HUB_STATE_PATH"] = str(Path(_TMP.name) / "hub_state.json")
+os.environ["HUB_DECISION_LOG_PATH"] = str(Path(_TMP.name) / "decision_log.jsonl")
 
 import app  # noqa: E402
 from schema import (  # noqa: E402
@@ -34,6 +40,7 @@ from schema import (  # noqa: E402
     VoiceSummary,
     VoiceTranscript,
 )
+from test_real_hospitals import real_capability  # noqa: E402
 
 _received: list[dict] = []
 
@@ -74,7 +81,8 @@ def main() -> None:
     engine.update_hospital_info(HospitalInfo(
         hospitalId="A1100017", name="[테스트] 대동맥응급 가능 신고 병원",
         gps=GpsPoint(lat=37.5665, lng=126.9780), availableBedCount=4, nightDutyAvailable=True,
-        specialties=[Specialty(department="심장혈관흉부외과", doctorCount=2)],
+        # A1100017은 실제 서울대학교병원 hpid — 역량도 그 병원 값(test_real_hospitals.py)
+        **real_capability("서울대학교병원", [Specialty(department="심장혈관흉부외과", doctorCount=2)]),
         updatedAt="2026-09-10T00:00:00Z",
         assessment=_assessment("declared_yes"),
         bedReliability=BedReliabilityInput(
@@ -86,7 +94,7 @@ def main() -> None:
     engine.update_hospital_info(HospitalInfo(
         hospitalId="A1100099", name="[테스트] 끝까지 무응답 병원",
         gps=GpsPoint(lat=37.5700, lng=126.9820), availableBedCount=2, nightDutyAvailable=True,
-        specialties=[Specialty(department="심장혈관흉부외과", doctorCount=1)],
+        **real_capability("강북삼성병원", [Specialty(department="심장혈관흉부외과", doctorCount=1)]),
         updatedAt="2026-09-10T00:00:00Z",
     ))
 

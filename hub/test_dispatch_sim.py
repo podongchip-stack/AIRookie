@@ -15,6 +15,7 @@ from pathlib import Path
 
 _TMP = tempfile.TemporaryDirectory()
 os.environ["HUB_STATE_PATH"] = str(Path(_TMP.name) / "hub_state.json")
+os.environ["HUB_DECISION_LOG_PATH"] = str(Path(_TMP.name) / "decision_log.jsonl")  # 실로그(해시 체인) 보호(2026-11-04)
 
 import app  # noqa: E402
 from ambulance_sim import HOSPITAL_DWELL_SEC, TRIP_SEC, DispatchSim  # noqa: E402
@@ -116,9 +117,10 @@ def main() -> None:
         ),
         gps, max_zone=app.engine.resolve_start_zone(gps),
     )
-    for hid in ("T001", "T_ALT"):
-        app._handle_dashboard_action({"caseId": case_id, "action": "hospital_approve", "hospital_id": hid,
-                                      "actor": "hospital", "timestamp": "2026-10-01T00:01:00Z"})
+    # T_ALT는 수용하지 않는다 — 수용 병원이 남아 있으면 아래 "도착 후 수용 불가 → 존 확장"이 일어나지 않는다(hub는 그 병원으로
+    # 재선택하게 둔다). "도착 뒤 목적지 변경 거부"는 수용 여부를 보기 전에 막으므로 T_ALT가 대기 상태여도 검사된다(2026-11-04)
+    app._handle_dashboard_action({"caseId": case_id, "action": "hospital_approve", "hospital_id": "T001",
+                                  "actor": "hospital", "timestamp": "2026-10-01T00:01:00Z"})
     app._handle_dashboard_action({"caseId": case_id, "action": "final_approval", "hospital_id": "T001",
                                   "actor": "paramedic", "timestamp": "2026-10-01T00:01:00Z"})
     assert app.sim.phase_of("A_SIM") == "transporting" and "transporting" in _phases(hosp), "확정 병원 탭도 이송을 본다"
@@ -141,7 +143,7 @@ def main() -> None:
     current = app.engine.get_case_result(case_id)
     assert app.sim.state("A_SIM")["hospitalId"] == "T001", "도착 뒤 재확정은 구급차 목적지를 바꾸면 안 된다"
     assert next(h for h in current.hospitals if h.hospitalId == "T001").status == "confirmed"
-    assert next(h for h in current.hospitals if h.hospitalId == "T_ALT").status == "approved"
+    assert next(h for h in current.hospitals if h.hospitalId == "T_ALT").status == "pending"
     assert amb.sent[-1].get("reason") == "already_arrived", "구급대 화면에 거부 이유를 알린다"
     assert "T_FAR" not in [h.hospitalId for h in app.engine.get_case_result(case_id).hospitals]
     _REJECTIONS.clear()

@@ -9,17 +9,17 @@ from typing import Any
 
 
 def can_receive(match: Any) -> bool:
+    """전달 대상(보고서 기준, 2026-11-04): 확인된 사실로 처치할 수 없는 병원(ktasSuitability.confirmedBlock — 혈관조영·CT
+    미운영 신고, 알려진 등급 미달)만 뺀다. 줄이 없어도 정보가 없거나 역량이 추정상 모자란 병원은 보내고, 정렬이 맨 뒤 띠에
+    둔다. 등급이 높은 병원도 받는다 — 대표 KTAS(hospitalKtas)는 표시용이다(정확 일치 필터는 권역센터가 KTAS 2 환자를
+    못 받게 해서 뺐다). 수용·확정한 병원은 늘 받는다."""
     get = match.get if isinstance(match, dict) else lambda key, default=None: getattr(match, key, default)
     if get("status") in ("approved", "confirmed"):
-        return True  # 의료진의 명시적 수용 판단은 자동 모형보다 우선한다.
-    suitability = get("ktasSuitability") or {}
-    patient, hospital = suitability.get("patientKtas"), suitability.get("hospitalKtas")
-    if patient is not None and hospital != patient:
-        return False
-    required, available = suitability.get("requiredCapacity"), suitability.get("effectiveCapacity")
-    if required is not None and available is not None and available < required:
-        return False
-    return not get("spiderBlocked")
+        return True
+    suitability = get("ktasSuitability")
+    if suitability:
+        return not suitability.get("confirmedBlock")
+    return not get("spiderBlocked")  # 판정 근거가 없는 예전 결과
 
 
 def dashboard_payload(payload: dict) -> dict:
@@ -28,7 +28,7 @@ def dashboard_payload(payload: dict) -> dict:
         return payload
     hospitals = payload.get("hospitals") or []
     targets = [h for h in hospitals if can_receive(h)]
-    omitted = [{"hospitalId": h["hospitalId"], "reason": h.get("spiderBlocked") or "patient_hospital_ktas_mismatch"} for h in hospitals if not can_receive(h)]
+    omitted = [{"hospitalId": h["hospitalId"], "reason": (h.get("ktasSuitability") or {}).get("confirmedBlock") or h.get("spiderBlocked")} for h in hospitals if not can_receive(h)]
     return {**payload, "hospitals": targets, "dispatchPolicy": {
         "source": "rule", "rule": "spider_ktas_v1", "clinicallyValidated": False,
         "ktasLevel": (payload.get("patientInfo") or {}).get("ktasLevel"),

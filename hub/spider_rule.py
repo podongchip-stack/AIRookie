@@ -102,6 +102,23 @@ def wall_ok(info, g: int, cond: str) -> bool:
     return True
 
 
+def confirmed_block(info, g: int, cond: str) -> str | None:
+    """줄 없음 가운데 **확인된 사실**로 처치할 수 없는 경우만 이유를 돌려준다(2026-11-04, 보고서 기준 "확인할 수 있는 조건으로
+    거르고, 정보가 없으면 빼지 않고 뒤로"). 장비 운영이 N으로 신고됐거나 등급이 알려진 채로 모자란 경우다. 장비 정보가 없거나
+    (미상) 역량이 등급·전문의·야간으로 계산한 추정치에서 모자란 병원은 None — 전달은 하되 줄 없는 띠(맨 뒤)에 둔다."""
+    known_level = getattr(info, "emergencyLevel", None) in LEVEL_G
+    if cond == "stemi" and _equipment(info, "ANGIO", "EQP_ANGIO_SUITE") == "N":
+        return "혈관조영 미운영"
+    if cond == "stroke":
+        if _equipment(info, "CT", "EQP_CT_24H") == "N":
+            return "CT 미운영"
+        if known_level and g < 2:
+            return "등급 미달(뇌졸중)"
+    if cond == "trauma" and known_level and g < 3:
+        return "등급 미달(중증외상)"
+    return None
+
+
 def line(k: int, cond: str, info, travel_min: float, load_min: float, inflight_severe: int, hour: float) -> dict:
     """한 병원에 거는 줄. {len, gap, gain_min, parts, blocked} — 줄이 없으면 len=None, blocked=이유."""
     need = KTAS_Z[k]
@@ -123,17 +140,22 @@ def line(k: int, cond: str, info, travel_min: float, load_min: float, inflight_s
 def ktas_suitability(k: int, cond: str, info, hour: float) -> dict:
     """병원별 KTAS 전달 근거. 기존 spider의 벽·허용 역량 차이를 그대로 쓴다.
 
-    자동 전달은 환자와 병원의 대표 KTAS가 같은 경우만 허용한다(정확 일치).
+    eligible = 줄이 걸린다(벽 통과 + 모자람이 GAP_FLOOR 안) — 등급이 높아도 해당한다. 존 확장은 이 병원을 찾아 넓힌다.
+    confirmedBlock = 확인된 사실로 처치할 수 없다(confirmed_block) — 이 병원에만 전달하지 않는다. 줄이 없어도 이것이
+    None이면 전달은 하고 맨 뒤에 둔다(보고서 기준: 정보가 없거나 추정상 모자라면 빼지 않고 뒤로, 2026-11-04).
+    hospitalKtas는 관제 표시용 대표값(역량을 온전히 채우는 가장 위급한 KTAS)이며 전달을 거르지 않는다.
     supportedKtas는 이 질환군·시각에 대한 모형상의 값이며 실제 수용 보장이 아니다.
     """
     g, z, _ = hospital_z(info, hour)
-    supported = [level for level, need in KTAS_Z.items() if wall_ok(info, g, cond) and z >= need]
-    hospital_ktas = min(supported) if supported else None
+    wall = wall_ok(info, g, cond)
+    supported = [level for level, need in KTAS_Z.items() if wall and z - need >= GAP_FLOOR]
+    full = [level for level, need in KTAS_Z.items() if wall and z >= need]
     return {"source": "rule", "rule": "spider_ktas_v1", "clinicallyValidated": False,
-            "dispatchMode": "exact_ktas", "patientKtas": k, "condition": cond, "requiredCapacity": KTAS_Z[k],
-            "effectiveCapacity": round(z, 2), "minimumGap": 0.0,
-            "hospitalKtas": hospital_ktas,
-            "supportedKtas": supported, "eligible": k == hospital_ktas}
+            "dispatchMode": "required_or_above", "patientKtas": k, "condition": cond, "requiredCapacity": KTAS_Z[k],
+            "effectiveCapacity": round(z, 2), "minimumGap": GAP_FLOOR,
+            "hospitalKtas": min(full) if full else None,
+            "supportedKtas": supported, "eligible": k in supported,
+            "confirmedBlock": confirmed_block(info, g, cond)}
 
 
 def gain_reasons(sp: dict, k: int) -> list[str]:

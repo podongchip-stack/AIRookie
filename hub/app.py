@@ -35,7 +35,8 @@ from delivery import HUB_REJECTION_URL, LIVE_OUTPUT_DIR, deliver, send_rejection
 from routing import KakaoRouting
 from geo import ZONE_BAND_KM, haversine_km, zone_of
 from scoring import DEFAULT_MIN_PER_KM
-from hub_engine import HubEngine, _is_bed_count_unknown
+import assignment_agent
+from hub_engine import HubEngine, _is_bed_count_unknown, _is_bed_data_stale
 from case_history import CaseTracker, query_archive
 from record_archive import RecordArchive
 from schema import (
@@ -478,7 +479,7 @@ def _mci_allocate(case_ids: list[str], ws=None) -> list[dict]:
         _handle_dashboard_action({
             "caseId": case_id, "action": "final_approval", "hospital_id": item["hospitalId"], "actor": "paramedic",
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }, ws)
+        }, ws, allocated=True)
         results.append({"caseId": case_id, "hospitalId": item["hospitalId"], "hospitalName": item.get("hospitalName"),
                         "loadPenaltyMin": item.get("loadPenaltyMin"), "reason": "confirmed"})
     decision_log.log_decision("mci_allocated", {"results": results})
@@ -859,6 +860,119 @@ def _send_to_dashboard(payload: dict) -> None:
             }
             _case_reach.setdefault(case_id, set()).update(hospital_ids & connected)
             _case_last_activity[case_id] = datetime.now(timezone.utc)
+    # 수용 상태·확정이 바뀌면 1순위 겹침도 바뀐다 — 락을 놓은 뒤 다시 판정한다
+    if is_match or payload.get("type") == "case_closed":
+        _reevaluate_assignment()
+
+
+# ── 상황실 배정 에이전트(2026-11-04, assignment_agent.py) ──────────────────────
+# 평상시엔 구급대원이 1순위 수용 병원으로 바로 이송 승인한다. 여러 사건의 1순위가 같은 병원인데 여력이 모자라면
+# 그 사건들을 "관제 판단 대기"로 묶는다 — 구급대 탭엔 dispatcher_pending, 관제엔 assignment_conflicts, 구급대원의
+# 이송 승인은 관제가 정할 때까지 막는다(관제는 dispatcher final_approval로 지정). 판정은 매번 엔진 상태에서 다시
+# 계산하므로 저장하지 않는다(재시작해도 같은 결과).
+_assignment_lock = threading.Lock()
+_assignment_groups: list[dict] = []
+_assignment_pending: dict[str, str] = {}  # caseId -> 충돌 병원
+_assignment_last_sent: dict | None = None  # 관제에 마지막으로 보낸 묶음·배분 안 — 같으면 다시 안 보낸다
+
+
+def _assignment_capacity(hospital_id: str) -> int | None:
+    """여력 = 응급실 가용 − 이송 중(effective_bed_count). 미상·1일 넘은 값이면 None(모름)."""
+    info = engine.get_hospital(hospital_id)
+    if info is None or _is_bed_count_unknown(info) or _is_bed_data_stale(info, datetime.now(timezone.utc)):
+        return None
+    return engine.effective_bed_count(info)
+
+
+def _hospital_name(hospital_id: str) -> str | None:
+    info = engine.get_hospital(hospital_id)
+    return info.name if info is not None else None
+
+
+def _assignment_snapshot() -> dict:
+    """관제로 보내는 충돌 묶음 + 묶음마다 배분 안·근거(2026-11-04 2단계). 엔진의 지금 상태로 매번 만든다."""
+    with _assignment_lock:
+        groups = [dict(g) for g in _assignment_groups]
+    for g in groups:
+        g["hospitalName"] = _hospital_name(g["hospitalId"])
+        results = {}
+        for case_id in g["caseIds"]:
+            result = engine.get_case_result(case_id)
+            if result is not None:
+                results[case_id] = result.model_dump()
+        infos = {}
+        for result in results.values():
+            for h in result["hospitals"]:
+                info = engine.get_hospital(h["hospitalId"])
+                if info is not None:
+                    infos[h["hospitalId"]] = info.model_dump()
+        g["proposal"] = assignment_agent.build_proposal(g, results, infos, _assignment_capacity)
+    return {"type": "assignment_conflicts", "groups": groups, "source": "rule", "rule": assignment_agent.RULE}
+
+
+def _dispatcher_pending_message(case_id: str, hospital_id: str | None) -> dict:
+    return {"type": "dispatcher_pending", "caseId": case_id, "pending": hospital_id is not None,
+            "hospitalId": hospital_id, "hospitalName": _hospital_name(hospital_id) if hospital_id else None}
+
+
+def _send_dispatcher_pending(case_id: str, hospital_id: str | None) -> None:
+    apid = engine.get_case_apid(case_id)
+    with _sockets_lock:
+        targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and apid and id_ == apid]
+    for ws in targets:
+        _send_to_socket(ws, _dispatcher_pending_message(case_id, hospital_id), "관제 판단 대기")
+
+
+def _is_dispatcher_pending(case_id: str) -> bool:
+    with _assignment_lock:
+        return case_id in _assignment_pending
+
+
+def _log_assignment_decision(case_id: str, hospital_id: str) -> None:
+    """관제가 충돌 사건을 지정했을 때 제안을 따랐는지 남긴다(15장 "의료진 자문 채택 지표"의 재료)."""
+    with _assignment_lock:
+        snapshot = _assignment_last_sent
+    proposed = next((c["proposedHospitalId"] for g in (snapshot or {}).get("groups", [])
+                     for c in g["proposal"]["cases"] if c["caseId"] == case_id), None)
+    decision_log.log_decision("assignment_decided", {"caseId": case_id, "hospitalId": hospital_id,
+                                                     "proposedHospitalId": proposed,
+                                                     "followedProposal": proposed == hospital_id})
+
+
+def _reevaluate_assignment() -> None:
+    """진행 사건 전체의 1순위 겹침을 다시 판정하고, 묶음이나 배분 안이 바뀌었을 때만 관제·구급대에 알린다.
+    묶음이 그대로여도 수용 곤란·새 수용·부하가 바뀌면 배분 안은 다시 계산돼 관제 모달이 따라간다."""
+    global _assignment_last_sent
+    results = [r for r in (engine.get_case_result(c) for c in engine.get_active_case_ids()) if r is not None]
+    groups = assignment_agent.detect_conflicts(results, _assignment_capacity)
+    pending = assignment_agent.pending_cases(groups)
+    with _assignment_lock:
+        groups_changed = groups != _assignment_groups
+        before = dict(_assignment_pending)
+        _assignment_groups[:] = groups
+        _assignment_pending.clear()
+        _assignment_pending.update(pending)
+    snapshot = _assignment_snapshot()
+    with _assignment_lock:
+        if snapshot == _assignment_last_sent:
+            return
+        _assignment_last_sent = snapshot
+    opened = {c: h for c, h in pending.items() if before.get(c) != h}
+    closed = sorted(c for c in before if c not in pending)
+    # 무엇을 제안했는지 남긴다 — 관제 결정이 제안을 따랐는지(assignment_decided) 셀 재료
+    plans = [{"hospitalId": g["hospitalId"], "plan": {c["caseId"]: c["proposedHospitalId"] for c in g["proposal"]["cases"]}}
+             for g in snapshot["groups"]]
+    if groups_changed:
+        decision_log.log_decision("assignment_conflicts", {"groups": groups, "opened": sorted(opened), "closed": closed,
+                                                           "plans": plans})
+    else:
+        decision_log.log_decision("assignment_proposal", {"plans": plans})
+    with _sockets_lock:
+        _send_to_monitors_locked(snapshot)
+    for case_id, hospital_id in opened.items():
+        _send_dispatcher_pending(case_id, hospital_id)
+    for case_id in closed:
+        _send_dispatcher_pending(case_id, None)
 
 
 # ── 관제 지도(role=monitor, 2026-10-03) ─────────────────────────────────────
@@ -1829,7 +1943,7 @@ def _notify_result(ws, case_id: str | None, action: str, ok: bool, reason: str |
         _send_to_socket(ws, {"type": "action_result", "caseId": case_id, "action": action, "ok": ok, "reason": reason}, "조작 결과")
 
 
-def _handle_dashboard_action(payload: dict, ws=None) -> None:
+def _handle_dashboard_action(payload: dict, ws=None, allocated: bool = False) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
     구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
     확인하고(maybe_expand_zone — 후보 0개 사각지대 보정 + 거절 비율 기반
@@ -1852,6 +1966,14 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
     if action.actor == "dispatcher" and ws is not None and _socket_identity.get(ws, (None, None))[0] != "monitor":
         decision_log.log_decision("approval_action_refused", {"action": action.model_dump(), "reason": "dispatcher requires monitor socket"})
         _notify_refused(ws, action.caseId, "not_dispatcher")
+        return
+
+    # 1순위 수용 병원이 겹쳐 여력이 모자란 사건은 관제가 정한다(2026-11-04) — 구급대원 이송 승인을 그때까지 막는다.
+    # 대량사고 [분배 확정](allocated)은 관제가 이미 정한 배분이라 막지 않는다.
+    if action.action == "final_approval" and action.actor == "paramedic" and not allocated \
+            and _is_dispatcher_pending(action.caseId):
+        decision_log.log_decision("approval_action_refused", {"action": action.model_dump(), "reason": "dispatcher_pending"})
+        _notify_refused(ws, action.caseId, "dispatcher_pending")
         return
 
     # 승인 액션도 사건의 "활동"이다 — 미결 sweep의 유휴 판정 기준을 갱신한다.
@@ -1901,9 +2023,12 @@ def _handle_dashboard_action(payload: dict, ws=None) -> None:
 
     # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
     arrival_refusal = _build_rejection_payload(action) if action.action in ("arrival_refused", "transport_withdraw") else None
+    pending_decision = action.action == "final_approval" and _is_dispatcher_pending(action.caseId)
     applied = engine.apply_approval_action(action)
     if applied:
         _archive_call("action", action.model_dump(), engine.get_case_apid(action.caseId))
+        if pending_decision:
+            _log_assignment_decision(action.caseId, action.hospital_id)
     if action.actor == "dispatcher":
         _notify_result(ws, action.caseId, action.action, bool(applied), None if applied else "refused")
     # spider 매칭 규칙(2026-10-15): 승인·확정·도착 결과로 부하·줄 길이가 바뀌면 다른 사건의 순위·τ 창 표시를 다시 맞춘다
@@ -2215,6 +2340,14 @@ def _handle_identify(ws, identify: DashboardIdentify) -> None:
     # 탭은 hub가 꺼졌다 켜져도 자동 재연결하며 화면 상태를 그대로 들고 있다 — 그 사이 끝난 사건(재시작 정리·
     # 방치 정리 등)은 case_closed를 못 받았으니, 지금 진행 중인 목록을 알려 나머지를 지우게 한다(2026-10-03).
     _send_to_socket(ws, {"type": "case_sync", "caseIds": active}, "사건 목록 동기화")
+    # 관제 판단 대기 따라잡기(2026-11-04) — 관제는 충돌 묶음 전체, 구급대는 자기 사건의 대기 상태
+    if identify.role == "monitor":
+        _send_to_socket(ws, _assignment_snapshot(), "배정 충돌")
+    elif identify.role == "ambulance":
+        with _assignment_lock:
+            mine = {c: h for c, h in _assignment_pending.items() if c in set(active)}
+        for case_id, hospital_id in mine.items():
+            _send_to_socket(ws, _dispatcher_pending_message(case_id, hospital_id), "관제 판단 대기")
     if sim is not None and identify.role in ("ambulance", "monitor"):
         apids = [identify.id] if identify.role == "ambulance" else [a.apid for a in engine.list_ambulances()]
         for apid in apids:

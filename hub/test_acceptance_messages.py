@@ -32,6 +32,7 @@ from schema import (  # noqa: E402
     VoiceSummary,
     VoiceTranscript,
 )
+from test_real_hospitals import real_capability  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 SCENE = GpsPoint(lat=37.5665, lng=126.9780)
@@ -52,7 +53,7 @@ def _hospital(hpid: str, lat: float, messages: list[AcceptanceMessage] | None) -
     return HospitalInfo(
         hospitalId=hpid, name=f"[테스트] {hpid}", gps=GpsPoint(lat=lat, lng=126.9780),
         availableBedCount=5, nightDutyAvailable=True,
-        specialties=[Specialty(department="흉부외과", doctorCount=0)],
+        **real_capability("강북삼성병원", [Specialty(department="흉부외과", doctorCount=0)]),
         updatedAt="2026-10-07T00:00:00Z", bedsByType={"ER_ADULT": 5},
         acceptanceMessages=messages,
     )

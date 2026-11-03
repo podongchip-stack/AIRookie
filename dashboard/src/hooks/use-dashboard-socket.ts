@@ -81,6 +81,8 @@ const INITIAL_STATE: DashboardState = {
   selectionReleased: null,
   mciAllocated: null,
   mciPlan: null,
+  assignmentGroups: [],
+  dispatcherPending: {},
   sceneInputMode: {},
 };
 
@@ -405,6 +407,18 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
               break;
             case "mci_plan":
               setState((prev) => ({ ...prev, mciPlan: { at: Date.now(), caseIds: parsed.caseIds, plan: parsed.plan } }));
+              break;
+            // 상황실 배정(2026-11-04): 관제는 충돌 묶음·배분 안 전체, 구급차는 자기 사건의 관제 판단 대기
+            case "assignment_conflicts":
+              setState((prev) => ({ ...prev, assignmentGroups: parsed.groups }));
+              break;
+            case "dispatcher_pending":
+              setState((prev) => {
+                const dispatcherPending = { ...prev.dispatcherPending };
+                if (parsed.pending) dispatcherPending[parsed.caseId] = { hospitalId: parsed.hospitalId, hospitalName: parsed.hospitalName };
+                else delete dispatcherPending[parsed.caseId];
+                return { ...prev, dispatcherPending };
+              });
               break;
             case "action_result":
               setState((prev) => ({ ...prev, actionResult: { at: Date.now(), caseId: parsed.caseId, action: parsed.action, ok: parsed.ok, reason: parsed.reason } }));

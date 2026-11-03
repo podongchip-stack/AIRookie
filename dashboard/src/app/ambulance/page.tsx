@@ -118,7 +118,10 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
       if (fresh) setApprovalModal({ caseId: myResult.caseId, hospitalId: fresh.hospitalId });
     }
   }
-  const approvalHospital = approvalModal && myResult?.caseId === approvalModal.caseId && !hubConfirmedId
+  // 관제 판단 대기(2026-11-04) — 여러 사건의 1순위 수용 병원이 겹쳐 여력이 모자라면 상황실이 병원을 정한다.
+  // 그동안 hub가 이송 승인을 막으므로 화면에서도 승인 알림·버튼을 막고 안내만 보인다.
+  const dispatcherPending = activeCaseId ? state.dispatcherPending[activeCaseId] ?? null : null;
+  const approvalHospital = approvalModal && myResult?.caseId === approvalModal.caseId && !hubConfirmedId && !dispatcherPending
     ? myResult.hospitals.find((h) => h.hospitalId === approvalModal.hospitalId && h.status === "approved") ?? null
     : null;
 
@@ -204,6 +207,7 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
       pauseToast.notify();
       return;
     }
+    if (dispatcherPending) return; // 상황실이 지정한다 — 위 안내 띠가 이유를 보인다
     if (!activeCaseId) return;
     setPendingConfirm({ hospitalId, result: myResult });
     sendAction({
@@ -273,6 +277,12 @@ function AmbulanceDashboardContent({ apid }: { apid: string | null }) {
         {phoneCalling && (
           <div style={{ flex: "none", padding: "8px 16px", borderRadius: 12, background: AD.greenSoft, color: AD.green, fontSize: 13, fontWeight: 700 }}>
             휴대폰으로 {myCallStatus?.hospitalName ?? "병원"}과 통화 중 — 통화가 끝나면 환자 정보가 후보 병원에 동시에 전달됩니다
+          </div>
+        )}
+
+        {dispatcherPending && !hubConfirmedId && (
+          <div role="status" style={{ flex: "none", padding: "10px 16px", borderRadius: 12, background: "#FDECEA", color: "#B3261E", fontSize: 14, fontWeight: 700 }}>
+            관제 판단 대기 중 — {dispatcherPending.hospitalName ?? "1순위 병원"}에 여러 환자가 몰려 상황실이 병원을 지정합니다. 지정되면 바로 이송 병원이 확정됩니다.
           </div>
         )}
 

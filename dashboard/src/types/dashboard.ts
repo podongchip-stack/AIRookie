@@ -471,6 +471,75 @@ export interface MciPlan {
   plan: MciPlanItem[];
 }
 
+// 상황실 배정(2026-11-04, hub assignment_agent.py) — 여러 사건의 1순위 수용 병원이 같고 여력이 모자라면 hub가 묶어
+// 관제에 배분 안·근거와 함께 보낸다. 근거는 규칙·공공데이터 값이며 전문의 검토 전 초안이다.
+export interface AssignmentEvidence {
+  hospitalId: string;
+  name: string;
+  status: HospitalStatus;
+  rejectReason: string | null;
+  emergencyLevel: string | null;
+  travelMin: number | null;
+  // 줄 길이(분) = 이동 − 역량 이득 + 부하. 줄이 없으면 null(추정상 모자람·정보 없음 → 맨 뒤)
+  lineMin: number | null;
+  gainMin: number | null;
+  loadMin: number;
+  lineBlocked: string | null;
+  confirmedBlock: string | null;
+  availableBedCount: number | null;
+  bedCountUnknown: boolean | null;
+  erBedCapacity: number | null;
+  inFlightCount: number;
+  // E-Gen 장비 운영 원값(Y/N/N1, 없으면 null)
+  equipment: Record<string, string | null>;
+  emDoctors: number | null;
+  requiredDepartment: string | null;
+  deptDoctors: number | null;
+  effectiveCapacity: number | null;
+  requiredCapacity: number | null;
+}
+
+export interface AssignmentCase {
+  caseId: string;
+  ambulanceName: string | null;
+  ktasLevel: number | null;
+  expectedDiagnosis: string | null;
+  chiefComplaint: string | null;
+  requiredDepartment: string | null;
+  // 제안 병원(수용 병원이 없으면 null — 판단 대기 병원에 수용 확인이 필요)
+  proposedHospitalId: string | null;
+  overCapacity: boolean;
+  reason: string;
+  candidates: AssignmentEvidence[];
+}
+
+export interface AssignmentGroup {
+  hospitalId: string;
+  hospitalName: string | null;
+  caseIds: string[];
+  capacity: number | null;
+  capacityKnown: boolean;
+  source: "rule";
+  rule: string;
+  proposal: { hospitalId: string; cases: AssignmentCase[]; source: "rule"; rule: string; clinicallyValidated: boolean };
+}
+
+export interface AssignmentConflicts {
+  type: "assignment_conflicts";
+  groups: AssignmentGroup[];
+  source: "rule";
+  rule: string;
+}
+
+// hub → 구급차 탭: 이 사건은 관제가 병원을 정한다(2026-11-04) — 그동안 구급대원 이송 승인은 hub가 막는다
+export interface DispatcherPending {
+  type: "dispatcher_pending";
+  caseId: string;
+  pending: boolean;
+  hospitalId: string | null;
+  hospitalName: string | null;
+}
+
 // hub → 조작한 관제 탭: 개입(존 확장·이송 확정 대행)의 결과(2026-11-01)
 export interface ActionResult {
   type: "action_result";
@@ -591,6 +660,10 @@ export interface DashboardState {
   mciAllocated: { at: number; results: MciAllocationResult[] } | null;
   // 마지막 대량사고 자동 분배 미리 보기(시연 콘솔 ③)
   mciPlan: { at: number; caseIds: string[]; plan: MciPlanItem[] } | null;
+  // 관제 탭: 지금 상황실이 정해야 하는 충돌 묶음과 배분 안(2026-11-04, 비면 충돌 없음)
+  assignmentGroups: AssignmentGroup[];
+  // 구급차 탭: caseId -> 관제 판단 대기 중인 충돌 병원(2026-11-04, 풀리면 키를 지운다)
+  dispatcherPending: Record<string, { hospitalId: string | null; hospitalName: string | null }>;
   // caseId -> 시연 콘솔 ② 현장 확인 방식(2026-10-06, 구급차 탭만 받는다). "template"이면 휴대폰 앱은 현장 통화를 못 한다
   sceneInputMode: Record<string, SceneInputMode>;
 }
@@ -986,4 +1059,6 @@ export type InboundMessage =
   | SelectionReleased
   | MciAllocated
   | MciPlan
+  | AssignmentConflicts
+  | DispatcherPending
   | SceneInputModeMessage;

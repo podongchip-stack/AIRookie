@@ -32,6 +32,7 @@ from hub_engine import TRANSCRIPT_NOT_PERSISTED, HubEngine  # noqa: E402
 from schema import (  # noqa: E402
     AmbulanceInfo, BedReliabilityInput, CallSignal, GpsPoint, HospitalInfo, Specialty,
 )
+from test_real_hospitals import real_capability  # noqa: E402
 
 
 class _FakeSocket:
@@ -48,9 +49,8 @@ def _hospital(beds: int) -> HospitalInfo:
     return HospitalInfo(
         hospitalId="T001", name="[테스트] 앱 레이어 병원",
         gps=GpsPoint(lat=37.5670, lng=126.9790), availableBedCount=beds, nightDutyAvailable=True,
-        # 앱 전달 검사에서 중증 환자를 받을 수 있는 spider 역량을 명시한다.
-        emergencyLevel="지역응급의료센터",
-        specialties=[Specialty(department="흉부외과", doctorCount=1), Specialty(department="응급의학과", doctorCount=5)],
+        # 실제 병원(강북삼성병원) 역량 — 중증·심근경색 환자에게도 거미줄 줄이 걸린다(test_real_hospitals.py)
+        **real_capability("강북삼성병원", [Specialty(department="흉부외과", doctorCount=1)]),
         updatedAt=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         bedsByType={"ER_ADULT": beds},
     )

@@ -21,13 +21,17 @@ import app  # noqa: E402
 from hub_engine import HubEngine  # noqa: E402
 from schema import ApprovalAction, BackupCapacity, GpsPoint, HospitalInfo, Specialty  # noqa: E402
 from test_acceptance_messages import SCENE, _FakeMatcher, _voice  # noqa: E402
+from test_real_hospitals import REAL_PROFILES  # noqa: E402
 
 
 def _hospital(hpid: str, backup: bool) -> HospitalInfo:
     return HospitalInfo(
         hospitalId=hpid, name=f"[테스트] {hpid}", gps=GpsPoint(lat=37.5700, lng=126.9780),
         availableBedCount=5, nightDutyAvailable=True, updatedAt="2026-10-08T00:00:00Z",
-        specialties=[Specialty(department="심장혈관흉부외과", doctorCount=4), Specialty(department="내과", doctorCount=0)],
+        # 등급·응급의학과 전문의는 실제 병원(강북삼성병원) 값. 장비 운영은 이 테스트가 보는 값(CT N1)을 그대로 둔다
+        emergencyLevel=REAL_PROFILES["강북삼성병원"]["emergencyLevel"],
+        specialties=[Specialty(department="심장혈관흉부외과", doctorCount=4), Specialty(department="내과", doctorCount=0),
+                     Specialty(department="응급의학과", doctorCount=REAL_PROFILES["강북삼성병원"]["emDoctors"])],
         bedsByType={"ER_ADULT": 5, "OR": 3, "ICU": 2}, bedCapacityByType={"ER_ADULT": 20, "OR": 16, "ICU": 65},
         equipmentOperating={"ECMO": "Y", "ANGIO": "Y", "CT": "N1"},
         backupCapacity=BackupCapacity(
@@ -62,7 +66,7 @@ def main() -> None:
     assert equipment["FETAL_MONITOR"]["hiraCount"] == 18 and equipment["FETAL_MONITOR"]["egenOperating"] is None
     assert all(row["label"] != "골밀도검사기" for row in body["equipment"]), "배후진료와 무관한 심평원 장비는 싣지 않는다"
     assert all("available" not in row for row in body["equipment"]), "장비엔 지금 남은 대수 칸이 없다(공개 정보 없음)"
-    assert [s["department"] for s in body["specialties"]] == ["심장혈관흉부외과"], "전문의 0명인 과는 뺀다"
+    assert [s["department"] for s in body["specialties"]] == ["심장혈관흉부외과", "응급의학과"], "전문의 0명인 과는 뺀다"
     assert body["nursingGrade"] == "1" and body["hiraCollectedAt"] and body["source"] == "rule"
     print("  [확인] 병상 보유·정원·가용, 장비 보유·운영, 혈관조영 설명, 전문의·간호등급")
 
