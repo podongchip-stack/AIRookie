@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { C } from "@/lib/control-map";
+import { C, GLASS } from "@/lib/control-map";
 
 // 병원 거절 사유 집계 모달(2026-11-01). 집계는 info 거절 로그 수신구가 만들고 hub(/rejection-stats)가 중계한다.
 // 무응답은 수용 능력이 아니라 채널 정보라 거절 사유와 섞지 않고 따로 보인다.
@@ -34,9 +34,9 @@ export function RejectionStatsModal({ onClose }: { onClose: () => void }) {
 
   const max = Math.max(1, ...(data?.byReason.map((r) => r.count) ?? [1]));
   return (
-    <div role="dialog" aria-modal="true" aria-label="거절 사유 통계" style={{ position: "absolute", inset: 0, zIndex: 300, background: "rgba(20,33,61,.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div role="dialog" aria-modal="true" aria-label="거절 사유 통계" style={{ position: "absolute", inset: 0, zIndex: 300, background: "rgba(28,31,42,.32)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <button type="button" aria-label="닫기" onClick={onClose} style={{ position: "absolute", inset: 0, border: 0, background: "transparent", cursor: "default" }} />
-      <div style={{ position: "relative", width: 640, maxHeight: "calc(100% - 48px)", maxWidth: "calc(100% - 48px)", background: "#fff", borderRadius: 6, boxShadow: "0 20px 60px rgba(20,33,61,.35)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ position: "relative", width: 640, maxHeight: "calc(100% - 48px)", maxWidth: "calc(100% - 48px)", background: GLASS.solid, border: GLASS.border, borderRadius: GLASS.radius, boxShadow: "0 24px 60px rgba(91,75,138,.28)", fontFamily: GLASS.font, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 10, padding: "16px 22px", borderBottom: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>병원 거절 사유</div>
           {DAYS.map((d) => (

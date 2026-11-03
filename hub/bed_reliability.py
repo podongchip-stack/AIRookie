@@ -72,6 +72,15 @@ def _parse_born_at(born_at: str) -> datetime:
     return born
 
 
+RISK_LOW_MIN = 0.8
+RISK_MEDIUM_MIN = 0.5
+
+
+def risk_level(r_arrive: float) -> str:
+    """도착 시 유효 확률 → 표시용 위험 등급(병상 값이 도착 전에 크게 바뀔 위험). 수용 확률이 아니다."""
+    return "low" if r_arrive >= RISK_LOW_MIN else "medium" if r_arrive >= RISK_MEDIUM_MIN else "high"
+
+
 def evaluate(
     bed_reliability: BedReliabilityInput | None,
     distance_km: float,

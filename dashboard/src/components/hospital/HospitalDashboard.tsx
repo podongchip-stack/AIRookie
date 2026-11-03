@@ -6,6 +6,7 @@ import { css } from "styled-system/css";
 import { HospitalTopBar } from "@/components/hospital/HospitalTopBar";
 import { HospitalSelfInfoPanel } from "@/components/hospital/HospitalSelfInfoPanel";
 import { CallStatusBanner } from "@/components/hospital/CallStatusBanner";
+import { DispatcherRequestBanner } from "@/components/hospital/DispatcherRequestBanner";
 import { RequestCard, cardKind, kindMeta } from "@/components/hospital/RequestCard";
 import { MapPanel } from "@/components/hospital/MapPanel";
 import { HD } from "@/components/hospital/hospital-design";
@@ -177,6 +178,7 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
   const pauseToast = usePauseToast(state.actionRefused, selectionNotice);
   // 예비 고지에서 [확인]을 누른 사건 — 모달만 닫고, 실제 요청·사건 종료 시 훅이 데이터를 지운다.
   const [dismissedPreAlerts, setDismissedPreAlerts] = useState<Set<string>>(new Set());
+  const [dismissedDispatcher, setDismissedDispatcher] = useState<ReadonlySet<string>>(new Set());
   const activePreAlerts = Object.values(state.preAlerts).filter((alert) => !dismissedPreAlerts.has(alert.caseId));
 
   // 본원이 후보로 들어있는 사건만 걸러 카드로 나열한다 — 하나의 병원이 여러 구급차의 후보 목록에 동시에 들어갈
@@ -267,6 +269,13 @@ export function HospitalDashboard({ hospitalId, onClose }: { hospitalId: string;
         <PreAlertModal
           alerts={activePreAlerts}
           onDismiss={(caseId) => setDismissedPreAlerts((prev) => new Set(prev).add(caseId))}
+        />
+
+        {/* 상황실 수용 확인 요청·상황실 지정 통보(2026-11-04) */}
+        <DispatcherRequestBanner
+          items={state.dispatcherRequests.filter((r) => r.hospitalId === MY_HOSPITAL_ID)}
+          dismissed={dismissedDispatcher}
+          onDismiss={(key) => setDismissedDispatcher((prev) => new Set(prev).add(key))}
         />
 
         {/* 구급대가 이 병원을 골라 건 통화(📞, 2026-10-03) */}

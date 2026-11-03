@@ -133,6 +133,10 @@ export interface BedReliabilityMatch {
   ttlSec: number;
   modelTag: string;
   source: "ai";
+  // 표시용 위험 등급(hub 2026-11-04, 발표 8장): rArrive 0.8↑ low · 0.5↑ medium · 그 아래 high. 수용 확률이 아니다.
+  riskLevel?: "low" | "medium" | "high" | null;
+  // 이 병상 값이 마지막으로 확인된 시각(E-Gen 갱신·병원 확인 중 늦은 쪽)
+  checkedAt?: string | null;
   // 실시간 감쇠용 곡선 파라미터. 구버전 hub면 없을 수 있다 — 그땐 위 스칼라를
   // 정지값으로 그대로 표시한다.
   predictedSurvivalSec?: number | null;
@@ -267,6 +271,12 @@ export interface HospitalCandidate {
   // hub 2026-10-07~: 병원이 E-Gen에 걸어둔 지금 유효한 수용 제한 메시지(규칙 기반). 이 환자에 해당하는
   // 것(matched)이 앞이다. 사건 질환군의 중증질환 차단이 있으면 demoteReasons에 "severe_blocked"가 붙는다.
   acceptanceMessages?: AcceptanceMessage[] | null;
+  // hub 2026-11-04~: 다른 사건에서 받은 수용 곤란의 되먹임(규칙) — 순간적 사유 30분 동안 더한 분과 설명.
+  // 구조적 사유는 demoteReasons의 "structural_refusal"로 순서만 내린다.
+  refusalPenaltyMin?: number;
+  refusalReasons?: string[] | null;
+  // 첫 동시 전송 보류("recent_severe_block" — 최근 6시간 안에 사건 질환군 차단 공지). 존을 넓히면 풀린다.
+  dispatchHold?: string | null;
 }
 
 // hub GET /hospital-backup(2026-10-08) — [배후역량] 버튼. 보유(심평원, 월 단위)·정원/운영(E-Gen)·지금 가용(E-Gen 5분,
@@ -497,6 +507,11 @@ export interface AssignmentEvidence {
   deptDoctors: number | null;
   effectiveCapacity: number | null;
   requiredCapacity: number | null;
+  // 다른 사건에서 받은 수용 곤란의 되먹임 설명 · 병상 위험 등급(AI)과 최종 확인 시각 · 상황실이 수용 확인을 요청한 시각
+  refusalReasons: string[];
+  bedRisk: "low" | "medium" | "high" | null;
+  bedCheckedAt: string | null;
+  confirmRequestedAt?: string | null;
 }
 
 export interface AssignmentCase {
@@ -509,6 +524,8 @@ export interface AssignmentCase {
   // 제안 병원(수용 병원이 없으면 null — 판단 대기 병원에 수용 확인이 필요)
   proposedHospitalId: string | null;
   overCapacity: boolean;
+  // 수용한 병원이 없어 판단 대기 병원을 상황실 지정으로 제안했다(지정하면 병원에 지정 통보)
+  designation?: boolean;
   reason: string;
   candidates: AssignmentEvidence[];
 }
@@ -519,16 +536,49 @@ export interface AssignmentGroup {
   caseIds: string[];
   capacity: number | null;
   capacityKnown: boolean;
+  // 이 묶음의 관제 판단 대기가 시작된 시각(가장 이른 사건) — 대기 시간 알림
+  openedAt?: string | null;
   source: "rule";
   rule: string;
   proposal: { hospitalId: string; cases: AssignmentCase[]; source: "rule"; rule: string; clinicallyValidated: boolean };
 }
 
+// 다수 사상자 등록 분석(hub → 관제 탭, 2026-11-04, 규칙)
+export interface MciAssessment {
+  type: "mci_assessment";
+  incidentId: string;
+  gps: { lat: number; lng: number };
+  label?: string | null;
+  counts: Record<string, number>;
+  total: number;
+  source: "rule";
+  ambulances: { apid: string; name: string | null; km: number }[];
+  hospitalsInRadius: number;
+  radiusKm: number;
+  byLevel: Record<string, { count: number; beds: number; unknown: number }>;
+  plan: { hospitalId: string; name: string; emergencyLevel: string | null; km: number; beds: number | null; count: number; bySeverity: Record<string, number> }[];
+  unplaced: number;
+  steps: { stage: string; source: string; text: string }[];
+}
+
 export interface AssignmentConflicts {
   type: "assignment_conflicts";
   groups: AssignmentGroup[];
+  // 관제 지정 수 · 그중 에이전트 제안을 따른 수(hub 재시작 시 0)
+  stats?: { decided: number; followed: number };
   source: "rule";
   rule: string;
+}
+
+// hub → 병원 탭(2026-11-04): 상황실이 수용 확인을 요청했다 / 상황실이 이 병원을 지정했다(수용 회신 전 지정)
+export interface DispatcherRequest {
+  type: "dispatcher_request" | "dispatcher_designated";
+  caseId: string;
+  hospitalId: string;
+  at: string;
+  ambulanceName?: string | null;
+  ktasLevel?: number | null;
+  chiefComplaint?: string | null;
 }
 
 // hub → 구급차 탭: 이 사건은 관제가 병원을 정한다(2026-11-04) — 그동안 구급대원 이송 승인은 hub가 막는다
@@ -664,6 +714,11 @@ export interface DashboardState {
   assignmentGroups: AssignmentGroup[];
   // 구급차 탭: caseId -> 관제 판단 대기 중인 충돌 병원(2026-11-04, 풀리면 키를 지운다)
   dispatcherPending: Record<string, { hospitalId: string | null; hospitalName: string | null }>;
+  // 병원 탭: 상황실의 수용 확인 요청·지정 통보(가장 최근 것부터 쌓는다, 2026-11-04)
+  dispatcherRequests: DispatcherRequest[];
+  // 관제 탭: 에이전트 제안 채택 통계 · 마지막 다수 사상자 분석(2026-11-04)
+  assignmentStats: { decided: number; followed: number } | null;
+  mciAssessment: MciAssessment | null;
   // caseId -> 시연 콘솔 ② 현장 확인 방식(2026-10-06, 구급차 탭만 받는다). "template"이면 휴대폰 앱은 현장 통화를 못 한다
   sceneInputMode: Record<string, SceneInputMode>;
 }
@@ -829,6 +884,11 @@ export interface MonitorCaseHospital {
   respondedAt?: string | null;
   // 수용 승인했지만 이송은 다른 병원으로 확정됨(hub 2026-10-22, 관제 요약엔 2026-10-24부터). status는 approved 그대로
   notSelected?: boolean | null;
+  refusalPenaltyMin?: number | null;
+  refusalReasons?: string[] | null;
+  dispatchHold?: string | null;
+  // 설명 필드(hub _MONITOR_EXPLAIN_FIELDS 일부) — 병상 정보 신뢰도(AI)·위험 등급
+  bedReliability?: BedReliabilityMatch | null;
 }
 
 // 사건 진행 과정 한 줄(2026-10-04, hub case_history — 규칙 기반 기록). kind: p 출동·통화 / s 요청 시작 /
@@ -879,6 +939,13 @@ export interface CaseHistory {
 // 사건 요약 — 통화 전문·활력징후 등 환자 상세는 없다(그건 요청을 받은 병원 대시보드만 본다).
 export interface MonitorCase {
   ktasLevel?: number | null;
+  // 환자 요약(hub 2026-10-14~, 분류 결과만 — 통화 전문·활력징후 없음)과 전달 정책 요약(2026-11-04, 에이전트 활동 패널)
+  expectedDiagnosis?: string | null;
+  chiefComplaint?: string | null;
+  requiredDepartment?: string | null;
+  patient?: string | null;
+  confirmedBy?: "ai" | "paramedic" | string | null;
+  dispatchPolicy?: Record<string, unknown> | null;
   type: "case_overview";
   caseId: string;
   apid: string | null;
@@ -1061,4 +1128,6 @@ export type InboundMessage =
   | MciPlan
   | AssignmentConflicts
   | DispatcherPending
+  | DispatcherRequest
+  | MciAssessment
   | SceneInputModeMessage;

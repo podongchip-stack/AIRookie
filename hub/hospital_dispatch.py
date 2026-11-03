@@ -16,6 +16,8 @@ def can_receive(match: Any) -> bool:
     get = match.get if isinstance(match, dict) else lambda key, default=None: getattr(match, key, default)
     if get("status") in ("approved", "confirmed"):
         return True
+    if get("dispatchHold"):  # 최근 차단 공지 병원 — 첫 동시 전송 보류, 존을 넓히면 hub가 풀어 보낸다
+        return False
     suitability = get("ktasSuitability")
     if suitability:
         return not suitability.get("confirmedBlock")
@@ -28,7 +30,7 @@ def dashboard_payload(payload: dict) -> dict:
         return payload
     hospitals = payload.get("hospitals") or []
     targets = [h for h in hospitals if can_receive(h)]
-    omitted = [{"hospitalId": h["hospitalId"], "reason": (h.get("ktasSuitability") or {}).get("confirmedBlock") or h.get("spiderBlocked")} for h in hospitals if not can_receive(h)]
+    omitted = [{"hospitalId": h["hospitalId"], "reason": h.get("dispatchHold") or (h.get("ktasSuitability") or {}).get("confirmedBlock") or h.get("spiderBlocked")} for h in hospitals if not can_receive(h)]
     return {**payload, "hospitals": targets, "dispatchPolicy": {
         "source": "rule", "rule": "spider_ktas_v1", "clinicallyValidated": False,
         "ktasLevel": (payload.get("patientInfo") or {}).get("ktasLevel"),

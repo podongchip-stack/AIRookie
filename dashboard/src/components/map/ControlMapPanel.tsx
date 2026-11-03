@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { css } from "styled-system/css";
 import { useKakaoMapScript } from "@/hooks/use-kakao-map-script";
 import { escapeHtml } from "@/lib/kakao-map-markers";
@@ -21,6 +21,8 @@ import type { AmbulanceSimState, MapOverview } from "@/types/dashboard";
 
 const SEOUL_CENTER = { lat: 37.5565, lng: 126.99 };
 const INITIAL_LEVEL = 8;
+// 지도 정리(2026-11-04): 이 레벨보다 넓게 보면 사건과 무관한 병원은 권역·지역센터만 남긴다(서울 전역에 70곳 넘는 점이 선을 가렸다)
+const QUIET_LEVEL = 7;
 
 /** 두 점을 잇는 완만한 호(2차 베지어, 같은 쪽으로 휜다) — 직선이면 선이 겹쳐 어느 병원으로 가는지 구분이 안 된다 */
 function arcPath(a: { lat: number; lng: number }, b: { lat: number; lng: number }, n = 20): { lat: number; lng: number }[] {
@@ -89,6 +91,7 @@ export function ControlMapPanel({
   children?: React.ReactNode;
 }) {
   const { ready, error } = useKakaoMapScript();
+  const [zoom, setZoom] = useState(INITIAL_LEVEL);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<kakao.maps.Map | null>(null);
   const hospitalsRef = useRef(new Map<string, HospitalLayer>());
@@ -126,6 +129,8 @@ export function ControlMapPanel({
       center: new kakao.maps.LatLng(SEOUL_CENTER.lat, SEOUL_CENTER.lng),
       level: INITIAL_LEVEL,
     });
+    const created = mapRef.current;
+    kakao.maps.event.addListener(created, "zoom_changed", () => setZoom(created.getLevel()));
     return mapRef.current;
   }
 
@@ -175,7 +180,9 @@ export function ControlMapPanel({
       const on = hoverHospital === h.hospitalId;
       const inTab = req != null && (activeTab === "all" || activeTab === req.st);
       const showPill = req != null && ((req.st !== "w" && inTab) || on);
-      const key = `${req?.st ?? "-"}|${inTab}|${on}|${showPill}`;
+      const center = h.emergencyLevel === "권역응급의료센터" || h.emergencyLevel === "지역응급의료센터";
+      const quiet = !req && !on && (zoom > QUIET_LEVEL ? !center : false);
+      const key = `${req?.st ?? "-"}|${inTab}|${on}|${showPill}|${quiet}|${!!selected}`;
       if (layer.key === key) continue;
       layer.key = key;
       const base =
@@ -183,8 +190,11 @@ export function ControlMapPanel({
         "box-shadow:0 1px 3px rgba(20,30,50,.35);transition:transform .15s,opacity .2s;cursor:default;";
       if (!req) {
         const color = (h.emergencyLevel && LEVEL_DOT[h.emergencyLevel]) || LEVEL_DEFAULT;
-        layer.dot.style.cssText = `${base}left:-5px;top:-5px;width:10px;height:10px;background:${color};opacity:${on ? 1 : 0.45};` +
-          (on ? "transform:scale(1.7);" : "");
+        // 사건을 보는 중이면 무관한 병원은 더 작고 옅게 — 요청 선과 응답 표시가 먼저 보이게
+        const sz = selected ? 7 : 9;
+        layer.dot.style.cssText = quiet ? "display:none" :
+          `${base}left:${-sz / 2}px;top:${-sz / 2}px;width:${sz}px;height:${sz}px;border-width:1.5px;background:${color};` +
+          `opacity:${on ? 1 : selected ? 0.22 : 0.4};` + (on ? "transform:scale(1.7);" : "");
       } else {
         const big = activeTab === "w" && req.st === "w";
         const size = big ? 12 : 14;
@@ -205,7 +215,7 @@ export function ControlMapPanel({
       }
       layer.overlay.setZIndex(on ? 60 : !req ? 3 : req.st === "w" ? 6 : 12);
     }
-  }, [overview, selected, activeTab, hoverHospital]);
+  }, [overview, selected, activeTab, hoverHospital, zoom]);
 
   // ── 선택한 사건 자동 포커스(2026-10-06) — 하단 구급차 패널 등이 덮은 부분을 빼고 보이는 영역에 맞춘다 ──
   // 실제 사건(콘솔 시연)은 단계가 바뀔 때마다 맞춘다: 출동(구급차~현장) → 현장(현장 확대) → 병원 요청(요청 병원이 다
@@ -358,7 +368,7 @@ export function ControlMapPanel({
       if (path && (!drawn || drawn.key !== pathKey)) {
         const line = new kakao.maps.Polyline({
           path: path.map(([lat, lng]) => new kakao.maps.LatLng(lat, lng)),
-          strokeWeight: isSel ? 4 : 3, strokeColor: col, strokeOpacity: isSel ? 0.8 : 0.45, strokeStyle: "solid",
+          strokeWeight: isSel ? 4 : 2.5, strokeColor: col, strokeOpacity: isSel ? 0.85 : 0.22, strokeStyle: "solid",
         });
         line.setMap(map);
         pathsRef.current.set(a.apid, { line, key: pathKey });
@@ -438,6 +448,7 @@ export function ControlMapPanel({
       for (const h of selected.hospitals) {
         const to = gpsById.get(h.hospitalId);
         if (!to) continue;
+        if (h.st === "r" && hoverHospital !== h.hospitalId) continue; // 수용 곤란은 선 없이 점·말풍선으로만(지도 정리)
         wanted.add(h.hospitalId);
         const on = hoverHospital === h.hospitalId;
         const dim = false;
@@ -448,8 +459,8 @@ export function ControlMapPanel({
         const line = new kakao.maps.Polyline({
           path: arcPath(center, to).map((p) => new kakao.maps.LatLng(p.lat, p.lng)),
           strokeColor: ST_DOT[h.st],
-          strokeWeight: (h.st === "t" ? 5 : h.st === "a" ? 3.5 : h.st === "w" ? 2 : 1.5) + (on ? 2 : 0),
-          strokeOpacity: dim ? 0.18 : h.st === "r" ? 0.5 : on ? 1 : 0.8,
+          strokeWeight: (h.st === "t" ? 5 : h.st === "a" ? 3.5 : h.st === "w" ? 1.6 : 1.5) + (on ? 2 : 0),
+          strokeOpacity: dim ? 0.18 : h.st === "r" ? 0.5 : on ? 1 : h.st === "w" ? 0.45 : 0.85,
           strokeStyle: h.st === "r" ? "shortdash" : h.st === "w" ? "dash" : "solid",
         });
         line.setMap(map);

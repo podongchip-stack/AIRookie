@@ -10,6 +10,8 @@ export const ALERT_RULES = {
   confirmDelayMin: 1,
   /** 출동·병원 도착 결과 대기·재선택 대기에 이만큼 머물면 주의 (이송 중은 길 수 있어 제외) */
   stuckMin: 10,
+  /** 상황실 배정 요청(관제 판단 대기)이 이만큼 처리되지 않으면 긴급 — 그동안 구급대 이송 승인이 잠겨 있다(2026-11-04 초안) */
+  assignmentWaitMin: 2,
 };
 
 /** 새 사건 접수를 알리는 카드가 머무는 시간 — 사건 목록의 NEW 깜빡임도 같은 시간 */
@@ -43,7 +45,7 @@ const STUCK_PHASES: Partial<Record<AmbulancePhase, string>> = {
 };
 const LEVEL_RANK: Record<AlertLevel, number> = { urgent: 0, info: 1, warn: 2, system: 3 };
 
-export function deriveAlerts(incidents: Incident[], now: number, tr: AlertTracker): ControlAlert[] {
+export function deriveAlerts(incidents: Incident[], now: number, tr: AlertTracker, assignOpened: Record<string, string> = {}): ControlAlert[] {
   const out: ControlAlert[] = [];
   const liveIds = new Set(incidents.map((i) => i.caseId));
   for (const id of tr.matchedAt.keys()) if (!liveIds.has(id)) tr.matchedAt.delete(id);
@@ -60,6 +62,14 @@ export function deriveAlerts(incidents: Incident[], now: number, tr: AlertTracke
       push("new", "info", "새 사건 접수", "");
     }
     if (inc.sev === "중증") push("severe", "urgent", "중증 사건", "");
+    // 상황실 배정 대기(2026-11-04) — 자동 확정은 하지 않는다(결정은 사람). 오래 두면 긴급으로 올려 알린다.
+    const opened = assignOpened[inc.caseId];
+    if (opened) {
+      const min = Math.max(0, (now - Date.parse(opened)) / 60_000);
+      const late = min >= ALERT_RULES.assignmentWaitMin;
+      push(late ? "assignlate" : "assign", late ? "urgent" : "warn", late ? "상황실 배정 지연" : "상황실 배정 요청",
+        `${Math.floor(min)}분째 관제 판단 대기 · 구급대 이송 승인 잠김`);
+    }
 
     if (inc.matched && !tr.matchedAt.has(inc.caseId)) tr.matchedAt.set(inc.caseId, now);
     const requestedAt = Date.parse(inc.events.find((e) => e.kind === "s")?.t ?? "") || tr.matchedAt.get(inc.caseId) || now;
@@ -102,19 +112,6 @@ export function confirmWaitMs(inc: Incident, now: number): number | null {
 export function isConfirmDelayed(inc: Incident, now: number): boolean {
   const w = confirmWaitMs(inc, now);
   return w != null && w >= ALERT_RULES.confirmDelayMin * 60_000;
-}
-
-/**
- * 병원 문제로 이송이 막힌 사건 — 이송 확정 전인데 수용할 병원이 없다(전부 수용 불가 / 요청 후 noApprovalMin분 넘게 승인 없음 / 재선택 대기).
- * 알림과 달리 확인(ack)해도 사라지지 않는 사건 상태라, 관제 '처리 조치' 패널을 띄우는 기준으로 쓴다.
- */
-export function isTransportStalled(inc: Incident, now: number): boolean {
-  if (!inc.matched || inc.hospitals.some((h) => h.st === "t")) return false;
-  if (inc.phase === "rerouting") return true;
-  if (inc.hospitals.some((h) => h.st === "a")) return false;
-  if (inc.hospitals.length > 0 && inc.hospitals.every((h) => h.st === "r")) return true;
-  const requestedAt = Date.parse(inc.events.find((e) => e.kind === "s")?.t ?? "") || inc.startedAt;
-  return (now - requestedAt) / 60_000 >= ALERT_RULES.noApprovalMin;
 }
 
 export const HUB_DOWN_ALERT: ControlAlert = {

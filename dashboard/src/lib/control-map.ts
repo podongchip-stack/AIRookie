@@ -17,21 +17,46 @@ import type {
 // 전부 규칙 기반 — 거리·존·상태 집계일 뿐 판단은 하지 않는다.
 
 // ── 시안 색 ──────────────────────────────────────────────────────────────────
+// 2026-11-04 발표 자료(GoldenLink_글래스_모핑) 톤으로 — 잉크 #1C1F2A, 보조 #5B6070·#8A8FA0, 강조 보라 #6B5BD2,
+// 연보라 바탕 #F4F2FA·선 #E4DEFF. 상태색(판단 대기·수용·불가·확정)과 구급차 주황은 지도 표식과 맞물려 그대로 둔다.
 export const C = {
-  navy: "#14213D",
-  ink: "#1B2430",
-  ink2: "#2A3441",
-  ink3: "#4A5565",
-  sub: "#5A6676",
-  muted: "#7A8594",
-  faint: "#9AA3B0",
-  bg: "#F1F3F6",
-  line: "#DDE2E8",
-  line2: "#E6E9EE",
-  blue: "#1F6FE5",
+  navy: "#1C1F2A",
+  ink: "#1C1F2A",
+  ink2: "#3A3F50",
+  ink3: "#5B6070",
+  sub: "#5B6070",
+  muted: "#8A8FA0",
+  faint: "#A9ADBB",
+  bg: "#F4F2FA",
+  line: "#E4DEFF",
+  line2: "#EEEAFB",
+  blue: "#6B5BD2",
   orange: "#F26B1D",
-  zone: "#7B4DFF",
+  zone: "#8E7CF0",
 } as const;
+
+// 유리 패널(글래스모피즘) 공통값 — 흰 56%(2026-11-04 조금 더 투명하게) + 흰 테두리 + 보라빛 그림자 + 큰 모서리(발표 자료 카드와 같은 값)
+export const GLASS = {
+  panel: "rgba(255,255,255,.56)",
+  solid: "rgba(255,255,255,.92)",
+  border: "1.5px solid rgba(255,255,255,.92)",
+  shadow: "0 6px 22px rgba(91,75,138,.14)",
+  blur: "blur(20px) saturate(1.4)",
+  radius: 18,
+  radiusSm: 10,
+  tint: "#F1EEFF",
+  darkPanel: "rgba(28,31,42,.56)",
+  darkBorder: "1px solid rgba(185,167,255,.30)",
+  font: 'Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+} as const;
+
+// 바탕의 흐린 파스텔 원(발표 자료 blob) — 지도가 덮지 않는 곳·지도가 뜨기 전에 보인다
+export const GLASS_BLOBS: { color: string; left: string; top: string; size: string }[] = [
+  { color: "rgba(255,209,102,.55)", left: "62%", top: "-18%", size: "62vw" },
+  { color: "rgba(255,173,138,.45)", left: "-14%", top: "48%", size: "52vw" },
+  { color: "rgba(185,167,255,.50)", left: "-10%", top: "-22%", size: "54vw" },
+  { color: "rgba(158,208,255,.45)", left: "58%", top: "56%", size: "56vw" },
+];
 
 // 병원 응답 상태 — 짧은 키(시안과 같은 w/r/a/t)
 export type St = "w" | "r" | "a" | "t";
@@ -53,7 +78,7 @@ const SEV_OF: Record<string, Sev> = { high: "중증", medium: "중등증", low: 
 export const SEV_STYLE: Record<Sev, { background: string; color: string }> = {
   중증: { background: "#FDECEA", color: "#D93025" },
   중등증: { background: "#FFF1E0", color: "#C75B00" },
-  경증: { background: "#E8EEF8", color: "#1F4E9C" },
+  경증: { background: "#F1EEFF", color: "#5A4BC0" },
 };
 const SEV_RANK: Record<Sev, number> = { 중증: 0, 중등증: 1, 경증: 2 };
 

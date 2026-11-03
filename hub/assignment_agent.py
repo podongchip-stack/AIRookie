@@ -94,7 +94,8 @@ def hospital_evidence(match: dict, info: dict | None, required_department: str |
     specialties = {s.get("department"): s.get("doctorCount") for s in info.get("specialties") or []}
     operating = info.get("equipmentOperating") or {}
     travel = match.get("travelMin")
-    load = (match.get("loadPenaltyMin") or 0.0) + (match.get("occupancyPenaltyMin") or 0.0)
+    load = ((match.get("loadPenaltyMin") or 0.0) + (match.get("occupancyPenaltyMin") or 0.0)
+            + (match.get("refusalPenaltyMin") or 0.0))
     line = match.get("spiderLen")
     suitability = match.get("ktasSuitability") or {}
     return {
@@ -109,11 +110,16 @@ def hospital_evidence(match: dict, info: dict | None, required_department: str |
         "gainMin": round(travel + load - line, 1) if line is not None and travel is not None else None,
         "loadMin": round(load, 1),
         "lineBlocked": match.get("spiderBlocked"),
+        # 다른 사건에서 받은 수용 곤란의 되먹임 설명(순간적 30분 +분 / 구조적 같은 질환군 뒤로)
+        "refusalReasons": match.get("refusalReasons") or [],
         "confirmedBlock": suitability.get("confirmedBlock"),
         "availableBedCount": match.get("availableBedCount"),
         "bedCountUnknown": match.get("bedCountUnknown"),
         "erBedCapacity": match.get("erBedCapacity"),
         "inFlightCount": match.get("inFlightCount") or 0,
+        # 병상 값 위험 등급(AI 정보 생존 모델 → 등급) · 최종 확인 시각 — 수용 확률이 아니라 숫자가 도착까지 유지될지
+        "bedRisk": (match.get("bedReliability") or {}).get("riskLevel"),
+        "bedCheckedAt": (match.get("bedReliability") or {}).get("checkedAt"),
         "equipment": {key: operating.get(key) for key in EVIDENCE_EQUIPMENT},
         "emDoctors": specialties.get("응급의학과"),
         "requiredDepartment": required_department,
@@ -125,6 +131,13 @@ def hospital_evidence(match: dict, info: dict | None, required_department: str |
 
 def _receivable(h: dict) -> bool:
     return h.get("status") == "approved" and not h.get("excluded") and not h.get("notSelected")
+
+
+def _designatable(h: dict) -> bool:
+    """수용 회신 전이지만 상황실이 지정할 수 있는 병원(2026-11-04) — 판단 대기이고, 확인된 사실로 처치 불가가 아니며,
+    첫 전송 보류(최근 차단 공지)·제외가 아닌 곳. 줄이 있는 병원만(추정상 모자란 병원을 상황실이 고르게 제안하진 않는다)."""
+    return (h.get("status") == "pending" and not h.get("excluded") and not h.get("dispatchHold")
+            and not (h.get("ktasSuitability") or {}).get("confirmedBlock") and h.get("spiderLen") is not None)
 
 
 def build_proposal(group: dict, results: dict[str, dict], infos: dict[str, dict],
@@ -144,6 +157,13 @@ def build_proposal(group: dict, results: dict[str, dict], infos: dict[str, dict]
         with_room = [h for h in ranked if remaining[h["hospitalId"]] is None or remaining[h["hospitalId"]] > 0]
         pick = (with_room or ranked or [None])[0]
         over = pick is not None and not with_room
+        designate = False
+        if pick is None:  # 수용한 병원이 없다 — 상황실 지정 후보(판단 대기 중 줄 최단)를 제안한다
+            options = sorted((h for h in hospitals if _designatable(h)),
+                             key=lambda h: _line_key(h) + PLAN_LOAD_STEP_MIN * used.get(h["hospitalId"], 0))
+            if options:
+                pick, designate = options[0], True
+                remaining.setdefault(pick["hospitalId"], capacity_of(pick["hospitalId"]))
         if pick is not None:
             hid = pick["hospitalId"]
             used[hid] = used.get(hid, 0) + 1
@@ -151,7 +171,10 @@ def build_proposal(group: dict, results: dict[str, dict], infos: dict[str, dict]
                 remaining[hid] -= 1
         top = accepted[0] if accepted else None
         if pick is None:
-            reason = "수용한 병원이 없습니다 — 판단 대기 병원에 수용 확인이 필요합니다"
+            reason = "수용한 병원도 지정할 병원도 없습니다 — 수용 확인 요청이나 범위 확장이 필요합니다"
+        elif designate:
+            reason = (f"수용 회신이 없습니다 — 판단 대기 중 줄 길이 최단 {pick.get('name')}을(를) 상황실 지정으로 제안"
+                      " (지정하면 병원에 지정 통보)")
         elif over:
             reason = f"수용 병원이 모두 여력 소진 — 가장 짧은 {pick.get('name')}(여력 초과)"
         elif top is not None and pick["hospitalId"] != top["hospitalId"]:
@@ -172,6 +195,7 @@ def build_proposal(group: dict, results: dict[str, dict], infos: dict[str, dict]
             "requiredDepartment": required,
             "proposedHospitalId": pick["hospitalId"] if pick else None,
             "overCapacity": over,
+            "designation": designate,
             "reason": reason,
             "candidates": [hospital_evidence(h, infos.get(h["hospitalId"]), required) for h in ranked + pending],
         })

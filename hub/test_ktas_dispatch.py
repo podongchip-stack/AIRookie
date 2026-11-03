@@ -18,7 +18,7 @@ os.environ["HUB_SPIDER_HOUR"] = "14"
 import spider_rule
 from hospital_dispatch import can_receive, dashboard_payload
 from hub_engine import HubEngine
-from schema import ApprovalAction, DashboardIdentify, GpsPoint, HospitalInfo, PatientOverride, Specialty, VoiceCallSummaryMessage
+from schema import AcceptanceMessage, ApprovalAction, DashboardIdentify, GpsPoint, HospitalInfo, PatientOverride, Specialty, VoiceCallSummaryMessage
 from test_spider_rule import _voice
 
 SCENE = GpsPoint(lat=37.5665, lng=126.9780)
@@ -250,6 +250,29 @@ class KtasDispatchTests(unittest.TestCase):
         self.assertEqual(max(night.zoneActive), 2)
         # 밤엔 L이 추정상 모자라 줄이 없다 — 존을 넓혀 R을 찾고, L은 빼지 않고 맨 뒤로
         self.assertEqual([h["hospitalId"] for h in dashboard_payload(night.model_dump())["hospitals"]], ["R", "L"])
+
+    def test_recent_block_held_from_first_dispatch_until_zone_expands(self):
+        # 사건 질환군(대동맥응급) 차단 공지를 1시간 전에 건 병원 — 첫 동시 전송에선 보류, 존을 넓히면 포함(2026-11-04)
+        from datetime import datetime, timedelta, timezone
+        start = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        block = AcceptanceMessage(kind="severe", message="의료진 부족", department="흉부외과", diseaseGroup="대동맥응급", startAt=start)
+        self.engine.update_hospital_info(hospital("B", "권역응급의료센터").model_copy(update={"acceptanceMessages": [block]}))
+        self.engine.update_hospital_info(hospital("R", "권역응급의료센터", lat=37.5690))
+        first = self.result(text="대동맥 박리 의심")
+        held = next(h for h in first.hospitals if h.hospitalId == "B")
+        self.assertEqual(held.dispatchHold, "recent_severe_block")
+        self.assertEqual([h["hospitalId"] for h in dashboard_payload(first.model_dump())["hospitals"]], ["R"])
+        wider = self.engine.force_expand_zone("case", SCENE, cause="test")
+        self.assertIsNotNone(wider)
+        self.assertIn("B", [h["hospitalId"] for h in dashboard_payload(wider.model_dump())["hospitals"]])
+
+    def test_old_block_is_not_held(self):
+        from datetime import datetime, timedelta, timezone
+        start = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+        block = AcceptanceMessage(kind="severe", message="의료진 부족", department="흉부외과", diseaseGroup="대동맥응급", startAt=start)
+        self.engine.update_hospital_info(hospital("B", "권역응급의료센터").model_copy(update={"acceptanceMessages": [block]}))
+        first = self.result(text="대동맥 박리 의심")
+        self.assertIsNone(first.hospitals[0].dispatchHold, "6시간 넘은 공지는 보류하지 않는다(순서만 내림 — 기존 규칙)")
 
     def test_reject_ratio_counts_only_dispatchable_hospitals(self):
         for i in range(4):

@@ -83,6 +83,9 @@ const INITIAL_STATE: DashboardState = {
   mciPlan: null,
   assignmentGroups: [],
   dispatcherPending: {},
+  dispatcherRequests: [],
+  assignmentStats: null,
+  mciAssessment: null,
   sceneInputMode: {},
 };
 
@@ -410,7 +413,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
               break;
             // 상황실 배정(2026-11-04): 관제는 충돌 묶음·배분 안 전체, 구급차는 자기 사건의 관제 판단 대기
             case "assignment_conflicts":
-              setState((prev) => ({ ...prev, assignmentGroups: parsed.groups }));
+              setState((prev) => ({ ...prev, assignmentGroups: parsed.groups, assignmentStats: parsed.stats ?? prev.assignmentStats }));
               break;
             case "dispatcher_pending":
               setState((prev) => {
@@ -419,6 +422,13 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
                 else delete dispatcherPending[parsed.caseId];
                 return { ...prev, dispatcherPending };
               });
+              break;
+            case "mci_assessment":
+              setState((prev) => ({ ...prev, mciAssessment: parsed }));
+              break;
+            case "dispatcher_request":
+            case "dispatcher_designated":
+              setState((prev) => ({ ...prev, dispatcherRequests: [parsed, ...prev.dispatcherRequests].slice(0, 10) }));
               break;
             case "action_result":
               setState((prev) => ({ ...prev, actionResult: { at: Date.now(), caseId: parsed.caseId, action: parsed.action, ok: parsed.ok, reason: parsed.reason } }));
@@ -730,7 +740,22 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     return true;
   }, []);
 
-  return { state, connectionMode, sendCallConnection, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendPatientOverride, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
+  // 관제 [수용 확인 요청](2026-11-04) — 수용 회신 없는 병원에 상황실이 다시 묻는다(hospitalIds 없으면 판단 대기 전부)
+  const sendConfirmRequest = useCallback((caseId: string, hospitalIds?: string[]) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "confirm_request", caseId, hospitalIds }));
+    return true;
+  }, []);
+  // 관제·콘솔 → hub 일반 메시지(다수 사상자 등록·시연 상황 부여 등, 2026-11-04)
+  const sendRaw = useCallback((message: Record<string, unknown>) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify(message));
+    return true;
+  }, []);
+
+  return { state, connectionMode, sendConfirmRequest, sendRaw, sendCallConnection, sendAction, sendCallSignal, sendAudioChunk, sendInfoConfirm, sendPatientOverride, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode };
 }
 
 // 상단바 연결 표시. 병원·구급차 상단바가 같은 문구를 쓰도록 여기 한 곳에 둔다.

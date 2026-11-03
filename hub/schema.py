@@ -459,6 +459,11 @@ class BedReliabilityMatch(BaseModel):
     ttlSec: float
     modelTag: str
     source: Literal["ai"] = "ai"
+    # 표시용 위험 등급(2026-11-04, 발표 8장 — 의료진 자문: 확률 대신 등급 + 최종 확인 시각). 도착 시 유효 확률(rArrive)에서
+    # 나눈다: 0.8 이상 low(실측 97.9% 유지 구간) · 0.5 이상 medium · 그 아래 high(라이브 보드 경고 기준). 수용 확률이 아니다.
+    riskLevel: Optional[Literal["low", "medium", "high"]] = None
+    # 이 병상 값이 마지막으로 확인된 시각 — E-Gen 갱신 시각과 병원의 "현재 정보 확인" 중 늦은 쪽
+    checkedAt: Optional[str] = None
     # ── 실시간 감쇠 파라미터 (2026-09-28 추가) ──
     # dashboard가 다음 브로드캐스트를 기다리지 않고 authority를 초 단위로 직접
     # 감쇠시켜 그릴 수 있게, 곡선의 파라미터 자체를 같이 보낸다:
@@ -497,7 +502,7 @@ class SevereFreshness(BaseModel):
 # severe_blocked(2026-10-07): 관련 중증질환군에 병원이 E-Gen 차단 메시지를 걸어둠("의료진 부족" 등).
 # 병원이 이 사건에 승인(approved)·확정(confirmed) 응답을 했으면 신고·병상·메시지보다 그 응답이
 # 우선이라 declared_no·severe_blocked·beds_full로 내리지 않는다.
-DemoteReason = Literal["declared_no", "severe_blocked", "beds_full", "rejected"]
+DemoteReason = Literal["declared_no", "severe_blocked", "beds_full", "rejected", "structural_refusal"]
 # 순위 계산에 쓴 이동 시간의 출처. eta: 카카오 도로 기준 소요시간 / estimate: 직선거리 ×
 # (같은 사건에서 ETA가 있는 병원들로 보정한 분/km, 없으면 기본값)으로 추정.
 TravelBasis = Literal["eta", "estimate"]
@@ -586,6 +591,12 @@ class HospitalMatch(BaseModel):
     # E-Gen 신고 포화도(이송 확정 차감 전)에 비례해 이동시간에 더한 분(최대 5분)과 설명 문구. 병상 미상·오래된 값이면 0.
     occupancyPenaltyMin: float = 0.0
     occupancyReason: Optional[str] = None
+    # 다른 사건에서 받은 수용 곤란의 되먹임(2026-11-04, refusal_memory.py, 규칙) — 순간적 사유 30분 동안 더한 분과 설명.
+    # 구조적 사유는 demoteReasons의 structural_refusal로 순서만 내린다.
+    refusalPenaltyMin: float = 0.0
+    refusalReasons: Optional[list[str]] = None
+    # 첫 동시 전송 보류(2026-11-04) — "recent_severe_block": 사건 질환군 차단 공지를 최근(6시간) 건 병원. 존을 넓히면 풀린다
+    dispatchHold: Optional[str] = None
 
 
 class ArrivalResult(BaseModel):
@@ -868,6 +879,9 @@ class MonitorCaseHospital(BaseModel):
     # 보게 하기 위함. 환자 정보는 아니다. 병상 유효 확률(bedReliability, AI)·심평원 대조 신뢰도(reliability)·중증 신고 신선도
     # (severeFreshness, 규칙)·순위 근거(finalScore·travelMin·가산/페널티 문구·내림 이유)·E-Gen 메시지.
     ktasSuitability: Optional[dict] = None
+    refusalPenaltyMin: Optional[float] = None
+    refusalReasons: Optional[list[str]] = None
+    dispatchHold: Optional[str] = None
     gps: Optional[GpsPoint] = None
     emergencyLevel: Optional[str] = None
     availableBedCount: Optional[int] = None
@@ -928,6 +942,8 @@ class MonitorCase(BaseModel):
     requiredDepartment: Optional[str] = None
     patient: Optional[str] = None
     confirmedBy: Optional[str] = None
+    # 전달 정책 요약(2026-11-04, 에이전트 활동 패널) — 후보 수·전달 수·뺀 병원과 사유(확인된 처치 불가·첫 전송 보류)
+    dispatchPolicy: Optional[dict] = None
     source: Literal["rule"] = "rule"
 
 

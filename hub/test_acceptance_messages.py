@@ -82,7 +82,8 @@ def _voice(case_id: str) -> VoiceCallSummaryMessage:
 def main() -> None:
     engine = HubEngine(specialty_matcher=_FakeMatcher())
     # 가까운 순: M001(차단) < M002(끝난 차단 + 응급실 메시지) < M003(시작 전 차단) < M004(필드 없음)
-    engine.update_hospital_info(_hospital("M001", 37.5700, [_severe("대동맥응급", -60, 60),
+    # 8시간 전에 건 공지 — 6시간 안의 최근 공지는 첫 전송에서 보류돼(dispatchHold) 병원이 회신할 수 없다(2026-11-04)
+    engine.update_hospital_info(_hospital("M001", 37.5700, [_severe("대동맥응급", -480, 60),
                                                            _severe("중증화상", -60, 60)]))
     engine.update_hospital_info(_hospital("M002", 37.5750, [
         _severe("대동맥응급", -120, -1),

@@ -524,6 +524,14 @@ const sceneOptions = (reportKey: string | null | undefined): Template[] => {
   return report ? PATIENT_TEMPLATES.filter((t) => t.report === report) : REPORT_TEMPLATES;
 };
 
+// 상황실 시연 상황(2026-11-04, hub _run_demo_scenario)
+const DEMO_SCENARIOS = [
+  { kind: "conflict", label: "충돌 — 한 병원에 환자 2명, 여력 1석(관제 배정 요청)" },
+  { kind: "refusal", label: "수용 곤란 — 수술실 사용 중, 다음 사건에 30분 반영" },
+  { kind: "no_accept", label: "수용 회신 없음 — 수용 확인 요청·상황실 지정" },
+  { kind: "recent_block", label: "최근 차단 공지 — 첫 동시 전송 보류" },
+] as const;
+
 // 대량사고 사상자 수 입력의 처음 값(시연 초기화 때도 이 값으로 되돌린다)
 const MCI_DEFAULT_COUNTS = { high: 2, medium: 3, low: 4 };
 
@@ -595,7 +603,7 @@ type DemoConsoleProps = {
 
 /** 기존 콘솔과 관제 지도에서 같은 시연 동작을 사용한다. */
 export function DemoConsole({ embedded = false, singleUnit = true, activeApid, onAmbulanceChange }: DemoConsoleProps) {
-  const { state, connectionMode, sendCallConnection, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode } =
+  const { state, connectionMode, sendRaw, sendCallConnection, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode } =
     useDashboardSocket({ role: "monitor", id: embedded ? "map-control" : "control" });
   const simOn = state.identity.simDispatch === true;
   const ambulances = state.mapOverview?.ambulances ?? [];
@@ -1359,6 +1367,23 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
                 시연 초기화
               </button>
             )}
+            {/* 상황실 시연 상황 부여(2026-11-04) — hub가 실제 병원·구급차로 장면을 만든다(사건 caseId demo-, 로그 demo: true).
+                충돌 → 관제 배정 요청 모달 / 수용 곤란 → 다음 사건 학습 반영 / 수용 회신 없음 → 수용 확인 요청·상황실 지정 /
+                최근 차단 공지 → 첫 동시 전송 보류 */}
+            <select
+              aria-label="상황실 시연 상황 부여"
+              value=""
+              onChange={(e) => {
+                const kind = e.target.value;
+                if (!kind) return;
+                const label = DEMO_SCENARIOS.find((d) => d.kind === kind)?.label ?? kind;
+                note(sendRaw({ type: "demo_scenario", kind }) ? `상황 부여 — ${label}` : "hub와 연결이 끊겨 상황을 만들지 못했습니다");
+              }}
+              style={{ ...headerButton, cursor: "pointer" }}
+            >
+              <option value="">상황 부여 ▾</option>
+              {DEMO_SCENARIOS.map((d) => <option key={d.kind} value={d.kind}>{d.label}</option>)}
+            </select>
             {/* 시연 영상 모드(2026-10-06) — 연결된 모든 화면(관제 지도·병원·콘솔·구급차)이 각자 영상으로. 영상 위 [시연 모드]로 돌아온다 */}
             <button type="button" style={headerButton} onClick={() => sendDemoMode("video") || note("hub와 연결이 끊겨 영상 모드로 바꾸지 못했습니다")}>
               영상 모드

@@ -55,6 +55,7 @@ from scoring import (
     rank_key,
 )
 from specialty_matcher import SpecialtyMatcher
+from refusal_memory import RefusalMemory
 from voice_v2 import KTAS_TO_SEVERITY
 
 if TYPE_CHECKING:
@@ -410,6 +411,35 @@ def _severe_blocked(info: HospitalInfo, group: str | None, now: datetime) -> boo
     return any(m.kind == "severe" and m.diseaseGroup == group for m in _active_messages(info, now))
 
 
+#: 최근 차단 공지로 보는 시간(2026-11-04, 초안) — 이 안에 시작한 사건 질환군 차단 공지는 병원이 막 밝힌 "지금 못 받는다"라
+#: 첫 동시 전송에서 뺀다. 존을 넓히면(맞는 병원이 부족하면) 다시 포함한다 — 제외가 아니라 첫 요청 보류.
+RECENT_BLOCK_HOURS = 6.0
+
+
+def _with_risk(match, info: HospitalInfo, confirmed: datetime | None):
+    """병상 신뢰도에 표시용 위험 등급·최종 확인 시각을 붙인다(2026-11-04). 신뢰도가 없으면 그대로 None."""
+    if match is None:
+        return None
+    checked = _parse_iso(info.updatedAt) if info.updatedAt else None
+    if confirmed is not None and (checked is None or confirmed > checked):
+        checked = confirmed
+    return match.model_copy(update={
+        "riskLevel": bed_reliability.risk_level(match.rArrive),
+        "checkedAt": checked.isoformat(timespec="seconds") if checked is not None else None,
+    })
+
+
+def _recent_severe_block(info: HospitalInfo, group: str | None, now: datetime) -> bool:
+    if group is None:
+        return False
+    for m in _active_messages(info, now):
+        start = _parse_iso(m.startAt) if m.startAt else None
+        if m.kind == "severe" and m.diseaseGroup == group and start is not None \
+                and now - start <= timedelta(hours=RECENT_BLOCK_HOURS):
+            return True
+    return False
+
+
 def _acceptance_messages_for(
     info: HospitalInfo, group: str | None, required_department: str | None, now: datetime
 ) -> list[AcceptanceMessageMatch] | None:
@@ -436,6 +466,7 @@ def _demote_reasons(
     bed_unknown: bool,
     bed_stale: bool,
     now: datetime,
+    structural_refusal: bool = False,
 ) -> list[str]:
     """이 병원을 순위 뒤쪽으로 내릴 이유들(2026-09-28). 비면 finalScore 순서 그대로다.
 
@@ -457,6 +488,8 @@ def _demote_reasons(
         reasons.append("severe_blocked")
     if not bed_unknown and not bed_stale and effective_beds <= 0:
         reasons.append("beds_full")
+    if structural_refusal:  # 같은 질환군 환자를 구조적 사유로 수용 곤란했다(refusal_memory.py)
+        reasons.append("structural_refusal")
     return reasons
 
 
@@ -573,6 +606,12 @@ class HubEngine:
         self._approval_status: dict[tuple[str, str], HospitalStatus] = {}
         # (caseId, hospitalId) -> 병원이 [불가] 때 고른 사유(2026-10-03). 화면의 사유 선택칸 표시용.
         self._reject_reason: dict[tuple[str, str], str] = {}
+        # 수용 곤란 사유의 되먹임(2026-11-04, refusal_memory.py) — 순간적 사유는 30분 동안 다른 사건 줄 길이에 분을 더하고,
+        # 구조적 사유는 같은 질환군 환자에게 순서를 내린다. 사건마다 그 사건의 질환군 키(없으면 spider 질환군)를 기억한다.
+        self._refusals = RefusalMemory()
+        # 사건의 첫 매칭 존(2026-11-04) — 최근 차단 공지 병원은 첫 동시 전송에서 빼고 존을 넓힌 뒤엔 포함한다
+        self._case_initial_zone: dict[str, int] = {}
+        self._case_refusal_key: dict[str, str] = {}
         # 구급차 레지스트리(feature/info가 Supabase ambulances 테이블에서
         # 읽어 보내줌). GPS·voicePort 조회에 쓴다.
         self._ambulances: dict[str, AmbulanceInfo] = {}
@@ -965,6 +1004,8 @@ class HubEngine:
         self._case_max_zone.pop(case_id, None)
         self._case_voice.pop(case_id, None)
         self._case_group.pop(case_id, None)
+        self._case_initial_zone.pop(case_id, None)
+        self._case_refusal_key.pop(case_id, None)
         self._spider_pick.pop(case_id, None)
         self._case_gps_fallback.pop(case_id, None)
         self._case_confirmed_at.pop(case_id, None)
@@ -1072,7 +1113,8 @@ class HubEngine:
                 erBedCapacity=capacity,
                 erOccupancyPct=occupancy,
                 demoteReasons=_demote_reasons(
-                    info, self._case_group.get(case_id), status, beds, unknown, stale, now
+                    info, self._case_group.get(case_id), status, beds, unknown, stale, now,
+                    self._refusals.effect(match.hospitalId, case_id, self._case_refusal_key.get(case_id), now).demote,
                 ),
             )
             update["unavailableReason"] = _unavailable_reason(status, update["demoteReasons"])
@@ -1139,7 +1181,10 @@ class HubEngine:
                 and not any(h.hospitalId == action.hospital_id and can_receive(h) for h in result.hospitals)
             ):
                 refuse_reason = "hospital is not a KTAS-compatible dispatch target"
-            elif action.action == "final_approval" and current != "approved":
+            elif action.action == "final_approval" and current != "approved" and not (
+                    # 상황실 지정(2026-11-04, 개정 응급의료법 취지): 관제는 수용 회신 전 병원도 지정할 수 있다.
+                    # 수용 곤란·제외 병원은 여전히 안 된다(아래 excluded 검사).
+                    action.actor == "dispatcher" and current == "pending"):
                 refuse_reason = f"final_approval requires hospital approval (current: {current})"
             elif action.action == "hospital_approve" and self._is_confirmed_full(action.hospital_id):
                 # 응급실 병상 0이 확인된 병원은 승인을 받지 않는다(2026-10-01). 화면에서만 막으면 승인이 통과해
@@ -1198,6 +1243,12 @@ class HubEngine:
             self._approval_status[status_key] = new_status
             if action.action == "hospital_reject":
                 self._reject_reason[status_key] = action.reason or "UNSPECIFIED"
+                kept = self._refusals.record(action.hospital_id, action.caseId, action.reason,
+                                             self._case_refusal_key.get(action.caseId), _utcnow())
+                if kept is not None:
+                    decision_log.log_decision("refusal_feedback_recorded", {
+                        "hospitalId": kept.hospital_id, "caseId": kept.case_id, "reasonCode": kept.reason, "axis": kept.axis,
+                        "group": kept.group, "until": kept.until.isoformat(timespec="seconds"), "source": "rule"})
             else:
                 self._reject_reason.pop(status_key, None)
             if new_status == "confirmed":
@@ -1473,6 +1524,9 @@ class HubEngine:
             )
             sp_hour = spider_rule.local_hour(now)
             sp_severe = self._spider_inflight_severe(voice.caseId)
+            refusal_key = best_group or sp_cond
+            self._case_refusal_key[voice.caseId] = refusal_key
+            expanded = max_zone > self._case_initial_zone.get(voice.caseId, max_zone)
             for (info, distance), (best_dept, similarity) in zip(candidates, specialty_results):
                 eta = etas.get(info.hospitalId)
                 travel_min = eta[0] / 60.0 if eta is not None else distance * min_per_km
@@ -1500,17 +1554,20 @@ class HubEngine:
                 # 병원의 "현재 정보 확인" 이력 — 현재 claim에 유효한지는
                 # evaluate()가 bornAt과 대조해 판단한다.
                 confirmed = self._info_confirmations.get(info.hospitalId)
+                # 다른 사건에서 받은 수용 곤란 — 순간적이면 분을 더하고 구조적이면 같은 질환군에서 내린다
+                refusal = self._refusals.effect(info.hospitalId, voice.caseId, refusal_key, now)
                 er_capacity, er_occupancy = _er_capacity(info, beds, unknown, stale)
                 # spider 줄 길이 = 도로 분 − μ×이득(또는 + ν×모자람) + 부하. 진료과 임베딩 점수는 이 모델에 없어 순위에 안 쓴다
-                sp = spider_rule.line(sp_k, sp_cond, info, travel_min, load_min + occupancy_min, sp_severe, sp_hour)
+                sp = spider_rule.line(sp_k, sp_cond, info, travel_min, load_min + occupancy_min + refusal.penalty_min,
+                                      sp_severe, sp_hour)
                 sp_window = (
                     self._spider_window(voice.caseId, info.hospitalId, now + timedelta(minutes=travel_min), sp_k)
                     if sp["len"] is not None and status == "pending" else []
                 )
                 bonus_min = round(sp["gain_min"], 1)
-                bonus_reasons = [f"거미줄 {spider_rule.COND_LABEL[sp_cond]} K{sp_k} · {sp['parts']}"] + spider_rule.gain_reasons(sp, sp_k) + (
+                bonus_reasons = [f"거미줄 {spider_rule.COND_LABEL[sp_cond]} K{sp_k} · {sp['parts']}"] + spider_rule.gain_reasons(sp, sp_k) + list(refusal.reasons) + (
                     [f"줄 없음({sp['blocked']}) — 뒤로"] if sp["blocked"] else
-                    [f"줄 길이 {sp['len']:.1f}분 (도로 {travel_min:.1f} − 이득 {sp['gain_min']:.1f} + 부하 {load_min + occupancy_min:.1f})"]
+                    [f"줄 길이 {sp['len']:.1f}분 (도로 {travel_min:.1f} − 이득 {sp['gain_min']:.1f} + 부하 {load_min + occupancy_min + refusal.penalty_min:.1f})"]
                 ) + (
                     # τ 창은 사실만 알린다(2026-10-22) — 순위를 내리지도, 병원을 건너뛰지도 않는다. 수용 판단은 병원이.
                     [f"같은 10분 안에 도착 예정인 다른 사건 {len(sp_window)}건 — 순위 영향 없음, 수용 판단은 병원"]
@@ -1534,10 +1591,10 @@ class HubEngine:
                         reliability=_reliability_for(info, best_group) if best_group is not None else None,
                         # 병상 숫자 자체의 유효 확률(infosurv 모델, source: "ai"). 설명용 —
                         # 도착 시점(horizon)은 순위에 쓴 이동 시간과 같은 값을 쓴다.
-                        bedReliability=bed_reliability.evaluate(
+                        bedReliability=_with_risk(bed_reliability.evaluate(
                             info.bedReliability, distance, now=now,
                             horizon_sec=travel_min * 60.0, confirmed_at=confirmed,
-                        ),
+                        ), info, confirmed),
                         # 매칭된 질환군의 수용가능 신고 신선도(규칙 기반, source: "rule").
                         severeFreshness=_severe_freshness_for(info, best_group),
                         # 수술실·입원실·소아 등 확장 필드의 유효 확률 — 응급실
@@ -1556,7 +1613,7 @@ class HubEngine:
                         # 도로 기준 도착 예상 시간(분, 올림). 표시용 원값.
                         etaMin=_ceil_minutes(eta[0]) if eta is not None else None,
                         roadDistanceKm=round(eta[1] / 1000.0, 2) if eta is not None else None,
-                        finalScore=spider_rule.score(sp["len"], travel_min, load_min + occupancy_min),
+                        finalScore=spider_rule.score(sp["len"], travel_min, load_min + occupancy_min + refusal.penalty_min),
                         spiderLen=round(sp["len"], 1) if sp["len"] is not None else None,
                         spiderGap=round(sp["gap"], 2),
                         spiderBlocked=sp["blocked"],
@@ -1573,7 +1630,12 @@ class HubEngine:
                         travelMin=round(travel_min, 1),
                         travelBasis="eta" if eta is not None else "estimate",
                         acceptanceMessages=_acceptance_messages_for(info, best_group, required, now),
-                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale, now)),
+                        demoteReasons=(demote := _demote_reasons(info, best_group, status, beds, unknown, stale, now,
+                                                                 refusal.demote)),
+                        refusalPenaltyMin=refusal.penalty_min,
+                        dispatchHold=("recent_severe_block" if status == "pending" and not expanded
+                                      and _recent_severe_block(info, best_group, now) else None),
+                        refusalReasons=list(refusal.reasons) or None,
                         rejectReason=self._reject_reason_for(voice.caseId, info.hospitalId, status),
                         unavailableReason=_unavailable_reason(status, demote),
                         bedDataStale=stale,
@@ -1919,6 +1981,7 @@ class HubEngine:
             self._prune_old_cases()
             self._case_voice[voice.caseId] = voice
             self._case_max_zone[voice.caseId] = max_zone
+            self._case_initial_zone.setdefault(voice.caseId, max_zone)
             self._case_gps_fallback[voice.caseId] = gps_fallback
             self._dirty = True
 

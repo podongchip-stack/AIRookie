@@ -84,7 +84,7 @@ def test_rule() -> None:
     assert a_h1["gainMin"] == 5.0, "줄 길이 5 = 이동 10 − 이득 5 + 부하 0"
     none = aa.build_proposal({"hospitalId": "H1", "caseIds": ["X"]},
                              {"X": {"patientInfo": {"ktasLevel": 2}, "hospitals": [match("H9", "pending", 3.0, 3.0)]}}, {}, {}.get)
-    assert none["cases"][0]["proposedHospitalId"] is None and "수용 확인" in none["cases"][0]["reason"]
+    assert none["cases"][0]["proposedHospitalId"] == "H9" and none["cases"][0]["designation"], "수용 병원이 없으면 판단 대기 중 줄 최단을 상황실 지정으로 제안"
     print("  [확인] KTAS 1 → 권역(여력 1), 나머지 → 다음 수용 병원 · 근거(전문의·장비·줄 길이 분해) · 수용 병원 없으면 확인 필요")
 
 
@@ -160,7 +160,38 @@ def test_app() -> None:
     print("  [확인] 관제가 case-1 지정 → 충돌 해소, case-2 대기 해제")
 
 
+def test_confirm_and_designate() -> None:
+    print("=== ③ 수용 확인 요청 · 상황실 지정 ===")
+    other = _hospital(beds=3).model_copy(update={"hospitalId": "T_WAIT", "name": "[테스트] 회신 전 병원"})
+    app.engine.update_hospital_info(other)
+    monitor, hosp, stranger = _FakeSocket(), _FakeSocket(), _FakeSocket()
+    app._dashboard_sockets.update({monitor, hosp, stranger})
+    app._handle_identify(monitor, DashboardIdentify(role="monitor", id="map"))
+    app._handle_identify(hosp, DashboardIdentify(role="hospital", id="T_WAIT"))
+    app._handle_identify(stranger, DashboardIdentify(role="ambulance", id="A9"))
+    app.engine.register_case("case-wait", "A9")
+    app._send_to_dashboard(app.engine.process_voice_summary(_summary("case-wait"), SCENE).model_dump())
+
+    app._handle_confirm_request(stranger, {"type": "confirm_request", "caseId": "case-wait"})
+    assert _of(stranger, "action_refused")[-1]["reason"] == "not_dispatcher", "관제 소켓만 확인 요청을 보낸다"
+    app._handle_confirm_request(monitor, {"type": "confirm_request", "caseId": "case-wait", "hospitalIds": ["T_WAIT"]})
+    req = _of(hosp, "dispatcher_request")
+    assert req and req[-1]["caseId"] == "case-wait" and req[-1]["hospitalId"] == "T_WAIT"
+    assert _of(monitor, "action_result")[-1]["ok"], "누른 관제에 결과를 알린다"
+    print("  [확인] 관제 [수용 확인 요청] → 그 병원 탭에 dispatcher_request")
+
+    app._handle_dashboard_action(_action("case-wait", "final_approval", "dispatcher", "T_WAIT"), ws=monitor)
+    assert app.engine.get_case_status("case-wait", "T_WAIT") == "confirmed", "상황실은 수용 회신 전 병원도 지정한다"
+    assert _of(hosp, "dispatcher_designated")[-1]["caseId"] == "case-wait", "지정된 병원 탭에 지정 통보"
+    app.engine.register_case("case-wait-2", "A9")
+    app.engine.process_voice_summary(_summary("case-wait-2"), SCENE)
+    app._handle_dashboard_action(_action("case-wait-2", "final_approval", "paramedic", "T_WAIT"))
+    assert app.engine.get_case_status("case-wait-2", "T_WAIT") == "pending", "구급대원은 여전히 수용 병원에만 이송 승인"
+    print("  [확인] 상황실 지정(회신 전 병원) → 확정 + 병원에 dispatcher_designated, 구급대원은 그대로 수용 병원만")
+
+
 if __name__ == "__main__":
     test_rule()
     test_app()
+    test_confirm_and_designate()
     print("\n모든 검사 통과")

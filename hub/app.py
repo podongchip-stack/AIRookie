@@ -40,6 +40,7 @@ from hub_engine import HubEngine, _is_bed_count_unknown, _is_bed_data_stale
 from case_history import CaseTracker, query_archive
 from record_archive import RecordArchive
 from schema import (
+    AcceptanceMessage,
     AmbulanceInfo,
     ApprovalAction,
     CallSignal,
@@ -873,7 +874,9 @@ def _send_to_dashboard(payload: dict) -> None:
 _assignment_lock = threading.Lock()
 _assignment_groups: list[dict] = []
 _assignment_pending: dict[str, str] = {}  # caseId -> 충돌 병원
-_assignment_last_sent: dict | None = None  # 관제에 마지막으로 보낸 묶음·배분 안 — 같으면 다시 안 보낸다
+_assignment_opened: dict[str, str] = {}  # caseId -> 관제 판단 대기가 시작된 시각(관제 화면의 대기 시간 알림 재료)
+_assignment_last_sent: dict | None = None
+_assignment_stats = {"decided": 0, "followed": 0}  # 관제 지정 수 · 그중 에이전트 제안을 따른 수(hub 재시작 시 0)  # 관제에 마지막으로 보낸 묶음·배분 안 — 같으면 다시 안 보낸다
 
 
 def _assignment_capacity(hospital_id: str) -> int | None:
@@ -895,6 +898,9 @@ def _assignment_snapshot() -> dict:
         groups = [dict(g) for g in _assignment_groups]
     for g in groups:
         g["hospitalName"] = _hospital_name(g["hospitalId"])
+        with _assignment_lock:
+            opened = [_assignment_opened[c] for c in g["caseIds"] if c in _assignment_opened]
+        g["openedAt"] = min(opened) if opened else None
         results = {}
         for case_id in g["caseIds"]:
             result = engine.get_case_result(case_id)
@@ -907,7 +913,12 @@ def _assignment_snapshot() -> dict:
                 if info is not None:
                     infos[h["hospitalId"]] = info.model_dump()
         g["proposal"] = assignment_agent.build_proposal(g, results, infos, _assignment_capacity)
-    return {"type": "assignment_conflicts", "groups": groups, "source": "rule", "rule": assignment_agent.RULE}
+        for c in g["proposal"]["cases"]:
+            asked = _confirm_requests.get(c["caseId"], {})
+            for h in c["candidates"]:
+                h["confirmRequestedAt"] = asked.get(h["hospitalId"])
+    return {"type": "assignment_conflicts", "groups": groups, "source": "rule", "rule": assignment_agent.RULE,
+            "stats": dict(_assignment_stats)}
 
 
 def _dispatcher_pending_message(case_id: str, hospital_id: str | None) -> dict:
@@ -934,12 +945,14 @@ def _log_assignment_decision(case_id: str, hospital_id: str) -> None:
         snapshot = _assignment_last_sent
     proposed = next((c["proposedHospitalId"] for g in (snapshot or {}).get("groups", [])
                      for c in g["proposal"]["cases"] if c["caseId"] == case_id), None)
+    _assignment_stats["decided"] += 1
+    _assignment_stats["followed"] += int(proposed == hospital_id)
     decision_log.log_decision("assignment_decided", {"caseId": case_id, "hospitalId": hospital_id,
                                                      "proposedHospitalId": proposed,
                                                      "followedProposal": proposed == hospital_id})
 
 
-def _reevaluate_assignment() -> None:
+def _reevaluate_assignment(force: bool = False) -> None:
     """진행 사건 전체의 1순위 겹침을 다시 판정하고, 묶음이나 배분 안이 바뀌었을 때만 관제·구급대에 알린다.
     묶음이 그대로여도 수용 곤란·새 수용·부하가 바뀌면 배분 안은 다시 계산돼 관제 모달이 따라간다."""
     global _assignment_last_sent
@@ -952,9 +965,14 @@ def _reevaluate_assignment() -> None:
         _assignment_groups[:] = groups
         _assignment_pending.clear()
         _assignment_pending.update(pending)
+        now_iso = _utcnow_iso()
+        for c in pending:
+            _assignment_opened.setdefault(c, now_iso)
+        for c in [c for c in _assignment_opened if c not in pending]:
+            _assignment_opened.pop(c)
     snapshot = _assignment_snapshot()
     with _assignment_lock:
-        if snapshot == _assignment_last_sent:
+        if snapshot == _assignment_last_sent and not force:
             return
         _assignment_last_sent = snapshot
     opened = {c: h for c, h in pending.items() if before.get(c) != h}
@@ -975,6 +993,316 @@ def _reevaluate_assignment() -> None:
         _send_dispatcher_pending(case_id, None)
 
 
+_confirm_requests: dict[str, dict[str, str]] = {}  # caseId -> {hospitalId: 요청 시각} — 배분 안 근거에 "확인 요청함"을 보인다
+
+
+def _hospital_sockets(hospital_id: str) -> list:
+    with _sockets_lock:
+        return [w for w, (role, id_) in _socket_identity.items() if role == "hospital" and id_ == hospital_id]
+
+
+def _case_brief(case_id: str) -> dict:
+    """병원 화면 알림에 싣는 사건 개요 — 구급대·Pre-KTAS·주 호소만(통화 전문 없음)."""
+    result = engine.get_case_result(case_id)
+    if result is None:
+        return {}
+    p = result.patientInfo
+    return {"ambulanceName": result.ambulanceName, "ktasLevel": p.ktasLevel,
+            "chiefComplaint": p.chiefComplaint or p.expectedDiagnosis}
+
+
+def _handle_confirm_request(ws, payload: dict) -> None:
+    """관제의 [수용 확인 요청](2026-11-04): 수용 회신이 없는 병원에 상황실이 다시 묻는다. 병원 화면에 dispatcher_request.
+    hospitalIds가 없으면 그 사건의 판단 대기·전달 대상 병원 전부. 관제 소켓에서만 받는다."""
+    case_id = payload.get("caseId")
+    if _socket_identity.get(ws, (None, None))[0] != "monitor":
+        _notify_refused(ws, case_id, "not_dispatcher")
+        return
+    if _case_paused(case_id):
+        _notify_result(ws, case_id, "confirm_request", False, "paused")
+        return
+    result = engine.get_case_result(case_id) if case_id else None
+    if result is None:
+        _notify_result(ws, case_id, "confirm_request", False, "unknown_case")
+        return
+    wanted = set(payload.get("hospitalIds") or [])
+    targets = [h for h in dashboard_payload(result.model_dump())["hospitals"]
+               if h["status"] == "pending" and (not wanted or h["hospitalId"] in wanted)]
+    now = _utcnow_iso()
+    brief = _case_brief(case_id)
+    delivered = []
+    for h in targets:
+        message = {"type": "dispatcher_request", "caseId": case_id, "hospitalId": h["hospitalId"], "at": now, **brief}
+        socks = _hospital_sockets(h["hospitalId"])
+        for w in socks:
+            _send_to_socket(w, message, "상황실 수용 확인 요청")
+        if socks:
+            delivered.append(h["hospitalId"])
+        _confirm_requests.setdefault(case_id, {})[h["hospitalId"]] = now
+    decision_log.log_decision("dispatcher_confirm_request", {
+        "caseId": case_id, "hospitalIds": [h["hospitalId"] for h in targets], "delivered": delivered, "timestamp": now})
+    _notify_result(ws, case_id, "confirm_request", bool(targets), None if targets else "no_pending_hospital")
+    _reevaluate_assignment(force=True)
+
+
+def _send_dispatcher_designated(case_id: str, hospital_id: str, timestamp: str) -> None:
+    """상황실 지정(2026-11-04): 병원이 수용 회신 전인데 상황실이 지정했다 — 그 병원 화면에 알린다(개정법의 지정 통보 자리)."""
+    socks = _hospital_sockets(hospital_id)
+    message = {"type": "dispatcher_designated", "caseId": case_id, "hospitalId": hospital_id, "at": timestamp,
+               **_case_brief(case_id)}
+    for w in socks:
+        _send_to_socket(w, message, "상황실 지정")
+    decision_log.log_decision("dispatcher_designated", {"caseId": case_id, "hospitalId": hospital_id,
+                                                        "delivered": len(socks), "timestamp": timestamp})
+
+
+# ── 관제 시연 상황 부여 · 다수 사상자 등록(2026-11-04) ─────────────────────────
+# 시연 콘솔·관제 화면이 버튼 하나로 상황을 만든다. 실제 병원·구급차 레지스트리를 쓰고, 만든 사건은 caseId가 demo-로
+# 시작하며 의사결정 로그에 demo: true로 남는다. 병상 값을 바꾸는 연출(충돌)은 info의 다음 전송(5분)이 덮어쓴다.
+DEMO_CENTER = GpsPoint(lat=37.5665, lng=126.9780)
+_MCI_KTAS = {"중증": (2, "중증"), "중등증": (3, "중등증"), "경증": (4, "경증")}
+_mci_incidents: dict[str, dict] = {}  # 다수 사상자 등록 id -> 등록 내용(관제 [출동 지시]가 쓴다)
+
+
+def _ambulance_pos(apid: str) -> GpsPoint | None:
+    info = engine.get_ambulance(apid)
+    return (sim.gps_for(apid) if sim is not None else None) or (info.gps if info else None)
+
+
+def _idle_ambulances_near(gps: GpsPoint, n: int) -> list[str]:
+    """출동하지 않은(사건 없는) 구급차를 가까운 순으로 n대."""
+    rows = []
+    for a in engine.list_ambulances():
+        state = sim.state(a.apid) if sim is not None else None
+        if state and state.get("phase") not in (None, "idle"):
+            continue
+        if engine.get_case_ids_for_apid(a.apid):
+            continue
+        pos = _ambulance_pos(a.apid)
+        if pos is not None:
+            rows.append((haversine_km(gps.lat, gps.lng, pos.lat, pos.lng), a.apid))
+    return [apid for _, apid in sorted(rows)[:n]]
+
+
+def _nearest_center(gps: GpsPoint, levels=("권역응급의료센터",)) -> HospitalInfo | None:
+    rows = [(haversine_km(gps.lat, gps.lng, h.gps.lat, h.gps.lng), h) for h in engine.list_hospitals()
+            if h.emergencyLevel in levels]
+    return min(rows, key=lambda r: r[0])[1] if rows else None
+
+
+def _demo_case(apid: str, ktas: int, complaint: str) -> str:
+    """시연 사건 하나 — 구급대에 묶고 통화 요약(v2 형식)을 바로 매칭한다(작업 스레드 안에서 부른다)."""
+    import uuid
+    case_id = f"demo-{uuid.uuid4().hex[:8]}"
+    engine.register_case(case_id, apid)
+    voice = VoiceCallSummaryMessage.model_validate({
+        "caseId": case_id, "source": "ai",
+        "transcript": {"raw_text": f"[시연] {complaint}", "filtered_text": f"[시연] {complaint}"},
+        "summary": {"ktas_level": ktas, "chief_complaint": {"major": complaint, "minor": complaint}},
+    })
+    _run_match_job(voice)
+    return case_id
+
+
+def _demo_act(case_id: str, action: str, hospital_id: str, reason: str | None = None) -> None:
+    _handle_dashboard_action({"caseId": case_id, "action": action, "hospital_id": hospital_id, "actor": "hospital",
+                              "timestamp": _utcnow_iso(), **({"reason": reason} if reason else {})})
+
+
+def _top_pending(case_id: str, skip: set[str] = frozenset()) -> str | None:
+    result = engine.get_case_result(case_id)
+    if result is None:
+        return None
+    for h in dashboard_payload(result.model_dump())["hospitals"]:
+        if h["status"] == "pending" and h["hospitalId"] not in skip and not h.get("unavailableReason"):
+            return h["hospitalId"]
+    return None
+
+
+def _demo_approve_next(case_id: str, skip: set[str]) -> str | None:
+    """판단 대기 병원을 순서대로 수용시켜 본다 — 실제 데이터엔 응급실 만실(수용 거부)인 병원이 많다."""
+    tried = set(skip)
+    for _ in range(8):
+        hid = _top_pending(case_id, tried)
+        if hid is None:
+            return None
+        _demo_act(case_id, "hospital_approve", hid)
+        if engine.get_case_status(case_id, hid) == "approved":
+            return hid
+        tried.add(hid)
+    return None
+
+
+def _run_demo_scenario(kind: str, ws) -> None:
+    """시연 콘솔·관제의 [상황 부여] — 작업 스레드에서 돈다."""
+    ok, note, made = True, "", []
+    try:
+        if kind == "conflict":
+            # 권역센터 한 곳이 두 환자의 1순위 수용 병원이 되고 여력이 1석 → 관제 판단 대기(배정 요청 모달)
+            center = _nearest_center(DEMO_CENTER)
+            if center is None:
+                raise RuntimeError("권역응급의료센터 정보가 없습니다")
+            if engine.effective_bed_count(center) != 1 or _is_bed_count_unknown(center):
+                engine.update_hospital_info(center.model_copy(update={
+                    "availableBedCount": 1, "bedsByType": {**(center.bedsByType or {}), "ER_ADULT": 1}}))
+                decision_log.log_decision("demo_bed_override", {"hospitalId": center.hospitalId, "beds": 1, "demo": True})
+            apids = _idle_ambulances_near(center.gps, 2)
+            if len(apids) < 2:
+                raise RuntimeError("대기 중인 구급차가 2대 필요합니다")
+            made = [_demo_case(apids[0], 1, "심정지 의심"), _demo_case(apids[1], 2, "뇌졸중 의심")]
+            for case_id in made:
+                _demo_act(case_id, "hospital_approve", center.hospitalId)
+            # 2호차엔 권역센터보다 뒤 순위인 대안 병원도 수용 — 1순위는 둘 다 권역센터로 남고, 배분 안이 2호차를 대안으로 옮긴다
+            # 수용 병원끼리는 finalScore 순이라, 권역센터보다 점수가 높은 병원을 수용시키면 그쪽이 1순위가 돼 충돌이 풀린다
+            result = engine.get_case_result(made[1])
+            hs = dashboard_payload(result.model_dump())["hospitals"] if result else []
+            center_score = next((h.get("finalScore") or 0.0 for h in hs if h["hospitalId"] == center.hospitalId), 0.0)
+            ahead = {h["hospitalId"] for h in hs if (h.get("finalScore") or 0.0) >= center_score}
+            _demo_approve_next(made[1], ahead | {center.hospitalId})
+            note = f"{center.name} 여력 1석 · 환자 2명"
+        elif kind == "refusal":
+            # 병원이 '수술실 사용 중'으로 수용 곤란 → 30분 동안 다른 사건에서 그 병원 +15분(학습 반영)
+            apids = _idle_ambulances_near(DEMO_CENTER, 2)
+            if len(apids) < 2:
+                raise RuntimeError("대기 중인 구급차가 2대 필요합니다")
+            first = _demo_case(apids[0], 2, "흉통")
+            top = _top_pending(first)
+            if top is None:
+                raise RuntimeError("요청 병원이 없습니다")
+            _demo_act(first, "hospital_reject", top, "OR_OCCUPIED")
+            made = [first, _demo_case(apids[1], 2, "흉통")]
+            note = f"{_hospital_name(top)} 수술실 사용 중 → 다음 사건에 30분 반영"
+        elif kind == "no_accept":
+            # 아무도 수용 회신을 안 한 사건 — 사건 상세에서 [수용 확인 요청]·[상황실 지정]
+            apids = _idle_ambulances_near(DEMO_CENTER, 1)
+            if not apids:
+                raise RuntimeError("대기 중인 구급차가 없습니다")
+            made = [_demo_case(apids[0], 2, "의식 저하")]
+            note = "수용 회신 없음 — 관제가 수용 확인 요청 또는 상황실 지정"
+        elif kind == "recent_block":
+            # 1순위 병원이 1시간 전 대동맥응급 차단 공지 → 첫 동시 전송에서 보류(존을 넓히면 포함)
+            center = _nearest_center(DEMO_CENTER, ("권역응급의료센터", "지역응급의료센터"))
+            apids = _idle_ambulances_near(center.gps if center else DEMO_CENTER, 1)
+            if center is None or not apids:
+                raise RuntimeError("센터 병원과 대기 구급차가 필요합니다")
+            start = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")
+            block = {"kind": "severe", "message": "[시연] 흉부외과 의료진 부족", "department": "흉부외과",
+                     "diseaseGroup": "대동맥응급", "startAt": start}
+            engine.update_hospital_info(center.model_copy(update={
+                "acceptanceMessages": [*(center.acceptanceMessages or []), AcceptanceMessage(**block)]}))
+            decision_log.log_decision("demo_block_message", {"hospitalId": center.hospitalId, "demo": True})
+            made = [_demo_case(apids[0], 2, "대동맥 박리 의심")]
+            note = f"{center.name} 최근 차단 공지 → 첫 동시 전송 보류"
+        else:
+            raise RuntimeError(f"모르는 상황: {kind}")
+    except Exception as e:  # noqa: BLE001
+        ok, note = False, str(e)
+    decision_log.log_decision("demo_scenario", {"kind": kind, "ok": ok, "note": note, "caseIds": made, "demo": True})
+    _notify_result(ws, made[0] if made else None, f"demo_scenario:{kind}", ok, note)
+
+
+def _plan_mci(gps: GpsPoint, counts: dict[str, int], radius_km: float = 15.0) -> dict:
+    """다수 사상자 예상 분배(규칙 — spider 줄 길이 + 배정마다 부하, 확인된 병상 여력까지). 확정이 아니라 미리 보기다."""
+    import spider_rule
+    hour = spider_rule.local_hour(datetime.now(timezone.utc))
+    near = []
+    for h in engine.list_hospitals():
+        km = haversine_km(gps.lat, gps.lng, h.gps.lat, h.gps.lng)
+        if km <= radius_km:
+            unknown = _is_bed_count_unknown(h)
+            near.append({"info": h, "km": km, "beds": None if unknown else engine.effective_bed_count(h), "given": 0,
+                         "bySev": {}})
+    summary = {}
+    for n in near:
+        level = n["info"].emergencyLevel or "기타"
+        row = summary.setdefault(level, {"count": 0, "beds": 0, "unknown": 0})
+        row["count"] += 1
+        if n["beds"] is None:
+            row["unknown"] += 1
+        else:
+            row["beds"] += n["beds"]
+    unplaced = 0
+    for sev in ("중증", "중등증", "경증"):
+        k, _ = _MCI_KTAS[sev]
+        for _ in range(max(0, int(counts.get(sev, 0)))):
+            best = None
+            for n in near:
+                if n["beds"] is not None and n["beds"] - n["given"] <= 0:
+                    continue
+                travel = n["km"] * DEFAULT_MIN_PER_KM
+                load = 10.0 * n["given"] / (n["given"] + max(1, n["beds"] or 1))
+                ln = spider_rule.line(k, "general", n["info"], travel, load, 0, hour)
+                if ln["len"] is None:
+                    continue
+                if best is None or ln["len"] < best[0]:
+                    best = (ln["len"], n)
+            if best is None:
+                unplaced += 1
+                continue
+            best[1]["given"] += 1
+            best[1]["bySev"][sev] = best[1]["bySev"].get(sev, 0) + 1
+    plan = sorted(({"hospitalId": n["info"].hospitalId, "name": n["info"].name, "emergencyLevel": n["info"].emergencyLevel,
+                    "km": round(n["km"], 1), "beds": n["beds"], "count": n["given"], "bySeverity": n["bySev"]}
+                   for n in near if n["given"]), key=lambda r: -r["count"])
+    return {"hospitalsInRadius": len(near), "radiusKm": radius_km, "byLevel": summary, "plan": plan, "unplaced": unplaced}
+
+
+def _handle_mci_register(ws, payload: dict) -> None:
+    """관제 [다수 사상자 등록](2026-11-04): 위치·추정 사상자 수를 받아 에이전트가 반경 병원 여력 집계 → 가까운 대기 구급대
+    추천 → 예상 분배(규칙)를 계산해 그 관제 탭에 mci_assessment로 돌려준다. 출동은 관제가 [출동 지시]로 정한다."""
+    import uuid
+    if _socket_identity.get(ws, (None, None))[0] != "monitor":
+        _notify_refused(ws, None, "not_dispatcher")
+        return
+    try:
+        gps = GpsPoint(lat=float(payload["lat"]), lng=float(payload["lng"]))
+    except (KeyError, TypeError, ValueError):
+        _notify_result(ws, None, "mci_register", False, "위치가 필요합니다")
+        return
+    counts = {k: max(0, int((payload.get("counts") or {}).get(k, 0) or 0)) for k in _MCI_KTAS}
+    total = sum(counts.values())
+    plan = _plan_mci(gps, counts)
+    apids = _idle_ambulances_near(gps, total)
+    incident_id = f"mci-{uuid.uuid4().hex[:6]}"
+    names = {a.apid: a.name for a in engine.list_ambulances()}
+    _mci_incidents[incident_id] = {"gps": gps.model_dump(), "counts": counts, "apids": apids, "label": payload.get("label")}
+    message = {
+        "type": "mci_assessment", "incidentId": incident_id, "gps": gps.model_dump(), "label": payload.get("label"),
+        "counts": counts, "total": total, "source": "rule",
+        "ambulances": [{"apid": a, "name": names.get(a), "km": round(haversine_km(gps.lat, gps.lng, p.lat, p.lng), 1)}
+                       for a in apids if (p := _ambulance_pos(a)) is not None],
+        **plan,
+        "steps": [
+            {"stage": "인식", "source": "rule", "text": f"반경 {plan['radiusKm']:g}km 병원 {plan['hospitalsInRadius']}곳의 응급실 여력·등급 집계"},
+            {"stage": "판단", "source": "rule", "text": f"사상자 {total}명을 중증부터 줄 길이·여력·부하로 분배 — {len(plan['plan'])}곳"
+                                                       + (f", 미배정 {plan['unplaced']}명(범위 확장 필요)" if plan["unplaced"] else "")},
+            {"stage": "행동", "source": "rule", "text": f"가까운 대기 구급대 {len(apids)}대 추천 — 관제가 [출동 지시]하면 출동"},
+        ],
+    }
+    decision_log.log_decision("mci_registered", {"incidentId": incident_id, "gps": gps.model_dump(), "counts": counts,
+                                                 "plan": plan["plan"], "unplaced": plan["unplaced"], "apids": apids})
+    _send_to_socket(ws, message, "다수 사상자 분석")
+
+
+def _handle_mci_dispatch(ws, payload: dict) -> None:
+    """관제 [출동 지시] — 등록한 다수 사상자 현장으로 추천 구급대를 출동시킨다(출동 시뮬레이션, 사건마다 새 caseId)."""
+    import uuid
+    if _socket_identity.get(ws, (None, None))[0] != "monitor":
+        _notify_refused(ws, None, "not_dispatcher")
+        return
+    incident = _mci_incidents.get(payload.get("incidentId") or "")
+    if incident is None or sim is None:
+        _notify_result(ws, None, "mci_dispatch", False, "출동 시뮬레이션이 꺼져 있거나 등록이 없습니다")
+        return
+    sent = 0
+    for apid in payload.get("apids") or incident["apids"]:
+        _handle_sim_command({"type": "dispatch", "apid": apid, "caseId": f"case-{uuid.uuid4().hex[:10]}",
+                             "timestamp": _utcnow_iso(), "target": incident["gps"], "targetMode": "map"})
+        sent += 1
+    decision_log.log_decision("mci_dispatched", {"incidentId": payload.get("incidentId"), "count": sent})
+    _notify_result(ws, None, "mci_dispatch", sent > 0, f"{sent}대 출동")
+
+
 # ── 관제 지도(role=monitor, 2026-10-03) ─────────────────────────────────────
 # 병원 대시보드는 직접 접속하지 않고, 관제 지도에서 환자 요청이 온 병원을 눌러 연다. 지도는 전체 병원·구급차
 # 위치(map_overview), 사건 요약(case_overview), 구급차 이동(ambulance_phase·position)을 받는다. 통화 전문·
@@ -986,7 +1314,7 @@ _MONITOR_EXPLAIN_FIELDS = (
     "gps", "emergencyLevel", "availableBedCount", "bedCountUnknown", "bedDataStale", "erBedCapacity", "erOccupancyPct",
     "travelMin", "travelBasis", "etaMin", "finalScore", "specialtyMatch", "bedReliability", "reliability", "severeFreshness",
     "demoteReasons", "bonusReasons", "loadReason", "occupancyReason", "inFlightCount", "excluded", "acceptanceMessages",
-    "notSelected", "ktasSuitability",
+    "notSelected", "ktasSuitability", "refusalPenaltyMin", "refusalReasons", "dispatchHold",
 )
 
 
@@ -1012,6 +1340,7 @@ def _monitor_case(payload: dict) -> dict:
         chiefComplaint=patient.get("chiefComplaint"), requiredDepartment=patient.get("requiredDepartment"),
         patient=patient.get("patient"), confirmedBy=patient.get("confirmedBy"),
         diseaseGroup=engine.case_group(payload["caseId"]),
+        dispatchPolicy=payload.get("dispatchPolicy"),
         zoneActive=payload.get("zoneActive") or [],
         zoneBandKm=ZONE_BAND_KM,
         hospitals=[
@@ -1919,6 +2248,7 @@ def _forget_case(case_id: str, reason: str) -> None:
     with _triage_lock:
         _transport_triage.pop(case_id, None)
     _pre_alerts.pop(case_id, None)
+    _confirm_requests.pop(case_id, None)
     for modes in _input_modes.values():
         modes.pop(case_id, None)
     _record_case_closed(case_id, reason)
@@ -2024,7 +2354,11 @@ def _handle_dashboard_action(payload: dict, ws=None, allocated: bool = False) ->
     # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
     arrival_refusal = _build_rejection_payload(action) if action.action in ("arrival_refused", "transport_withdraw") else None
     pending_decision = action.action == "final_approval" and _is_dispatcher_pending(action.caseId)
+    designated = (action.action == "final_approval" and action.actor == "dispatcher"
+                  and engine.get_case_status(action.caseId, action.hospital_id) == "pending")
     applied = engine.apply_approval_action(action)
+    if applied and designated:
+        _send_dispatcher_designated(action.caseId, action.hospital_id, action.timestamp)
     if applied:
         _archive_call("action", action.model_dump(), engine.get_case_apid(action.caseId))
         if pending_decision:
@@ -2526,6 +2860,14 @@ def dashboard_socket(ws):
                 _handle_scene_input_mode(payload)
             elif payload.get("type") == "demo_mode":
                 _set_demo_mode(payload.get("mode", ""))
+            elif payload.get("type") == "confirm_request":
+                _handle_confirm_request(ws, payload)
+            elif payload.get("type") == "demo_scenario":
+                _match_executor.submit(_run_demo_scenario, str(payload.get("kind") or ""), ws)
+            elif payload.get("type") == "mci_register":
+                _handle_mci_register(ws, payload)
+            elif payload.get("type") == "mci_dispatch":
+                _handle_mci_dispatch(ws, payload)
             elif payload.get("type") == "zone_expand_now":
                 try:
                     expand = ZoneExpandNow.model_validate(payload)

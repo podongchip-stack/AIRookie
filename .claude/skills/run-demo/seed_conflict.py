@@ -23,10 +23,12 @@ for hid, name, lat, lng, beds, level, em in hospitals:
         "equipmentOperating": {"CT": "Y", "ANGIO": "Y" if level != "지역응급의료기관" else "N"}, "updatedAt": now(),
     }, timeout=10).raise_for_status()
 
+# 돌릴 때마다 새 사건 ID — 같은 ID를 다시 쓰면 지난번 확정이 남아 충돌이 다시 생기지 않는다
+RUN = datetime.now().strftime("%H%M%S")
 cases = [  # (caseId, apid, 구급대 이름, 위치, KTAS, 주 호소)
-    ("case-A", "A0000001", "구급 1호차", (37.5665, 126.9780), 1, "심정지 의심"),
-    ("case-B", "A0000002", "구급 2호차", (37.5640, 126.9800), 2, "뇌졸중 의심"),
-    ("case-C", "A0000003", "구급 3호차", (37.5620, 126.9760), 3, "복통"),
+    (f"case-A-{RUN}", "A0000001", "구급 1호차", (37.5665, 126.9780), 1, "심정지 의심"),
+    (f"case-B-{RUN}", "A0000002", "구급 2호차", (37.5640, 126.9800), 2, "뇌졸중 의심"),
+    (f"case-C-{RUN}", "A0000003", "구급 3호차", (37.5620, 126.9760), 3, "복통"),
 ]
 for _, apid, name, (lat, lng), _, _ in cases:
     requests.post(f"{HUB}/info/ambulances", json={"apid": apid, "name": name, "gps": {"lat": lat, "lng": lng},
@@ -59,7 +61,8 @@ for hid in ("H001", "H002"):
     h.send(json.dumps({"type": "identify", "role": "hospital", "id": hid}))
     hosp[hid] = h
 time.sleep(1)
-for case_id, hid in (("case-A", "H001"), ("case-B", "H001"), ("case-C", "H001"), ("case-B", "H002"), ("case-C", "H002")):
+a, b, c = (cid for cid, *_ in cases)
+for case_id, hid in ((a, "H001"), (b, "H001"), (c, "H001"), (b, "H002"), (c, "H002")):
     hosp[hid].send(json.dumps({"action": "hospital_approve", "hospital_id": hid, "actor": "hospital",
                                "timestamp": now(), "caseId": case_id}))
     time.sleep(0.5)

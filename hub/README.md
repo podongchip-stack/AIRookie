@@ -385,6 +385,28 @@ NEWS2 공개 표준 + 쇼크지수), 검증은 `python test_transport_triage.py`
   새로 설치해서 검증했다 — voice 쪽 라이브러리(faster-whisper 등)는 안 들어있는 깔끔한
   환경이다.
 
+## 상황실 배정 (2026-11-04)
+
+발표 방향 — 평상시엔 구급대원이 1순위 수용 병원으로 이송 승인하고, 여러 사건이 한 병원으로 몰려 여력이 모자라면 상황실이 정한다.
+에이전트(hub)는 감지·배분 안·근거·기록까지 하고 결정은 관제가 한다. 전부 규칙 기반이며 상수는 전문의 검토 전 초안이다.
+
+| 메시지 | 방향 | 내용 |
+|---|---|---|
+| `assignment_conflicts` | hub → 관제 | 충돌 묶음(`hospitalId`·`caseIds`·`capacity`·`openedAt`) + `proposal`(사건별 제안 병원·`designation`·이유·후보 근거) + `stats` |
+| `dispatcher_pending` | hub → 구급차 | `{caseId, pending, hospitalId, hospitalName}` — 대기 중 구급대원 `final_approval`은 `action_refused`(`dispatcher_pending`) |
+| `confirm_request` | 관제 → hub | `{caseId, hospitalIds?}` → 병원 탭 `dispatcher_request` |
+| `final_approval` (`actor: dispatcher`) | 관제 → hub | 수용 병원 또는 판단 대기 병원(상황실 지정 → 병원 탭 `dispatcher_designated`) |
+| `mci_register` / `mci_dispatch` | 관제 → hub | 다수 사상자 등록 → `mci_assessment`, 추천 구급대 출동 |
+| `demo_scenario` | 콘솔·관제 → hub | `conflict` · `refusal` · `no_accept` · `recent_block` 시연 장면 |
+
+- 충돌 = 이송 확정 전 사건 2건 이상의 1순위 수용 병원이 같고 여력(가용 − 이송 중) < 사건 수(미상은 2건 이상). `assignment_agent.py`
+- 전달 필터: 확인된 사실(`ktasSuitability.confirmedBlock`)·최근 차단 공지(`dispatchHold`)만 전달 안 함 — 나머지는 보내고 정렬이 뒤로
+- 수용 곤란 되먹임: `refusal_memory.py`(순간적 30분 +15분 / 구조적 같은 질환군 24시간 뒤로)
+- 병상 위험 등급: `bedReliability.riskLevel`·`checkedAt`
+- 의사결정 로그: `assignment_conflicts`·`assignment_proposal`·`assignment_decided`(제안 채택 여부)·`dispatcher_confirm_request`·`dispatcher_designated`·
+  `refusal_feedback_recorded`·`mci_registered`·`mci_dispatched`·`demo_scenario`
+- 시드: `.claude/skills/run-demo/seed_conflict.py`, 또는 콘솔 [상황 부여 ▾]
+
 ## 입출력 데이터 포맷
 
 > 아래 스키마 모두 가안이며 팀 리뷰 후 확정 예정.

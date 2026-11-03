@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ControlMapPanel } from "@/components/map/ControlMapPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
-  AMB_CHIP, AMB_RANK, SIDEBAR_W, C, EVENT_TONE, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL,
+  AMB_CHIP, AMB_RANK, SIDEBAR_W, C, GLASS, GLASS_BLOBS, EVENT_TONE, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL,
   ambState, buildIncidents, counts, fmtClock, fmtElapsed, fmtHm, fmtMd, haversineKm, pastResult, sevOf, shortAmb, shortHospital,
   stageOf, zoneText,
   type AmbKey, type Incident, type St,
@@ -15,6 +15,8 @@ import { useCaseArchive } from "@/hooks/use-case-archive";
 import { useControlAlerts } from "@/hooks/use-control-alerts";
 import { RejectionStatsModal } from "@/components/map/RejectionStatsModal";
 import { AssignmentModal } from "@/components/map/AssignmentModal";
+import { CaseDetailPanel } from "@/components/map/CaseDetailPanel";
+import { MciRegisterModal } from "@/components/map/MciRegisterModal";
 import { AlertStack, topAlertOf, useAlertTabTitle } from "@/components/map/ControlAlerts";
 import { ARCHIVE_MOCK, daysAgo, type ArchiveResult } from "@/lib/case-archive";
 import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
@@ -44,7 +46,9 @@ const LEGEND_LEVELS: [string, string][] = [
 ];
 
 export default function MonitorMapPage() {
-  const { state, connectionMode, sendAction } = useDashboardSocket({ role: "monitor", id: "map" });
+  const { state, connectionMode, sendAction, sendConfirmRequest, sendRaw, sendZoneExpand } = useDashboardSocket({ role: "monitor", id: "map" });
+  const [leftTab, setLeftTab] = useState<"case" | "amb">("case");
+  const [showMci, setShowMci] = useState(false);
   // 상황실 배정 요청(2026-11-04) — hub가 1순위 수용 병원 겹침 + 여력 부족을 묶어 보낸다. 새 묶음이 생기면 모달을 자동으로 연다.
   const assignmentGroups = state.assignmentGroups;
   const assignmentCount = assignmentGroups.reduce((n, g) => n + g.caseIds.length, 0);
@@ -112,6 +116,7 @@ export default function MonitorMapPage() {
   const selectCase = useCallback((caseId: string) => {
     setFocusNonce((n) => n + 1);
     setSelId(caseId);
+    setLeftTab("case");
     setTab("all");
     setSeenAt((prev) => ({ ...prev, [caseId]: Date.now() }));
   }, []);
@@ -169,7 +174,7 @@ export default function MonitorMapPage() {
         key={a.apid}
         onMouseEnter={() => setHoverAmb(a.apid)}
         onMouseLeave={() => setHoverAmb("")}
-        style={{ ...acellStyle, flex: "none", background: on ? "#E8EEF8" : a.key === "s" ? "#FFF4EC" : undefined }}
+        style={{ ...acellStyle, flex: "none", background: on ? GLASS.tint : a.key === "s" ? "#FFF4EC" : undefined }}
       >
         <span title={a.name} style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{shortAmb(a.name)}</span>
         <span style={{ flex: "none", color: C.sub, fontSize: 12, minWidth: 38, textAlign: "right" }}>
@@ -195,7 +200,13 @@ export default function MonitorMapPage() {
 
   const past = state.caseHistory;
   const live = connectionMode === "live";
-  const alertView = useControlAlerts(incidents, live);
+  // 관제 판단 대기 사건 → 시작 시각(대기 시간 알림, 2026-11-04)
+  const assignOpened = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const g of assignmentGroups) for (const c of g.caseIds) if (g.openedAt) out[c] = g.openedAt;
+    return out;
+  }, [assignmentGroups]);
+  const alertView = useControlAlerts(incidents, live, assignOpened);
 
   // ── 3D 거미줄과의 연동(2026-11-01) — 같은 도메인의 iframe이라 거미줄 화면의 함수를 직접 부른다 ──
   type SpiderWin = Window & {
@@ -307,20 +318,32 @@ export default function MonitorMapPage() {
   }, [alertView.alerts, selectCase]);
 
   return (
-    <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: C.bg, color: C.ink, whiteSpace: "nowrap" }}>
+    <div style={{ position: "fixed", inset: 0, overflow: "hidden", background: C.bg, color: C.ink, whiteSpace: "nowrap", fontFamily: GLASS.font }}>
+      {/* 발표 자료와 같은 흐린 파스텔 원 — 지도가 덮지 않는 곳·지도가 뜨기 전에 보인다 */}
+      <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+        {GLASS_BLOBS.map((b, i) => (
+          <span key={i} style={{ position: "absolute", left: b.left, top: b.top, width: b.size, height: b.size, borderRadius: "50%", background: `radial-gradient(circle, ${b.color} 0%, transparent 68%)`, filter: "blur(40px)" }} />
+        ))}
+      </div>
       {/* 시연 영상 모드(2026-10-06) — 관제 지도는 ijs.mp4를 반복 재생(2026-10-08, /verify/stage 순환 없음) */}
       <DemoVideoOverlay src="/demo-videos/ijs.mp4" />
       <div style={{ position: "absolute", inset: 0, boxSizing: "border-box", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
         {/* 헤더 + 범례 */}
-        <Glass as="header" dark={dark} data-map-cover="top" style={{ position: "relative", zIndex: 10, flex: "none", borderRadius: 6, padding: "12px 20px", gap: 10 }}>
+        <Glass as="header" dark={dark} data-map-cover="top" style={{ position: "relative", zIndex: 10, flex: "none", borderRadius: GLASS.radius, padding: "12px 22px", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <Link href="/" style={{ fontSize: 19, fontWeight: 900, letterSpacing: "-0.02em", color: C.navy }}>골든링크</Link>
-            <div style={{ width: 1, height: 16, background: "#CDD3DA" }} />
+            <div style={{ width: 1, height: 16, background: C.line }} />
             <div style={{ fontSize: 13, color: C.ink3 }}>관제 지도 · 병원·구급차 실시간 위치</div>
             <div style={{ flex: "1 1 0" }} />
             <button type="button" aria-label="지난 사건 보기" onClick={() => setShowPast(true)} style={toolBtnStyle}>
               지난 사건 <b style={{ fontWeight: 900 }}>오늘 {past.length}</b>
             </button>
+            <span title="골든링크 AI 에이전트 — 인식(휴대폰·서버 AI) → 판단·행동·학습(규칙). 최종 결정은 상황실" style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 28, padding: "0 12px", borderRadius: 999, background: GLASS.tint, color: C.blue, fontSize: 12, fontWeight: 700 }}>
+              <span className="ctl-live" style={{ width: 7, height: 7, borderRadius: "50%", background: C.blue }} />
+              AI 에이전트 작동 중 · 사건 {realIncidents.length}
+              {state.assignmentStats && state.assignmentStats.decided > 0 && ` · 제안 채택 ${state.assignmentStats.followed}/${state.assignmentStats.decided}`}
+            </span>
+            <button type="button" onClick={() => setShowMci(true)} style={{ ...toolBtnStyle, borderColor: C.blue, color: C.blue, fontWeight: 700 }}>다수 사상자 등록</button>
             {assignmentCount > 0 && (
               <button type="button" onClick={() => setShowAssign(true)} style={{ ...toolBtnStyle, background: "#D93025", borderColor: "#D93025", color: "#fff", fontWeight: 900 }}>
                 배정 요청 {assignmentCount}건
@@ -384,7 +407,7 @@ export default function MonitorMapPage() {
         <div style={{ position: "relative", flex: "none", height: 0, marginTop: -14, zIndex: 250 }}>
           <AlertStack dark={dark} alerts={alertView.alerts} incidents={incidents} onAck={alertView.ack} onAckAll={alertView.ackAll} onOpen={selectCase} onHandle={(caseId, keys) => { alertView.startHandling(caseId, keys); selectCase(caseId); }} />
         </div>
-        <style>{"@keyframes ctlbl{0%,100%{opacity:1}50%{opacity:.3}}.ctl-live{animation:ctlbl 1.6s infinite}@keyframes ctlnew{0%,100%{background:#fff}50%{background:#FFD9D5}}.ctl-new{animation:ctlnew 1s ease-in-out 10;border-color:#D93025!important}.ctl-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#C5CCD6 transparent}.ctl-scroll::-webkit-scrollbar{width:6px}.ctl-scroll::-webkit-scrollbar-thumb{background:#C5CCD6;border-radius:3px}"}</style>
+        <style>{"@keyframes ctlbl{0%,100%{opacity:1}50%{opacity:.3}}.ctl-live{animation:ctlbl 1.6s infinite}@keyframes ctlnew{0%,100%{background:#fff}50%{background:#FFD9D5}}.ctl-new{animation:ctlnew 1s ease-in-out 10;border-color:#D93025!important}.ctl-scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#CFC6F5 transparent}.ctl-scroll::-webkit-scrollbar{width:6px}.ctl-scroll::-webkit-scrollbar-thumb{background:#CFC6F5;border-radius:3px}"}</style>
 
         <div style={{ flex: "1 1 0", minHeight: 0, display: "flex", gap: 16 }}>
           {/* 왼쪽: 진행 중인 사건 · 지난 사건 · 선택한 사건의 병원 */}
@@ -420,7 +443,7 @@ export default function MonitorMapPage() {
                           ...irowStyle, height: 62, minHeight: 62,
                           // 선택 표시는 연한 테두리 1px + 옅은 배경(2026-10-04) — 진한 이중선(테두리+그림자)은 스크롤
                           // 영역 가장자리에서 잘려 두께가 들쭉날쭉해 보였다
-                          ...(on ? { border: "1px solid #C9D4E6", background: "#F5F8FF" } : {}),
+                          ...(on ? { border: `1px solid ${C.blue}`, background: GLASS.tint } : {}),
                         }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -435,7 +458,7 @@ export default function MonitorMapPage() {
                           <span style={{ flex: "none", fontSize: 12, color: C.sub, fontVariantNumeric: "tabular-nums" }}>{fmtElapsed(now - inc.startedAt)}</span>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>
-                          <span style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, color: alertView.handling.has(inc.caseId) ? "#1F4E9C" : alert ? (alertRed ? "#D93025" : "#C75B00") : stage.color, overflow: "hidden", textOverflow: "ellipsis" }}>{alertView.handling.has(inc.caseId) ? `처리 중${alert ? ` · ${alert.title}` : ""}` : alert ? `${alert.title}${alert.detail ? ` · ${alert.detail}` : ""}` : stage.text}</span>
+                          <span style={{ flex: "1 1 auto", minWidth: 0, fontWeight: 700, color: alertView.handling.has(inc.caseId) ? C.blue : alert ? (alertRed ? "#D93025" : "#C75B00") : stage.color, overflow: "hidden", textOverflow: "ellipsis" }}>{alertView.handling.has(inc.caseId) ? `처리 중${alert ? ` · ${alert.title}` : ""}` : alert ? `${alert.title}${alert.detail ? ` · ${alert.detail}` : ""}` : stage.text}</span>
                           {unseen > 0 && (
                             <span style={{ flex: "none", fontSize: 10, fontWeight: 700, color: "#fff", background: C.blue, borderRadius: 4, padding: "0 6px", lineHeight: "15px" }}>새 {unseen}</span>
                           )}
@@ -450,73 +473,104 @@ export default function MonitorMapPage() {
               </div>
 
               {incidents.length > 3 && (
-                <div style={{ flex: "none", textAlign: "center", fontSize: 11, fontWeight: 700, color: "#1F4E9C", lineHeight: "14px" }}>
+                <div style={{ flex: "none", textAlign: "center", fontSize: 11, fontWeight: 700, color: C.blue, lineHeight: "14px" }}>
                   드래그·스크롤로 나머지 {incidents.length - 3}건 확인
                 </div>
               )}
 
 
             </Glass>
-            <Glass dark={dark} style={{ ...cardStyle, flex: "1 1 0", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>구급차 {ambRows.length}대</div>
-                <div style={{ fontSize: 11.5, color: C.sub }}>{selected ? "선택한 사건 기준 · 가까운 순" : "상태순"}</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <input
-                  type="search"
-                  value={ambQuery}
-                  onChange={(e) => setAmbQuery(e.target.value)}
-                  placeholder="구급차 이름 검색"
-                  aria-label="구급차 이름 검색"
-                  style={{ flex: "1 1 0", minWidth: 0, height: 28, boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 4, padding: "0 10px", fontFamily: "inherit", fontSize: 12.5, color: C.ink, background: "#fff" }}
-                />
-                <button
-                  type="button"
-                  aria-pressed={standbyOnMap}
-                  onClick={() => setStandbyOnMap((v) => !v)}
-                  title="켜면 기지 대기 구급차를 지도에 전부 표시합니다. 기본은 움직이는 구급차와 가까운 대기 5대만 보입니다."
-                  style={{ flex: "none", height: 28, padding: "0 10px", border: `1px solid ${standbyOnMap ? C.navy : C.line}`, borderRadius: 6, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: standbyOnMap ? C.navy : "#fff", color: standbyOnMap ? "#fff" : C.ink2 }}
-                >
-                  지도에 대기 전체
+            {/* 사건 상세 / 구급차 — 진행 중인 사건을 누르면 사건 상세(환자 정보·진행 상황·AI 에이전트 활동·병원 응답·기록) */}
+            <div role="tablist" aria-label="왼쪽 아래 패널" style={{ flex: "none", display: "flex", gap: 6 }}>
+              {([["case", "사건 상세"], ["amb", `구급차 ${ambRows.length}대`]] as const).map(([key, label]) => (
+                <button key={key} type="button" role="tab" aria-selected={leftTab === key} onClick={() => setLeftTab(key)}
+                  style={{ ...tab2Style, ...(leftTab === key ? { background: C.blue, color: "#fff" } : { background: "rgba(255,255,255,.6)", color: C.ink2 }) }}>
+                  {label}
                 </button>
-              </div>
-              <div className="ctl-scroll" tabIndex={0} aria-label="구급차 목록" style={{ minHeight: 0, overflowY: "auto", flex: "1 1 0" }}>
-              {ambQ ? (
-                <div className="ctl-scroll" style={{ flex: "0 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
-                  <div style={{ flex: "none", fontSize: 11.5, fontWeight: 700, color: C.sub }}>검색 결과 {ambHits.length}대</div>
-                  {ambHits.map(renderAmb)}
-                  {ambHits.length === 0 && <div style={{ padding: "16px 8px", textAlign: "center", fontSize: 12.5, color: C.muted }}>이름이 맞는 구급차가 없습니다.</div>}
-                </div>
-              ) : (
-                <>
-                  {/* 움직이는 구급차는 고정, 스크롤은 기지 대기 목록만 */}
-                  <div style={{ flex: "none", display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: C.sub }}>
-                      움직이는 구급차 {activeAmbs.length}대 <span style={{ fontWeight: 500 }}>· 현장 {ambCount.s} · 출동 {ambCount.d} · 이송 중 {ambCount.t}</span>
+              ))}
+            </div>
+            {leftTab === "case" ? (
+              <Glass dark={dark} style={{ ...cardStyle, flex: "1 1 0", gap: 8 }}>
+                <div className="ctl-scroll" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto", paddingRight: 4 }}>
+                  {selected && !selected.fake ? (
+                    <CaseDetailPanel
+                      inc={selected}
+                      mc={state.monitorCases[selected.caseId]}
+                      group={assignmentGroups.find((g) => g.caseIds.includes(selected.caseId))}
+                      now={now}
+                      onConfirmRequest={(caseId) => sendConfirmRequest(caseId)}
+                      onZoneExpand={(caseId) => sendZoneExpand(caseId)}
+                      onDesignate={dispatchTo}
+                    />
+                  ) : (
+                    <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 12.5, color: C.muted, whiteSpace: "normal" }}>
+                      진행 중인 사건을 누르면 환자 정보·진행 상황·AI 에이전트 활동·기록이 여기에 뜹니다.
                     </div>
-                    {activeAmbs.map(renderAmb)}
-                    {activeAmbs.length === 0 && <div style={{ padding: "10px 8px", textAlign: "center", fontSize: 12.5, color: C.muted }}>지금 움직이는 구급차가 없습니다.</div>}
-                    <button
-                      type="button"
-                      aria-expanded={standbyOpen}
-                      onClick={() => setStandbyOpen((v) => !v)}
-                      style={{ flex: "none", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between", height: 30, padding: "0 10px", border: `1px solid ${C.line2}`, borderRadius: 4, background: C.bg, fontFamily: "inherit", fontSize: 12, fontWeight: 700, color: C.ink2, cursor: "pointer" }}
-                    >
-                      <span>기지 대기 {standbyAmbs.length}대{!standbyOpen && center ? " · 가까운 5대" : ""}</span>
-                      <span aria-hidden="true">{standbyOpen ? "▴" : "▾"}</span>
-                    </button>
-                  </div>
+                  )}
+                </div>
+              </Glass>
+            ) : (
+              <Glass dark={dark} style={{ ...cardStyle, flex: "1 1 0", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 2px" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>구급차 {ambRows.length}대</div>
+                  <div style={{ fontSize: 11.5, color: C.sub }}>{selected ? "선택한 사건 기준 · 가까운 순" : "상태순"}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="search"
+                    value={ambQuery}
+                    onChange={(e) => setAmbQuery(e.target.value)}
+                    placeholder="구급차 이름 검색"
+                    aria-label="구급차 이름 검색"
+                    style={{ flex: "1 1 0", minWidth: 0, height: 28, boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 4, padding: "0 10px", fontFamily: "inherit", fontSize: 12.5, color: C.ink, background: "#fff" }}
+                  />
+                  <button
+                    type="button"
+                    aria-pressed={standbyOnMap}
+                    onClick={() => setStandbyOnMap((v) => !v)}
+                    title="켜면 기지 대기 구급차를 지도에 전부 표시합니다. 기본은 움직이는 구급차와 가까운 대기 5대만 보입니다."
+                    style={{ flex: "none", height: 28, padding: "0 10px", border: `1px solid ${standbyOnMap ? C.navy : C.line}`, borderRadius: 6, fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer", background: standbyOnMap ? C.navy : "#fff", color: standbyOnMap ? "#fff" : C.ink2 }}
+                  >
+                    지도에 대기 전체
+                  </button>
+                </div>
+                <div className="ctl-scroll" tabIndex={0} aria-label="구급차 목록" style={{ minHeight: 0, overflowY: "auto", flex: "1 1 0" }}>
+                {ambQ ? (
                   <div className="ctl-scroll" style={{ flex: "0 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
-                    {(standbyOpen ? standbyAmbs : nearStandby).map(renderAmb)}
-                    {!standbyOpen && !center && (
-                      <div style={{ flex: "none", padding: "2px 8px", fontSize: 11.5, color: C.muted, whiteSpace: "normal" }}>기지 대기 구급차 5대 표시 · 위 버튼으로 전체를 펼칠 수 있어요.</div>
-                    )}
+                    <div style={{ flex: "none", fontSize: 11.5, fontWeight: 700, color: C.sub }}>검색 결과 {ambHits.length}대</div>
+                    {ambHits.map(renderAmb)}
+                    {ambHits.length === 0 && <div style={{ padding: "16px 8px", textAlign: "center", fontSize: 12.5, color: C.muted }}>이름이 맞는 구급차가 없습니다.</div>}
                   </div>
-                </>
-              )}
-              </div>
-            </Glass>
+                ) : (
+                  <>
+                    {/* 움직이는 구급차는 고정, 스크롤은 기지 대기 목록만 */}
+                    <div style={{ flex: "none", display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: C.sub }}>
+                        움직이는 구급차 {activeAmbs.length}대 <span style={{ fontWeight: 500 }}>· 현장 {ambCount.s} · 출동 {ambCount.d} · 이송 중 {ambCount.t}</span>
+                      </div>
+                      {activeAmbs.map(renderAmb)}
+                      {activeAmbs.length === 0 && <div style={{ padding: "10px 8px", textAlign: "center", fontSize: 12.5, color: C.muted }}>지금 움직이는 구급차가 없습니다.</div>}
+                      <button
+                        type="button"
+                        aria-expanded={standbyOpen}
+                        onClick={() => setStandbyOpen((v) => !v)}
+                        style={{ flex: "none", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between", height: 30, padding: "0 10px", border: `1px solid ${C.line2}`, borderRadius: 4, background: C.bg, fontFamily: "inherit", fontSize: 12, fontWeight: 700, color: C.ink2, cursor: "pointer" }}
+                      >
+                        <span>기지 대기 {standbyAmbs.length}대{!standbyOpen && center ? " · 가까운 5대" : ""}</span>
+                        <span aria-hidden="true">{standbyOpen ? "▴" : "▾"}</span>
+                      </button>
+                    </div>
+                    <div className="ctl-scroll" style={{ flex: "0 1 auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 7, paddingRight: 6 }}>
+                      {(standbyOpen ? standbyAmbs : nearStandby).map(renderAmb)}
+                      {!standbyOpen && !center && (
+                        <div style={{ flex: "none", padding: "2px 8px", fontSize: 11.5, color: C.muted, whiteSpace: "normal" }}>기지 대기 구급차 5대 표시 · 위 버튼으로 전체를 펼칠 수 있어요.</div>
+                      )}
+                    </div>
+                  </>
+                )}
+                </div>
+              </Glass>
+            )}
           </aside>
           <aside aria-label="병원 정보" data-map-cover="right" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, marginLeft: "auto", height: "100%", minHeight: 0, display: "flex" }}>
             <Glass dark={dark} style={{ ...cardStyle, width: "100%", flex: "1 1 0", gap: 12 }}>
@@ -526,7 +580,7 @@ export default function MonitorMapPage() {
               </div>
               <div className="ctl-scroll" tabIndex={0} aria-label="병원 목록" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, paddingRight: 4 }}>
                 {(overview?.hospitals ?? []).map((h) => (
-                  <article key={h.hospitalId} onMouseEnter={() => setHoverHospital(h.hospitalId)} onMouseLeave={() => setHoverHospital("")} style={{ flex: "none", border: `1px solid ${hoverHospital === h.hospitalId ? C.blue : C.line}`, borderRadius: 5, padding: 12, background: "#fff", whiteSpace: "normal" }}>
+                  <article key={h.hospitalId} onMouseEnter={() => setHoverHospital(h.hospitalId)} onMouseLeave={() => setHoverHospital("")} style={{ flex: "none", border: `1px solid ${hoverHospital === h.hospitalId ? C.blue : C.line}`, borderRadius: GLASS.radiusSm, padding: 12, background: "rgba(255,255,255,.66)", whiteSpace: "normal" }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{h.name}</div>
                     <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12, color: C.ink2 }}>
                       <span>가용 병상 <b>{h.bedCountUnknown !== false || h.availableBedCount == null ? "미상" : `${h.availableBedCount}개`}</b></span>
@@ -576,7 +630,16 @@ export default function MonitorMapPage() {
       </div>
 
       {showReject && <RejectionStatsModal onClose={() => setShowReject(false)} />}
-      {showAssign && assignmentCount > 0 && <AssignmentModal groups={assignmentGroups} onClose={() => setShowAssign(false)} onDispatch={dispatchTo} />}
+      {showMci && (
+        <MciRegisterModal
+          assessment={state.mciAssessment}
+          center={selected?.center ?? null}
+          onClose={() => setShowMci(false)}
+          onRegister={(body) => sendRaw({ type: "mci_register", ...body })}
+          onDispatch={(incidentId) => sendRaw({ type: "mci_dispatch", incidentId })}
+        />
+      )}
+      {showAssign && assignmentCount > 0 && <AssignmentModal groups={assignmentGroups} now={now} onClose={() => setShowAssign(false)} onDispatch={dispatchTo} onConfirmRequest={(caseId) => sendConfirmRequest(caseId)} />}
       {showPast && (
         <PastModal today={past} onClose={() => setShowPast(false)} />
       )}
@@ -635,9 +698,9 @@ function PastModal({ today, onClose }: {
   const selRes = sel ? pastResult(sel) : null;
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="지난 사건" style={{ position: "absolute", inset: 0, zIndex: 300, background: "rgba(20,33,61,.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div role="dialog" aria-modal="true" aria-label="지난 사건" style={{ position: "absolute", inset: 0, zIndex: 300, background: "rgba(28,31,42,.32)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <button type="button" aria-label="닫기" onClick={onClose} style={{ position: "absolute", inset: 0, border: 0, background: "transparent", cursor: "default" }} />
-      <div style={{ position: "relative", width: 940, height: 660, maxWidth: "calc(100% - 48px)", maxHeight: "calc(100% - 48px)", background: "#fff", borderRadius: 6, boxShadow: "0 20px 60px rgba(20,33,61,.35)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ position: "relative", width: 940, height: 660, maxWidth: "calc(100% - 48px)", maxHeight: "calc(100% - 48px)", background: GLASS.solid, border: GLASS.border, borderRadius: GLASS.radius, boxShadow: "0 24px 60px rgba(91,75,138,.28)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 12, padding: "16px 22px", borderBottom: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>지난 사건</div>
           <div style={{ fontSize: 12.5, color: C.sub }}>
@@ -698,7 +761,7 @@ function PastModal({ today, onClose }: {
                     type="button"
                     aria-pressed={on}
                     onClick={() => onPick(p.caseId)}
-                    style={{ ...prowStyle, ...(on ? { background: "#F5F8FF", border: "1px solid #C9D4E6" } : {}) }}
+                    style={{ ...prowStyle, ...(on ? { background: GLASS.tint, border: `1px solid ${C.blue}` } : {}) }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                       {sev && <SevChip sev={sev} />}
@@ -735,7 +798,7 @@ function PastModal({ today, onClose }: {
                   <MiniStat label="요청 범위" value={sel.zone ? zoneText(sel.zone) : "요청 전"} />
                   <MiniStat label="총 소요" value={fmtElapsed(durMs(sel))} />
                 </div>
-                <div style={{ flex: "none", fontSize: 12.5, color: C.ink3, padding: "8px 12px", background: "#F5F8FF", borderRadius: 4, whiteSpace: "normal" }}>
+                <div style={{ flex: "none", fontSize: 12.5, color: C.ink3, padding: "8px 12px", background: GLASS.tint, borderRadius: GLASS.radiusSm, whiteSpace: "normal" }}>
                   {sel.result === "done"
                     ? `최종 이송 병원 ${sel.hospital ? shortHospital(sel.hospital) : "-"} · 요청 ${sel.requested}곳 중 ${sel.rejected}곳이 수용 불가`
                     : sel.hospital
@@ -756,7 +819,7 @@ function PastModal({ today, onClose }: {
                           </div>
                           <div style={{ flex: "none", position: "relative", width: 14 }}>
                             <span style={{ position: "absolute", left: 2, top: 3, width: 10, height: 10, borderRadius: "50%", background: tone }} />
-                            {!last && <span style={{ position: "absolute", left: 6, top: 15, bottom: -3, width: 2, background: "#E1E5EB" }} />}
+                            {!last && <span style={{ position: "absolute", left: 6, top: 15, bottom: -3, width: 2, background: C.line }} />}
                           </div>
                           <div style={{ flex: "1 1 auto", minWidth: 0, fontSize: 13, lineHeight: 1.35, color: tone, fontWeight: ["d", "t", "x"].includes(e.kind) ? 700 : 500, whiteSpace: "normal" }}>{e.text}</div>
                         </div>
@@ -778,7 +841,7 @@ function PastModal({ today, onClose }: {
 // ── 작은 조각 ────────────────────────────────────────────────────────────────
 
 function Divider() {
-  return <span style={{ width: 1, height: 14, background: "#D5DAE1" }} />;
+  return <span style={{ width: 1, height: 14, background: C.line }} />;
 }
 
 function NumBadge({ n }: { n: number }) {
@@ -851,7 +914,7 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
 // ── 스타일(시안 값 그대로) ──────────────────────────────────────────────────
 
 const DARK_FILTER = "invert(1) hue-rotate(180deg) brightness(1.25) saturate(1.15)";
-const GLASS_COMMON: React.CSSProperties = { backdropFilter: "blur(16px) saturate(1.2)", WebkitBackdropFilter: "blur(16px) saturate(1.2)", boxShadow: "0 1px 3px rgba(20,33,61,.18)" };
+const GLASS_COMMON: React.CSSProperties = { backdropFilter: GLASS.blur, WebkitBackdropFilter: GLASS.blur, boxShadow: GLASS.shadow };
 /**
  * 지도 위에 떠 있는 유리 패널(2026-11-01). 3D 거미줄(어두운 지도) 위에서는 dark — 어두운 유리 + 안쪽 내용의 색을 반전한다.
  * 유리(배경·블러)와 내용(반전)을 두 겹으로 나눈 이유: 같은 요소에 filter를 걸면 뒤 지도의 블러까지 같이 반전돼 버린다.
@@ -867,8 +930,8 @@ function Glass({ as = "div", dark, style, children, ...rest }: {
       {...rest}
       style={{
         ...outer, ...GLASS_COMMON, display: "flex", flexDirection: "column", boxSizing: "border-box",
-        background: dark ? "rgba(11,17,38,.80)" : "rgba(255,255,255,.84)",
-        border: dark ? "1px solid rgba(130,150,210,.30)" : "1px solid rgba(20,33,61,.14)",
+        background: dark ? GLASS.darkPanel : GLASS.panel,
+        border: dark ? GLASS.darkBorder : GLASS.border,
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap, minHeight: 0, flex: "1 1 auto", filter: dark ? DARK_FILTER : undefined }}>
@@ -878,32 +941,32 @@ function Glass({ as = "div", dark, style, children, ...rest }: {
   );
 }
 const cardStyle: React.CSSProperties = {
-  background: "rgba(255,255,255,.84)", backdropFilter: "blur(16px) saturate(1.2)", WebkitBackdropFilter: "blur(16px) saturate(1.2)", border: "1px solid rgba(20,33,61,.14)", boxShadow: "0 1px 3px rgba(20,33,61,.18)", borderRadius: 6, padding: 14, boxSizing: "border-box",
+  background: GLASS.panel, backdropFilter: GLASS.blur, WebkitBackdropFilter: GLASS.blur, border: GLASS.border, boxShadow: GLASS.shadow, borderRadius: GLASS.radius, padding: 16, boxSizing: "border-box",
   display: "flex", flexDirection: "column", gap: 8, minHeight: 0,
 };
 const irowStyle: React.CSSProperties = {
   flex: "none", display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, width: "100%", minHeight: 42,
-  boxSizing: "border-box", padding: "3px 10px", border: `1px solid ${C.line2}`, borderRadius: 4, background: "#fff",
+  boxSizing: "border-box", padding: "3px 12px", border: `1px solid ${C.line2}`, borderRadius: GLASS.radiusSm, background: "rgba(255,255,255,.66)",
   fontFamily: "inherit", textAlign: "left", cursor: "pointer", scrollSnapAlign: "start", transition: "background .6s",
 };
 const tab2Style: React.CSSProperties = {
-  flex: "none", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12, fontWeight: 500, border: 0, borderRadius: 3,
-  height: 26, padding: "0 12px", cursor: "pointer", fontVariantNumeric: "tabular-nums",
+  flex: "none", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12, fontWeight: 600, border: 0, borderRadius: 999,
+  height: 28, padding: "0 14px", cursor: "pointer", fontVariantNumeric: "tabular-nums",
 };
 const acellStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 8, height: 28, padding: "0 6px", border: 0, borderBottom: `1px solid ${C.line2}`, borderRadius: 0,
   fontSize: 12.5, fontVariantNumeric: "tabular-nums", cursor: "default", boxSizing: "border-box", scrollSnapAlign: "start",
 };
 const dateInputStyle: React.CSSProperties = {
-  boxSizing: "border-box", height: 26, padding: "0 8px", border: `1px solid ${C.line}`, borderRadius: 4,
+  boxSizing: "border-box", height: 26, padding: "0 8px", border: `1px solid ${C.line}`, borderRadius: GLASS.radiusSm,
   fontFamily: "inherit", fontSize: 12, color: C.ink2, background: "#fff",
 };
 const toolBtnStyle: React.CSSProperties = {
-  display: "inline-flex", alignItems: "center", gap: 6, height: 26, padding: "0 12px", border: 0, borderRadius: 3,
-  background: C.bg, fontFamily: "inherit", fontSize: 12, fontWeight: 500, color: C.ink2, cursor: "pointer",
+  display: "inline-flex", alignItems: "center", gap: 6, height: 28, padding: "0 14px", border: `1px solid ${C.line}`, borderRadius: 999,
+  background: "rgba(255,255,255,.6)", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: C.ink2, cursor: "pointer",
 };
 const prowStyle: React.CSSProperties = {
   flex: "none", display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, width: "100%", height: 58,
-  boxSizing: "border-box", padding: "0 12px", border: `1px solid ${C.line2}`, borderRadius: 4, background: "#fff",
+  boxSizing: "border-box", padding: "0 12px", border: `1px solid ${C.line2}`, borderRadius: GLASS.radiusSm, background: "rgba(255,255,255,.66)",
   fontFamily: "inherit", textAlign: "left", cursor: "pointer",
 };

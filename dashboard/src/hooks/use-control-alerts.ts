@@ -23,7 +23,7 @@ export interface ControlAlertsView {
  * 관제 알림. 1초마다 사건 요약에서 규칙(lib/control-alerts)을 평가한다. 알림음은 2026-11-01에 없앴다(화면 카드와 탭 제목 깜빡임만).
  * 같은 상황은 한 번만 알리고(key), 확인하면 그 상황이 끝났다가 다시 생길 때까지 조용하다.
  */
-export function useControlAlerts(incidents: Incident[], connected: boolean): ControlAlertsView {
+export function useControlAlerts(incidents: Incident[], connected: boolean, assignOpened: Record<string, string> = {}): ControlAlertsView {
   const [active, setActive] = useState<ControlAlert[]>([]);
   const [acked, setAcked] = useState<ReadonlySet<string>>(new Set());
   // 방금 접수된 사건(목록에서 NEW로 깜빡이는 것) — 알림 카드를 확인(닫기)해도 NEW_CASE_MS 동안은 목록 표시가 남는다.
@@ -32,10 +32,10 @@ export function useControlAlerts(incidents: Incident[], connected: boolean): Con
   const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(new Set());
   const silentRef = useRef<Set<string>>(new Set());
 
-  const inputRef = useRef({ incidents, connected });
+  const inputRef = useRef({ incidents, connected, assignOpened });
   useEffect(() => {
-    inputRef.current = { incidents, connected };
-  }, [incidents, connected]);
+    inputRef.current = { incidents, connected, assignOpened };
+  }, [incidents, connected, assignOpened]);
 
   const trackerRef = useRef(newTracker());
   const prevKeysRef = useRef<Set<string>>(new Set());
@@ -52,7 +52,7 @@ export function useControlAlerts(incidents: Incident[], connected: boolean): Con
   useEffect(() => {
     const tick = () => {
       const now = Date.now();
-      const { incidents: incs, connected: live } = inputRef.current;
+      const { incidents: incs, connected: live, assignOpened: opened } = inputRef.current;
       if (live) {
         wasLiveRef.current = true;
         liveSinceRef.current ??= now;
@@ -60,7 +60,7 @@ export function useControlAlerts(incidents: Incident[], connected: boolean): Con
         liveSinceRef.current = null;
         baselineRef.current = false;
       }
-      const list = live ? deriveAlerts(incs, now, trackerRef.current) : [];
+      const list = live ? deriveAlerts(incs, now, trackerRef.current, opened) : [];
       if (!live && wasLiveRef.current) list.push(HUB_DOWN_ALERT);
       const keys = new Set(list.map((a) => a.key));
 
