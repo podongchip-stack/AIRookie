@@ -47,7 +47,7 @@ export const GLASS = {
   tint: "#F1EEFF",
   darkPanel: "rgba(28,31,42,.56)",
   darkBorder: "1px solid rgba(185,167,255,.30)",
-  font: 'Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+  font: '"Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
 } as const;
 
 // 바탕의 흐린 파스텔 원(발표 자료 blob) — 지도가 덮지 않는 곳·지도가 뜨기 전에 보인다
