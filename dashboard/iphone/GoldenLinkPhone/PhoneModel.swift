@@ -378,6 +378,7 @@ final class PhoneModel {
         tab = .patient
     }
 
+    var requestingCallPermission = false
     var callRequestId: String?
 
     @discardableResult
@@ -402,7 +403,8 @@ final class PhoneModel {
 
     /// hub에 연결 요청 → 관제의 전화 응답 이후에만 녹음 시작.
     func dial(hospitalId: String, name: String) async {
-        guard let caseId, let apid, call == nil else { return }
+        guard call == nil, !requestingCallPermission else { return }
+        guard let caseId, apid != nil else { show("구급대와 현재 사건 연결을 확인해 주세요."); return }
         error = nil
         if paused {
             show("현재 시연 일시정지 중입니다.")
@@ -412,13 +414,23 @@ final class PhoneModel {
             show("콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다.")
             return
         }
+        requestingCallPermission = true
+        defer { requestingCallPermission = false }
         guard await MicCapture.requestPermission() else { error = "마이크 권한이 꺼져 있습니다. 설정 앱에서 켜 주세요."; return }
+        guard self.caseId == caseId, call == nil else { return }
+        guard !paused, !sceneCallBlocked, !transportCallBlocked else {
+            show("현재 상태에서는 전화할 수 없습니다. 시연 진행 상태를 확인해 주세요."); return
+        }
         let followup = sent
         call = LocalCall(caseId: caseId, hospitalId: hospitalId, hospitalName: name, followup: followup, phase: .connecting, startedAt: Date())
         callRequestId = UUID().uuidString
         if !connectionAction("request") {
-            call = nil; error = "hub 연결이 끊겨 전화 요청을 보내지 못했습니다."
+            call = nil; callRequestId = nil
+            error = "hub 연결이 끊겨 전화 요청을 보내지 못했습니다."
+            return
         }
+        callHospitalListPresented = false
+        tab = .call
     }
 
     private func beginConnectedCall() async {

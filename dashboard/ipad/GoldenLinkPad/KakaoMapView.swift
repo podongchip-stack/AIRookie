@@ -88,6 +88,7 @@ struct KakaoMapView: UIViewRepresentable {
     let routePath: [[Double]]
     /// 활성 존(구급차 중심 반경 km) — 없으면 안 그린다
     let zoneRadiusKm: Double?
+    var zonePaused = false
     /// 이 값이 바뀔 때만 카메라를 fitPoints에 맞춘다
     let fitKey: String
     let fitPoints: [GpsPoint]
@@ -125,7 +126,6 @@ struct KakaoMapView: UIViewRepresentable {
         private var priorPins: [String: MapPin] = [:]
         private var priorStyles: [String: String] = [:]
         private var priorRoute: [[Double]] = []
-        private var soloAmbulanceFocus: String?
         private var zoneSignature: String?
         private var didInitialCenter = false
         private var lastCenterRequest = 0
@@ -138,6 +138,8 @@ struct KakaoMapView: UIViewRepresentable {
         private var markerTask: Task<Void, Never>?
         private var markerFrame = 0
         private var heading = 0
+        private var pulseTask: Task<Void, Never>?
+        private var pulseShape: MapPolygonShape?
 
         private static var initializedKey = ""
         // 관제 지도 dashboard/src/lib/control-map.ts의 C.zone과 같은 보라색
@@ -162,7 +164,7 @@ struct KakaoMapView: UIViewRepresentable {
             ]
         }
         func stop() {
-            stopped = true; markerTask?.cancel(); markerTask = nil
+            stopped = true; markerTask?.cancel(); markerTask = nil; pulseTask?.cancel(); pulseTask = nil
             observers.forEach(NotificationCenter.default.removeObserver); observers = []
             roadLine = nil
             map?.eventDelegate = nil
@@ -172,7 +174,7 @@ struct KakaoMapView: UIViewRepresentable {
         private func setAppActive(_ active: Bool) {
             guard !stopped else { return }
             foreground = active
-            if active { controller?.activateEngine(); scheduleRender() } else { controller?.pauseEngine() }
+            if active { controller?.activateEngine(); scheduleRender() } else { pulseTask?.cancel(); pulseTask = nil; zoneSignature = nil; controller?.pauseEngine() }
         }
         nonisolated func addViews() { DispatchQueue.main.async { [weak self] in self?.addMapView() } }
         private func addMapView() {
@@ -229,11 +231,18 @@ struct KakaoMapView: UIViewRepresentable {
                 }
             }
             let shapes = view.getShapeManager()
-            zoneLayer = shapes.addShapeLayer(layerID: "response-zone", zOrder: 1)
+            zoneLayer = shapes.addShapeLayer(layerID: "response-zone", zOrder: 10)
+            zoneLayer?.visible = true
             let purple = Self.zoneColor
-            shapes.addPolygonStyleSet(PolygonStyleSet(styleSetID: "zone", styles: [
-                PolygonStyle(styles: [PerLevelPolygonStyle(color: purple.withAlphaComponent(0.10), strokeWidth: 2, strokeColor: purple.withAlphaComponent(0.55), level: 0)]),
-            ]))
+            var styles = [PolygonStyle(styles: [PerLevelPolygonStyle(color: purple.withAlphaComponent(0.18), strokeWidth: 3, strokeColor: purple.withAlphaComponent(0.95), level: 0)])]
+            for step in 1...16 {
+                let strength = CGFloat(step) / 16
+                styles.append(PolygonStyle(styles: [PerLevelPolygonStyle(color: purple.withAlphaComponent(strength * 0.018), strokeWidth: 2, strokeColor: purple.withAlphaComponent(strength * 0.5), level: 0)]))
+            }
+            shapes.addPolygonStyleSet(PolygonStyleSet(styleSetID: "zone", styles: styles))
+            shapes.addPolylineStyleSet(PolylineStyleSet(styleSetID: "zone-outline", styles: [
+                PolylineStyle(styles: [PerLevelPolylineStyle(bodyColor: purple.withAlphaComponent(0.9), bodyWidth: 3, level: 0)]),
+            ], capType: .round))
             // hub의 도로 꼭짓점을 생략 없이 그려 짧은 도로·회전 구간도 표시한다.
             shapes.addPolylineStyleSet(PolylineStyleSet(styleSetID: "road-line", styles: [
                 PolylineStyle(styles: [PerLevelPolylineStyle(bodyColor: UIColor(AD.blue), bodyWidth: 6,
@@ -304,7 +313,7 @@ struct KakaoMapView: UIViewRepresentable {
                 let dy = pin.pos.lat - before.pos.lat
                 let dx = (pin.pos.lng - before.pos.lng) * cos(pin.pos.lat * .pi / 180)
                 if hypot(dx, dy) > 0.000001 {
-                    heading = (Int(((atan2(dx, dy) * 180 / .pi + 360) / 15).rounded()) % 24)
+                    heading = Int(((atan2(dx, dy) * 180 / .pi + 360) / 15).rounded()) % 24
                 }
             }
             for pin in visible {
@@ -351,29 +360,18 @@ struct KakaoMapView: UIViewRepresentable {
             let insets = UIEdgeInsets(top: 60, left: 60, bottom: 60, right: 60)
             if map.margins != insets { map.setMargins(insets) }
             updateZone()
-            let ambulanceOnly = !visible.contains {
-                [.hospital, .recommended, .selected, .approved, .rejected].contains($0.kind)
-            }
-            if !ambulanceOnly { soloAmbulanceFocus = nil }
             if input.initialCenter && !didInitialCenter,
                let ambulance = visible.first(where: { $0.kind == .ambulance }) {
                 map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, zoomLevel: 15, mapView: map))
                 didInitialCenter = true
                 lastCenterRequest = input.centerRequest
                 lastFitKey = input.fitKey
+                if input.fitPoints.count > 1 { fit(input.fitPoints.filter(\.valid).map(\.mapPoint)) }
                 // UIView 갱신 중 ObservableObject를 바꾸지 않도록 다음 메인 큐에서 기록한다.
                 DispatchQueue.main.async { [weak self] in
                     guard let self, !self.stopped else { return }
                     self.input.onInitialCenter()
                 }
-            } else if ambulanceOnly, let ambulance = visible.first(where: { $0.kind == .ambulance }) {
-                // 병원 없는 출동·현장 확인 단계에서는 경로 전체 대신 구급차를 중앙에 둔다.
-                let key = "\(input.fitKey)-\(ambulance.pos)-\(container.bounds.size)"
-                if soloAmbulanceFocus != key {
-                    map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, mapView: map))
-                    soloAmbulanceFocus = key
-                }
-                lastFitKey = input.fitKey
             } else if lastFitKey != input.fitKey {
                 lastFitKey = input.fitKey
                 fit(input.fitPoints.filter(\.valid).map(\.mapPoint))
@@ -390,6 +388,8 @@ struct KakaoMapView: UIViewRepresentable {
             if points.count == 1 { map.moveCamera(CameraUpdate.make(target: points[0], zoomLevel: 15, mapView: map)) }
             else {
                 let update = CameraUpdate.make(area: AreaRect(points: points), levelLimit: 17)
+                update.cameraPosition?.rotation = 0
+                update.cameraPosition?.tilt = 0
                 if input.fitKey.contains("|show|") && !UIAccessibility.isReduceMotionEnabled {
                     map.animateCamera(cameraUpdate: update, options: CameraAnimationOptions(autoElevation: false, consecutive: false, durationInMillis: 550))
                 } else { map.moveCamera(update) }
@@ -400,16 +400,43 @@ struct KakaoMapView: UIViewRepresentable {
         private func updateZone() {
             guard foreground, let layer = zoneLayer else { return }
             guard let km = input.zoneRadiusKm, let amb = input.pins.first(where: { $0.kind == .ambulance && $0.pos.valid }) else {
-                guard zoneSignature != nil else { return }
+                pulseTask?.cancel(); pulseTask = nil; pulseShape = nil
                 zoneSignature = nil; layer.clearAllShapes(); return
             }
-            let key = "\(amb.pos)-\(km)"
+            let reduce = UIAccessibility.isReduceMotionEnabled
+            let key = "\(amb.pos)-\(km)-\(reduce)-\(input.zonePaused)"
             guard zoneSignature != key else { return }
-            zoneSignature = key
+            pulseTask?.cancel(); pulseTask = nil; zoneSignature = key
             layer.clearAllShapes()
+            let points = mapCircle(center: amb.pos, radiusKm: km).map(\.mapPoint)
             let options = MapPolygonShapeOptions(shapeID: "zone-boundary", styleID: "zone", zOrder: 0)
-            options.polygons = [MapPolygon(exteriorRing: mapCircle(center: amb.pos, radiusKm: km).map(\.mapPoint), holes: nil, styleIndex: 0)]
+            options.polygons = [MapPolygon(exteriorRing: points, holes: nil, styleIndex: 0)]
             layer.addMapPolygonShape(options)?.show()
+            let outline = MapPolylineShapeOptions(shapeID: "zone-outline", styleID: "zone-outline", zOrder: 2)
+            outline.polylines = stride(from: 0, to: points.count - 2, by: 3).map {
+                MapPolyline(line: Array(points[$0...$0 + 2]), styleIndex: 0)
+            }
+            layer.addMapPolylineShape(outline)?.show()
+            guard !reduce, !input.zonePaused else { return }
+            let pulse = MapPolygonShapeOptions(shapeID: "zone-pulse", styleID: "zone", zOrder: 1)
+            pulse.polygons = pulsePolygons(center: amb.pos, radiusKm: km, frame: 0)
+            pulseShape = layer.addMapPolygonShape(pulse); pulseShape?.show()
+            pulseTask = Task { @MainActor [weak self] in
+                var frame = 0
+                while !Task.isCancelled {
+                    guard let self, !self.stopped, self.foreground, self.zoneSignature == key else { return }
+                    self.pulseShape?.changeStyleAndData(styleID: "zone", polygons: self.pulsePolygons(center: amb.pos, radiusKm: km, frame: frame))
+                    frame = (frame + 1) % 90
+                    do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
+                }
+            }
+        }
+        private func pulsePolygons(center: GpsPoint, radiusKm: Double, frame: Int) -> [MapPolygon] {
+            (0..<3).map { wave in
+                let progress = Double((frame + wave * 30) % 90) / 90
+                let opacity = UInt(max(1, min(16, Int(pow(1 - progress, 1.4) * 16))))
+                return MapPolygon(exteriorRing: mapCircle(center: center, radiusKm: radiusKm * (0.025 + 0.975 * progress)).map(\.mapPoint), holes: nil, styleIndex: opacity)
+            }
         }
 
         /// 병원·구급차는 사각 박스+십자가(구급차는 주황), 사건 현장은 마름모 느낌표, 센터는 건물

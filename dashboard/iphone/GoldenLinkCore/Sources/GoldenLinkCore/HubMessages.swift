@@ -150,6 +150,7 @@ public struct SceneCandidate: Decodable, Equatable, Identifiable {
 }
 
 public struct SceneCandidates: Decodable, Equatable {
+    public let zoneActive: [Int]?
     public let caseId: String
     public let apid: String
     /// 도착 시간순(hub가 정한 순서 그대로 쓴다)

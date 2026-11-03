@@ -244,7 +244,8 @@ private struct KakaoCallMap: UIViewRepresentable {
         func setVisible(_ active: Bool) {
             if !active {
                 navigationGeneration = UUID(); navigationTask?.cancel(); navigationTask = nil
-                pulseTask?.cancel(); pulseTask = nil; zoneSignature = nil
+                pulseTask?.cancel(); pulseTask = nil; pulseShape = nil; zoneSignature = nil
+                zoneLayer?.clearAllShapes()
             }
         }
         private func setAppActive(_ active: Bool) {
@@ -313,10 +314,11 @@ private struct KakaoCallMap: UIViewRepresentable {
                 }
             }
             let shapes = view.getShapeManager()
-            zoneLayer = shapes.addShapeLayer(layerID: "response-zone", zOrder: 1)
+            zoneLayer = shapes.addShapeLayer(layerID: "response-zone", zOrder: 10)
+            zoneLayer?.visible = true
             let purple = Self.zoneColor
             // 고정 영역이 펄스가 끝난 뒤에도 지도에서 분명히 보이도록 채움과 경계를 유지한다.
-            var zoneStyles = [PolygonStyle(styles: [PerLevelPolygonStyle(color: purple.withAlphaComponent(0.12), level: 0)])]
+            var zoneStyles = [PolygonStyle(styles: [PerLevelPolygonStyle(color: purple.withAlphaComponent(0.18), strokeWidth: 3, strokeColor: purple.withAlphaComponent(0.95), level: 0)])]
             for step in 0..<16 {
                 let strength = CGFloat(step + 1) / 16
                 zoneStyles.append(PolygonStyle(styles: [PerLevelPolygonStyle(color: purple.withAlphaComponent(strength * 0.018), strokeWidth: 2, strokeColor: purple.withAlphaComponent(strength * 0.5), level: 0)]))
@@ -475,6 +477,7 @@ private struct KakaoCallMap: UIViewRepresentable {
                 input.model.routeFitRequest = nil
                 input.model.kakaoFittedPath = input.routePath
                 if let zone = input.responseZone {
+                    fit(Self.circlePoints(center: ambulance.pos, radiusKm: zone.radiusKm))
                     input.model.responseMapFocusKey = "\(input.model.caseId ?? "")-\(zone.radiusKm)"
                 }
                 if let key = input.sceneFocusKey, let hospital = visible.first(where: { $0.kind == .selected }) {
@@ -483,7 +486,7 @@ private struct KakaoCallMap: UIViewRepresentable {
             } else if input.centerRequest != lastCenter, let ambulance {
                 map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, mapView: map))
                 lastCenter = input.centerRequest
-            } else if ambulanceOnly, let ambulance {
+            } else if ambulanceOnly, input.responseZone == nil, input.model.deliveryShow == nil, let ambulance {
                 let key = "\(input.model.phase)-\(ambulance.pos)-\(container.bounds.size)-\(input.bottomOverlayHeight)"
                 if soloAmbulanceFocus != key || firstCamera {
                     map.moveCamera(CameraUpdate.make(target: ambulance.pos.mapPoint, mapView: map))
@@ -500,13 +503,14 @@ private struct KakaoCallMap: UIViewRepresentable {
                     input.model.kakaoFittedPath = input.routePath; firstCamera = false
                 }
             } else if input.model.deliveryShow != nil, let ambulance {
-                let key = "delivery-\(input.model.caseId ?? "")"
+                let key = "delivery-\(input.model.caseId ?? "")-\(input.responseZone?.radiusKm ?? 0)"
                 if input.model.responseMapFocusKey != key {
                     let targets = Array((input.model.result?.hospitals ?? []).compactMap { input.model.hospitalGps[$0.hospitalId] }.prefix(8))
                     let mirrored = targets.filter(\.validMapPoint).map {
                         MapPoint(longitude: 2 * ambulance.pos.lng - $0.lng, latitude: 2 * ambulance.pos.lat - $0.lat)
                     }
-                    fit([ambulance.pos.mapPoint] + targets.filter(\.validMapPoint).map(\.mapPoint) + mirrored)
+                    let zonePoints = input.responseZone.map { Self.circlePoints(center: ambulance.pos, radiusKm: $0.radiusKm) } ?? []
+                    fit([ambulance.pos.mapPoint] + targets.filter(\.validMapPoint).map(\.mapPoint) + mirrored + zonePoints)
                     input.model.responseMapFocusKey = key
                 }
             } else if let zone = input.responseZone, let ambulance,
@@ -514,7 +518,7 @@ private struct KakaoCallMap: UIViewRepresentable {
                 // 응답 단계 진입·존 확장 때만 맞춘다. 이후 사용자의 확대·이동은 유지한다.
                 fit(Self.circlePoints(center: ambulance.pos, radiusKm: zone.radiusKm) + visible.map { $0.pos.mapPoint })
                 input.model.responseMapFocusKey = "\(input.model.caseId ?? "")-\(zone.radiusKm)"; firstCamera = false
-            } else if let key = input.sceneFocusKey, let ambulance, let hospital = visible.first(where: { $0.kind == .selected }) {
+            } else if input.responseZone == nil, let key = input.sceneFocusKey, let ambulance, let hospital = visible.first(where: { $0.kind == .selected }) {
                 let signature = "\(key)-\(hospital.pos)-\(container.bounds.size)-\(input.bottomOverlayHeight)"
                 if signature != input.model.sceneMapFocusKey {
                     fit([ambulance.pos.mapPoint, hospital.pos.mapPoint])
@@ -632,7 +636,6 @@ private struct KakaoCallMap: UIViewRepresentable {
             guard foreground, let layer = zoneLayer else { return }
             guard let zone = input.responseZone,
                   let ambulance = input.pins.first(where: { $0.kind == .ambulance && $0.pos.validMapPoint }) else {
-                guard zoneSignature != nil || pulseTask != nil else { return }
                 pulseTask?.cancel(); pulseTask = nil; pulseShape = nil; zoneSignature = nil
                 layer.clearAllShapes(); return
             }

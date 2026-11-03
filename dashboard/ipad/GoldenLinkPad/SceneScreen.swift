@@ -170,16 +170,11 @@ struct SceneScreen: View {
     private var incident: CLLocationCoordinate2D? { model.sim?.incident?.coordinate }
     private var ambulance: CLLocationCoordinate2D? { model.sim?.gps?.coordinate }
     private var baseCoord: CLLocationCoordinate2D? { model.sim?.base?.coordinate }
-    private var zoneKm: Double? { sent && phase == "on_scene" ? 5.0 * Double(model.result?.zoneActive?.max() ?? 1) : nil }
+    private var zoneKm: Double? { phase == "on_scene" ? 5.0 * Double(model.result?.zoneActive?.max() ?? model.scene?.zoneActive?.max() ?? 1) : nil }
 
-    /// hub가 준 도로 경로의 남은 구간. 경로가 없으면 임의의 직선을 만들지 않는다.
+    /// 정적인 지도에는 출발지부터 목적지까지 도로 경로 전체를 유지한다.
     private var route: [CLLocationCoordinate2D] {
-        guard let sim = model.sim, let a = sim.gps else { return [] }
-        if let path = sim.path {
-            let rest = RoadRoute.remaining(path, latitude: a.lat, longitude: a.lng)
-            if rest.count >= 2 { return rest.map { .init(latitude: $0[0], longitude: $0[1]) } }
-        }
-        return []
+        roadPath.map { .init(latitude: $0[0], longitude: $0[1]) }
     }
     private var etaMin: Int? { model.sim?.etaSec.map { max(1, Int(ceil($0 / 60))) } }
 
@@ -379,17 +374,18 @@ struct SceneScreen: View {
             if phase == "returning", let b = model.sim?.base { pts.append(b) }
             pts += route.striding(8).map { GpsPoint(lat: $0.latitude, lng: $0.longitude) }
         }
+        if let km = zoneKm, let a = model.sim?.gps { pts += mapCircle(center: a, radiusKm: km) }
         return pts
     }
 
     private var roadPath: [[Double]] {
-        guard let a = model.sim?.gps else { return [] }
-        if let path = model.sim?.path { let rest = RoadRoute.remaining(path, latitude: a.lat, longitude: a.lng); if rest.count >= 2 { return rest } }
-        return []
+        (model.sim?.path ?? []).filter { p in
+            p.count == 2 && p[0].isFinite && p[1].isFinite && (-90...90).contains(p[0]) && (-180...180).contains(p[1])
+        }
     }
 
     private var mapCard: some View {
-        KakaoMapView(pins: pins, routePath: roadPath, zoneRadiusKm: zoneKm, fitKey: fitKey.joined(separator: "|"), fitPoints: fitPoints, centerRequest: centerRequest,
+        KakaoMapView(pins: pins, routePath: roadPath, zoneRadiusKm: zoneKm, zonePaused: model.paused, fitKey: fitKey.joined(separator: "|"), fitPoints: fitPoints, centerRequest: centerRequest,
                      initialCenter: model.needsInitialMapCenter, onInitialCenter: { model.needsInitialMapCenter = false },
                      onPin: { id in if candidates.contains(where: { $0.hospitalId == id }) { focusId = id } },
                      onProjector: { projector = $0 }, onMessage: { mapMessage = $0 })
