@@ -872,7 +872,7 @@ _MONITOR_EXPLAIN_FIELDS = (
     "gps", "emergencyLevel", "availableBedCount", "bedCountUnknown", "bedDataStale", "erBedCapacity", "erOccupancyPct",
     "travelMin", "travelBasis", "etaMin", "finalScore", "specialtyMatch", "bedReliability", "reliability", "severeFreshness",
     "demoteReasons", "bonusReasons", "loadReason", "occupancyReason", "inFlightCount", "excluded", "acceptanceMessages",
-    "notSelected",
+    "notSelected", "ktasSuitability",
 )
 
 
@@ -918,6 +918,9 @@ def _monitor_case(payload: dict) -> dict:
 
 
 def _build_map_overview() -> dict:
+    import spider_rule
+
+    hour = spider_rule.local_hour(datetime.now(timezone.utc))
     ambulances = []
     for info in engine.list_ambulances():
         gps = (sim.gps_for(info.apid) if sim is not None else None) or info.gps
@@ -927,7 +930,10 @@ def _build_map_overview() -> dict:
             MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel, erPhone=h.erPhone,
                         inFlightCount=engine.in_flight_count(h.hospitalId),
                         availableBedCount=engine.effective_bed_count(h),
-                        bedCountUnknown=_is_bed_count_unknown(h))
+                        bedCountUnknown=_is_bed_count_unknown(h),
+                        mapCapacity=spider_rule.hospital_z(h, hour)[1],
+                        mapKtasLevel=spider_rule.ktas_suitability(3, "general", h, hour)["hospitalKtas"],
+                        supportedKtas=spider_rule.ktas_suitability(3, "general", h, hour)["supportedKtas"])
             for h in engine.list_hospitals()
         ],
         ambulances=ambulances,

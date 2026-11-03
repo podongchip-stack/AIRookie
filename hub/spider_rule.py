@@ -123,14 +123,17 @@ def line(k: int, cond: str, info, travel_min: float, load_min: float, inflight_s
 def ktas_suitability(k: int, cond: str, info, hour: float) -> dict:
     """병원별 KTAS 전달 근거. 기존 spider의 벽·허용 역량 차이를 그대로 쓴다.
 
+    자동 전달은 환자와 병원의 대표 KTAS가 같은 경우만 허용한다(정확 일치).
     supportedKtas는 이 질환군·시각에 대한 모형상의 값이며 실제 수용 보장이 아니다.
     """
     g, z, _ = hospital_z(info, hour)
-    supported = [level for level, need in KTAS_Z.items() if wall_ok(info, g, cond) and z - need >= GAP_FLOOR]
+    supported = [level for level, need in KTAS_Z.items() if wall_ok(info, g, cond) and z >= need]
+    hospital_ktas = min(supported) if supported else None
     return {"source": "rule", "rule": "spider_ktas_v1", "clinicallyValidated": False,
-            "patientKtas": k, "condition": cond, "requiredCapacity": KTAS_Z[k],
-            "effectiveCapacity": round(z, 2), "minimumGap": GAP_FLOOR,
-            "supportedKtas": supported, "eligible": k in supported}
+            "dispatchMode": "exact_ktas", "patientKtas": k, "condition": cond, "requiredCapacity": KTAS_Z[k],
+            "effectiveCapacity": round(z, 2), "minimumGap": 0.0,
+            "hospitalKtas": hospital_ktas,
+            "supportedKtas": supported, "eligible": k == hospital_ktas}
 
 
 def gain_reasons(sp: dict, k: int) -> list[str]:

@@ -817,6 +817,12 @@ class MapHospital(BaseModel):
     gps: GpsPoint
     emergencyLevel: Optional[str] = None
     erPhone: Optional[str] = None
+    # 지도 높이·대표 KTAS·전달 문턱을 같은 현재 유효 역량으로 맞춘다(규칙 모형).
+    mapCapacity: Optional[float] = None
+    mapKtasLevel: Optional[int] = None
+    supportedKtas: Optional[list[int]] = None
+    ktasSource: Literal["rule"] = "rule"
+    ktasClinicallyValidated: bool = False
     # 이 병원으로 지금 이송 중(확정, TTL 오버레이)인 건수(2026-10-03) — 관제 지도가
     # "이 병원에 N건 몰리는 중"을 보여주는 재료. 확정·도착 결과 때마다 overview가 다시 간다.
     inFlightCount: int = 0
@@ -861,6 +867,7 @@ class MonitorCaseHospital(BaseModel):
     # HospitalMatch의 같은 이름 필드를 그대로 옮긴다: "이 병원 정보가 얼마나 유효한가, 왜 이 순위인가"를 사건 밖(관제)에서도
     # 보게 하기 위함. 환자 정보는 아니다. 병상 유효 확률(bedReliability, AI)·심평원 대조 신뢰도(reliability)·중증 신고 신선도
     # (severeFreshness, 규칙)·순위 근거(finalScore·travelMin·가산/페널티 문구·내림 이유)·E-Gen 메시지.
+    ktasSuitability: Optional[dict] = None
     gps: Optional[GpsPoint] = None
     emergencyLevel: Optional[str] = None
     availableBedCount: Optional[int] = None

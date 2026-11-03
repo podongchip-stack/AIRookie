@@ -5,6 +5,11 @@
 // 통화 전문·활력징후는 hub가 관제에 보내지 않으므로 여기도 없다. 이 파일은 상태 관리와 그리기만 하고 hub에 아무것도 보내지
 // 않는다(identify뿐). "누가 어디로 가는가"는 hub가 정한 것을 그대로 보여 주고, 거미줄 모델의 선택은 "제안"으로만 겹쳐 그린다.
 // ?apid=<구급차> 로 열면(아이패드 구급차 앱) 그 구급차의 사건·이동만 그린다
+const transmission = new GoldenTransmission.Tracker();
+const transmissionReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+let selectedTransmissionCase = null;
+const transmissionPlayed = new Map();
+window.setSelectedCase = caseId => { selectedTransmissionCase = caseId || null; };
 const ONLY_APID = new URLSearchParams(location.search).get('apid') || null;
 const myCases = () => Object.values(HUB.cases).filter(c => !ONLY_APID || c.apid === ONLY_APID);
 const mySims = () => Object.values(HUB.sims).filter(s => !ONLY_APID || s.apid === ONLY_APID);
@@ -280,6 +285,8 @@ function applyOverview(m) {
         hvec: null, er_cap: null, icu: null, op: null, ct: null, angio: null, hasBeds: true, hasSevere: false, em: null, fromHub: true };
       H.push(h); HMAP.set(h.hpid, h);
     }
+    if (Number.isFinite(mh.mapCapacity)) h.z = mh.mapCapacity;
+    h.mapKtasLevel = mh.mapKtasLevel ?? null;
     h.hasBeds = true;
     h.hvec = mh.bedCountUnknown ? null : mh.availableBedCount;
     h.inFlight = mh.inFlightCount || 0;
@@ -428,7 +435,7 @@ function groupByScreen(items, cellPxW, cellPxH) {
   // 가까운 것끼리 차례로 붙인다(이름표 한 칸 안이면 같은 묶음)
   const groups = [];
   for (const p of pts) {
-    const g = groups.find(g => Math.abs(g.x - p.x) < cellPxW && Math.abs(g.y - p.y) < cellPxH);
+    const g = groups.find(g => g.items[0].k === p.it.k && Math.abs(g.x - p.x) < cellPxW && Math.abs(g.y - p.y) < cellPxH);
     if (g) { g.items.push(p.it); g.x = (g.x * (g.items.length - 1) + p.x) / g.items.length; g.y = (g.y * (g.items.length - 1) + p.y) / g.items.length; }
     else groups.push({ items: [p.it], x: p.x, y: p.y });
   }
@@ -442,6 +449,33 @@ function liveLayers(t) {
   const hs = HS(), pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350), air = $('air').checked;
   const lines = [], airLines = [], lights = [], airLights = [], stems = [], ups = [], occ = [], ambs = [], paths = [], donePaths = [], sugLines = [], sugTexts = [], ambTexts = [], bestTexts = [];
   const top = h => [h.lng, h.lat, ZH(h.z) * hs];
+  const txTime = performance.now(), txCases = myCases();
+  transmission.sync(txCases, txTime);
+  const txPaths = [], txPackets = [];
+  const aliveCases = new Set(txCases.map(c => c.caseId));
+  for (const id of transmissionPlayed.keys()) if (!aliveCases.has(id)) transmissionPlayed.delete(id);
+  const selectedTx = selectedTransmissionCase || txCases[0]?.caseId;
+  for (const c of txCases) {
+    const sim = c.apid ? HUB.sims[c.apid] : null;
+    const p = sim?.gps || casePos(c);
+    if (!p) continue;
+    const from = [p.lng, p.lat, ZH(KTAS_Z[caseK(c)]) * hs];
+    const beams = transmission.frame(c, from, id => { const h = hp(id); return h ? top(h) : null; }, txTime, transmissionReducedMotion.matches);
+    const selected = c.caseId === selectedTx;
+    if (selected && beams.length && !transmissionPlayed.has(c.caseId)) transmissionPlayed.set(c.caseId, txTime);
+    const elapsed = txTime - (transmissionPlayed.get(c.caseId) ?? txTime);
+    for (const beam of beams) {
+      // Inactive incidents remain as quiet, complete hairlines; selection never replays a viewed case.
+      txPaths.push({ ...beam, selected, path: GoldenTransmission.curve(from, beam.end, 1) });
+      if (selected && !transmissionReducedMotion.matches) {
+        const progress = GoldenTransmission.packetProgress(elapsed);
+        if (progress !== null) {
+          const path = GoldenTransmission.curve(from, beam.end, progress);
+          txPackets.push({ pos: path[path.length - 1] });
+        }
+      }
+    }
+  }
   const EMB = isEmbedMap(), destIcons = [], baseIcons = [];   // 아이패드 embed: 목적지 병원·센터 아이콘(안드로이드와 같은 핀 정책)
   for (const c of myCases()) {
     const pos = casePos(c); if (!pos) continue;
@@ -450,7 +484,7 @@ function liveLayers(t) {
     const confirmed = caseConfirmed(c);
     const arrived = sim && (sim.phase === 'at_hospital' || sim.phase === 'returning') && confirmed;
     if (!arrived) {
-      lights.push({ pos: [pos.lng, pos.lat, 0], k, label: caseLabel(c) });
+      lights.push({ pos: [pos.lng, pos.lat, ZH(pz) * hs], k, label: `${caseLabel(c)} · Pre-KTAS ${k}` });
       if (air) { airLights.push({ pos: [pos.lng, pos.lat, ZH(pz) * hs], k }); stems.push({ a: [pos.lng, pos.lat, 0], b: [pos.lng, pos.lat, ZH(pz) * hs], k }); }
     }
     // 줄(2026-10-15): 확정되면 확정 병원 하나(이송 경로). 확정 전엔 **수용 승인한 병원 전부**와 잇는다 — 그중 hub 순위 1위(=구급차
@@ -535,6 +569,14 @@ function liveLayers(t) {
   L.push(new LineLayer({ id: 'lv-sug', widthScale: LK, data: sugLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: [...SUG_COL, 200], getWidth: 2, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-sug-txt', data: sugTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [...SUG_COL, 255], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 170], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
   L.push(new TextLayer({ id: 'lv-best-txt', data: bestTexts, getPosition: d => d.pos, getText: d => d.text, getSize: 11, characterSet: 'auto', getColor: [94, 227, 127, 255], getPixelOffset: [0, -36], fontFamily: css('--font'), background: true, getBackgroundColor: [10, 16, 36, 180], backgroundPadding: [4, 2], parameters: { depthTest: false } }));
+  // 요약 동시 전달: 구급차 위 Pre-KTAS 사건 높이에서 병원 역량 노드까지 실이 자라난다.
+  // 수용 승인선(초록)과 구분되는 흰색·청록색. 새 존의 병원만 추가로 뻗는다.
+  L.push(new PathLayer({ id: 'lv-transmit-thread', data: txPaths, getPath: d => d.path,
+    getColor: d => d.selected ? [145,205,220,125] : [115,160,180,36], getWidth: d => d.selected ? 1.1 : .6,
+    widthUnits: 'pixels', parameters: { depthTest: false } }));
+  L.push(new IconLayer({ id: 'lv-transmit-packets', data: txPackets, getPosition: d => d.pos,
+    getIcon: () => ({ url: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="28" viewBox="0 0 24 28"><rect x="3" y="2" width="18" height="24" rx="3" fill="#F4FCFF" stroke="#51BEDC" stroke-width="2"/><path d="M8 10h8M8 15h8M8 20h5" stroke="#206B8E" stroke-width="2" stroke-linecap="round"/></svg>'), width: 24, height: 28, anchorX: 12, anchorY: 14 }),
+    getSize: 15, sizeUnits: 'pixels', billboard: true, parameters: { depthTest: false } }));
   L.push(new LineLayer({ id: 'lv-air-glow', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [d.col[0], d.col[1], d.col[2], 60], getWidth: 8, widthUnits: 'pixels', parameters: ADD }));
   L.push(new LineLayer({ id: 'lv-air', widthScale: LK, data: airLines, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => d.col, getWidth: d => d.w, widthUnits: 'pixels', parameters: { depthTest: false } }));
   L.push(new LineLayer({ id: 'lv-stems', widthScale: LK, data: stems, getSourcePosition: d => d.a, getTargetPosition: d => d.b, getColor: d => [...kCol(d.k).slice(0, 3), 130], getWidth: 1.5, widthUnits: 'pixels', parameters: ADD }));

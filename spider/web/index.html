@@ -61,7 +61,7 @@ if(new URLSearchParams(location.search).get('embed')==='1') document.body.classL
         <label>시작 시각 (시, 야간 22~06은 얇은 병원 역량이 내려감) <span id="shv" class="pill">14</span><input id="sh" type="range" min="0" max="23" step="1" value="14"></label>
         <label class="row"><input id="dyn" type="checkbox" checked> 유효 역량 사용 (전문의 두께·야간) + 부하 항</label>
         <label class="row"><input id="wload" type="checkbox" checked> 부하 항 — 줄 길이에 분으로 (이송 중 건수 10×n/(n+가용) + 포화 최대 5분; 허브 공유 장부 전제, 각자 낡은 뷰면 끌 것)</label>
-        <label>높이 배율 <span id="hv" class="pill">500</span><input id="hs" type="range" min="100" max="1500" step="50" value="500"></label>
+        <label>높이 배율 <span id="hv" class="pill">200</span><input id="hs" type="range" min="100" max="1500" step="50" value="200"></label>
         <label>높이 대비 (지수, 클수록 상급 병원이 더 솟음) <span id="zexpv" class="pill">2.0</span><input id="zexp" type="range" min="1" max="3" step="0.1" value="2.0"></label>
       </div>
     </details>
@@ -118,6 +118,7 @@ if(new URLSearchParams(location.search).get('embed')==='1') document.body.classL
 <script src="vendor/deck.gl.min.js"></script>
 <!-- 공개 도메인(Cloudflare)이 .js를 브라우저에 4시간 캐시하게 덮어써서, 고쳐도 바로 안 바뀐다(서버는 no-cache인데도). 파일을 고치면 아래 v=를 올리고
      관제 화면(dashboard/src/app/map/page.tsx)의 SPIDER_BUILD도 같은 값으로 올린다 — 주소가 바뀌어야 새 파일을 받는다(2026-11-01). -->
-<script src="app.js?v=20261101c"></script>
-<script src="live.js?v=20261101c"></script>
+<script src="app.js?v=20261103-calm1"></script>
+<script src="transmission.js?v=20261103-calm1"></script>
+<script src="live.js?v=20261103-calm1"></script>
 </body></html>

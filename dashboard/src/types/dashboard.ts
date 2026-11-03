@@ -710,6 +710,12 @@ export interface MapHospital {
   emergencyLevel?: string | null;
   // 응급실 전화번호(hub 2026-11-01~, 관제 '전화 확인'용) — 구버전 hub면 없다
   erPhone?: string | null;
+  // 일반 질환·현재 시각 기준 규칙 모형의 전달 범위(실제 수용 보장 아님).
+  mapCapacity?: number | null;
+  mapKtasLevel?: number | null;
+  supportedKtas?: number[] | null;
+  ktasSource?: "rule";
+  ktasClinicallyValidated?: boolean;
   // 이송 중 부하(TTL 오버레이 건수, hub 2026-10-03~) — 관제 지도에서 환자가 몰리는
   // 병원을 표시해 분산 장치가 작동 중임을 보여준다. 구버전 hub면 필드 자체가 없다.
   inFlightCount?: number;
@@ -799,6 +805,7 @@ export interface CaseHistory {
 
 // 사건 요약 — 통화 전문·활력징후 등 환자 상세는 없다(그건 요청을 받은 병원 대시보드만 본다).
 export interface MonitorCase {
+  ktasLevel?: number | null;
   type: "case_overview";
   caseId: string;
   apid: string | null;

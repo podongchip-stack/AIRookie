@@ -71,6 +71,19 @@ class KtasDispatchTests(unittest.TestCase):
     def result(self, k=2, text="복통"):
         return self.engine.process_voice_summary(_voice("case", k, text), SCENE)
 
+    def test_monitor_overview_exposes_rule_ktas(self):
+        h = hospital("MAP", "지역응급의료센터")
+        self.engine.update_hospital_info(h)
+        payload = self.app._build_map_overview()
+        row = next(r for r in payload["hospitals"] if r["hospitalId"] == "MAP")
+        expected = spider_rule.ktas_suitability(3, "general", h, 14)["supportedKtas"]
+        self.assertEqual(row["supportedKtas"], expected)
+        self.assertEqual(row["ktasSource"], "rule")
+        self.assertFalse(row["ktasClinicallyValidated"])
+        self.assertFalse(row["bedCountUnknown"])
+        self.assertEqual(row["mapCapacity"], spider_rule.hospital_z(h, 14)[1])
+        self.assertEqual(row["mapKtasLevel"], min(expected))
+
     def test_all_ktas_reuse_spider_rule(self):
         for level in spider_rule.LEVEL_G:
             for em in (0, 2, 5, 8):
@@ -79,14 +92,44 @@ class KtasDispatchTests(unittest.TestCase):
                         h = hospital("H", level, em=em)
                         for k in range(1, 6):
                             suitability = spider_rule.ktas_suitability(k, cond, h, hour)
-                            expected = spider_rule.line(k, cond, h, 10, 0, 0, hour)["blocked"] is None
+                            g, z, _ = spider_rule.hospital_z(h, hour)
+                            supported = [n for n, need in spider_rule.KTAS_Z.items() if spider_rule.wall_ok(h, g, cond) and z >= need]
+                            expected = bool(supported) and k == min(supported)
                             self.assertEqual(suitability["eligible"], expected)
-                            self.assertEqual(k in suitability["supportedKtas"], expected)
+                            self.assertEqual(suitability["hospitalKtas"] == k, expected)
                             self.assertFalse(suitability["clinicallyValidated"])
+
+    def test_all_patient_levels_never_dispatch_below_required_capacity(self):
+        for k in range(1, 6):
+            for level in spider_rule.LEVEL_G:
+                h = hospital(f"{k}-{level}", level, em=2)
+                self.engine.update_hospital_info(h)
+            wire = dashboard_payload(self.result(k).model_dump())
+            for row in wire["hospitals"]:
+                proof = row["ktasSuitability"]
+                self.assertGreaterEqual(proof["effectiveCapacity"], proof["requiredCapacity"])
+                self.assertEqual(proof["hospitalKtas"], k)
+
+    def test_higher_capacity_hospital_is_also_excluded_by_exact_ktas(self):
+        self.engine.update_hospital_info(hospital("K1", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("K2", "지역응급의료센터"))
+        self.engine.update_hospital_info(hospital("K3", "지역응급의료기관"))
+        rows = dashboard_payload(self.result(2).model_dump())["hospitals"]
+        self.assertEqual([h["hospitalId"] for h in rows], ["K2"])
+
+    def test_small_capacity_shortfall_is_scored_but_not_dispatched(self):
+        h = hospital("THIN", "지역응급의료센터", em=2)
+        self.engine.update_hospital_info(h)
+        result = self.result(2)
+        raw = next(r for r in result.hospitals if r.hospitalId == "THIN")
+        self.assertIsNone(raw.spiderBlocked)  # 순위 계산의 옛 허용폭은 내부 감사용으로 남는다.
+        self.assertFalse(can_receive(raw))
+        self.assertEqual(dashboard_payload(result.model_dump())["hospitals"], [])
+        self.assertEqual(raw.ktasSuitability["hospitalKtas"], 3)
 
     def test_k2_filters_local_keeps_internal_audit(self):
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         result = self.result()
         wire = dashboard_payload(result.model_dump())
         self.assertEqual({h.hospitalId for h in result.hospitals}, {"L", "R"})
@@ -97,14 +140,14 @@ class KtasDispatchTests(unittest.TestCase):
         self.assertEqual(wire["hospitals"][0]["ktasSuitability"]["patientKtas"], 2)
 
     def test_condition_wall_blocks_equipment_missing(self):
-        self.engine.update_hospital_info(hospital("NO", "권역응급의료센터", angio="N"))
-        self.engine.update_hospital_info(hospital("YES", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("NO", "지역응급의료센터", angio="N"))
+        self.engine.update_hospital_info(hospital("YES", "지역응급의료센터"))
         wire = dashboard_payload(self.result(text="심근경색").model_dump())
         self.assertEqual([h["hospitalId"] for h in wire["hospitals"]], ["YES"])
 
     def test_no_target_expands_to_compatible_zone(self):
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터", lat=37.63))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터", lat=37.63))
         result = self.result()
         self.assertEqual(max(result.zoneActive), 2)
         self.assertEqual([h["hospitalId"] for h in dashboard_payload(result.model_dump())["hospitals"]], ["R"])
@@ -116,15 +159,15 @@ class KtasDispatchTests(unittest.TestCase):
         self.assertEqual(dashboard_payload(result.model_dump())["hospitals"], [])
 
     def test_timer_skips_incompatible_outer_zone(self):
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         self.engine.update_hospital_info(hospital("L2", lat=37.63))
-        self.engine.update_hospital_info(hospital("R3", "권역응급의료센터", lat=37.68))
+        self.engine.update_hospital_info(hospital("R3", "지역응급의료센터", lat=37.68))
         self.result()
         self.assertEqual(self.engine.next_zone_with_new(SCENE, 1, case_id="case"), 3)
 
     def test_broadcast_phone_pad_hospital_and_monitor_agree(self):
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         phone, pad = self.connect("ambulance", "A"), self.connect("ambulance", "A")
         local, regional = self.connect("hospital", "L"), self.connect("hospital", "R")
         monitor = self.connect("monitor", "map")
@@ -137,7 +180,7 @@ class KtasDispatchTests(unittest.TestCase):
 
     def test_late_hospital_and_ambulance_catchup_are_filtered(self):
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         self.result()
         local, phone, regional = Socket(), Socket(), Socket()
         self.assertEqual(self.app._send_catchup(local, DashboardIdentify(role="hospital", id="L")), [])
@@ -149,7 +192,7 @@ class KtasDispatchTests(unittest.TestCase):
 
     def test_ktas_change_withdraws_request_without_new_profile(self):
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         local = self.connect("hospital", "L")
         self.app._send_to_dashboard(self.result(3).model_dump())
         self.assertEqual(local.sent[-1]["type"], "match_result")
@@ -179,7 +222,7 @@ class KtasDispatchTests(unittest.TestCase):
     def test_record_sync_uses_filtered_candidates(self):
         from record_archive import RecordArchive
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         archive = RecordArchive(Path(_TMP.name) / "record-filter-test.sqlite3")
         with patch.object(self.app, "record_archive", archive):
             self.app._send_to_dashboard(self.result().model_dump())
@@ -189,7 +232,7 @@ class KtasDispatchTests(unittest.TestCase):
 
     def test_raw_voice_v2_ktas_is_the_dispatch_input(self):
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         voice = VoiceCallSummaryMessage.model_validate({"caseId": "case", "source": "ai",
             "transcript": {"raw_text": "통화", "filtered_text": "통화"},
             "summary": {"ktas_level": 2, "chief_complaint": {"major": "복통", "minor": "복통"}}})
@@ -198,8 +241,8 @@ class KtasDispatchTests(unittest.TestCase):
         self.assertEqual([h["hospitalId"] for h in wire["hospitals"]], ["R"])
 
     def test_night_refresh_expands_when_local_capacity_changes(self):
-        self.engine.update_hospital_info(hospital("L", em=2))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터", lat=37.63))
+        self.engine.update_hospital_info(hospital("L", em=5))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터", lat=37.63, em=2))
         day = self.result(3)
         self.assertEqual([h["hospitalId"] for h in dashboard_payload(day.model_dump())["hospitals"]], ["L"])
         with patch.dict(os.environ, {"HUB_SPIDER_HOUR": "2"}):
@@ -211,7 +254,7 @@ class KtasDispatchTests(unittest.TestCase):
     def test_reject_ratio_counts_only_dispatchable_hospitals(self):
         for i in range(4):
             self.engine.update_hospital_info(hospital(f"L{i}"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         self.result(2)
         self.assertTrue(self.engine.apply_approval_action(ApprovalAction(caseId="case", hospital_id="R",
             action="hospital_reject", actor="hospital", timestamp="2026-11-01T05:00:00Z")))
@@ -219,7 +262,7 @@ class KtasDispatchTests(unittest.TestCase):
 
     def test_state_reload_does_not_restore_omitted_hospital_access(self):
         self.engine.update_hospital_info(hospital("L"))
-        self.engine.update_hospital_info(hospital("R", "권역응급의료센터"))
+        self.engine.update_hospital_info(hospital("R", "지역응급의료센터"))
         self.result(2)
         restored = HubEngine(specialty_matcher=Matcher())
         restored.import_state(self.engine.export_state())

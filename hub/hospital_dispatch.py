@@ -10,7 +10,16 @@ from typing import Any
 
 def can_receive(match: Any) -> bool:
     get = match.get if isinstance(match, dict) else lambda key, default=None: getattr(match, key, default)
-    return get("status") in ("approved", "confirmed") or not get("spiderBlocked")
+    if get("status") in ("approved", "confirmed"):
+        return True  # 의료진의 명시적 수용 판단은 자동 모형보다 우선한다.
+    suitability = get("ktasSuitability") or {}
+    patient, hospital = suitability.get("patientKtas"), suitability.get("hospitalKtas")
+    if patient is not None and hospital != patient:
+        return False
+    required, available = suitability.get("requiredCapacity"), suitability.get("effectiveCapacity")
+    if required is not None and available is not None and available < required:
+        return False
+    return not get("spiderBlocked")
 
 
 def dashboard_payload(payload: dict) -> dict:
@@ -19,7 +28,7 @@ def dashboard_payload(payload: dict) -> dict:
         return payload
     hospitals = payload.get("hospitals") or []
     targets = [h for h in hospitals if can_receive(h)]
-    omitted = [{"hospitalId": h["hospitalId"], "reason": h.get("spiderBlocked")} for h in hospitals if not can_receive(h)]
+    omitted = [{"hospitalId": h["hospitalId"], "reason": h.get("spiderBlocked") or "patient_hospital_ktas_mismatch"} for h in hospitals if not can_receive(h)]
     return {**payload, "hospitals": targets, "dispatchPolicy": {
         "source": "rule", "rule": "spider_ktas_v1", "clinicallyValidated": False,
         "ktasLevel": (payload.get("patientInfo") or {}).get("ktasLevel"),
