@@ -250,8 +250,16 @@ export default function MonitorMapPage() {
   };
   const focusRef = useRef(focusPointsOf);
   useEffect(() => { focusRef.current = focusPointsOf; });
+  // 다수 사상자 신고 모달의 [3D 거미줄로 보기](2026-11-04) — 3D가 뜨면 사고 지점으로 카메라를 옮긴다
+  const pendingFocusRef = useRef<{ lat: number; lng: number } | null>(null);
   const focusSelected = useCallback(() => {
     if (!pushInsets()) return;
+    const pending = pendingFocusRef.current;
+    if (pending) {
+      pendingFocusRef.current = null;
+      spiderWin()?.focusPoint?.(pending.lat, pending.lng);
+      return;
+    }
     spiderWin()?.setSelectedCase?.(selectedCaseRef.current ?? null);
     const pts = focusRef.current();
     if (pts.length === 0) return;
@@ -637,6 +645,12 @@ export default function MonitorMapPage() {
           onClose={() => setShowMci(false)}
           onRegister={(body) => sendRaw({ type: "mci_register", ...body })}
           onDispatch={(incidentId) => sendRaw({ type: "mci_dispatch", incidentId })}
+          onShow3d={(gps) => {
+            setShowMci(false);
+            pendingFocusRef.current = gps;
+            if (view !== "3d") { setSpiderReady(false); setView("3d"); }
+            else focusSelected();
+          }}
         />
       )}
       {showAssign && assignmentCount > 0 && <AssignmentModal groups={assignmentGroups} now={now} onClose={() => setShowAssign(false)} onDispatch={dispatchTo} onConfirmRequest={(caseId) => sendConfirmRequest(caseId)} />}

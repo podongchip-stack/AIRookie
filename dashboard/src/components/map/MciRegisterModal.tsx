@@ -23,10 +23,12 @@ const SEVS = ["중증", "중등증", "경증"] as const;
 const SEV_COLOR: Record<string, string> = { 중증: "#D9434B", 중등증: "#F26B1D", 경증: "#1E9E6A" };
 const STAGE_COLOR: Record<string, string> = { 인식: "#5AA9E6", 판단: "#6B5BD2", 행동: "#F5B942", 학습: "#1E9E6A" };
 
-export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, center }: {
+export function MciRegisterModal({ assessment, onRegister, onDispatch, onShow3d, onClose, center }: {
   assessment: MciAssessment | null;
   onRegister: (body: { lat: number; lng: number; counts: Record<string, number>; label: string }) => void;
   onDispatch: (incidentId: string) => void;
+  // 관제 지도를 3D 거미줄 보기로 바꾸고 사고 지점으로 — 출동한 구급차·사건이 실시간으로 그려진다(spider 서버가 떠 있을 때)
+  onShow3d: (gps: { lat: number; lng: number }) => void;
   onClose: () => void;
   center: { lat: number; lng: number } | null;
 }) {
@@ -132,7 +134,7 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
                 </ol>
                 {shown >= 4 && (
                   <>
-                    <MciSketch a={fresh} support={fresh.shortage > 0 ? supportCandidates(fresh.gps) : []} />
+                    <MciSketch key={fresh.incidentId} a={fresh} support={fresh.shortage > 0 ? supportCandidates(fresh.gps) : []} />
                     {fresh.shortage > 0 && (
                       <div style={{ padding: "8px 12px", borderRadius: GLASS.radiusSm, background: "#FDECEA", color: "#B3261E", fontSize: 12.5, lineHeight: 1.6 }}>
                         <b>구급차 {fresh.shortage}대 부족 — 인근 지역 지원 요청 후보</b>
@@ -168,6 +170,10 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
                         onClick={() => { setDispatched(true); onDispatch(fresh.incidentId); }}
                         style={{ ...primaryBtn, marginLeft: "auto", opacity: dispatched ? 0.6 : 1 }}>
                         {dispatched ? "출동 지시함" : `출동 지시 (${fresh.ambulances.length}대)`}
+                      </button>
+                      <button type="button" onClick={() => onShow3d(fresh.gps)} title="관제 지도를 3D 거미줄 보기로 바꾸고 사고 지점으로 이동합니다 — 출동한 사건이 실시간으로 그려집니다"
+                        style={{ ...ghostBtn, borderColor: C.blue, color: C.blue, fontWeight: 700 }}>
+                        3D 거미줄로 보기
                       </button>
                     </div>
                     <div style={{ fontSize: 11, color: C.muted }}>예상 분배는 미리 보기입니다 — 실제 배정은 각 구급대 통화 뒤 병원 수용 회신과 상황실 확정으로 정해집니다. 가중치는 전문의 검토 전 초안입니다.</div>
