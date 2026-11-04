@@ -343,7 +343,7 @@ export default function MonitorMapPage() {
               AI 에이전트 작동 중 · 사건 {realIncidents.length}
               {state.assignmentStats && state.assignmentStats.decided > 0 && ` · 제안 채택 ${state.assignmentStats.followed}/${state.assignmentStats.decided}`}
             </span>
-            <button type="button" onClick={() => setShowMci(true)} style={{ ...toolBtnStyle, borderColor: C.blue, color: C.blue, fontWeight: 700 }}>다수 사상자 등록</button>
+            <button type="button" onClick={() => setShowMci(true)} style={{ ...toolBtnStyle, borderColor: C.blue, color: C.blue, fontWeight: 700 }}>다수 사상자 신고</button>
             {assignmentCount > 0 && (
               <button type="button" onClick={() => setShowAssign(true)} style={{ ...toolBtnStyle, background: "#D93025", borderColor: "#D93025", color: "#fff", fontWeight: 900 }}>
                 배정 요청 {assignmentCount}건

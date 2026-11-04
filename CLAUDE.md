@@ -694,12 +694,12 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
     같은 질환군 24시간 `structural_refusal`로 뒤로, 주기적·환자 요인·사유 없음은 반영 안 함. `refusalPenaltyMin`·`refusalReasons`, 로그 `refusal_feedback_recorded`.
     거절 사유를 AI 학습 정답으로 쓰지 않는다(보고서). 메모리에만 — hub 재시작 시 비워짐
   - **병상 위험 등급**: `bedReliability.riskLevel`(rArrive 0.8↑ low · 0.5↑ medium · 그 아래 high)·`checkedAt`(E-Gen 갱신·병원 확인 중 늦은 쪽) — 발표 8장
-  - **다수 사상자 등록**(관제): WS `mci_register {lat,lng,counts,label}` → `mci_assessment`(반경 15km 병원 여력·예상 분배(규칙)·대기 구급대 추천, 미리 보기),
+  - **다수 사상자 신고**(관제): WS `mci_register {lat,lng,counts,label}` → `mci_assessment`(반경 15km 병원 여력·예상 분배(규칙)·대기 구급대 추천, 미리 보기),
     `mci_dispatch {incidentId}` → 추천 구급대 출동(시뮬레이션). **시연 상황 부여**: WS `demo_scenario {kind: conflict|refusal|no_accept|recent_block}`
     (콘솔 [상황 부여 ▾], 사건 `demo-`, 로그 demo) — conflict는 권역센터 병상을 1로 연출(info 다음 전송이 덮어씀)
   - **버그 수정**: 작업 스레드 재계산(`refresh_case`)이 계산 중 넓힌 존을 옛 값으로 덮어써 넓힌 존 병원이 수용해도 이송 승인이 거부되던 경쟁
   - 테스트: `test_assignment_agent.py`·`test_refusal_memory.py`·`test_control_demo.py`, 테스트 병원은 실제 병원 역량(`test_real_hospitals.py`)으로 채운다
-  - 관제 지도(`/map`): 배정 요청 모달·사건 상세(환자 정보·진행 상황·AI 에이전트 활동·병원 응답·기록)·다수 사상자 등록·에이전트 상태 칩·배정 대기 알림,
+  - 관제 지도(`/map`): 배정 요청 모달·사건 상세(환자 정보·진행 상황·AI 에이전트 활동·병원 응답·기록)·다수 사상자 신고·에이전트 상태 칩·배정 대기 알림,
     발표 자료(글래스 모핑) 톤의 유리 패널, 2D 지도 정리(넓게 보면 무관 병원은 센터만, 수용 곤란 선 숨김). 구급차 앱의 `dispatcher_pending` 표시는 앱 담당
 - **미선택 병원 통보(2026-10-22, 관제 반영 2026-10-24)**: 이송이 확정되면 수용 승인했지만 선택되지 않은 병원에 `HospitalMatch.notSelected`
   깃발이 서고(status는 approved 그대로 — 이동 중 재선택 대상으로 남는다, 확정이 풀리면 내려감), 그 병원 탭에 WS `selection_released`

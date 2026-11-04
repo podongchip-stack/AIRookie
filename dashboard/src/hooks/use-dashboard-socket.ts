@@ -747,7 +747,7 @@ export function useDashboardSocket(identity: { role: SocketRole; id: string } | 
     socket.send(JSON.stringify({ type: "confirm_request", caseId, hospitalIds }));
     return true;
   }, []);
-  // 관제·콘솔 → hub 일반 메시지(다수 사상자 등록·시연 상황 부여 등, 2026-11-04)
+  // 관제·콘솔 → hub 일반 메시지(다수 사상자 신고·시연 상황 부여 등, 2026-11-04)
   const sendRaw = useCallback((message: Record<string, unknown>) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;

@@ -1,9 +1,9 @@
-"""관제 시연 상황 부여 · 다수 사상자 등록(2026-11-04) 앱 레이어 검사 — 실제 상태·로그는 건드리지 않는다(임시 경로).
+"""관제 시연 상황 부여 · 다수 사상자 신고(2026-11-04) 앱 레이어 검사 — 실제 상태·로그는 건드리지 않는다(임시 경로).
 
 ① [충돌 상황] → 권역센터 여력 1 · 사건 2건 → 관제 배정 요청(assignment_conflicts)
 ② [수용 곤란 상황] → 다음 사건에서 그 병원에 학습 반영(+분)
 ③ [수용 회신 없음] · [최근 차단 공지] 사건이 만들어진다
-④ [다수 사상자 등록] → 반경 병원 집계·예상 분배·구급대 추천(mci_assessment), 관제 소켓만
+④ [다수 사상자 신고] → 반경 병원 집계·예상 분배·구급대 추천(mci_assessment), 관제 소켓만
 
 실행: python test_control_demo.py
 """
@@ -90,7 +90,7 @@ def main() -> None:
     assert held, "최근 차단 공지 병원은 첫 동시 전송에서 보류"
     print("  [확인] 최근 차단 공지 병원 → dispatchHold")
 
-    print("=== ④ 다수 사상자 등록 ===")
+    print("=== ④ 다수 사상자 신고 ===")
     stranger = _FakeSocket()
     app._dashboard_sockets.add(stranger)
     app._handle_identify(stranger, DashboardIdentify(role="hospital", id="C1"))

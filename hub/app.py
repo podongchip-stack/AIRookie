@@ -1056,12 +1056,12 @@ def _send_dispatcher_designated(case_id: str, hospital_id: str, timestamp: str) 
                                                         "delivered": len(socks), "timestamp": timestamp})
 
 
-# ── 관제 시연 상황 부여 · 다수 사상자 등록(2026-11-04) ─────────────────────────
+# ── 관제 시연 상황 부여 · 다수 사상자 신고(2026-11-04) ─────────────────────────
 # 시연 콘솔·관제 화면이 버튼 하나로 상황을 만든다. 실제 병원·구급차 레지스트리를 쓰고, 만든 사건은 caseId가 demo-로
 # 시작하며 의사결정 로그에 demo: true로 남는다. 병상 값을 바꾸는 연출(충돌)은 info의 다음 전송(5분)이 덮어쓴다.
 DEMO_CENTER = GpsPoint(lat=37.5665, lng=126.9780)
 _MCI_KTAS = {"중증": (2, "중증"), "중등증": (3, "중등증"), "경증": (4, "경증")}
-_mci_incidents: dict[str, dict] = {}  # 다수 사상자 등록 id -> 등록 내용(관제 [출동 지시]가 쓴다)
+_mci_incidents: dict[str, dict] = {}  # 다수 사상자 신고 id -> 등록 내용(관제 [출동 지시]가 쓴다)
 #: 구급차 1대가 태우는 사상자 수(초안) — 중증·중등증은 1명, 경증은 2명까지 함께 이송
 MCI_PER_AMBULANCE = {"중증": 1, "중등증": 1, "경증": 2}
 
@@ -1255,7 +1255,7 @@ def _plan_mci(gps: GpsPoint, counts: dict[str, int], radius_km: float = 15.0) ->
 
 
 def _handle_mci_register(ws, payload: dict) -> None:
-    """관제 [다수 사상자 등록](2026-11-04): 위치·추정 사상자 수를 받아 에이전트가 반경 병원 여력 집계 → 가까운 대기 구급대
+    """관제 [다수 사상자 신고](2026-11-04): 위치·추정 사상자 수를 받아 에이전트가 반경 병원 여력 집계 → 가까운 대기 구급대
     추천 → 예상 분배(규칙)를 계산해 그 관제 탭에 mci_assessment로 돌려준다. 출동은 관제가 [출동 지시]로 정한다."""
     import uuid
     if _socket_identity.get(ws, (None, None))[0] != "monitor":

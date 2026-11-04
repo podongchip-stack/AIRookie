@@ -7,7 +7,7 @@ import { supportCandidates } from "@/lib/fire-hq";
 import { MciSketch } from "@/components/map/MciSketch";
 import type { GeocodeResult, MciAssessment } from "@/types/dashboard";
 
-// 다수 사상자 등록(2026-11-04) — 개정법 이후 상황실이 직접 등록하고 에이전트가 단계별로 일하는 모습을 보인다.
+// 다수 사상자 신고(2026-11-04) — 개정법 이후 상황실이 직접 등록하고 에이전트가 단계별로 일하는 모습을 보인다.
 // 위치·추정 사상자 수를 넣으면 hub가 ① 반경 병원 여력 집계 ② 중증부터 예상 분배(규칙, spider 줄 길이 + 여력·부하)
 // ③ 가까운 대기 구급대 추천을 돌려준다(mci_assessment). 결과는 미리 보기이고 출동은 관제가 [출동 지시]로 정한다.
 // 단계는 응답이 오면 차례로 펼쳐 보인다(화면 연출) — 계산은 hub에서 이미 끝났고 생성형 AI가 아니라 규칙이다.
@@ -59,11 +59,11 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
   const total = SEVS.reduce((n, s) => n + (counts[s] ?? 0), 0);
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="다수 사상자 등록" style={{ position: "absolute", inset: 0, zIndex: 320, background: "rgba(28,31,42,.32)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div role="dialog" aria-modal="true" aria-label="다수 사상자 신고" style={{ position: "absolute", inset: 0, zIndex: 320, background: "rgba(28,31,42,.32)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <button type="button" aria-label="닫기" onClick={onClose} style={{ position: "absolute", inset: 0, border: 0, background: "transparent", cursor: "default" }} />
       <div style={{ position: "relative", width: 820, maxHeight: "calc(100% - 48px)", maxWidth: "calc(100% - 32px)", background: GLASS.solid, border: GLASS.border, borderRadius: GLASS.radius, boxShadow: "0 24px 60px rgba(91,75,138,.28)", fontFamily: GLASS.font, display: "flex", flexDirection: "column", overflow: "hidden", whiteSpace: "normal" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 10, padding: "16px 22px", borderBottom: `1px solid ${C.line2}` }}>
-          <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>다수 사상자 등록</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>다수 사상자 신고</div>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: C.blue, background: GLASS.tint, borderRadius: 999, padding: "2px 10px" }}>AI 에이전트 · 규칙 기반 분배</span>
           <div style={{ flex: 1 }} />
           <button type="button" onClick={onClose} style={ghostBtn}>닫기 ✕</button>
@@ -109,7 +109,7 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
             <button type="button" disabled={total === 0}
               onClick={() => { setShown(0); setDispatched(false); setSentAt(Date.now()); onRegister({ lat: where.lat, lng: where.lng, counts, label: label || where.label }); }}
               style={{ ...primaryBtn, opacity: total ? 1 : 0.5 }}>
-              등록하고 에이전트 분석 ({total}명)
+              신고하고 에이전트 분석 ({total}명)
             </button>
           </div>
 
@@ -117,7 +117,7 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
           <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
             {!fresh && (
               <div style={{ padding: 20, borderRadius: 14, background: GLASS.tint, color: C.sub, fontSize: 13, lineHeight: 1.6 }}>
-                {sentAt ? "에이전트가 분석 중입니다…" : "위치와 추정 사상자를 넣고 등록하면, 에이전트가 반경 병원의 여력을 모으고 중증 환자부터 예상 분배와 출동 구급대를 제안합니다."}
+                {sentAt ? "에이전트가 분석 중입니다…" : "위치와 추정 사상자를 넣고 신고하면, 에이전트가 반경 병원의 여력을 모으고 중증 환자부터 예상 분배와 출동 구급대를 제안합니다."}
               </div>
             )}
             {fresh && (

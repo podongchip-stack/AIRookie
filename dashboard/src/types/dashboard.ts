@@ -543,7 +543,7 @@ export interface AssignmentGroup {
   proposal: { hospitalId: string; cases: AssignmentCase[]; source: "rule"; rule: string; clinicallyValidated: boolean };
 }
 
-// 다수 사상자 등록 분석(hub → 관제 탭, 2026-11-04, 규칙)
+// 다수 사상자 신고 분석(hub → 관제 탭, 2026-11-04, 규칙)
 export interface MciAssessment {
   type: "mci_assessment";
   incidentId: string;

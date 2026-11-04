@@ -396,7 +396,7 @@ NEWS2 공개 표준 + 쇼크지수), 검증은 `python test_transport_triage.py`
 | `dispatcher_pending` | hub → 구급차 | `{caseId, pending, hospitalId, hospitalName}` — 대기 중 구급대원 `final_approval`은 `action_refused`(`dispatcher_pending`) |
 | `confirm_request` | 관제 → hub | `{caseId, hospitalIds?}` → 병원 탭 `dispatcher_request` |
 | `final_approval` (`actor: dispatcher`) | 관제 → hub | 수용 병원 또는 판단 대기 병원(상황실 지정 → 병원 탭 `dispatcher_designated`) |
-| `mci_register` / `mci_dispatch` | 관제 → hub | 다수 사상자 등록 → `mci_assessment`, 추천 구급대 출동 |
+| `mci_register` / `mci_dispatch` | 관제 → hub | 다수 사상자 신고 → `mci_assessment`, 추천 구급대 출동 |
 | `demo_scenario` | 콘솔·관제 → hub | `conflict` · `refusal` · `no_accept` · `recent_block` 시연 장면 |
 
 - 충돌 = 이송 확정 전 사건 2건 이상의 1순위 수용 병원이 같고 여력(가용 − 이송 중) < 사건 수(미상은 2건 이상). `assignment_agent.py`
