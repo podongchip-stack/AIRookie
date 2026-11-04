@@ -173,6 +173,8 @@ struct CandidateCard: View {
             bigButton("이송 확정됨", bg: AD.greenSoft, fg: AD.green, border: AD.green)
         } else if requesting {
             bigButton("확정 요청 중…", bg: AD.orangeSoft, fg: AD.approve, border: AD.approve)
+        } else if approvable, model.waitingDispatcher != nil {
+            bigButton("관제 판단 대기 중", bg: AD.redSoft, fg: AD.red, border: AD.red)
         } else if approvable {
             Button { model.approve(h.hospitalId) } label: { bigButton("이송 승인", bg: model.paused ? AD.gray : AD.approve, fg: .white, border: nil) }
                 .disabled(model.paused)

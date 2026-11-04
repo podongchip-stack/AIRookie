@@ -978,6 +978,8 @@ private fun ReselectList(m: PhoneModel) {
             CircularProgressIndicator(color = AD.blue, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
             Text("${deciding.name}(으)로 이송을 확정하고 있습니다", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AD.navy)
         }
+    } else if (ready.isNotEmpty() && m.waitingDispatcher != null) {
+        DispatcherWaitBanner(m.waitingDispatcher!!)
     } else if (ready.isNotEmpty()) {
         Text("승인한 병원이 있습니다 — 바로 이송 승인하세요", fontSize = 12.5.sp, color = AD.ink3)
         Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -57,6 +57,17 @@ struct TransportTab: View {
                 }
                 .padding(.horizontal, 4)
 
+                // 관제 판단 대기(2026-11-04) — 여러 환자가 한 병원에 몰려 상황실이 이송 병원을 지정하는 동안
+                if let name = m.waitingDispatcher {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("관제 판단 대기 중").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.red)
+                        Text("\(name)에 여러 환자가 몰려 상황실이 이송 병원을 지정합니다. 지정되면 바로 이송이 확정됩니다.")
+                            .font(.system(size: 12.5)).foregroundStyle(AD.ink3).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                    .background(AD.redSoft).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
                 if candidates.isEmpty { Text("수용 승인한 병원이 아직 없습니다. 병원 응답을 기다리고 있습니다.").font(.subheadline).foregroundStyle(AD.sub).padding() }
                 ForEach(candidates, id: \.hospitalId) { h in
                     CandidateCard(h: h, recommended: confirmed == nil && h.hospitalId == r.hospitals.first(where: canTransportNow)?.hospitalId)
@@ -221,6 +232,8 @@ private struct CandidateCard: View {
                 bigButtonLabel("이송 확정됨", bg: AD.greenSoft, fg: AD.green)
             } else if requesting {
                 bigButtonLabel("확정 요청 중…", bg: AD.orangeSoft, fg: approveColor)
+            } else if approvable, m.waitingDispatcher != nil {
+                bigButtonLabel("관제 판단 대기 중", bg: AD.redSoft, fg: AD.red)
             } else if approvable {
                 Button { m.approve(h.hospitalId) } label: { bigButtonLabel("이송 승인", bg: m.paused ? AD.gray : approveColor, fg: .white) }
                     .buttonStyle(.plain).disabled(m.paused)

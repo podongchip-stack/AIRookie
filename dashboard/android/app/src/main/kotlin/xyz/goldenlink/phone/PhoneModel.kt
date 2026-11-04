@@ -28,6 +28,8 @@ import xyz.goldenlink.core.ActionRefused
 import xyz.goldenlink.core.AmbulancePhase
 import xyz.goldenlink.core.AmbulanceSim
 import xyz.goldenlink.core.ApprovalAction
+import xyz.goldenlink.core.DispatcherNotice
+import xyz.goldenlink.core.DispatcherPending
 import xyz.goldenlink.core.BodyCare
 import xyz.goldenlink.core.BodyEdits
 import xyz.goldenlink.core.BodyMark
@@ -128,6 +130,8 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         get() = caseId?.let { extraNoteDrafts[it] } ?: ""
         set(v) { caseId?.let { extraNoteDrafts[it] = v } }
     var pendingConfirmId by mutableStateOf<String?>(null)  // 이송 승인을 보내고 hub의 확정 응답을 기다리는 병원
+    // caseId -> 관제 판단 대기의 원인 병원 이름(2026-11-04). 대기 중엔 이송 승인 대신 상황실이 병원을 지정한다
+    var dispatcherPending by mutableStateOf<Map<String, String>>(emptyMap())
     var incidentAddress by mutableStateOf<String?>(null)   // 인계확인서 "출발지 주소" — hub가 좌표를 주소로 바꿔 준다
     /** 통화 화면 지도의 병원 핀 좌표 — hub map_overview(병원 목록)에서 hospitalId로 찾는다. 현장 후보 메시지엔 좌표가 없다 */
     val hospitalGps = mutableStateMapOf<String, GPS>()
@@ -320,6 +324,8 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     val inTransport: Boolean get() = simOn && caseId != null && (phase == AmbulancePhase.transporting || phase == AmbulancePhase.rerouting)
     /** 운영자의 시연 일시정지(조작 잠금). 추가 통화로 이동만 멈춘 경우("call")는 통화·전송을 막지 않는다 */
     val paused: Boolean get() = mySim?.paused == true && mySim?.pauseReason != "call"
+    /** 지금 사건이 관제 판단 대기면 원인 병원 이름(없으면 "1순위 병원"), 아니면 null */
+    val waitingDispatcher: String? get() = (result?.caseId ?: caseId)?.let { dispatcherPending[it] }
     /** 이송 중 추가 통화 동안 구급차 이동이 멈춰 있다(통화 내용이 반영되면 hub가 다시 출발시킨다) */
     val transportHeld: Boolean get() = mySim?.paused == true && mySim?.pauseReason == "call"
     val sent: Boolean get() = caseId?.let { sentCount[it] } != null
@@ -457,12 +463,25 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                         "already_arrived" -> "이미 병원에 도착해 이송 병원을 바꿀 수 없습니다. 현재 병원의 수용 불가 처리 후 다시 선택해 주세요."
                         "confirm_failed" -> "이송 확정을 처리하지 못해 존 안 병원 전체에 전달했습니다. 구급차 대시보드를 확인해 주세요."
                         "no_pending_decision" -> "이 통화는 이미 처리됐습니다."
+                        "dispatcher_pending" -> DISPATCHER_WAIT_TEXT
                         else -> "지금은 통화를 시작할 수 없습니다."
                     })
                     if (call?.phase == LocalCall.Phase.CONNECTING && call?.webrtc != true) call = null  // 실제 통화는 call_state(ended)로 정리한다
                     if (r.reason == "no_pending_decision" && call?.phase == LocalCall.Phase.ENDED) { call = null; session = null }
                 }
                 "case_closed" -> forget(hubJson.decodeFromString(CaseClosed.serializer(), text).caseId)
+                // 관제 판단 대기(2026-11-04) — 여러 환자가 한 병원에 몰려 상황실이 병원을 정한다. 그동안 이송 승인은 막힌다
+                "dispatcher_pending" -> {
+                    val p = hubJson.decodeFromString(DispatcherPending.serializer(), text)
+                    dispatcherPending = if (p.pending) dispatcherPending + (p.caseId to (p.hospitalName ?: "1순위 병원"))
+                        else dispatcherPending - p.caseId
+                    if (p.pending) show("관제 판단 대기 — ${p.hospitalName ?: "1순위 병원"}에 여러 환자가 몰려 상황실이 병원을 지정합니다.")
+                }
+                "dispatcher_notice" -> {
+                    val n = hubJson.decodeFromString(DispatcherNotice.serializer(), text)
+                    dispatcherPending = dispatcherPending - n.caseId
+                    if (n.kind == "transport_confirmed") show("상황실이 ${n.hospitalName ?: "병원"}(으)로 이송 병원을 지정했습니다.")
+                }
                 "case_sync" -> {
                     val ids = hubJson.decodeFromString(CaseSync.serializer(), text).caseIds.toSet()
                     for (id in (scenes.keys + sentCount.keys + results.keys) - ids) forget(id)
@@ -476,6 +495,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     private fun forget(caseId: String) {
         closeRecord(caseId)
         results.remove(caseId)
+        dispatcherPending = dispatcherPending - caseId
         scenes.remove(caseId); callStatus.remove(caseId); hubTranscripts.remove(caseId); sentCount.remove(caseId)
         matchVersion.remove(caseId); destinations.remove(caseId); sceneInputMode.remove(caseId)
         transportInputMode.remove(caseId)
@@ -816,6 +836,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     /** 이송 승인(구급대원 판단) — 웹 handleApprove와 같은 형식. 병원이 승인한 병원에만 버튼이 열린다 */
     fun approve(hospitalId: String) {
         if (paused) { show("현재 시연 일시정지 중입니다."); return }
+        if (waitingDispatcher != null) { show(DISPATCHER_WAIT_TEXT); return }
         val id = result?.caseId ?: caseId ?: return
         pendingConfirmId = hospitalId
         if (!sendToHub(hubJson.encodeToJsonElement(ApprovalAction.serializer(), ApprovalAction(id, hospitalId, isoNow())))) {
@@ -1045,3 +1066,6 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         bodyEdits = BodyEdits(added, removed, cares)
     }
 }
+
+/** 관제 판단 대기 중 이송 승인을 누르거나 hub가 거부했을 때의 안내(2026-11-04) */
+const val DISPATCHER_WAIT_TEXT = "관제 판단 대기 중입니다. 상황실이 이송 병원을 지정합니다."

@@ -300,6 +300,23 @@ public struct ActionRefused: Decodable {
     public let reason: String
 }
 
+/// 관제 판단 대기(hub 2026-11-04) — 여러 사건의 1순위 수용 병원이 같고 여력이 모자라 상황실이 병원을 정한다.
+/// pending이면 구급대원 이송 승인을 hub가 막는다(action_refused "dispatcher_pending"). 풀리면 pending false.
+public struct DispatcherPending: Decodable {
+    public let caseId: String
+    public let pending: Bool
+    public let hospitalId: String?
+    public let hospitalName: String?
+}
+
+/// 관제가 구급대원 대신 이송 병원을 확정했다(hub 2026-11-01~, kind "transport_confirmed")
+public struct DispatcherNotice: Decodable {
+    public let caseId: String
+    public let kind: String?
+    public let hospitalId: String?
+    public let hospitalName: String?
+}
+
 /// scene_input_mode(2026-10-06) — 시연 콘솔 통화 방식. "template"(정해진 상황 선택)이면 그 단계의 통화를 못 한다(hub도 거부)
 public struct SceneInputMode: Decodable {
     public let caseId: String

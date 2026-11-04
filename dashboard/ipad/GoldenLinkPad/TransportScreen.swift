@@ -62,6 +62,16 @@ struct TransportScreen: View {
             }
             // 제목 줄과 분리된 자기 줄(2026-10-28) — 400pt 고정 폭에서 제목·요청 수와 같은 줄에 두면 넘쳐서 줄바꿈됐다
             if let r = model.result { responseCounts(r) }
+            // 관제 판단 대기(2026-11-04) — 여러 환자가 한 병원에 몰려 상황실이 이송 병원을 지정하는 동안
+            if let name = model.waitingDispatcher {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("관제 판단 대기 중").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.red)
+                    Text("\(name)에 여러 환자가 몰려 상황실이 이송 병원을 지정합니다. 지정되면 바로 이송이 확정됩니다.")
+                        .font(.system(size: 12.5)).foregroundStyle(AD.ink3).fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                .background(AD.redSoft).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
             if let r = model.result {
                 HStack(spacing: 6) {
                     Text("병원을 누르면 오른쪽에 배후역량표").font(.system(size: 11.5)).foregroundStyle(AD.muted)

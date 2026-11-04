@@ -258,6 +258,23 @@ struct ActionRefused: Codable {
     var reason: String?
 }
 
+/// 관제 판단 대기(hub 2026-11-04) — 여러 사건의 1순위 수용 병원이 같고 여력이 모자라 상황실이 병원을 정한다.
+/// pending이면 구급대원 이송 승인을 hub가 막는다(action_refused "dispatcher_pending"). 풀리면 pending false.
+struct DispatcherPending: Codable {
+    var caseId: String
+    var pending: Bool = false
+    var hospitalId: String?
+    var hospitalName: String?
+}
+
+/// 관제가 구급대원 대신 이송 병원을 확정했다(hub 2026-11-01~, kind "transport_confirmed")
+struct DispatcherNotice: Codable {
+    var caseId: String
+    var kind: String?
+    var hospitalId: String?
+    var hospitalName: String?
+}
+
 struct Envelope: Codable {
     var type: String?
 }

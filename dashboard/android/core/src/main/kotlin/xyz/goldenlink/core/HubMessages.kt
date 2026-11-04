@@ -268,6 +268,15 @@ data class SceneInputMode(val caseId: String, val mode: String, val stage: Strin
 @Serializable
 data class CaseClosed(val caseId: String)
 
+/** 관제 판단 대기(hub 2026-11-04) — 여러 사건의 1순위 수용 병원이 같고 여력이 모자라 상황실이 병원을 정한다.
+ *  pending이면 구급대원 이송 승인을 hub가 막는다(action_refused "dispatcher_pending"). 풀리면 pending false. */
+@Serializable
+data class DispatcherPending(val caseId: String, val pending: Boolean = false, val hospitalId: String? = null, val hospitalName: String? = null)
+
+/** 관제가 구급대원 대신 이송 병원을 확정했다(hub 2026-11-01~, kind "transport_confirmed") */
+@Serializable
+data class DispatcherNotice(val caseId: String, val kind: String = "", val hospitalId: String? = null, val hospitalName: String? = null)
+
 @Serializable
 data class CaseSync(val caseIds: List<String> = emptyList())
 

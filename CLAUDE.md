@@ -700,7 +700,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   - **버그 수정**: 작업 스레드 재계산(`refresh_case`)이 계산 중 넓힌 존을 옛 값으로 덮어써 넓힌 존 병원이 수용해도 이송 승인이 거부되던 경쟁
   - 테스트: `test_assignment_agent.py`·`test_refusal_memory.py`·`test_control_demo.py`, 테스트 병원은 실제 병원 역량(`test_real_hospitals.py`)으로 채운다
   - 관제 지도(`/map`): 배정 요청 모달·사건 상세(환자 정보·진행 상황·AI 에이전트 활동·병원 응답·기록)·다수 사상자 신고·에이전트 상태 칩·배정 대기 알림,
-    발표 자료(글래스 모핑) 톤의 유리 패널, 2D 지도 정리(넓게 보면 무관 병원은 센터만, 수용 곤란 선 숨김). 구급차 앱의 `dispatcher_pending` 표시는 앱 담당
+    발표 자료(글래스 모핑) 톤의 유리 패널, 2D 지도 정리(넓게 보면 무관 병원은 센터만, 수용 곤란 선 숨김). 구급차 앱(안드로이드·아이폰 전화 앱, 아이패드)은 `dispatcher_pending`이면 "관제 판단 대기 중" 띠와 [이송 승인] 잠금, `dispatcher_notice`면 "상황실이 ○○로 지정" 안내(2026-11-04, Windows에서 작성 — 실기기·빌드 확인 필요)
 - **미선택 병원 통보(2026-10-22, 관제 반영 2026-10-24)**: 이송이 확정되면 수용 승인했지만 선택되지 않은 병원에 `HospitalMatch.notSelected`
   깃발이 서고(status는 approved 그대로 — 이동 중 재선택 대상으로 남는다, 확정이 풀리면 내려감), 그 병원 탭에 WS `selection_released`
   (`confirmedHospitalId·confirmedHospitalName`)를 바로 보낸다. 임상 자문 요구 — 수용 승낙은 처치 공간·진료 조정 같은 자원 선배정이라 선택되지

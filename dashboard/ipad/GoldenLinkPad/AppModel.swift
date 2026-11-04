@@ -52,6 +52,8 @@ final class AppModel: ObservableObject {
     @Published var callStatus: CallStatus?
     @Published var transcript: [CallTranscriptLine] = []
     @Published var pendingConfirmId: String?
+    /// caseId -> 관제 판단 대기의 원인 병원 이름(2026-11-04). 대기 중엔 이송 승인 대신 상황실이 병원을 지정한다
+    @Published var dispatcherPending: [String: String] = [:]
     @Published var notice: String?
     @Published var receivedAt: Date?
     /// 사고 현장 주소(인계확인서 "출발지 주소") — hub가 좌표를 주소로 바꿔 준다. 못 구하면 nil이고 그때만 좌표를 적는다
@@ -91,6 +93,8 @@ final class AppModel: ObservableObject {
     }
     var confirmed: HospitalMatch? { result?.hospitals.first { $0.status == "confirmed" } }
     var paused: Bool { sim?.paused == true && sim?.pauseReason != "call" || result?.paused == true }
+    /// 지금 사건이 관제 판단 대기면 원인 병원 이름, 아니면 nil
+    var waitingDispatcher: String? { (result?.caseId ?? caseId).flatMap { dispatcherPending[$0] } }
 
     func start() {
         guard !started else { return }
@@ -244,6 +248,7 @@ final class AppModel: ObservableObject {
                 if transcript.count > 200 { transcript.removeFirst(transcript.count - 200) }
             }
         case "case_closed":
+            if let m = try? dec.decode(CaseClosed.self, from: data) { dispatcherPending[m.caseId] = nil }
             if let m = try? dec.decode(CaseClosed.self, from: data), m.caseId == result?.caseId || m.caseId == scene?.caseId {
                 result = nil; scene = nil; callStatus = nil; transcript = []; pendingConfirmId = nil; responseLog = []
             }
@@ -256,7 +261,24 @@ final class AppModel: ObservableObject {
         case "action_refused":
             if let m = try? dec.decode(ActionRefused.self, from: data) {
                 pendingConfirmId = nil
-                show(m.reason == "paused" ? "현재 시연 일시정지 중입니다." : "hub가 요청을 거부했습니다 (\(m.reason ?? ""))")
+                show(m.reason == "paused" ? "현재 시연 일시정지 중입니다."
+                     : m.reason == "dispatcher_pending" ? Self.dispatcherWaitText
+                     : "hub가 요청을 거부했습니다 (\(m.reason ?? ""))")
+            }
+        // 관제 판단 대기(2026-11-04) — 여러 환자가 한 병원에 몰려 상황실이 병원을 정한다. 그동안 이송 승인은 막힌다
+        case "dispatcher_pending":
+            if let m = try? dec.decode(DispatcherPending.self, from: data) {
+                if m.pending {
+                    dispatcherPending[m.caseId] = m.hospitalName ?? "1순위 병원"
+                    show("관제 판단 대기 — \(m.hospitalName ?? "1순위 병원")에 여러 환자가 몰려 상황실이 병원을 지정합니다.")
+                } else {
+                    dispatcherPending[m.caseId] = nil
+                }
+            }
+        case "dispatcher_notice":
+            if let m = try? dec.decode(DispatcherNotice.self, from: data) {
+                dispatcherPending[m.caseId] = nil
+                if m.kind == "transport_confirmed" { show("상황실이 \(m.hospitalName ?? "병원")(으)로 이송 병원을 지정했습니다.") }
             }
         default:
             break
@@ -264,8 +286,11 @@ final class AppModel: ObservableObject {
     }
 
     // ── 이송 승인(구급대원 판단) — 웹 handleApprove와 같은 형식. 병원이 승인한 병원에만 버튼이 열린다 ──
+    static let dispatcherWaitText = "관제 판단 대기 중입니다. 상황실이 이송 병원을 지정합니다."
+
     func approve(_ hospitalId: String) {
         if paused { show("현재 시연 일시정지 중입니다."); return }
+        if waitingDispatcher != nil { show(Self.dispatcherWaitText); return }
         guard let caseId = result?.caseId ?? caseId, let ambulance else { return }
         pendingConfirmId = hospitalId
         if !ambulance.send(ApprovalAction(caseId: caseId, hospital_id: hospitalId, timestamp: ISO.now())) {

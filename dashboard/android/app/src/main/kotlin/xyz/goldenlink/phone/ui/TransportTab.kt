@@ -84,6 +84,9 @@ fun TransportTab(m: PhoneModel) {
                     fontSize = 11.5.sp, color = AD.sub)
             }
         }
+        m.waitingDispatcher?.let { name ->  // 관제 판단 대기(2026-11-04)
+            item { DispatcherWaitBanner(name) }
+        }
         items(candidates, key = { it.hospitalId }) { h ->
             CandidateCard(m, h, recommended = confirmed == null && h.hospitalId == r.hospitals.firstOrNull { canTransportNow(it) }?.hospitalId, now = now)
         }
@@ -243,6 +246,7 @@ private fun ActionButton(m: PhoneModel, h: MatchHospital, confirmedHere: Boolean
     when {
         confirmedHere -> big("이송 확정됨", AD.greenSoft, AD.green)
         requesting -> big("확정 요청 중…", AD.orangeSoft, approveColor)
+        approvable && m.waitingDispatcher != null -> big("관제 판단 대기 중", AD.redSoft, AD.red)
         approvable -> big("이송 승인", if (m.paused) AD.gray else approveColor, Color.White, onClick = if (m.paused) null else ({ m.approve(h.hospitalId) }))
         else -> big(if (h.excluded == true) "이 사건에서 제외됨" else if (statusKey == "rejected") "수용 불가" else "병원 응답 대기", AD.chip, AD.muted)
     }
@@ -265,5 +269,16 @@ fun TabBar(m: PhoneModel) {
                 }
             }
         }
+    }
+}
+
+/** 관제 판단 대기 띠(2026-11-04) — 여러 환자가 한 병원에 몰려 상황실이 병원을 정하는 동안. 이송 승인은 hub가 막는다 */
+@Composable
+fun DispatcherWaitBanner(hospitalName: String) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AD.redSoft).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("관제 판단 대기 중", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.red)
+        Text("${hospitalName}에 여러 환자가 몰려 상황실이 이송 병원을 지정합니다. 지정되면 바로 이송이 확정됩니다.",
+            fontSize = 12.5.sp, color = AD.ink3)
     }
 }
