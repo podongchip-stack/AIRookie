@@ -148,7 +148,9 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 12.5, color: C.ink2 }}>
-                        추천 구급대 {fresh.ambulances.length}대 · {fresh.ambulances.slice(0, 4).map((a) => `${a.name ?? a.apid}(${a.km}km)`).join(", ")}{fresh.ambulances.length > 4 ? " …" : ""}
+                        필요 {fresh.neededAmbulances}대 · 가용 {fresh.ambulances.length}대
+                        {fresh.shortage > 0 && <b style={{ color: "#D9434B" }}> · {fresh.shortage}대 부족 — 인근 지역 지원 요청 필요</b>}
+                        <br />추천 · {fresh.ambulances.slice(0, 4).map((a) => `${a.name ?? a.apid}(${a.km}km)`).join(", ")}{fresh.ambulances.length > 4 ? " …" : ""}
                       </span>
                       <button type="button" disabled={dispatched || fresh.ambulances.length === 0}
                         onClick={() => { setDispatched(true); onDispatch(fresh.incidentId); }}

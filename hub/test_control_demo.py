@@ -100,6 +100,10 @@ def main() -> None:
     a = _of(monitor, "mci_assessment")[-1]
     assert a["total"] == 5 and a["hospitalsInRadius"] == 3 and sum(p["count"] for p in a["plan"]) + a["unplaced"] == 5, a
     assert [s["stage"] for s in a["steps"]] == ["인식", "판단", "행동"] and a["source"] == "rule"
+    assert a["neededAmbulances"] == 4, "중증 2 + 중등증 1 + 경증 2명(1대) = 4대"
+    app._handle_mci_register(monitor, {"lat": 37.566, "lng": 126.978, "counts": {"중증": 20}})
+    big = _of(monitor, "mci_assessment")[-1]
+    assert big["neededAmbulances"] == 20 and big["shortage"] == 20 - len(big["ambulances"]) > 0, "모자라면 부족 대수를 알린다"
     print(f"  [확인] 병원 {a['hospitalsInRadius']}곳 집계 · 분배 {[(p['name'], p['count']) for p in a['plan']]} · 구급대 {len(a['ambulances'])}대 추천")
     print("\n모든 검사 통과")
 

@@ -552,6 +552,9 @@ export interface MciAssessment {
   counts: Record<string, number>;
   total: number;
   source: "rule";
+  // 필요 구급차(중증·중등증 1명당 1대, 경증 2명당 1대 — 초안)와 대기 구급차가 모자란 대수
+  neededAmbulances: number;
+  shortage: number;
   ambulances: { apid: string; name: string | null; km: number }[];
   hospitalsInRadius: number;
   radiusKm: number;

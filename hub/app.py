@@ -1062,6 +1062,12 @@ def _send_dispatcher_designated(case_id: str, hospital_id: str, timestamp: str) 
 DEMO_CENTER = GpsPoint(lat=37.5665, lng=126.9780)
 _MCI_KTAS = {"중증": (2, "중증"), "중등증": (3, "중등증"), "경증": (4, "경증")}
 _mci_incidents: dict[str, dict] = {}  # 다수 사상자 등록 id -> 등록 내용(관제 [출동 지시]가 쓴다)
+#: 구급차 1대가 태우는 사상자 수(초안) — 중증·중등증은 1명, 경증은 2명까지 함께 이송
+MCI_PER_AMBULANCE = {"중증": 1, "중등증": 1, "경증": 2}
+
+
+def _mci_needed_ambulances(counts: dict[str, int]) -> int:
+    return sum(-(-counts.get(sev, 0) // per) for sev, per in MCI_PER_AMBULANCE.items())
 
 
 def _ambulance_pos(apid: str) -> GpsPoint | None:
@@ -1262,13 +1268,17 @@ def _handle_mci_register(ws, payload: dict) -> None:
     counts = {k: max(0, int((payload.get("counts") or {}).get(k, 0) or 0)) for k in _MCI_KTAS}
     total = sum(counts.values())
     plan = _plan_mci(gps, counts)
-    apids = _idle_ambulances_near(gps, total)
+    # 필요 대수만큼 가까운 대기 구급차를 찾는다 — 모자라면 그 수를 그대로 알려 인근 지역 지원을 요청하게 한다
+    needed = _mci_needed_ambulances(counts)
+    apids = _idle_ambulances_near(gps, needed)
+    shortage = max(0, needed - len(apids))
     incident_id = f"mci-{uuid.uuid4().hex[:6]}"
     names = {a.apid: a.name for a in engine.list_ambulances()}
     _mci_incidents[incident_id] = {"gps": gps.model_dump(), "counts": counts, "apids": apids, "label": payload.get("label")}
     message = {
         "type": "mci_assessment", "incidentId": incident_id, "gps": gps.model_dump(), "label": payload.get("label"),
         "counts": counts, "total": total, "source": "rule",
+        "neededAmbulances": needed, "shortage": shortage, "perAmbulance": MCI_PER_AMBULANCE,
         "ambulances": [{"apid": a, "name": names.get(a), "km": round(haversine_km(gps.lat, gps.lng, p.lat, p.lng), 1)}
                        for a in apids if (p := _ambulance_pos(a)) is not None],
         **plan,
@@ -1276,10 +1286,13 @@ def _handle_mci_register(ws, payload: dict) -> None:
             {"stage": "인식", "source": "rule", "text": f"반경 {plan['radiusKm']:g}km 병원 {plan['hospitalsInRadius']}곳의 응급실 여력·등급 집계"},
             {"stage": "판단", "source": "rule", "text": f"사상자 {total}명을 중증부터 줄 길이·여력·부하로 분배 — {len(plan['plan'])}곳"
                                                        + (f", 미배정 {plan['unplaced']}명(범위 확장 필요)" if plan["unplaced"] else "")},
-            {"stage": "행동", "source": "rule", "text": f"가까운 대기 구급대 {len(apids)}대 추천 — 관제가 [출동 지시]하면 출동"},
+            {"stage": "행동", "source": "rule", "text": f"필요 구급차 {needed}대(중증·중등증 1명당 1대, 경증 2명당 1대) — 가까운 대기 {len(apids)}대 추천"
+                                                       + (f", {shortage}대 부족 → 인근 지역 지원 요청 필요" if shortage else "")
+                                                       + " · 관제가 [출동 지시]하면 출동"},
         ],
     }
     decision_log.log_decision("mci_registered", {"incidentId": incident_id, "gps": gps.model_dump(), "counts": counts,
+                                                 "neededAmbulances": needed, "shortage": shortage,
                                                  "plan": plan["plan"], "unplaced": plan["unplaced"], "apids": apids})
     _send_to_socket(ws, message, "다수 사상자 분석")
 
