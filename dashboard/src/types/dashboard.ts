@@ -852,6 +852,10 @@ export interface MapHospital {
   name: string;
   gps: { lat: number; lng: number };
   emergencyLevel?: string | null;
+  // 응급실 병상 숫자의 지금 유효 확률·위험 등급·최종 확인(hub 2026-11-04~, AI 정보 생존 모델) — 병원 목록에 늘 보인다
+  bedAuthority?: number | null;
+  bedRiskLevel?: "low" | "medium" | "high" | null;
+  bedCheckedAt?: string | null;
   // 응급실 전화번호(hub 2026-11-01~, 관제 '전화 확인'용) — 구버전 hub면 없다
   erPhone?: string | null;
   // 일반 질환·현재 시각 기준 규칙 모형의 전달 범위(실제 수용 보장 아님).

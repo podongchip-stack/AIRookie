@@ -73,6 +73,15 @@ export const ST_TEXT: Record<St, string> = { w: "#C75B00", r: "#D93025", a: "#4E
 export const LEVEL_DOT: Record<string, string> = { 권역응급의료센터: "#B8195F", 지역응급의료센터: "#0F9AA8" };
 export const LEVEL_DEFAULT = "#1F4E9C";
 
+// 관제 병원 목록·지도의 등급 필터(2026-11-04) — 값은 E-Gen dutyEmclsName 그대로
+export const LEVEL_FILTERS: { key: string; label: string; level: string | null }[] = [
+  { key: "all", label: "전체", level: null },
+  { key: "regional", label: "권역센터", level: "권역응급의료센터" },
+  { key: "local", label: "지역센터", level: "지역응급의료센터" },
+  { key: "agency", label: "지역기관", level: "지역응급의료기관" },
+  { key: "reported", label: "신고기관", level: "응급실운영신고기관" },
+];
+
 export type Sev = "중증" | "중등증" | "경증";
 const SEV_OF: Record<string, Sev> = { high: "중증", medium: "중등증", low: "경증" };
 export const SEV_STYLE: Record<Sev, { background: string; color: string }> = {

@@ -790,6 +790,11 @@ class HubEngine:
                 gps=info.gps,
             )
 
+    def bed_reliability_now(self, info: HospitalInfo) -> dict | None:
+        """관제 지도 병원 목록용(2026-11-04) — 지금 응급실 병상 숫자의 유효 확률·위험 등급·최종 확인(AI). 없으면 None."""
+        with self._lock:
+            return self._bed_reliability_view(info, _utcnow())
+
     def _bed_reliability_view(self, info: HospitalInfo, now: datetime) -> dict | None:
         """병원 상세용 응급실 병상 정보 신뢰도(AI) — 지금 시점(도착 시간 0) 유효 확률과 위험 등급·최종 확인 시각."""
         if info.bedReliability is None:

@@ -1388,9 +1388,14 @@ def _build_map_overview() -> dict:
     for info in engine.list_ambulances():
         gps = (sim.gps_for(info.apid) if sim is not None else None) or info.gps
         ambulances.append(MapAmbulance(apid=info.apid, name=info.name, gps=gps, base=info.gps))
+    def _rel(h):
+        rel = engine.bed_reliability_now(h) or {}
+        return {"bedAuthority": rel.get("authority"), "bedRiskLevel": rel.get("riskLevel"), "bedCheckedAt": rel.get("checkedAt")}
+
     return MapOverview(
         hospitals=[
             MapHospital(hospitalId=h.hospitalId, name=h.name, gps=h.gps, emergencyLevel=h.emergencyLevel, erPhone=h.erPhone,
+                        **_rel(h),
                         inFlightCount=engine.in_flight_count(h.hospitalId),
                         availableBedCount=engine.effective_bed_count(h),
                         bedCountUnknown=_is_bed_count_unknown(h),

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ControlMapPanel } from "@/components/map/ControlMapPanel";
 import { CONNECTION_LABEL, useDashboardSocket } from "@/hooks/use-dashboard-socket";
 import {
-  AMB_CHIP, AMB_RANK, SIDEBAR_W, C, GLASS, GLASS_BLOBS, EVENT_TONE, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL,
+  AMB_CHIP, AMB_RANK, SIDEBAR_W, C, GLASS, GLASS_BLOBS, EVENT_TONE, LEVEL_FILTERS, LEVEL_DEFAULT, LEVEL_DOT, SEV_STYLE, ST_DOT, ST_LABEL,
   ambState, buildIncidents, counts, fmtClock, fmtElapsed, fmtHm, fmtMd, haversineKm, pastResult, sevOf, shortAmb, shortHospital,
   stageOf, zoneText,
   type AmbKey, type Incident, type St,
@@ -52,6 +52,9 @@ export default function MonitorMapPage() {
   const [showMci, setShowMci] = useState(false);
   // 병원 상세(2026-11-04) — 오른쪽 병원 목록·사건 상세의 병원 줄·지도 병원 점을 누르면 연다
   const [detailHospital, setDetailHospital] = useState<string | null>(null);
+  // 오른쪽 병원 목록·지도의 등급 필터(2026-11-04) — null이면 전체
+  const [levelFilter, setLevelFilter] = useState<string | null>(null);
+  const shownHospitals = (state.mapOverview?.hospitals ?? []).filter((h) => !levelFilter || h.emergencyLevel === levelFilter);
   // 상황실 배정 요청(2026-11-04) — hub가 1순위 수용 병원 겹침 + 여력 부족을 묶어 보낸다. 새 묶음이 생기면 모달을 자동으로 연다.
   const assignmentGroups = state.assignmentGroups;
   const assignmentCount = assignmentGroups.reduce((n, g) => n + g.caseIds.length, 0);
@@ -587,16 +590,43 @@ export default function MonitorMapPage() {
           <aside aria-label="병원 정보" data-map-cover="right" style={{ position: "relative", zIndex: 10, flex: "none", width: SIDEBAR_W, marginLeft: "auto", height: "100%", minHeight: 0, display: "flex" }}>
             <Glass dark={dark} style={{ ...cardStyle, width: "100%", flex: "1 1 0", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <strong style={{ fontSize: 14, color: C.navy }}>병원 {overview?.hospitals.length ?? 0}곳</strong>
-                <span style={{ fontSize: 12, color: C.sub }}>hub 실시간 정보</span>
+                <strong style={{ fontSize: 14, color: C.navy }}>병원 {shownHospitals.length}곳</strong>
+                <span style={{ fontSize: 12, color: C.sub }}>누르면 상세 · hub 실시간</span>
+              </div>
+              <div role="tablist" aria-label="병원 등급" style={{ flex: "none", display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {LEVEL_FILTERS.map((f) => {
+                  const on = levelFilter === f.level;
+                  const n = (overview?.hospitals ?? []).filter((h) => !f.level || h.emergencyLevel === f.level).length;
+                  return (
+                    <button key={f.key} type="button" role="tab" aria-selected={on} onClick={() => setLevelFilter(f.level)}
+                      style={{ ...tab2Style, height: 26, padding: "0 10px", ...(on ? { background: C.blue, color: "#fff" } : { background: "rgba(255,255,255,.6)", color: C.ink2 }) }}>
+                      {f.label} {n}
+                    </button>
+                  );
+                })}
               </div>
               <div className="ctl-scroll" tabIndex={0} aria-label="병원 목록" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, paddingRight: 4 }}>
-                {(overview?.hospitals ?? []).map((h) => (
+                {shownHospitals.map((h) => (
                   <article key={h.hospitalId} onClick={() => setDetailHospital(h.hospitalId)} title="눌러서 병원 상세 보기" onMouseEnter={() => setHoverHospital(h.hospitalId)} onMouseLeave={() => setHoverHospital("")} style={{ cursor: "pointer", flex: "none", border: `1px solid ${hoverHospital === h.hospitalId ? C.blue : C.line}`, borderRadius: GLASS.radiusSm, padding: 12, background: "rgba(255,255,255,.66)", whiteSpace: "normal" }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{h.name}</div>
                     <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12, color: C.ink2 }}>
                       <span>가용 병상 <b>{h.bedCountUnknown !== false || h.availableBedCount == null ? "미상" : `${h.availableBedCount}개`}</b></span>
                       <span>이송 중 {h.inFlightCount ?? 0}건</span>
+                    </div>
+                    {/* 가용 병상 숫자의 신뢰도(AI) — 누르지 않아도 늘 보인다 */}
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 4, fontSize: 12 }}
+                      title="정보 생존 모델(AI): 지금 보이는 가용 병상 숫자가 유효할 확률 — 수용 확률이 아닙니다">
+                      <span style={{ color: C.sub }}>병상 신뢰도</span>
+                      {h.bedAuthority != null ? (
+                        <>
+                          <b style={{ color: h.bedRiskLevel === "high" ? "#D9434B" : h.bedRiskLevel === "medium" ? "#B7791F" : "#1E9E6A" }}>{Math.round(h.bedAuthority * 100)}%</b>
+                          <span style={{ color: C.sub }}>
+                            {h.bedRiskLevel === "high" ? "변동 위험 높음" : h.bedRiskLevel === "medium" ? "변동 위험 보통" : "변동 위험 낮음"}
+                            {h.bedCheckedAt ? ` · ${Math.max(0, Math.round((now - Date.parse(h.bedCheckedAt)) / 60_000))}분 전 확인` : ""}
+                          </span>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: C.blue }}>AI</span>
+                        </>
+                      ) : <span style={{ color: C.muted }}>예측 없음</span>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 10, fontSize: 12 }}>
                       <span style={{ color: C.sub }}>KTAS</span>
@@ -635,6 +665,7 @@ export default function MonitorMapPage() {
             onHoverHospital={setHoverHospital}
             onHoverAmb={setHoverAmb}
             onSelectHospital={setDetailHospital}
+            levelFilter={levelFilter}
                 onSelectCase={selectCase}
           >
           </ControlMapPanel>

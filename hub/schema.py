@@ -839,6 +839,10 @@ class MapHospital(BaseModel):
     gps: GpsPoint
     emergencyLevel: Optional[str] = None
     erPhone: Optional[str] = None
+    # 응급실 병상 숫자의 지금 유효 확률·위험 등급·최종 확인 시각(2026-11-04, AI 정보 생존 모델) — 관제 병원 목록에 늘 보인다
+    bedAuthority: Optional[float] = None
+    bedRiskLevel: Optional[str] = None
+    bedCheckedAt: Optional[str] = None
     # 지도 높이·대표 KTAS·전달 문턱을 같은 현재 유효 역량으로 맞춘다(규칙 모형).
     mapCapacity: Optional[float] = None
     mapKtasLevel: Optional[int] = None

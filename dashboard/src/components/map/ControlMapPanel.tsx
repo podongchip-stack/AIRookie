@@ -71,6 +71,7 @@ export function ControlMapPanel({
   onHoverAmb,
   onSelectCase,
   onSelectHospital,
+  levelFilter = null,
   children,
 }: {
   overview: MapOverview | null;
@@ -91,6 +92,8 @@ export function ControlMapPanel({
   onSelectCase: (caseId: string) => void;
   // 병원 점을 누르면(2026-11-04) — 관제 병원 상세를 연다
   onSelectHospital?: (hospitalId: string) => void;
+  // 오른쪽 병원 목록의 등급 필터(2026-11-04) — 고른 등급 병원만 지도에 남긴다(지금 사건의 요청 병원은 등급과 무관하게 보인다)
+  levelFilter?: string | null;
   children?: React.ReactNode;
 }) {
   const { ready, error } = useKakaoMapScript();
@@ -185,7 +188,8 @@ export function ControlMapPanel({
       const inTab = req != null && (activeTab === "all" || activeTab === req.st);
       const showPill = req != null && ((req.st !== "w" && inTab) || on);
       const center = h.emergencyLevel === "권역응급의료센터" || h.emergencyLevel === "지역응급의료센터";
-      const quiet = !req && !on && (zoom > QUIET_LEVEL ? !center : false);
+      const filteredOut = !!levelFilter && h.emergencyLevel !== levelFilter;
+      const quiet = !req && !on && (filteredOut || (zoom > QUIET_LEVEL && !levelFilter ? !center : false));
       const key = `${req?.st ?? "-"}|${inTab}|${on}|${showPill}|${quiet}|${!!selected}`;
       if (layer.key === key) continue;
       layer.key = key;
@@ -219,7 +223,7 @@ export function ControlMapPanel({
       }
       layer.overlay.setZIndex(on ? 60 : !req ? 3 : req.st === "w" ? 6 : 12);
     }
-  }, [overview, selected, activeTab, hoverHospital, zoom]);
+  }, [overview, selected, activeTab, hoverHospital, zoom, levelFilter]);
 
   // ── 선택한 사건 자동 포커스(2026-10-06) — 하단 구급차 패널 등이 덮은 부분을 빼고 보이는 영역에 맞춘다 ──
   // 실제 사건(콘솔 시연)은 단계가 바뀔 때마다 맞춘다: 출동(구급차~현장) → 현장(현장 확대) → 병원 요청(요청 병원이 다
