@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { C } from "@/lib/control-map";
+import { C, shortHospital } from "@/lib/control-map";
 import type { FireHq } from "@/lib/fire-hq";
 import type { MciAssessment } from "@/types/dashboard";
 
@@ -35,9 +35,12 @@ export function MciSketch({ a, support }: { a: MciAssessment; support: (FireHq &
   const kx = Math.cos((a.gps.lat * Math.PI) / 180);
   const toXY = (p: { lat: number; lng: number }) => ({ x: (p.lng - a.gps.lng) * kx, y: -(p.lat - a.gps.lat) });
   const radiusDeg = a.radiusKm / 111;
+  // 범위는 사고 지점·분배 병원·추천 구급차에만 맞춘다 — 반경 원·먼 지원 본부까지 넣으면 가운데에 점이 뭉쳤다(2026-11-04).
+  // 최소 범위(약 2km)는 둬서 한두 점만 있을 때 과하게 확대되지 않게 한다.
+  const minSpan = 2 / 111;
   const pts = [
-    { x: -radiusDeg, y: -radiusDeg }, { x: radiusDeg, y: radiusDeg },
-    ...a.plan.map(toXY), ...a.ambulances.map(toXY), ...support.map(toXY),
+    { x: -minSpan, y: -minSpan }, { x: minSpan, y: minSpan },
+    ...a.plan.map(toXY), ...a.ambulances.map(toXY),
   ];
   const minX = Math.min(...pts.map((p) => p.x)), maxX = Math.max(...pts.map((p) => p.x));
   const minY = Math.min(...pts.map((p) => p.y)), maxY = Math.max(...pts.map((p) => p.y));
@@ -47,6 +50,27 @@ export function MciSketch({ a, support }: { a: MciAssessment; support: (FireHq &
   const px = (p: { lat: number; lng: number }) => { const q = toXY(p); return { x: ox + q.x * scale, y: oy + q.y * scale }; };
   const c = px(a.gps);
   const r = radiusDeg * scale;
+  // 그림 밖의 지원 본부는 가장자리에 방향 표시로 — 사고 지점에서 본부 쪽으로 그은 선이 테두리와 만나는 곳
+  const edge = (p: { x: number; y: number }) => {
+    const dx = p.x - c.x, dy = p.y - c.y;
+    const inside = p.x >= 16 && p.x <= W - 16 && p.y >= 16 && p.y <= H - 16;
+    if (inside) return { ...p, clipped: false };
+    const t = Math.min(
+      dx > 0 ? (W - 22 - c.x) / dx : dx < 0 ? (22 - c.x) / dx : Infinity,
+      dy > 0 ? (H - 22 - c.y) / dy : dy < 0 ? (22 - c.y) / dy : Infinity,
+    );
+    return { x: c.x + dx * t, y: c.y + dy * t, clipped: true, angle: (Math.atan2(dy, dx) * 180) / Math.PI };
+  };
+  // 같은 좌표(같은 센터의 구급차 여러 대)는 작은 원 위로 벌려 그린다
+  const seen = new Map<string, number>();
+  const spread = (p: { x: number; y: number }) => {
+    const key = `${Math.round(p.x)}:${Math.round(p.y)}`;
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    if (n === 0) return p;
+    const ang = n * 2.4;
+    return { x: p.x + Math.cos(ang) * 9, y: p.y + Math.sin(ang) * 9 };
+  };
   // 박자: 반경 0~0.7초 → 병원 0.6초부터 하나씩 → 구급차 출발 1.4초 → 지원 본부 2.4초부터
   const hospitalAt = (i: number) => 0.6 + i * 0.12;
   const ambAt = 1.4;
@@ -58,13 +82,17 @@ export function MciSketch({ a, support }: { a: MciAssessment; support: (FireHq &
       <circle className="mci-ring" cx={c.x} cy={c.y} r={r} fill="rgba(107,91,210,.07)" stroke="#8E7CF0" strokeDasharray="5 4" />
       <text className="mci-fade" style={delay(0.5)} x={c.x} y={c.y - r - 5} textAnchor="middle" fontSize="10" fill="#6B5BD2">분석 반경 {a.radiusKm}km</text>
       {support.map((h, i) => {
-        const p = px(h);
+        const p = edge(px(h));
+        const lx = Math.min(W - 40, Math.max(40, p.x));
+        const ly = p.y > H / 2 ? p.y - 12 : p.y + 20;
         return (
           <g key={h.name}>
-            <line className="mci-draw" style={delay(supportAt(i))} pathLength={1} x1={c.x} y1={c.y} x2={p.x} y2={p.y} stroke="#D9434B" strokeWidth="1.8" opacity=".75" />
+            <line className="mci-draw" style={delay(supportAt(i))} pathLength={1} x1={c.x} y1={c.y} x2={p.x} y2={p.y} stroke="#D9434B" strokeWidth="1.8" strokeDasharray="1" opacity=".75" />
             <g className="mci-fade" style={delay(supportAt(i) + 0.5)}>
-              <rect x={p.x - 6} y={p.y - 6} width="12" height="12" rx="3" fill="#D9434B" />
-              <text x={p.x} y={p.y + 18} textAnchor="middle" fontSize="10.5" fontWeight="700" fill="#B3261E">{h.city} {Math.round(h.km)}km</text>
+              {p.clipped
+                ? <path d="M -7 -6 L 7 0 L -7 6 Z" transform={`translate(${p.x} ${p.y}) rotate(${p.angle})`} fill="#D9434B" />
+                : <rect x={p.x - 6} y={p.y - 6} width="12" height="12" rx="3" fill="#D9434B" />}
+              <text x={lx} y={ly} textAnchor="middle" fontSize="11" fontWeight="700" fill="#B3261E" stroke="#F7F5FD" strokeWidth="3" paintOrder="stroke">{h.city} 본부 {Math.round(h.km)}km</text>
             </g>
           </g>
         );
@@ -75,14 +103,17 @@ export function MciSketch({ a, support }: { a: MciAssessment; support: (FireHq &
           <g key={h.hospitalId}>
             <line className="mci-draw" style={delay(hospitalAt(i))} pathLength={1} x1={c.x} y1={c.y} x2={p.x} y2={p.y} stroke="#6B5BD2" strokeWidth={1 + h.count * 0.6} opacity=".35" />
             <g className="mci-fade" style={delay(hospitalAt(i) + 0.35)}>
-              <circle cx={p.x} cy={p.y} r={5 + h.count} fill="#6B5BD2" stroke="#fff" strokeWidth="1.5" />
+              <circle cx={p.x} cy={p.y} r={6 + h.count} fill="#6B5BD2" stroke="#fff" strokeWidth="1.5" />
               <text x={p.x} y={p.y + 3.5} textAnchor="middle" fontSize="9.5" fontWeight="900" fill="#fff">{h.count}</text>
+              <text x={p.x} y={p.y - 10 - h.count} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="#3B2F8F" stroke="#F7F5FD" strokeWidth="3" paintOrder="stroke">
+                {shortHospital(h.name).replace(/(대학교|의과대학|부속|학교법인)/g, "").slice(0, 10)}
+              </text>
             </g>
           </g>
         );
       })}
       {a.ambulances.map((m, i) => {
-        const p = px(m);
+        const p = spread(px(m));
         // 기지에서 사고 지점 쪽으로 80%까지 이동한 모습으로 멈춘다 — "출동하면 이렇게 모인다"는 미리 보기
         const go = { "--dx": `${(c.x - p.x) * 0.8}px`, "--dy": `${(c.y - p.y) * 0.8}px`, ...delay(ambAt + i * 0.05) } as CSSProperties;
         return (

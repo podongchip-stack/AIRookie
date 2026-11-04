@@ -73,6 +73,17 @@ npm run dev        # http://localhost:3000
 > `…+demo-reseed`)이면 가짜다. 병상 미상 병원에는 안 붙인다(숫자가 없는데 "숫자의 유효
 > 확률"은 성립 안 함 — 올바른 동작).
 
+### 관제 3D 거미줄 보기 — spider 서버(포트 2700) (2026-11-04)
+
+관제 지도의 3D 보기는 `spider/serve.py`가 그린다(dev 대시보드는 `/spider`를 2700으로 넘긴다, next.config.ts). 안 떠 있으면
+3D가 안 불러와지고 2D로 돌아간다. 도로 그래프(`roads_data.js`)가 없으면 직선거리 추정으로 돈다.
+
+```bash
+cd spider && MSYS_NO_PATHCONV=1 SPIDER_HUB_WS_URL=ws://127.0.0.1:5001/ws/dashboard SPIDER_HUB_HTTP_URL=http://127.0.0.1:5001   python -u serve.py --host 0.0.0.0 --port 2700
+```
+⚠ Git Bash에서 `SPIDER_PREFIX=/spider`를 넘기면 `C:/Program Files/Git/spider`로 바뀌어 서버가 죽는다 — 넘기지 말거나(기본값이 /spider)
+`MSYS_NO_PATHCONV=1`을 붙인다.
+
 ### 서울 119 구급차 162대 — seed_seoul_ambulances.py (2026-11-04)
 
 관제 시연(다수 사상자 신고·시연 상황 부여)은 실제 구급차가 있어야 한다. `info/ambulance_registry/result/seoul_ambulances.csv`
