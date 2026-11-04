@@ -44,18 +44,20 @@ pip install -r requirements.txt
 | Hub 저장소 · 경로 | 내용 | 로컬 폴더로 대신 쓰려면 |
 | --- | --- | --- |
 | [`Playedwell03/qwen3-asr-0.6b-119ko-tiny`](https://huggingface.co/Playedwell03/qwen3-asr-0.6b-119ko-tiny) | Qwen3-ASR-0.6B LoRA 어댑터 (`adapter_config.json`, `adapter_model.safetensors`) | `ASR_ADAPTER_DIR` |
-| [`podongchip/MF_BERT`](https://huggingface.co/podongchip/MF_BERT) | MF_BERT 체크포인트 `best.pt`(약 1.4GB) + `tokenizer/` | `MF_BERT_DIR` |
+| [`podongchip/MF_BERT`](https://huggingface.co/podongchip/MF_BERT) | MF_BERT 통화 결과판 4비트 ONNX hqq (`encoder.onnx`, `decoder.onnx`+`.data`, `outcome_decoder.onnx`, `catalog.json`, `tokenizer/`, 약 690MB) | `MF_BERT_DIR` |
 
 환경변수를 주면 Hub에서 받지 않고 그 폴더를 쓴다(재학습한 가중치를 올리기 전에 시험할 때 등, `weights.py`).
-MF_BERT는 **2026-10-02 모델의 Hub 커밋 해시 `f1d3e1dbd41424e1bb32cf4aded891ed48b39df6`로 고정**해서 받는다
-(`weights.py`의 `MF_BERT_REVISION` 기본값, 2026-10-03). `main`이나 태그 대신 해시를 쓰는 이유는, Hub에 구조가 바뀐
-가중치가 올라오면 `MF_BERT/` 코드와 state_dict가 안 맞아 서버가 아예 뜨지 않기 때문이다(2026-10-03 실제로 겪음).
-이전 2026-09-30 모델은 `MF_BERT_REVISION=v1-2026-09-30`으로 받을 수 있고 지금 코드로도 읽힌다 — 체크포인트의 학습
-인자에 보기별 어텐션·헤드 층 수가 없으면 `args.get(...)` 기본값으로 예전 구조를 만든다(`MF_BERT/__init__.py`).
-새 가중치를 들여올 때는 `MF_BERT/` 코드를 먼저 맞춘 뒤 이 해시를 바꾼다.
-ASR 베이스 모델(`Qwen/Qwen3-ASR-0.6B-hf`)과 MF_BERT 인코더 설정(`klue/roberta-large`의 config만 — 인코더 가중치는
-체크포인트에 들어 있어 받지 않는다)도 같은 캐시로 자동으로 내려받는다. 이전 구조화 모델 저장소
-`podongchip/goldenlink-voice-models`(HMM v1·v2 가중치)는 더 이상 쓰지 않는다.
+MF_BERT는 **2026-11-04 통화 결과판의 Hub 커밋 해시 `41bbb84f939fa75ce7767ad66b6c343a24a1ae5b`로 고정**해서 받는다
+(`weights.py`의 `MF_BERT_REVISION` 기본값, 2026-11-04). 태그 `v5-2026-11-04-outcome`과 같은 커밋이다.
+`main`이나 태그 대신 해시를 쓰는 이유는, Hub에 구조가 바뀐 가중치가 올라오면 `MF_BERT/` 코드와 안 맞아 서버가 아예
+뜨지 않기 때문이다(2026-10-03 실제로 겪음). 새 가중치를 들여올 때는 `MF_BERT/` 코드를 먼저 맞춘 뒤 이 해시를 바꾼다.
+이전 모델은 지금 코드로 읽지 못한다 — `v4-2026-10-29-hqq`는 통화 결과 디코더(`outcome_decoder.onnx`)가 없고,
+`v3-2026-10-20-rtn` 이하는 처치 출력도 없다. `MfBertExtractor`가 파일과 `catalog.json`의 목록을 대조해 서버가 뜰 때 바로 멈춘다.
+
+MF_BERT는 HF 캐시(`hub/`) 대신 **`$HF_HOME/local/MF_BERT-<해시 앞 12자>/`에 실제 파일로** 받는다. HF 캐시의 스냅샷
+파일은 서로 다른 blob을 가리키는 심볼릭 링크라, onnxruntime이 `decoder.onnx`의 외부 데이터(`decoder.onnx.data`)를
+찾을 때 링크를 따라가 "모델 폴더 밖 경로"로 거부하기 때문이다. ASR 베이스 모델(`Qwen/Qwen3-ASR-0.6B-hf`)은 HF 캐시로
+자동으로 내려받는다. 이전 구조화 모델 저장소 `podongchip/goldenlink-voice-models`(HMM v1·v2 가중치)는 더 이상 쓰지 않는다.
 
 **3. 실행** — 마이크로 바로 시작해볼 수 있다 (`voice/` 안에서):
 
@@ -70,12 +72,12 @@ Ctrl+C를 누르면(통화 종료) 남은 발화를 인식한 뒤 구조화 → 
 
 ## 이 브랜치가 하는 일
 
-통화 음성을 텍스트로 바꾸고 → v2 스키마(17개 필드)로 구조화해 → `feature/hub`로 보낸다.
+통화 음성을 텍스트로 바꾸고 → 통화 결과(수용·거절·보류)·환자 수·환자별 14개 항목으로 구조화하고 Pre-KTAS 단계를 규칙으로 추정해 → `feature/hub`로 보낸다.
 dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 
 ```
-마이크 ─▶ [STT] Qwen3-ASR + LoRA ─▶ 발화 텍스트 ─▶ [구조화] MF_BERT ─▶ summary(v2 17필드) ─▶ feature/hub
-          통화 중 발화 단위로 인식                    분류·태깅 모델 (생성형 아님)
+마이크 ─▶ [STT] Qwen3-ASR + LoRA ─▶ 발화 텍스트 ─▶ [구조화] MF_BERT ─▶ [규칙] Pre-KTAS ─▶ summary ─▶ feature/hub
+          통화 중 발화 단위로 인식                    선택·구간 모델 (생성형 아님)  환자별 단계 추정
 ```
 
 > **2026-09-24 교체.** 이전 경로(faster-whisper → `corrections.json` 오인식 교정 →
@@ -89,6 +91,23 @@ dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 > **2026-10-03 MF_BERT를 2026-10-02 모델로 갱신.** 다중 선택 헤드에 보기별 어텐션, 분류 헤드를 2층으로 바꾼
 > 모델에 맞춰 `MF_BERT/model.py`·`__init__.py`를 고치고 가중치를 커밋 해시로 고정했다. `labels.py`·`decode.py`·
 > `parse.py`는 바뀌지 않아 `summary`(v2 17필드) 형식은 그대로다.
+>
+> **2026-10-04 `decode.py`에 원본의 10-03 수정을 옮기고, 10-02 모델 벤치마크([BENCHMARK.md](BENCHMARK.md))를 붙였다.**
+> 처치 세부·손상 좌우가 여럿이면 예전엔 하나만 남겼는데, 이제 정답 데이터처럼 항목을 그만큼 나눠 낸다. 필드 구성은
+> 같고 `treatments`·`injuries`의 항목 수만 늘 수 있다(hub `voice_v2.py`는 그대로 처리).
+>
+> **2026-10-21 MF_BERT를 2026-10-20 활력징후판(4비트 ONNX)으로 교체. `summary` 형식이 바뀌었다.**
+> v2 17필드 대신 `{patient_count, patients[]}` — 환자마다 성별·나이대·주증상 대분류·소분류·AVPU와 활력징후 8개를 낸다.
+> 모델이 KTAS를 예측하지 않아, 환자마다 Pre-KTAS 추정 단계를 규칙(`pre_ktas.py`)으로 붙인다. 예전 PyTorch 코드
+> (`model.py`·`decode.py`·`labels.py`·`parse.py`)는 지웠다. **hub는 아직 v2를 기대하므로 hub 담당자가 새 형식을 읽도록 고쳐야 한다.**
+>
+> **2026-10-29 MF_BERT를 2026-10-29 처치판(4비트 ONNX hqq)으로 교체.** 환자마다 `treat_categories`(처치 범주 28개 중 고른 키
+> 목록)가 더해졌고 나머지 13개 항목은 형식이 같다. 모델은 처치를 말한 원문 구절(범주의 근거)도 내지만 `"오"`·`"이"`처럼 조각나
+> 나오는 일이 잦아 보내지 않는다. 처치 범주 디코딩은 `MF_BERT/treatments.py`. hub는 아직 이 필드를 읽지 않는다.
+>
+> **2026-11-04 MF_BERT를 2026-11-04 통화 결과판으로 교체.** `summary.call_outcome`(통화 하나에 하나, `수용`·`거절`·`보류`)이
+> 더해졌다. 처치판의 인코더·디코더를 고정한 채 두 번째 디코더(`outcome_decoder.onnx`)만 따로 학습한 것이라 환자 항목은 처치판과
+> 똑같다. 병원 응답이 텍스트에 없으면 `수용`으로 기우는 약점이 있다([알려진 제약사항](#알려진-제약사항--todo)). hub는 아직 이 필드를 읽지 않는다.
 
 **진입점은 3개**다. 셋 다 같은 모델·같은 후처리(`transcribe.emit_call_summary()`)를 쓰고
 출력 JSON 스키마도 같다.
@@ -99,7 +118,7 @@ dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 | `call_capture.py` | 마이크로 직접 통화를 흉내내는 CLI 테스트 | 실행 / `Ctrl+C` | 통화 중 발화 단위 |
 | `transcribe.py` | 이미 녹음된 파일 배치 처리 | (해당 없음) | 파일 통째로 5초 조각 |
 
-시연·튜닝용 화면은 `simulation3/gui.py`에 따로 있다 — 같은 모듈을 쓰면서 통화 중에 v2 17필드·hub JSON을 실시간으로 보여준다(전송은 안 함). 사용법은 [`simulation3/README.md`](simulation3/README.md).
+시연·튜닝용 화면은 `simulation3/gui.py`에 따로 있다 — 같은 모듈을 쓰면서 통화 중에 환자별 항목·Pre-KTAS·hub JSON을 실시간으로 보여준다(전송은 안 함). 사용법은 [`simulation3/README.md`](simulation3/README.md).
 
 ---
 
@@ -233,7 +252,8 @@ POST /call/end    (hub 중계)
 │                                                                  │
 │ transcribe.emit_call_summary()                                   │
 │   발화들을 줄바꿈으로 이어 붙임 → origin_text/<세션>.txt 저장     │
-│   MfBertExtractor.extract()     MF_BERT 점수 → v2 17필드 (decode)│
+│   MfBertExtractor.extract()     통화 → 환자 수·환자별 14개 항목    │
+│   pre_ktas.annotate()           환자마다 Pre-KTAS 추정 (규칙)      │
 │   CallSummaryMessage 조립       pydantic 검증                    │
 │   summary_text/<세션>_call_summary.json 저장                     │
 │   send_to_hub()                 POST /voice/summary              │
@@ -271,7 +291,7 @@ Qwen3-ASR은 오디오 한 덩어리를 받아 문장을 생성하는 모델이�
 | --- | --- | --- |
 | STT | `transcript.raw_text` · `turns[]` | `62세 남성이고요.\n30분 전부터 갑자기 가슴이.\n...짐근경색을 의심하고...` |
 | 구조화 입력 | `transcript.filtered_text` | `raw_text`와 같음 (교정·필터링 단계 없음) |
-| 구조화 | `summary` | `{"ktas_level": 2, "chief_complaint": {"major": "I 심혈관계", "minor": "흉통(심장성)"}, "age": {"years": 62, ...}, "sex": "남성", ...}` (v2 17필드) |
+| 구조화 | `summary` | `{"patient_count": 1, "patients": [{"gender": "남성", "age_group": "60대", "cc_minor": "흉통(심장성)", "sbp": 150, ..., "pre_ktas": {"level": 2, ...}}]}` |
 | 전송 | `CallSummaryMessage` | 위 전부 + `caseId`·`source`·`model_used` |
 
 ### 실측 소요 시간
@@ -283,17 +303,18 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 | 모델 로딩 (ASR + 구조화 모델) | 14~20초 *(프로세스당 1회, HMM v2 때 측정)* |
 | **통화 종료 → hub 수신** (`app.py`, 발화 단위 인식) | **3.7초** |
 | 참고: 같은 통화를 끝나고 한 번에 인식 (`transcribe.py`) | ASR 61.1초 |
-| 구조화 (MF_BERT) | 0.01~0.03초 *(프로세스 첫 호출만 약 0.3초)* |
+| 구조화 (MF_BERT, CPU) | 통화 1건 평균 0.71초, 중앙 0.62초, 최대 3.5초 *(실제 통화 테스트셋 612건, i5-14400F, 2026-10-29)* |
 
 `app.py` 수치는 실제 마이크 대신 파일을 실시간 속도로 흘려 넣어 잰 값이고, 구조화 모델이 HMM v2였을 때 쟀다.
-MF_BERT만 따로 잰 값(Linux · RTX 5080 · 텍스트 입력)은 캐시에서 올리는 데 5.7초, GPU 메모리 1.41GB다.
-구조화는 두 모델 모두 1초 미만이라 종료 → hub 수신 시간은 거의 그대로일 것으로 보지만, 교체 후 다시 재지는 않았다.
+지금 MF_BERT는 CPU(onnxruntime)에서 돌아 예전 GPU 모델(0.015초)보다 느리지만 대부분 1초 미만이다(10-20 모델은 평균 0.58초).
+올리는 데는 1초 안팎 걸린다.
+교체 후 종료 → hub 수신 시간은 다시 재지 않았다.
 
 ### 실패해도 죽지 않는 지점 / 죽는 지점
 
 | 상황 | 동작 |
 | --- | --- |
-| GPU 없음 | **계속** — ASR은 mps/cpu, MF_BERT는 cpu로 (매우 느림, 미검증) |
+| GPU 없음 | **계속** — ASR은 mps/cpu로 (매우 느림, 미검증). MF_BERT는 원래 CPU로 돈다 |
 | 가중치를 못 받음(오프라인 첫 실행) / 환경변수 폴더 없음 | **시작 실패** — 다운로드 오류나 `FileNotFoundError`로 서버가 뜨지 않는다 |
 | 통화 중 인식 예외 | **계속** — 종료 시 남은 소리를 한꺼번에 다시 인식 |
 | 인식된 발화가 없음(무음 통화) | 구조화·전송을 **건너뜀** (원문 `.txt`는 빈 파일로 남음) |
@@ -324,70 +345,130 @@ MF_BERT만 따로 잰 값(Linux · RTX 5080 · 텍스트 입력)은 캐시에서
 
 ### 구조화 — MF_BERT (`MF_BERT/`)
 
-KLUE RoBERTa-large 인코더에 출력층 여러 개를 붙인 다중과제 모델이 필드별 점수를 내고(AI),
-`decode.py`가 그 점수를 v2 스키마로 푼다. 활력징후·나이·발생 시점의 숫자는 모델이 찾은 구간을
-규칙(`parse.py`)으로 읽는다. **생성형 모델이 아니라** 출력 형식이 깨질 일이 없고, 같은 입력에는
-항상 같은 결과가 나온다. 필드 정의는 `C:\Dev\HMM\data_v3\필드_설명.md`가 원본이다.
-
-긴 통화는 512토큰 조각(128토큰씩 겹침)으로 나눠 인코딩하고, 겹친 토큰은 한 조각 것만 남겨 원문 토큰
-줄로 다시 이어 붙인다(`chunking.py`). 이전 HMM v2는 포지션 임베딩을 2048칸으로 늘려 한 번에 넣었지만,
-MF_BERT는 사전학습된 512칸만 쓴다. 조각이 하나뿐인 짧은 통화는 두 방식의 계산이 같다.
-
-| 출력층 | 하는 일 | v2 필드 |
-| --- | --- | --- |
-| 단일 선택 8개 | KTAS 등급, 주 호소 대분류·소분류, 주 기전, 질병 분류, 성별, 의식(AVPU), 복용약 유무 | `ktas_level` `chief_complaint` `incidents` `disease_category` `sex` `consciousness` `medications` |
-| 다중 선택 7개 | 기전(+세부), 처치(+세부), 증상, 손상(+좌우) — 확률 0.5 이상 | `incidents` `treatments` `symptoms` `injuries` |
-| 구간 태거 | 활력징후·나이·발생 시점·의심 진단·복용약 구간(BIO) 태깅 | `vitals` `age` `onset` `suspected_diagnosis` `medications` |
-
-`call_type`·`ktas_evidence`·`notes`는 모델이 배우는 항목이 아니라 항상 `null`이고, 그 사실이 `summary.meta.not_predicted`에 들어 있다.
-
-**모델 구조** (`MF_BERT/model.py` 머리말과 같다. 지금 받는 모델은 2026-10-02 모델)
+**2026-11-04 통화 결과판** = 2026-10-29 처치판(원본 학습 폴더 `MF_BERT_treat_cat/runs/2026-10-29_155117/last`, ONNX 변환·양자화
+`small-MF_BERT_treat_cat/2026-10-29_155117/last/hqq`) + 통화 결과 디코더(학습 폴더 `ML/MF BERT/outputs/default`). 통화 텍스트에 질문을 던져 답을 고르는 방식이다. **생성형 모델이 아니라**
+출력 형식이 깨질 일이 없고, 같은 입력에는 항상 같은 결과가 나온다. **KTAS 등급은 예측하지 않는다** — 아래 Pre-KTAS 참고.
 
 ```
-조각 인코딩    H^(j)_c = Encoder(chunk_c)                    512토큰 조각마다 KLUE RoBERTa-large
-토큰 복원      H^(j) = concat_c H^(j)_c[keep_c]              겹친 토큰은 한 조각 것만 남겨 원문 토큰 줄로 이어 붙임 (chunking.py)
-층 혼합        h_t = gamma * sum_j softmax(w)_j H^(j)_t       마지막 4층, 문장용·토큰용 두 그룹, layer dropout
-풀링           alpha_t = softmax_t(q_k . h_t / sqrt(d))       단일 선택 헤드 k마다 query 하나, 통화 전체 토큰 대상
-보기별 어텐션  alpha_t = softmax_t(q_{k,o} . h_t / sqrt(d))   다중 선택 헤드 7개는 보기 o마다 query 하나 (모두 292개, LabelAttentionHead)
-분류 헤드      [dropout -> Linear -> GELU -> LayerNorm] -> dropout -> dense -> tanh -> dropout -> out_proj
-               대괄호가 2층 헤드로 더해진 층 (head_layers=2, head_trunk). 보기별 어텐션 헤드에도 똑같이 붙는다
-구간 태거      토큰별 선형 한 겹 -> 11태그 (VITALS·AGE·ONSET·DX·MED의 BIO)
+통화 텍스트
+ └ 512토큰 조각으로 나눔 (128 겹침)                               chunking.py
+    └ 조각마다 인코더(encoder.onnx) → 겹친 토큰은 한 조각 것만 남겨 원문 토큰 줄로 복원
+질문("2번째 환자의 성별은?") 벡터들이 결정 디코더(decoder.onnx) 2층에서 통화 토큰을 읽음
+ ├ 선택 항목: 후보 선택지 중 점수가 가장 높은 것
+ ├ 활력징후: 통화 토큰 위에서 수치가 적힌 구간의 시작·끝 → 글자를 숫자로 읽음   vitals.py · ko_number.py (규칙)
+ ├ 처치 범주: 28개 범주마다 있음 점수 → 0보다 큰(확률 0.5 초과) 범주의 키 목록   treatments.py
+ └ 처치 구절: 토큰마다 B·I·O 태그 (묻기만 하고 내보내지 않음 — 아래)
+같은 통화 토큰을 통화 결과 디코더(outcome_decoder.onnx)도 읽음 → 수용·거절·보류 중 점수가 가장 높은 것
 ```
 
-- **보기별 어텐션**: 예전에는 다중 선택 헤드마다 query 하나로 통화 전체를 벡터 하나로 요약하고, 그 벡터 하나로 보기 전부(증상 88개, 손상 81개 등)를 판단했다.
-  "구토는 없어요"처럼 한 문장에만 있는 정보가 요약에 묻히기 쉬웠다. 이제는 보기마다 자기 근거 토큰을 따로 가중 평균한다.
-  dense·tanh는 보기끼리 나눠 쓰고, 마지막 층은 보기마다 가중치 벡터 하나로 점수를 낸다. 단일 선택 8개는 헤드마다 query 하나 그대로다
-- **2026-09-30 모델과의 차이**: 09-30 모델은 15개 헤드가 모두 헤드마다 query 하나, 분류 헤드는 1층이었다. 파라미터 수는 0.35B → 0.37B다(원본 `docs/MF_BERT.md`)
-- **학습 쪽 변경**(원본 `docs/MF_BERT.md`, 원본 실행 폴더 `2026-10-02_120702`):
-  - 다중 선택 BCE의 양성 항에 보기별 양성 가중치(`sqrt(음성 수/양성 수)`, 상한 10)를 곱한다
-  - KTAS 기대 비용 손실을 더한다(등급 차이만큼 비용, 가볍게 틀리면 2배)
-  - 층별 학습률 감소: 인코더 맨 위층 2e-5에서 한 층 내려갈 때마다 0.95배
-  - 학습 데이터에 부정 증상을 보강했다. 원문이 분명히 부정했는데 라벨에서 빠진 부정 증상을 Sonnet 라벨러로 찾아 더했다
-  - 데이터는 정제·재라벨·부정 보강을 거친 8,082건이다. 분할은 5-fold가 아니라 균형 9:1 한 번이다(학습 7,188 / 검증 894)
-- 출력층 구성·보기 목록·디코딩(다중 선택 기준 0.5)은 그대로라 `labels.py`·`decode.py`·`parse.py`는 바뀌지 않았고 `summary` 형식도 같다
+- **통화 결과**(`call_outcome`): 통화가 끝난 시점의 병원 응답 — `수용`(받겠다), `거절`(못 받는다, 다른 병원 안내 포함),
+  `보류`(다시 연락·확인 중·끊김·정보만 전달처럼 통화 안에서 결론이 안 남). 학습된 질의 벡터 하나가 통화 토큰을 읽는 2층 디코더로,
+  인코더·기존 디코더를 고정한 채 통화 1,376건으로 따로 학습했다. 같은 출처의 검증 344건에서 정확도 0.994·macro-F1 0.993이지만
+  **실제 통화 테스트셋에는 통화 결과 정답이 없어 재지 못했다.** 학습·검증 통화가 모두 391토큰 이하라 512토큰을 넘는 긴 통화도 검증 전이다
+- **추론은 두 단계**: 환자 수 질문(0번)으로 환자 수 n을 정하고, 환자 1..n의 질문 15개씩을 한 번에 넣는다
+- **선택 항목**: 성별 3, 나이대 11, 주증상 대분류 17 + 판단 보류, 소분류 169 + 판단 보류(고른 대분류에 속한 것만), AVPU 6
+  (`A`·`V`·`P`·`U`·`기타`·`언급 없음`). 대분류가 판단 보류면 소분류도 판단 보류다
+- **활력징후**: `sbp` `dbp` `hr` `rr` `spo2` `temp` `glucose` `gcs`. 시작 자리를 고르고 그 뒤 8토큰 안에서 끝을 고른다.
+  구간 말고 "말하지 않음"(null)과 "0"(무호흡·맥박 없음처럼 숫자 글자 없이 0) 자리가 따로 있다. 한글 숫자("백 삼십에")도
+  읽는다. 숫자로 못 읽으면 null. **수치 범위 검사(예: 혈압 300 초과 거르기)는 하지 않는다**
+- **처치 범주**(`treat_categories`): 구급대원이 한(하는·할) 처치와 병원이 지시한 처치의 범주. 아래 28개 키 중 고른 것을 표의 순서대로
+  낸다. 처치가 없으면 `[]`이지만, 재현율이 0.705라 **빈 목록이 "처치 안 함"을 뜻하지는 않는다**
+- **처치 구절은 내보내지 않는다**: 모델은 "k번째 환자의 처치는?"으로 처치를 말한 원문 구절(범주의 근거)도 고르지만, 테스트셋에서
+  처치가 예측된 환자 60명 중 33명의 구절이 `"오"`·`"이"`·`"십"`처럼 2글자 이하 조각으로 끊겨 나왔다. 질문 자체는 빼지 않는다 —
+  디코더 안에서 질문끼리 서로 보므로, 빼면 다른 항목의 답이 원본 모델과 달라질 수 있다
+- **4비트 양자화 (HQQ)**: 인코더 MatMul 120개를 블록 32 단위 4비트(onnxruntime MatMulNBits)로 줄였다. 블록마다 scale·zero point를
+  원래 가중치와의 오차가 작아지게 반복 최적화하는 방식이다. 인코더 마지막 4층(20~23)과 디코더는 fp32다. 1.4GB → 646MB. onnxruntime CPU로 돈다
+- 복사해 온 코드가 원본(`small-MF_BERT_treat_cat/runtime.py`, hqq)과 같은 결과를 내는지 실제 통화 테스트셋 612건으로 대조했다
+  (2026-10-29, 가중치는 Hub 고정 해시에서 받은 것, 처치 구절을 뺀 출력 612건 전부 동일)
+- **성능** — 실제 119 통화 바탕 테스트셋 612통화(환자 617명), 자세한 건 [BENCHMARK.md](BENCHMARK.md):
 
-**성능 — 2026-09-30 모델 기준** (합성 통화 대본 8,990건, 5-fold 교차검증 — `/mnt/D/Project/BERT_Multiclass Classification/BERT/train_kfold.py`, 실행 `2026-09-30_183446`)
+  | 항목 | 배포본 (4비트 hqq) | 원본 (bf16) | 10-20 모델 (같은 채점기) |
+  | --- | --- | --- | --- |
+  | score (환자 수 + 선택지 5개 평균) | 0.845 | 0.843 | 0.840 |
+  | 주증상 대분류 / 소분류 | 0.681 / 0.556 | 0.679 / 0.546 | 0.684 / 0.548 |
+  | AVPU | 0.919 | 0.921 | 0.908 |
+  | 활력징후 8개 평균 | 0.960 | 0.961 | 0.960 |
+  | 처치 범주 micro-F1 (정밀도 / 재현율) | 0.809 (0.948 / 0.705) | 0.786 (0.887 / 0.705) | - |
 
-지금 받는 2026-10-02 모델은 아직 이 저장소 기준으로 성능을 재지 않았다. 벤치마크를 돌려 오른쪽 칸을 채울 예정이다.
+  기존 항목은 10-20 모델과 같은 수준이다. 처치 범주는 고른 것은 대체로 맞지만 말한 처치의 약 30%를 놓친다. 테스트셋에서 처치가 있는
+  환자는 72명이고 그중 54명이 산소라, 28개 범주 중 17개는 테스트셋에 한 번도 나오지 않아 범주별 성능은 확인되지 않았다.
+  약점은 여전히 주증상이다. 학습 데이터 보강 일부가 이 테스트셋의 오답 유형을 참고했으므로 실제보다 높게 나왔을 수 있다.
+  10-20 모델과 LLM을 비교한 10-22 벤치마크, 그 전 10-02 모델 기록은 같은 문서 아래쪽에 남아 있다
+- 학습 데이터는 합성 통화와 Claude 계열 모델이 붙인 라벨이다(처치 라벨은 2026-10-29 Sonnet 5.5가 구절+범주로 붙임).
+  **실제 음성 인식(STT) 출력에서의 성능은 측정하지 않았다**
 
-| 항목 | 2026-09-30 모델 (5-fold 평균 ± 표준편차) | 2026-10-02 모델 (현재 배포) |
+#### 처치 범주
+
+| 묶음 | 키 | 내용 |
 | --- | --- | --- |
-| 종합 score | 0.6912 ± 0.0041 (배포 체크포인트였던 fold00: 0.6934) | 측정 예정 |
-| 긴 통화(조각 2개 이상)만 종합 score | 0.6346 ± 0.0153 | 측정 예정 |
-| 성별 / 복용약 유무 / 주 기전 정확도 | 0.996 / 0.975 / 0.950 | 측정 예정 |
-| KTAS 정확도 · macro-F1 | 0.791 · 0.779 | 측정 예정 |
-| 주 호소 대분류 / 소분류 정확도 | 0.923 / 0.872 | 측정 예정 |
-| 증상 micro-F1 · macro-F1 | 0.672 · 0.431 | 측정 예정 |
-| 처치 micro-F1 · macro-F1 | 0.730 · 0.384 | 측정 예정 |
-| 손상 micro-F1 (좌우 포함 0.309) | 0.482 — **가장 약함** | 측정 예정 |
-| 구간 span F1 | 0.696 | 측정 예정 |
+| 기도·호흡 | `oxygen` | 산소 투여 (비강 캐뉼라, 마스크, 비재호흡 마스크) |
+| | `suction` | 흡인 |
+| | `foreign_body` | 기도 이물 제거 (하임리히, 등 두드리기, 입안 이물 꺼냄) |
+| | `airway_basic` | 도수 기도 확보, 구인두·비인두 기도유지기 |
+| | `airway_advanced` | 성문상 기도기 (i-gel, LMA), 기관삽관 |
+| | `ventilation` | 양압 환기 (BVM, 인공호흡기) |
+| 순환·소생 | `cpr` | 가슴압박 (수동, 기계식) |
+| | `defib` | 제세동 · 심율동전환 (쇼크를 준 경우) |
+| | `iv` | 정맥로 · 골내 확보 |
+| | `fluid` | 수액 투여 |
+| | `bleeding` | 지혈 (직접 압박, 거즈로 누름, 압박 드레싱, 지혈대) |
+| 약물 | `med_aspirin` | 아스피린 |
+| | `med_nitro` | 니트로글리세린 |
+| | `med_glucose` | 포도당 · 당 공급 |
+| | `med_epinephrine` | 에피네프린 |
+| | `med_bronchodilator` | 기관지확장제 (네뷸라이저, 흡입기) |
+| | `med_other` | 그 밖의 모든 약 |
+| 고정 | `spinal` | 경추 보호대, 척추고정판 · KED · 스쿠프 들것 |
+| | `splint` | 팔다리 부목 · 삼각건, 골반 고정대 |
+| 상처·노출 | `wound` | 소독, 드레싱, 거즈 · 붕대로 덮거나 감기 |
+| | `burn` | 화상 냉각 · 드레싱 |
+| | `irrigation` | 오염물 세척 (눈 · 피부 세척, 입 헹굼) |
+| | `cold_pack` | 국소 냉찜질 |
+| 체온 | `cooling` | 전신 냉각 (고체온) |
+| | `warming` | 보온 (담요, 핫팩, 히터, 젖은 옷 벗김) |
+| 기타 | `position` | 치료 목적의 자세 (회복자세, 다리 올림, 반좌위, 임신부 왼쪽으로 눕힘) |
+| | `delivery` | 분만 처치 |
+| | `other` | 그 밖의 처치 (반지 · 벌침 제거, 안대, 억제대, 미주신경 자극 등) |
 
-- (09-30 모델) 배포 체크포인트는 전체 데이터로 다시 학습한 모델이 아니라 fold00이었다. 5개 fold 중 검증 score가 가장 높은 건 fold04(0.6977)이고 fold00은 두 번째다. 이 fold의 검증 데이터는 다른 fold 학습에 쓰였으므로 위 수치는 평균값을 기준으로 읽는다
-- (09-30 모델) **이전 HMM v2의 수치(score 0.7312)와 직접 비교할 수 없다** — 학습·검증 데이터가 다르다(HMM v2는 `data_v3` 9,677건 중 `edge`·119 신고 제외)
-- 10-02 모델은 학습 데이터(8,082건 정제본)와 분할(균형 9:1)이 달라, 측정 후에도 09-30 모델의 5-fold 수치와는 같은 조건의 비교가 아니다
-- 학습 데이터는 전부 합성 통화 대본이고 라벨도 Claude로 자동 생성했다(일부 레코드 meta에 "사람 검수 전"으로 표시)
-- 학습 데이터는 "줄바꿈 = 화자 전환"인 대본 형태다. 여기 입력은 "줄바꿈 = 발화 경계"라 완전히 같은 형태가 아니고, **실제 음성 입력에서의 성능은 측정하지 않았다**
-- 복사해 온 코드가 원본 `mf_bert/infer.py`의 `predict()`와 같은 결과를 내는지는 **09-30 모델로만** 대조했다(fold00 검증 데이터 15건, 조각 3개짜리 긴 통화 5건 포함, 전부 동일). **2026-10-02 모델로는 같은 대조를 하지 않았다(미검증)**
+키와 순서는 `MF_BERT/treatments.py`의 `CATEGORIES`이고, 라벨 기준은 원본 데이터 폴더의 `label/treat/TREAT_GUIDE.md`다.
+
+### Pre-KTAS 추정 (`pre_ktas.py`, 규칙 기반)
+
+모델이 KTAS를 내지 않아, 모델이 뽑은 주증상·의식·활력징후를 공개된 객관 기준에 넣어 환자마다 단계를 계산한다.
+각 기준에서 나온 단계 중 **가장 위급한 값**이 최종 단계다(Pre-KTAS·OTAS가 쓰는 방식).
+
+| 기준 | 쓰는 항목 | 출처 |
+| --- | --- | --- |
+| 주증상별 최소 단계 (169개 중 153개 대응) | `cc_minor` | OTAS 보충표 2 (Kim 외, Yonsei Med J 2022;63(3):272) |
+| 산소포화도 90 미만 1 / 92 미만 2 / 94 미만 3 | `spo2` | OTAS 표 1 |
+| 수축기혈압 80 미만 1 / 80~100 + 맥박 이상 2 / 그 밖의 경계값 3 | `sbp` `hr` | OTAS 표 1 |
+| 의식 U 1 / V·P 2, GCS 3–8 1 / 9–13 2 | `avpu` `gcs` | OTAS 표 1, Pre-KTAS 시범사업 앱 |
+| SIRS(체온·맥박·호흡수) 2·3·4 | `temp` `hr` `rr` | OTAS 표 1 |
+| 외상 주증상 + 수축기혈압 90 미만 → 1 | `cc_minor` `sbp` | Pre-KTAS 첫인상 평가 (강창신 외, 대한응급의학회지 2024) |
+| 혈당 54 미만 3(의식·행동 변화면 2), 324 이상 + 숨참·쇠약·다뇨 2 | `glucose` | Ontario Prehospital CTAS 표 8 |
+
+- 결과는 `{"level": 1~5 | null, "basis": [걸린 기준마다 {"rule", "level", "text"}], "source": "rule"}`. 어느 기준에도
+  걸리지 않으면 단계를 지어내지 않고 `null`이다(주증상이 판단 보류이거나 OTAS 표에 없는 주증상 15개 — 소아·신생아 전용,
+  온열손상, 기억상실 등 — 이면서 활력징후도 정상일 때)
+- **실제보다 덜 위급하게 나올 수 있는 추정값이다.** 통증 점수·사고 기전·출혈성 질환·경련 진행 여부·절단 범위·화상 면적·
+  분만 징후는 모델이 뽑지 않아 반영 못 한다. 성인 기준이고(소아 나이별 기준·65세 이상 가산 미적용), 소방청 공식 수치표가
+  공개돼 있지 않아 병원 KTAS를 객관화한 OTAS를 쓴다. KTAS 정답 데이터로 검증하지 않았다
+- 정답 라벨로 계산한 단계와 모델 출력으로 계산한 단계를 비교하면, 실제 통화 테스트셋 615명에서 배포본(2026-10-29
+  처치판)은 71.9%가 같았고 모델 오차가 단계를 덜 위급하게 바꾼 경우가 10.2%였다(10-20 모델은 69.9%·9.9%). 합성 검증
+  데이터 5,165명에서는 95.4%(10-20 모델)였지만 실제 통화에서는 그만큼 맞지 않는다. 자체 검사 `python pre_ktas.py`,
+  대조 `python pre_ktas.py <eval_predictions.jsonl>`
+
+**아직 정하지 않은 것** (정해지면 `pre_ktas.py`에 반영)
+
+1. **OTAS 표에 대응이 없는 주증상 15개의 최소 단계** — 지금은 주증상 기준 없이 나머지 기준으로만 판정한다(검증 데이터
+   환자 5,353명 중 338명, 6.3%). 기억상실, 온열손상, 천명음(다른 증상 호소 없음), 협착음, 음순부종, 출산 후 문제(6주 이내), 그리고 소아·신생아
+   전용 9개(소아의 파괴적 행동, 축 늘어진 소아, 영아의 무호흡 발작, 신생아 수유곤란, 신생아 황달, 소아의 보행장애/보행 시
+   통증, 영유아의 달랠 수 없는 울음, 소아의 선천적 문제, 방금 태어난 신생아). 근거로 쓸 KTAS 원문을 더 찾아야 한다
+2. **"외상 + 수축기혈압 90 미만 → 1단계"에 넣을 외상 주증상 목록** — 지금은 `TRAUMA_COMPLAINTS` 18개(두부·눈·코·귀·안면·
+   목·항문/회음부·생식기 외상, 외상성 목·등·허리 손상, 절단, 상지·하지 손상, 열상/천공, 몸통 외상 5개). 눈·코·귀 외상과
+   열상까지 넣어 넓을 수 있어 팀 확인이 필요하다
+3. **65세 이상 가산(S-OTAS)** — 나이대가 "60대"로만 나와 60대 환자가 65세 이상인지 알 수 없다. 60대를 넣을지 70대부터 할지
+4. **소아 기준** — OTAS는 18세 이상 성인 기준이다. 소아는 나이별 활력징후 기준이 달라 "10대 미만"·"10대"를 어떻게 다룰지
 
 ---
 
@@ -396,11 +477,12 @@ MF_BERT는 사전학습된 512칸만 쓴다. 조각이 하나뿐인 짧은 통�
 | 구분 | 모델 | 처리 방식 |
 | --- | --- | --- |
 | STT | Qwen3-ASR-0.6B + LoRA (`Playedwell03/qwen3-asr-0.6b-119ko-tiny`) | AI 처리 |
-| 정보 구조화 — 필드 판정 | KLUE RoBERTa-large 다중과제 모델 MF_BERT (팀 학습, `podongchip/MF_BERT` 2026-10-02 모델 — 다중 선택 헤드 보기별 어텐션 + 2층 분류 헤드, [모델 구조](#구조화--mf_bert-mf_bert)) | AI 처리 (분류·태깅, 생성형 아님) |
-| 정보 구조화 — 점수 해석·숫자 파싱 | *(모델 없음, `MF_BERT/decode.py`·`MF_BERT/parse.py`)* | 규칙 기반 |
+| 정보 구조화 — 항목 판정 | KLUE RoBERTa-large + 결정 디코더 MF_BERT (팀 학습, `podongchip/MF_BERT` 2026-11-04 통화 결과판 4비트 ONNX hqq, [모델 구조](#구조화--mf_bert-mf_bert)) | AI 처리 (선택·구간·범주, 생성형 아님) |
+| 정보 구조화 — 활력징후 숫자 읽기 | *(모델 없음, `MF_BERT/vitals.py`·`MF_BERT/ko_number.py`)* | 규칙 기반 |
+| Pre-KTAS 추정 | *(모델 없음, `pre_ktas.py` — OTAS·Pre-KTAS·Pre-CTAS 기준)* | 규칙 기반 |
 
-**개발 환경**: Python 3.11, torch 2.11 (CUDA 12.8), transformers 5.17, peft, flask.
-Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌아가며 외부 API로 음성·텍스트가 나가지 않는다.
+**개발 환경**: Python 3.11, torch 2.11 (CUDA 12.8), transformers 5.17, peft, onnxruntime 1.31, flask.
+Qwen3-ASR이 transformers 5.13 이상을 요구한다. MF_BERT는 onnxruntime CPU로 돈다. 전부 로컬에서 돌아가며 외부 API로 음성·텍스트가 나가지 않는다.
 
 ---
 
@@ -410,7 +492,8 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
 
 **출력**: `feature/hub`로 전달되는 JSON. dashboard로는 직접 보내지 않는다.
 `feature/dashboard`의 `CallSummaryMessage` 타입과 1:1 대응하며(`schema.py`),
-**`summary`는 2026-09-29에 v1(6필드)에서 v2 스키마(17필드 + `meta`)로 바뀌었다(2026-10-01 구조화 모델을 MF_BERT로 바꾸고 2026-10-03 10-02 모델로 갱신했어도 형식은 같다). hub·dashboard 쪽 수정은 담당자가 따로 진행한다.**
+**`summary`는 2026-10-21에 v2 스키마(17필드 + `meta`)에서 `{patient_count, patients[]}`(환자별 13개 항목 + `pre_ktas`)로 바뀌었고,
+2026-10-29에 환자마다 `treat_categories`가, 2026-11-04에 통화 단위 `call_outcome`이 더해졌다. hub·dashboard 쪽 수정은 담당자가 따로 진행한다.**
 
 ```json
 {
@@ -430,89 +513,45 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
     ]
   },
   "summary": {
-    "call_type": null,
-    "ktas_level": 2,
-    "ktas_evidence": null,
-    "chief_complaint": {
-      "major": "I 심혈관계",
-      "minor": "흉통(심장성)"
-    },
-    "suspected_diagnosis": [
+    "call_outcome": "수용",
+    "patient_count": 1,
+    "patients": [
       {
-        "text": "심근경색 의심"
-      }
-    ],
-    "vitals": [
-      {
-        "sequence": 1,
+        "gender": "남성",
+        "age_group": "60대",
+        "cc_major": "I 심혈관계",
+        "cc_minor": "흉통(심장성)",
+        "avpu": "A",
         "sbp": 150,
         "dbp": 90,
         "hr": 110,
         "rr": null,
-        "bt": null,
         "spo2": 96,
+        "temp": null,
         "glucose": null,
-        "evidence": [
-          "혈압 150에 90 맥박 110 산소포화도 96이고요"
-        ]
+        "gcs": null,
+        "treat_categories": ["oxygen"],
+        "pre_ktas": {
+          "level": 2,
+          "basis": [
+            { "rule": "complaint", "level": 2, "text": "주증상 흉통(심장성)" },
+            { "rule": "hemodynamic", "level": 3, "text": "수축기혈압 150 + 맥박 110 (100 초과 또는 60 미만)" }
+          ],
+          "source": "rule"
+        }
       }
-    ],
-    "consciousness": [
-      {
-        "sequence": 1,
-        "avpu": "A"
-      }
-    ],
-    "symptoms": [
-      {
-        "standard_name": "흉통",
-        "status": "확인"
-      }
-    ],
-    "onset": {
-      "text": "30분 전부터",
-      "minutes_ago": 30
-    },
-    "incidents": [
-      {
-        "type": "질병",
-        "detail": null,
-        "primary": true
-      }
-    ],
-    "disease_category": "심장질환",
-    "injuries": [],
-    "treatments": [],
-    "age": {
-      "years": 62,
-      "months": null,
-      "band": null,
-      "evidence": [
-        "62세 남성이",
-        "요"
-      ]
-    },
-    "sex": "남성",
-    "medications": {
-      "status": "미언급",
-      "items": []
-    },
-    "notes": null,
-    "meta": {
-      "not_predicted": [
-        "call_type",
-        "ktas_evidence",
-        "notes"
-      ]
-    }
+    ]
   },
   "source": "ai",
   "model_used": {
     "stt": "qwen3-asr-0.6b-119ko-tiny",
-    "llm": "mf-bert-klue-roberta-large"
+    "llm": "mf-bert-treat-cat-outcome-klue-roberta-large-int4-hqq"
   }
 }
 ```
+
+(위 `summary`는 이 통화 텍스트를 지금 모델에 실제로 넣어 나온 값이다. "심전도 시행"은 처치 범주 28개에 없어 `treat_categories`에 들어가지 않는다.
+`call_outcome`이 `수용`인 것은 오답이다 — 이 텍스트엔 병원 응답이 없어 기준대로면 `보류`인데, 모델은 응답이 없으면 `수용`으로 기운다.)
 
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
@@ -523,13 +562,19 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. 전부 로컬에서 돌�
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 (처리 시점에서 통화 길이만큼 거슬러 올라간 근사값) |
 | `transcript.duration_sec` | number | 통화 길이(초) |
 | `transcript.turns` | array | 발화별 원본 로그 (`speaker`는 화자 분리가 없어 `"미분리"` 고정, `excludedFromSummary`는 채우는 곳이 없어 항상 빠짐) |
-| `summary` | object | MF_BERT 출력 그대로(v2 스키마) — 17개 필드(`call_type` `ktas_level` `ktas_evidence` `chief_complaint` `suspected_diagnosis` `vitals` `consciousness` `symptoms` `onset` `incidents` `disease_category` `injuries` `treatments` `age` `sex` `medications` `notes`)와 `meta`. 각 필드의 뜻은 `C:\Dev\HMM\data_v3\필드_설명.md`. 값이 없는 필드도 `null`·빈 목록으로 **빠지지 않고 나간다** |
-| `summary.ktas_level` | 1~5 | Pre-KTAS 중증도. 1이 가장 위급. 항상 값이 있다 |
-| `summary.call_type` `ktas_evidence` `notes` | null | 모델이 예측하지 않는 항목이라 항상 `null` |
+| `summary.call_outcome` | string | 통화 결과(통화 하나에 하나): `수용` / `거절` / `보류`(통화 안에서 결론이 안 남). 병원 응답이 텍스트에 없으면 `수용`으로 잘못 나올 수 있다 |
+| `summary.patient_count` | int | 이송할 환자 수(1 이상). `patients` 길이와 같다 |
+| `summary.patients[].gender` | string | `남성` / `여성` / `판단 보류` |
+| `summary.patients[].age_group` | string | `10대 미만` ~ `90대이상` / `판단 보류` |
+| `summary.patients[].cc_major` `cc_minor` | string | 주증상 대분류(17개, 예: `I 심혈관계`)·소분류(169개, 예: `흉통(심장성)`) — Pre-KTAS 주증상 목록. 모르면 `판단 보류` |
+| `summary.patients[].avpu` | string | `A` / `V` / `P` / `U` / `기타`(AVPU로 못 정하는 의식 표현) / `언급 없음` |
+| `summary.patients[].sbp` `dbp` `hr` `rr` `spo2` `temp` `glucose` `gcs` | number \| null | 통화에서 말한 활력징후 수치(수축기·이완기 혈압, 맥박, 호흡수, 산소포화도, 체온, 혈당, GCS). 말하지 않았으면 `null`, 무호흡처럼 0이면 `0` |
+| `summary.patients[].treat_categories` | string[] | 처치 범주 키 목록([처치 범주](#처치-범주) 표의 순서, 예: `["oxygen", "iv"]`). 없으면 `[]` — 재현율 0.705라 빈 목록이 "처치 안 함"은 아니다. 한글 표시는 받는 쪽이 키로 바꾼다 |
+| `summary.patients[].pre_ktas` | object | Pre-KTAS 추정(규칙). `level`(1~5, 판정 못 하면 `null`)·`basis`(걸린 기준마다 `rule`·`level`·`text`)·`source: "rule"`. [Pre-KTAS 추정](#pre-ktas-추정-pre_ktaspy-규칙-기반) 참고 |
 | `source` | `"ai"` | AI 처리 결과 고정값 |
 | `model_used.stt` / `model_used.llm` | string | 실제 사용된 모델명. `llm`은 필드명만 유지할 뿐 생성형 모델이 아니다 |
 
-`summary.vitals`는 통화 속 발화에서 읽은 값일 뿐, 별도 바이탈 수집·전송 경로는 없다.
+환자의 활력징후는 통화 속 발화에서 읽은 값일 뿐, 별도 바이탈 수집·전송 경로는 없다.
 
 ---
 
@@ -551,13 +596,13 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
 │   ├── mic_recorder.py          [녹음]   마이크 입력 → numpy 버퍼 → WAV
 │   ├── live_transcriber.py      [녹음→STT] 통화 중 무음 감지로 발화를 잘라 바로 인식
 │   ├── asr.py                   [STT]    Qwen3-ASR + LoRA, 오디오 읽기·5초 분할
-│   ├── MF_BERT/                 [구조화] MF_BERT 모델 + 디코더
-│   │   ├── __init__.py          MfBertExtractor — 체크포인트 로딩, 텍스트 → v2 17필드
-│   │   ├── model.py             모델 정의 (체크포인트 state_dict와 구조가 같아야 함)
+│   ├── MF_BERT/                 [구조화] MF_BERT ONNX 추론
+│   │   ├── __init__.py          MfBertExtractor — ONNX 로딩, 텍스트 → 환자 수·환자별 14개 항목
 │   │   ├── chunking.py          긴 통화 → 512토큰 조각, 조각 → 원문 토큰 줄 복원
-│   │   ├── labels.py            출력층 보기 목록 (순서를 바꾸면 체크포인트와 안 맞음)
-│   │   ├── decode.py            점수 → v2 필드 (주 호소는 대분류에 속한 소분류만, 구간은 BIO 태그)
-│   │   └── parse.py             활력징후·나이·발생 시점 구간 → 숫자 (규칙)
+│   │   ├── vitals.py            활력징후 구간 점수 → 숫자 (규칙)
+│   │   ├── treatments.py        처치 범주 점수 → 범주 키 목록, 범주 28개 목록
+│   │   └── ko_number.py         한글·아라비아 숫자 글자 → 수치 (규칙)
+│   ├── pre_ktas.py              [규칙]   환자 항목 → Pre-KTAS 추정 단계
 │   ├── schema.py                [출력]   pydantic 스키마 (hub 전송용 JSON)
 │   │
 │   │   ── 그 외 ──
@@ -590,11 +635,11 @@ AIRookie/                        (.gitignore·CLAUDE.md·pull-all.sh는 브랜�
                        │
         ┌──────────────┼──────────────┐
         ▼              ▼              ▼
-MF_BERT.MfBertExtractor schema   send_to_hub()
-   (model→decode)    (pydantic)      hub POST
+MF_BERT.MfBertExtractor schema + pre_ktas  send_to_hub()
+   (ONNX→vitals)     (pydantic·규칙)       hub POST
 ```
 
-화살표가 한 방향뿐이고 순환이 없다. `MF_BERT/`·`schema.py`·`mic_recorder.py`는 다른 로컬
+화살표가 한 방향뿐이고 순환이 없다. `MF_BERT/`(가중치 위치만 `weights.py`)·`pre_ktas.py`·`schema.py`·`mic_recorder.py`는 다른 로컬
 모듈에 의존하지 않아, 모델을 바꿔도 영향 범위가 그 폴더·파일로 묶인다.
 
 ### 경로 규칙
@@ -609,12 +654,20 @@ MF_BERT.MfBertExtractor schema   send_to_hub()
 ## 알려진 제약사항 / TODO
 
 - **실제 마이크(sounddevice)로 발화 단위 인식을 검증하지 않았다.** 파일을 실시간 속도로 흘려 넣어 확인했다. 무음 판정 기본값은 장비 마이크에서 다시 맞춰야 할 수 있다
-- 화자 분리(diarization)가 없어 모든 턴의 `speaker`는 `"미분리"`로 고정. MF_BERT 입력의 줄바꿈도 화자 전환이 아니라 발화 경계다
+- 화자 분리(diarization)가 없어 모든 턴의 `speaker`는 `"미분리"`로 고정. MF_BERT 입력의 줄바꿈은 발화 경계일 뿐이고, 토크나이저가 공백과 똑같이 다룬다
 - 파이프라인이 중간에 실패하거나 인식된 발화가 없으면 hub로 알리는 경로가 없어 hub가 계속 기다린다
-- **hub·dashboard가 아직 v1 `summary`(6필드)를 기대한다.** `patient`·`mechanism`·`symptoms`(문자열 목록)·`treatment`·`severity_tag`·`required_department`가 사라져 hub가 이 메시지를 그대로는 처리하지 못한다 — hub 담당자가 v2 17필드를 읽도록 고쳐야 한다
-- v2에는 진료과(`required_department`)를 내는 규칙이 없다. 예전 원인·부위 → 전문과목 대응표는 v1 라벨 기준이라 함께 삭제했다
+- **hub가 아직 v2 `summary`(17필드)를 기대한다.** 2026-10-21 형식(`patient_count`·`patients[]`)을 hub가 그대로는 처리하지 못한다 — hub 담당자가 새 형식을 읽도록 고쳐야 한다. 새 형식에는 KTAS 등급(대신 규칙 추정 `pre_ktas`)·의심 진단·증상 목록·손상·사고 기전·발생 시점·복용약·정확한 나이가 없다. 처치는 2026-10-29부터 범주(`treat_categories`)로만 있고 세부 내용(약 용량·산소 유량 등)은 없다
+- 진료과(`required_department`)를 내는 규칙이 없다. 예전 원인·부위 → 전문과목 대응표는 v1 라벨 기준이라 함께 삭제했다
+- 여러 환자를 낼 수 있지만, hub는 지금 사건(caseId)당 환자 한 명을 전제로 한다. 테스트셋에 환자가 둘 이상인 통화는
+  5건(8명)뿐이라 환자별로 항목을 제대로 나눠 붙이는지는 거의 검증되지 않았다 — 직접 넣어 본 2명 통화에서 한 환자에게만
+  준 산소가 두 환자 모두에 붙었다
 - ASR이 `***[개인정보]`를 출력하는 경우의 처리 보류 중
-- MF_BERT에서 손상(injury micro-F1 0.48)·처치·증상의 희귀 라벨 성능이 낮다(macro-F1 각각 0.30·0.38·0.43 — **2026-09-30 모델 수치**). 10-02 모델은 보기별 어텐션·양성 가중치로 이 부분을 노렸지만 이 저장소 기준 수치는 측정 예정이다
-- Mac(MPS)·CPU 실행은 두 모델 모두 검증하지 않았다. ASR은 CPU에서 느리다
+- MF_BERT는 주증상이 약하다(실제 통화 테스트셋 대분류 0.68, 소분류 0.56 — [BENCHMARK.md](BENCHMARK.md)). Pre-KTAS 추정은 KTAS 정답으로 검증하지 않았다(소아·65세 이상 미반영)
+- 처치 범주는 재현율이 0.705라 말한 처치의 약 30%를 놓친다. 28개 범주 중 17개는 테스트셋에 나오지 않아 범주별 성능을 확인하지 못했다. Pre-KTAS 추정은 처치 범주를 쓰지 않는다(예: 가슴압박 중이면 1단계 — 근거 기준을 정한 뒤에 넣는다)
+- 활력징후 수치 범위 검사가 없어, 인식 오류로 터무니없는 수치가 나와도 그대로 나간다
+- **통화 결과(`call_outcome`)는 병원 응답이 텍스트에 없으면 `보류` 대신 `수용`으로 기운다.** 구급대원 브리핑만 있는 텍스트·"여보세요?"로
+  끊긴 통화·"네." 한 마디가 `수용`(확률 0.81~1.00)으로 나왔다(직접 만든 예문, 2026-11-04). 휴대폰 전화 앱은 병원과 실제 음성이 연결되지
+  않는 연출이라 STT 입력에 병원 쪽 말이 없을 수 있다 — 이 필드를 hub가 판단에 쓰기 전에 실제 통화로 확인해야 한다
+- Mac(MPS)·CPU의 ASR 실행은 검증하지 않았다. ASR은 CPU에서 느리다. MF_BERT는 Linux CPU에서만 확인했다
 - 마이크 권한 설정 필수 (macOS: 시스템 설정 > 개인정보 보호 > 마이크)
 - `data/voice_data/` 하위 전 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음

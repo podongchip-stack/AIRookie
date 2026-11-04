@@ -1,13 +1,13 @@
 r"""Qwen3-ASR -> MF_BERT 실험용 데스크톱 시뮬레이터 (tkinter).
 
-장비 마이크로 말하면 발화 단위로 인식하고, v2 17필드·hub로 갈 JSON을 보여준다.
+장비 마이크로 말하면 발화 단위로 인식하고, 환자별 14개 항목·Pre-KTAS 추정·hub로 갈 JSON을 보여준다.
 실운영 경로가 아니다. 처리는 전부 voice/의 실운영 모듈을 import해서 쓴다 — 마이크(MicRecorder)·무음 감지
 (LiveTranscriber)·ASR·MF_BERT·JSON 조립까지 app.py와 같은 코드라, 여기서 맞춘 무음 기준을 환경변수로 그대로
 옮기면 된다. 사본이 없으니 화면 결과와 실제 hub 전송값이 달라질 일도 없다.
 
     마이크 -> MicRecorder -> LiveTranscriber (발화 단위 ASR)
-                               -> 발화가 늘 때마다 MfBertExtractor.extract() -> v2 17필드
-                               -> build_call_summary_message() -> hub JSON (전송·저장은 안 함)
+                               -> 발화가 늘 때마다 MfBertExtractor.extract() -> 환자 수·환자별 14개 항목
+                               -> build_call_summary_message() -> Pre-KTAS 추정 + hub JSON (전송·저장은 안 함)
 
     conda activate AIRookieProject
     python voice\simulation3\gui.py
@@ -37,33 +37,37 @@ from transcribe import build_call_summary_message, load_models  # noqa: E402
 SESSION_NAME = "simulation"
 POLL_MS = 300
 
-#: summary v2 17필드가 어디서 왔는지 — CLAUDE.md "AI 처리 / 규칙 기반" 구분을 화면에 드러낸다
+#: 환자 항목이 어디서 왔는지 — CLAUDE.md "AI 처리 / 규칙 기반" 구분을 화면에 드러낸다
+VITAL_SOURCE = "AI 구간 → 규칙 숫자 읽기"
 FIELD_SOURCES = [
-    ("call_type", "통화 종류", "미예측 (항상 null)"),
-    ("ktas_level", "KTAS 중증도", "AI"),
-    ("ktas_evidence", "KTAS 근거", "미예측 (항상 null)"),
-    ("chief_complaint", "주 호소", "AI (대분류에 속한 소분류만 선택)"),
-    ("suspected_diagnosis", "의심 진단", "AI 구간 태깅 (원문 그대로)"),
-    ("vitals", "활력징후", "AI 구간 태깅 → 규칙 숫자 파싱"),
-    ("consciousness", "의식", "AI (AVPU)"),
-    ("symptoms", "증상", "AI"),
-    ("onset", "발생 시점", "AI 구간 태깅 → 규칙 분 환산"),
-    ("incidents", "발생 기전", "AI"),
-    ("disease_category", "질병 분류", "AI (기전에 질병이 있을 때만)"),
-    ("injuries", "손상", "AI"),
-    ("treatments", "처치", "AI"),
-    ("age", "나이", "AI 구간 태깅 → 규칙 나이 파싱"),
-    ("sex", "성별", "AI"),
-    ("medications", "복용약", "AI 유무 + 구간 태깅"),
-    ("notes", "비고", "미예측 (항상 null)"),
+    ("gender", "성별", "AI"),
+    ("age_group", "나이대", "AI"),
+    ("cc_major", "주증상 대분류", "AI"),
+    ("cc_minor", "주증상 소분류", "AI (대분류에 속한 소분류만 선택)"),
+    ("avpu", "의식(AVPU)", "AI"),
+    ("sbp", "수축기 혈압", VITAL_SOURCE),
+    ("dbp", "이완기 혈압", VITAL_SOURCE),
+    ("hr", "맥박", VITAL_SOURCE),
+    ("rr", "호흡수", VITAL_SOURCE),
+    ("spo2", "산소포화도", VITAL_SOURCE),
+    ("temp", "체온", VITAL_SOURCE),
+    ("glucose", "혈당", VITAL_SOURCE),
+    ("gcs", "GCS", VITAL_SOURCE),
+    ("treat_categories", "처치 범주", "AI (28개 범주 중 확률 0.5 초과)"),
+    ("pre_ktas", "Pre-KTAS 추정", "규칙 (pre_ktas.py)"),
 ]
 
 
 def show(value) -> str:
+    if isinstance(value, dict) and value.get("source") == "rule":  # pre_ktas
+        reasons = "; ".join(b["text"] for b in value["basis"]) or "걸린 기준 없음"
+        return f"{value['level']}단계 — {reasons}" if value["level"] is not None else f"판정 못 함 — {reasons}"
     if value is None:
         return "—"
     if isinstance(value, str):
         return value
+    if isinstance(value, list):  # 처치 범주
+        return " / ".join(value) or "없음"
     return json.dumps(value, ensure_ascii=False)
 
 
@@ -75,7 +79,8 @@ def render(extractor: MfBertExtractor, segments: list[Segment], duration_sec: fl
     summary, seconds = extractor.extract(text)
     message = build_call_summary_message(segments, duration_sec, SESSION_NAME, summary)
     return {
-        "fields": [(label, show(summary[key]), source) for key, label, source in FIELD_SOURCES],
+        "fields": [(f"환자 {i} · {label}", show(patient[key]), source)
+                   for i, patient in enumerate(message.summary.patients, 1) for key, label, source in FIELD_SOURCES],
         "json": json.dumps(message.to_payload(), ensure_ascii=False, indent=2),
         "seconds": seconds,
     }
@@ -159,9 +164,9 @@ class SimulatorApp:
 
         top = ttk.Frame(right)
         top.pack(fill="both", expand=True)
-        box = ttk.LabelFrame(top, text="summary v2 17필드 (hub로 가는 값)", padding=4)
+        box = ttk.LabelFrame(top, text="summary 환자별 항목 (hub로 가는 값)", padding=4)
         box.pack(side="left", fill="both", expand=True)
-        self.fields_table = make_table(box, [("필드", 100), ("값", 420), ("근거", 240)], 12)
+        self.fields_table = make_table(box, [("필드", 150), ("값", 420), ("근거", 200)], 12)
         box = ttk.LabelFrame(top, text="발화별 인식", padding=4)
         box.pack(side="left", fill="both", expand=True, padx=(8, 0))
         self.utterance_table = make_table(box, [("시작(초)", 60), ("끝(초)", 60), ("인식 텍스트", 320)], 12)
