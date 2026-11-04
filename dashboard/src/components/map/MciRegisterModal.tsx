@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { C, GLASS } from "@/lib/control-map";
-import type { MciAssessment } from "@/types/dashboard";
+import { searchPlaces } from "@/lib/geocode";
+import type { GeocodeResult, MciAssessment } from "@/types/dashboard";
 
 // 다수 사상자 등록(2026-11-04) — 개정법 이후 상황실이 직접 등록하고 에이전트가 단계별로 일하는 모습을 보인다.
 // 위치·추정 사상자 수를 넣으면 hub가 ① 반경 병원 여력 집계 ② 중증부터 예상 분배(규칙, spider 줄 길이 + 여력·부하)
 // ③ 가까운 대기 구급대 추천을 돌려준다(mci_assessment). 결과는 미리 보기이고 출동은 관제가 [출동 지시]로 정한다.
 // 단계는 응답이 오면 차례로 펼쳐 보인다(화면 연출) — 계산은 hub에서 이미 끝났고 생성형 AI가 아니라 규칙이다.
+// 위치는 주소·장소 검색(hub /geocode — 카카오 키는 hub에만)으로 어디든 고르고, 자주 쓰는 곳·선택한 사건 위치는 바로 고른다.
 
 const PLACES: { label: string; lat: number; lng: number }[] = [
   { label: "서울시청", lat: 37.5665, lng: 126.978 },
@@ -26,7 +28,18 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
   onClose: () => void;
   center: { lat: number; lng: number } | null;
 }) {
-  const [place, setPlace] = useState(0);
+  const [where, setWhere] = useState<{ label: string; lat: number; lng: number }>(PLACES[0]);
+  const [query, setQuery] = useState("");
+  const [found, setFound] = useState<GeocodeResult[]>([]);
+  const [searchNote, setSearchNote] = useState("");
+  const search = async () => {
+    const q = query.trim();
+    if (q.length < 2) { setSearchNote("두 글자 이상 입력하세요"); return; }
+    setSearchNote("검색 중…");
+    const { results, error } = await searchPlaces(q, "");
+    setFound(results.slice(0, 6));
+    setSearchNote(error ?? (results.length ? "" : "검색 결과가 없습니다"));
+  };
   const [label, setLabel] = useState("");
   const [counts, setCounts] = useState<Record<string, number>>({ 중증: 2, 중등증: 3, 경증: 5 });
   const [sentAt, setSentAt] = useState<number | null>(null);
@@ -41,7 +54,6 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
     return () => timers.forEach(clearTimeout);
   }, [fresh]);
 
-  const where = place < 0 && center ? center : PLACES[Math.max(0, place)];
   const total = SEVS.reduce((n, s) => n + (counts[s] ?? 0), 0);
 
   return (
@@ -59,12 +71,28 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
           {/* 입력 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label style={lab}>사고 위치</label>
+            <form onSubmit={(e) => { e.preventDefault(); void search(); }} style={{ display: "flex", gap: 6 }}>
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="주소·장소 검색 (예: 판교역, 시흥 산업단지)" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+              <button type="submit" style={{ ...chip(false), flex: "none" }}>검색</button>
+            </form>
+            {searchNote && <div style={{ fontSize: 11.5, color: C.sub }}>{searchNote}</div>}
+            {found.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 150, overflowY: "auto" }}>
+                {found.map((r) => (
+                  <button key={`${r.lat},${r.lng}`} type="button" onClick={() => { setWhere({ label: r.name, lat: r.lat, lng: r.lng }); setFound([]); setSearchNote(""); }}
+                    style={{ textAlign: "left", fontFamily: "inherit", fontSize: 12, padding: "5px 10px", borderRadius: GLASS.radiusSm, border: `1px solid ${C.line}`, background: "#fff", cursor: "pointer" }}>
+                    <b style={{ color: C.navy }}>{r.name}</b> <span style={{ color: C.sub }}>{r.address}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {PLACES.map((p, i) => (
-                <button key={p.label} type="button" onClick={() => setPlace(i)} style={chip(place === i)}>{p.label}</button>
+              {PLACES.map((p) => (
+                <button key={p.label} type="button" onClick={() => setWhere(p)} style={chip(where.label === p.label)}>{p.label}</button>
               ))}
-              {center && <button type="button" onClick={() => setPlace(-1)} style={chip(place === -1)}>선택한 사건 위치</button>}
+              {center && <button type="button" onClick={() => setWhere({ label: "선택한 사건 위치", ...center })} style={chip(where.label === "선택한 사건 위치")}>선택한 사건 위치</button>}
             </div>
+            <div style={{ fontSize: 12, color: C.ink2 }}>선택: <b style={{ color: C.blue }}>{where.label}</b></div>
             <label style={lab}>사고 내용(선택)</label>
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="예: 공장 화재, 다중 추돌" style={inputStyle} />
             <label style={lab}>추정 사상자</label>
@@ -77,7 +105,7 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
               </div>
             ))}
             <button type="button" disabled={total === 0}
-              onClick={() => { setShown(0); setDispatched(false); setSentAt(Date.now()); onRegister({ lat: where.lat, lng: where.lng, counts, label }); }}
+              onClick={() => { setShown(0); setDispatched(false); setSentAt(Date.now()); onRegister({ lat: where.lat, lng: where.lng, counts, label: label || where.label }); }}
               style={{ ...primaryBtn, opacity: total ? 1 : 0.5 }}>
               등록하고 에이전트 분석 ({total}명)
             </button>
