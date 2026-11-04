@@ -35,4 +35,14 @@ class CallDecisionTest {
         assertEquals("confirm", json["decision"]!!.jsonPrimitive.content)
         assertTrue(json["timestamp"]!!.jsonPrimitive.content.isNotBlank())
     }
+
+    @Test fun autoDecisionFromHub() {
+        // hub app._announce_auto_decision이 보내는 모양 그대로(type·source는 앱이 쓰지 않는 필드)
+        val d = hubJson.decodeFromString(CallDecisionAuto.serializer(),
+            """{"type":"call_decision_auto","caseId":"case-1","decision":"confirm","callOutcome":"수용","hospitalId":"H1","hospitalName":"강북삼성병원","source":"ai"}""")
+        assertEquals("case-1", d.caseId)
+        assertEquals("confirm", d.decision)
+        assertEquals("수용", d.callOutcome)
+        assertEquals("강북삼성병원", d.hospitalName)
+    }
 }

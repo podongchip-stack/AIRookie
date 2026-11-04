@@ -161,6 +161,11 @@ sim: DispatchSim | None = DispatchSim(router) if SIM_DISPATCH else None
 #: 구급차 대시보드에서 통화 시작 허용(2026-10-03, start-all.sh --dashboard-call → HUB_DASHBOARD_CALL=1). 기본은
 #: 꺼서 통화는 휴대폰 전화 앱(device="phone")으로만 받는다 — 대시보드(device="tablet")의 통화 시작은 거부한다.
 DASHBOARD_CALL = os.environ.get("HUB_DASHBOARD_CALL") == "1"
+#: 첫 통화 자동 판단(2026-11-04): voice 요약의 통화 결과(summary.call_outcome, AI)가 "수용"이면 [이송확정], "거절"이면
+#: [이송불가]를 구급대원 대신 고른다. "보류"·값 없음(온디바이스 앱·예전 voice)이면 지금처럼 구급대원이 고른다.
+#: 모델은 병원 응답이 텍스트에 없으면 "수용"으로 기운다(voice README) — 끄려면 HUB_FIRST_CALL_AUTO_DECISION=0
+FIRST_CALL_AUTO_DECISION = os.environ.get("HUB_FIRST_CALL_AUTO_DECISION", "1") != "0"
+AUTO_DECISION_OF_OUTCOME = {"수용": "confirm", "거절": "reject"}
 SIM_TICK_SEC = 1.0
 
 # dashboard는 순수 WebSocket 클라이언트(new WebSocket(), socket.io 아님)라
@@ -421,11 +426,12 @@ _first_call_wait: dict[str, dict] = {}
 _first_call_wait_lock = threading.Lock()
 
 
-def _register_first_call_wait(signal: CallSignal) -> None:
-    """call_ended(awaitDecision)를 받았다 — 이 사건의 첫 요약을 판단이 날 때까지 붙잡아 둔다."""
+def _register_first_call_wait(signal: CallSignal, ws=None) -> None:
+    """call_ended(awaitDecision)를 받았다 — 이 사건의 첫 요약을 판단이 날 때까지 붙잡아 둔다.
+    ws(통화를 끝낸 앱 소켓)는 자동 판단 때 거부 안내를 받을 곳이다 — 구급대원이 고르면 그 소켓으로 바뀐다."""
     with _first_call_wait_lock:
         _first_call_wait[signal.caseId] = {"apid": signal.apid, "hospitalId": signal.hospitalId, "summary": None,
-                                           "decision": None, "ws": None, "since": time.time()}
+                                           "decision": None, "ws": ws, "since": time.time(), "auto": None}
     case_tracker.event(signal.caseId, "p", "통화 종료 — 구급대원 이송 판단 대기")
     decision_log.log_decision("first_call_awaiting_decision", {"caseId": signal.caseId, "apid": signal.apid,
                                                                "hospitalId": signal.hospitalId})
@@ -433,17 +439,40 @@ def _register_first_call_wait(signal: CallSignal) -> None:
 
 def _first_call_gate(voice: VoiceCallSummaryMessage) -> bool:
     """첫 통화 요약이 판단 대기 중인 사건의 것이면 붙잡아 두고 True(병원에 보내지 않는다). 판단이 이미 와 있었으면 바로 처리한다."""
+    outcome = voice.summary.call_outcome
+    # 시연 일시정지 중엔 구급대원 판단도 거부하므로 자동 판단도 하지 않는다 — 재개 뒤 구급대원이 고른다
+    auto = AUTO_DECISION_OF_OUTCOME.get(outcome) if FIRST_CALL_AUTO_DECISION and not _case_paused(voice.caseId) else None
+    auto_applied = False
     with _first_call_wait_lock:
         wait = _first_call_wait.get(voice.caseId)
         if wait is None:
             return False
         wait["summary"] = voice
+        if wait["decision"] is None and auto is not None:  # 구급대원이 먼저 골랐으면 그 판단이 우선이다
+            wait["decision"], wait["auto"], auto_applied = auto, outcome, True
         decided = wait["decision"] is not None
+        apid, hospital_id = wait["apid"], wait["hospitalId"]
+    if auto_applied:
+        _announce_auto_decision(voice.caseId, apid, hospital_id, auto, outcome)
     if decided:
         _resolve_first_call(voice.caseId)
     else:
         print(f"  [첫 통화] caseId={voice.caseId} 요약 도착 — 구급대원 이송 판단 대기 중이라 병원에 보내지 않음")
     return True
+
+
+def _announce_auto_decision(case_id: str, apid: str, hospital_id: str, decision: str, outcome: str) -> None:
+    """AI 통화 결과로 판단을 대신 골랐다 — 그 구급차 앱의 [이송확정]/[이송불가] 버튼을 닫고 무엇을 골랐는지 보인다."""
+    payload = {"type": "call_decision_auto", "caseId": case_id, "decision": decision, "callOutcome": outcome,
+               "hospitalId": hospital_id, "hospitalName": _hospital_name(hospital_id), "source": "ai"}
+    with _sockets_lock:
+        targets = [ws for ws, (role, id_) in _socket_identity.items() if role == "ambulance" and id_ == apid]
+    for ws in targets:
+        _send_to_socket(ws, payload, "첫 통화 자동 판단")
+    decision_log.log_decision("first_call_decision", {"caseId": case_id, "apid": apid, "decision": decision,
+                                                      "auto": True, "callOutcome": outcome, "delivered": len(targets)})
+    case_tracker.event(case_id, "p", f"AI 통화 판정 「{outcome}」 — 자동 {'이송확정' if decision == 'confirm' else '이송불가'}")
+    print(f"  [첫 통화] caseId={case_id} AI 통화 판정 {outcome} → 자동 {decision}")
 
 
 def _take_first_call(case_id: str) -> dict | None:
@@ -468,7 +497,8 @@ def _resolve_first_call(case_id: str) -> None:
             engine.mark_first_call_declined(case_id, hospital_id)
             send_rejection_to_info({"hospitalId": hospital_id, "caseId": case_id, "timestamp": now_iso,
                                     "reasonCode": "UNSPECIFIED", "stage": "first_call"})
-            decision_log.log_decision("first_call_declined", {"caseId": case_id, "hospitalId": hospital_id})
+            decision_log.log_decision("first_call_declined", {"caseId": case_id, "hospitalId": hospital_id,
+                                                              "auto": wait["auto"] is not None})
             case_tracker.event(case_id, "r", "첫 통화 병원 이송불가 — 존 전체에 동시 전달")
             _apply_summary(voice)
             return
@@ -480,11 +510,14 @@ def _resolve_first_call(case_id: str) -> None:
             _apply_summary(voice)
             return
         _apply_summary(voice)
+        bypassed = _is_dispatcher_pending(case_id)
         _handle_dashboard_action({"caseId": case_id, "action": "final_approval", "hospital_id": hospital_id,
-                                  "actor": "paramedic", "timestamp": now_iso}, ws)
+                                  "actor": "paramedic", "timestamp": now_iso}, ws, lock_bypass="first_call")
         result = engine.get_case_result(case_id)
         if result is not None and any(h.hospitalId == hospital_id and h.status == "confirmed" for h in result.hospitals):
-            decision_log.log_decision("first_call_confirmed", {"caseId": case_id, "hospitalId": hospital_id})
+            decision_log.log_decision("first_call_confirmed", {"caseId": case_id, "hospitalId": hospital_id,
+                                                               "dispatcherPendingBypassed": bypassed,
+                                                               "auto": wait["auto"] is not None})
             case_tracker.event(case_id, "p", "첫 통화 병원으로 이송 확정")
             return
         # 확정이 받아들여지지 않았다(일시정지·이미 도착 등) — 좁힌 목록을 풀고 존 전체에 요청해 갈 곳이 막히지 않게 한다
@@ -611,7 +644,7 @@ def _mci_allocate(case_ids: list[str], ws=None) -> list[dict]:
         _handle_dashboard_action({
             "caseId": case_id, "action": "final_approval", "hospital_id": item["hospitalId"], "actor": "paramedic",
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }, ws, allocated=True)
+        }, ws, lock_bypass="mci")
         results.append({"caseId": case_id, "hospitalId": item["hospitalId"], "hospitalName": item.get("hospitalName"),
                         "loadPenaltyMin": item.get("loadPenaltyMin"), "reason": "confirmed"})
     decision_log.log_decision("mci_allocated", {"results": results})
@@ -2219,7 +2252,7 @@ def _relay_call_signal(signal: CallSignal, ws=None) -> None:
                 _first_call_wait.pop(signal.caseId, None)
         elif signal.awaitDecision and signal.hospitalId and engine.get_case_result(signal.caseId) is None:
             # 현장 첫 통화 — 요약은 구급대원이 [이송확정]/[이송불가]를 고를 때까지 병원에 보내지 않는다(2026-11-04)
-            _register_first_call_wait(signal)
+            _register_first_call_wait(signal, ws)
         if signal.cancelled:
             _release_call_hold(signal.caseId, "cancelled")
         else:
@@ -2640,7 +2673,7 @@ def _notify_result(ws, case_id: str | None, action: str, ok: bool, reason: str |
         _send_to_socket(ws, {"type": "action_result", "caseId": case_id, "action": action, "ok": ok, "reason": reason}, "조작 결과")
 
 
-def _handle_dashboard_action(payload: dict, ws=None, allocated: bool = False) -> None:
+def _handle_dashboard_action(payload: dict, ws=None, lock_bypass: str | None = None) -> None:
     """ApprovalAction 처리. HubEngine.apply_approval_action()은 이미
     구현·테스트되어 있으므로 그대로 호출만 한다. 처리 후 존 확장이 필요한지
     확인하고(maybe_expand_zone — 후보 0개 사각지대 보정 + 거절 비율 기반
@@ -2666,8 +2699,9 @@ def _handle_dashboard_action(payload: dict, ws=None, allocated: bool = False) ->
         return
 
     # 1순위 수용 병원이 겹쳐 여력이 모자란 사건은 관제가 정한다(2026-11-04) — 구급대원 이송 승인을 그때까지 막는다.
-    # 대량사고 [분배 확정](allocated)은 관제가 이미 정한 배분이라 막지 않는다.
-    if action.action == "final_approval" and action.actor == "paramedic" and not allocated \
+    # 예외(lock_bypass): 대량사고 [분배 확정]("mci")은 관제가 이미 정한 배분이고, 첫 통화 [이송확정]("first_call")은
+    # 병원이 전화로 직접 받겠다고 한 것이라 막지 않는다 — 막으면 통화에서 받은 승인까지 풀려 존 전체에 다시 요청됐다.
+    if action.action == "final_approval" and action.actor == "paramedic" and lock_bypass is None \
             and _is_dispatcher_pending(action.caseId):
         decision_log.log_decision("approval_action_refused", {"action": action.model_dump(), "reason": "dispatcher_pending"})
         _notify_refused(ws, action.caseId, "dispatcher_pending")
@@ -2720,7 +2754,9 @@ def _handle_dashboard_action(payload: dict, ws=None, allocated: bool = False) ->
 
     # 도착 후 수용 불가는 확정을 풀기 **전에** 결정 시점 스냅샷(병상 수·확률)을 떠 둔다.
     arrival_refusal = _build_rejection_payload(action) if action.action in ("arrival_refused", "transport_withdraw") else None
-    pending_decision = action.action == "final_approval" and _is_dispatcher_pending(action.caseId)
+    # 첫 통화 확정은 관제 결정이 아니라 제안 채택 지표(assignment_decided)에 세지 않는다
+    pending_decision = (action.action == "final_approval" and lock_bypass != "first_call"
+                        and _is_dispatcher_pending(action.caseId))
     designated = (action.action == "final_approval" and action.actor == "dispatcher"
                   and engine.get_case_status(action.caseId, action.hospital_id) == "pending")
     applied = engine.apply_approval_action(action)

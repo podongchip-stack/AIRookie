@@ -335,6 +335,19 @@ final class PhoneModel {
                     dispatcherPending[p.caseId] = nil
                 }
             }
+        // AI 통화 결과로 첫 통화 판단을 hub가 대신 골랐다(2026-11-04) — [이송확정]/[이송불가] 버튼을 닫는다
+        case "call_decision_auto":
+            if let d = try? dec.decode(CallDecisionAuto.self, from: data) {
+                if let c = call, c.caseId == d.caseId, c.decision == nil {
+                    call?.decision = d.decision
+                    call?.decidedAt = Date()
+                    if d.decision == "confirm" { pendingConfirmId = c.hospitalId }
+                }
+                let name = d.hospitalName ?? call?.hospitalName ?? "통화 병원"
+                let outcome = d.callOutcome ?? ""
+                show(d.decision == "confirm" ? "AI 통화 판정 「\(outcome)」 — \(name)(으)로 자동 이송확정합니다."
+                                             : "AI 통화 판정 「\(outcome)」 — 존 안 다른 후보 병원 전체에 전달합니다.")
+            }
         case "dispatcher_notice":
             if let n = try? dec.decode(DispatcherNotice.self, from: data) {
                 dispatcherPending[n.caseId] = nil

@@ -393,7 +393,7 @@ NEWS2 공개 표준 + 쇼크지수), 검증은 `python test_transport_triage.py`
 | 메시지 | 방향 | 내용 |
 |---|---|---|
 | `assignment_conflicts` | hub → 관제 | 충돌 묶음(`hospitalId`·`caseIds`·`capacity`·`openedAt`) + `proposal`(사건별 제안 병원·`designation`·이유·후보 근거) + `stats` |
-| `dispatcher_pending` | hub → 구급차 | `{caseId, pending, hospitalId, hospitalName}` — 대기 중 구급대원 `final_approval`은 `action_refused`(`dispatcher_pending`) |
+| `dispatcher_pending` | hub → 구급차 | `{caseId, pending, hospitalId, hospitalName}` — 대기 중 구급대원 `final_approval`은 `action_refused`(`dispatcher_pending`). 예외: 대량사고 분배 확정, 첫 통화 [이송확정](병원이 전화로 직접 받겠다고 함 — 막으면 통화 승인까지 풀려 존 전체에 다시 요청됐다) |
 | `confirm_request` | 관제 → hub | `{caseId, hospitalIds?}` → 병원 탭 `dispatcher_request` |
 | `final_approval` (`actor: dispatcher`) | 관제 → hub | 수용 병원 또는 판단 대기 병원(상황실 지정 → 병원 탭 `dispatcher_designated`) |
 | `mci_register` / `mci_dispatch` | 관제 → hub | 다수 사상자 신고 → `mci_assessment`, 추천 구급대 출동 |

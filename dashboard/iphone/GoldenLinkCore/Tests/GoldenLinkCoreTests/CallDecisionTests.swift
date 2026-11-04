@@ -28,4 +28,14 @@ final class CallDecisionTests: XCTestCase {
         XCTAssertEqual(json["decision"] as? String, "confirm")
         XCTAssertFalse((json["timestamp"] as? String ?? "").isEmpty)
     }
+
+    func testAutoDecisionFromHub() throws {
+        // hub app._announce_auto_decision이 보내는 모양 그대로(type·source는 앱이 쓰지 않는 필드)
+        let raw = #"{"type":"call_decision_auto","caseId":"case-1","decision":"confirm","callOutcome":"수용","hospitalId":"H1","hospitalName":"강북삼성병원","source":"ai"}"#
+        let d = try JSONDecoder().decode(CallDecisionAuto.self, from: Data(raw.utf8))
+        XCTAssertEqual(d.caseId, "case-1")
+        XCTAssertEqual(d.decision, "confirm")
+        XCTAssertEqual(d.callOutcome, "수용")
+        XCTAssertEqual(d.hospitalName, "강북삼성병원")
+    }
 }

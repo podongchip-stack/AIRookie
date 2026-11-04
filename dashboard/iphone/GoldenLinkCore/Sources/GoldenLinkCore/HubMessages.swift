@@ -48,6 +48,15 @@ public struct CallDecisionMessage: Encodable {
     }
 }
 
+/// AI 통화 결과(수용·거절)로 hub가 첫 통화 판단을 대신 골랐다(2026-11-04) — decision: "confirm" | "reject"
+public struct CallDecisionAuto: Decodable {
+    public let caseId: String
+    public let decision: String
+    public let callOutcome: String?
+    public let hospitalId: String?
+    public let hospitalName: String?
+}
+
 /// POST /voice/utterance — hub/schema.py VoiceUtterance
 public struct UtteranceMessage: Encodable {
     public let apid: String

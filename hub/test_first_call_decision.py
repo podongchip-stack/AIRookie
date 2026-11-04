@@ -44,6 +44,16 @@ def _voice(case_id: str) -> VoiceCallSummaryMessage:
     )
 
 
+def _voice_outcome(case_id: str, outcome: str | None) -> VoiceCallSummaryMessage:
+    """voice 통화 결과판(2026-11-04) 형식 — 환자별 항목(patients) + 통화 결과(call_outcome)."""
+    return VoiceCallSummaryMessage.model_validate({
+        "caseId": case_id, "transcript": {"raw_text": "통화 원문", "filtered_text": "통화 원문"}, "source": "ai",
+        "summary": {"call_outcome": outcome, "patient_count": 1, "patients": [{
+            "gender": "남성", "age_group": "50대", "cc_major": "소화기계", "cc_minor": "복통", "avpu": "A",
+            "pre_ktas": {"level": 5}, "treat_categories": []}]},
+    })
+
+
 def _results(sock: _FakeSocket, case_id: str) -> list[dict]:
     return [m for m in sock.sent if m.get("type") == "match_result" and m.get("caseId") == case_id]
 
@@ -156,6 +166,98 @@ def main() -> None:
     app.engine.force_expand_zone(case2, GpsPoint(lat=37.5665, lng=126.9780))
     assert case2 not in app.engine._case_only
     print("  [확인] 요청 목록 제한 해제")
+
+    print("=== 관제 판단 대기에 걸려도 전화로 받은 [이송확정]은 통과한다 ===")
+    # 병상 1개 병원 c에 다른 사건이 이미 수용 승인을 받았다 — 이 사건이 c와 통화해 확정하면 두 사건이 c에 겹쳐
+    # 관제 판단 대기로 묶이지만, 병원이 전화로 직접 받겠다고 했으니 막지 않는다(막으면 승인까지 풀려 존 전체에 다시 요청됐다).
+    c = a.model_copy(update={"hospitalId": "T003", "name": "[테스트] 병상 1개 병원", "availableBedCount": 1,
+                             "bedsByType": {"ER_ADULT": 1}})
+    app.engine.update_hospital_info(c)
+    for apid in ("A_T1", "A_T2"):
+        app._handle_sim_command({"type": "sim_reset", "apid": apid, "timestamp": "t"})
+    other, mine = "case-other", "case-phone-confirm"
+    to_scene("A_T1", other)
+    app._relay_call_signal(CallSignal(signal="call_started", timestamp="t", apid="A_T1", caseId=other,
+                                      hospitalId=c.hospitalId, device="phone"), tabs["A_T1"])
+    app._relay_call_signal(CallSignal(signal="call_ended", timestamp="t", apid="A_T1", caseId=other,
+                                      hospitalId=c.hospitalId, device="phone"), tabs["A_T1"])
+    app._run_match_job(_voice(other))
+    app._handle_dashboard_action({"caseId": other, "action": "hospital_approve", "hospital_id": c.hospitalId,
+                                  "actor": "hospital", "timestamp": "t"})
+    assert app.engine.get_case_status(other, c.hospitalId) == "approved"
+    to_scene("A_T2", mine)
+    app._relay_call_signal(CallSignal(signal="call_started", timestamp="t", apid="A_T2", caseId=mine,
+                                      hospitalId=c.hospitalId, device="phone"), tabs["A_T2"])
+    app._relay_call_signal(CallSignal(signal="call_ended", timestamp="t", apid="A_T2", caseId=mine,
+                                      hospitalId=c.hospitalId, device="phone", awaitDecision=True), tabs["A_T2"])
+    app._handle_call_decision(tabs["A_T2"], _decision(mine, "confirm"))
+    app._run_match_job(_voice(mine))
+    assert app.engine.get_case_status(mine, c.hospitalId) == "confirmed", app.engine.get_case_status(mine, c.hospitalId)
+    assert app.sim.phase_of("A_T2") == "transporting", app.sim.phase_of("A_T2")
+    refused = [m["reason"] for m in tabs["A_T2"].sent if m.get("type") == "action_refused" and m.get("caseId") == mine]
+    assert refused == [], refused
+    assert not app._is_dispatcher_pending(other), "확정 사건은 묶지 않으니 남은 한 건의 대기도 풀린다"
+    print("  [확인] 확정·출발, 거부 없음, 다른 사건의 관제 대기 해제")
+
+    print("=== 자동 판단: voice 통화 결과(call_outcome)로 구급대원 대신 고른다 ===")
+    assert _voice_outcome("x", "수용").summary.call_outcome == "수용", "통화 결과판 형식에서도 call_outcome이 남는다"
+    assert _voice_outcome("x", None).summary.ktas_level == 5
+
+    def fresh(apid: str, case_id: str) -> None:
+        app._handle_sim_command({"type": "sim_reset", "apid": apid, "timestamp": "t"})
+        to_scene(apid, case_id)
+        call(apid, case_id)
+
+    def auto_msgs(apid: str, case_id: str) -> list[dict]:
+        return [m for m in tabs[apid].sent if m.get("type") == "call_decision_auto" and m.get("caseId") == case_id]
+
+    auto_ok = "case-auto-accept"
+    fresh("A_T1", auto_ok)
+    app._run_match_job(_voice_outcome(auto_ok, "수용"))
+    assert app.engine.get_case_status(auto_ok, a.hospitalId) == "confirmed", "수용 → 버튼 없이 이송 확정"
+    assert app.sim.phase_of("A_T1") == "transporting"
+    msg = auto_msgs("A_T1", auto_ok)
+    assert len(msg) == 1 and msg[0]["decision"] == "confirm" and msg[0]["callOutcome"] == "수용" and msg[0]["source"] == "ai"
+    assert msg[0]["hospitalName"] == a.name
+    assert auto_ok not in app._first_call_wait
+    print("  [확인] 수용 → 자동 이송확정·출발, 앱에 call_decision_auto(confirm)")
+
+    auto_no = "case-auto-refuse"
+    fresh("A_T2", auto_no)
+    app._run_match_job(_voice_outcome(auto_no, "거절"))
+    assert app.engine.get_case_status(auto_no, a.hospitalId) == "rejected", "거절 → 통화 병원 불가"
+    assert app.engine.get_case_status(auto_no, b.hospitalId) == "pending", "존 전체 전달"
+    assert app.sim.phase_of("A_T2") == "on_scene"
+    assert auto_msgs("A_T2", auto_no)[0]["decision"] == "reject"
+    print("  [확인] 거절 → 자동 이송불가·존 전체 전달")
+
+    hold = "case-auto-hold"
+    fresh("A_T1", hold)
+    app._run_match_job(_voice_outcome(hold, "보류"))
+    assert app.engine.get_case_result(hold) is None and hold in app._first_call_wait, "보류는 구급대원 판단을 기다린다"
+    assert not auto_msgs("A_T1", hold)
+    app._handle_call_decision(tabs["A_T1"], _decision(hold, "reject"))
+    assert app.engine.get_case_status(hold, a.hospitalId) == "rejected"
+    print("  [확인] 보류 → 자동 판단 없음, 구급대원이 고른다")
+
+    first = "case-paramedic-first"
+    fresh("A_T2", first)
+    app._handle_call_decision(tabs["A_T2"], _decision(first, "reject"))
+    app._run_match_job(_voice_outcome(first, "수용"))
+    assert app.engine.get_case_status(first, a.hospitalId) == "rejected", "구급대원이 먼저 고른 판단이 우선"
+    assert not auto_msgs("A_T2", first)
+    print("  [확인] 구급대원이 먼저 고르면 AI 통화 결과는 무시")
+
+    off = "case-auto-off"
+    app.FIRST_CALL_AUTO_DECISION = False
+    try:
+        fresh("A_T1", off)
+        app._run_match_job(_voice_outcome(off, "수용"))
+        assert app.engine.get_case_result(off) is None and off in app._first_call_wait, "끄면 예전처럼 기다린다"
+    finally:
+        app.FIRST_CALL_AUTO_DECISION = True
+    app._handle_call_decision(tabs["A_T1"], _decision(off, "cancel"))
+    print("  [확인] HUB_FIRST_CALL_AUTO_DECISION=0이면 자동 판단 없음")
     print("\n모든 검사 통과")
 
 

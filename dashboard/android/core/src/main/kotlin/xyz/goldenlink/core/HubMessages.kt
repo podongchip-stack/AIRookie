@@ -49,6 +49,16 @@ data class CallDecisionMessage(
     val type: String = "call_decision",
 )
 
+/** AI 통화 결과(수용·거절)로 hub가 첫 통화 판단을 대신 골랐다(2026-11-04) — decision: "confirm" | "reject" */
+@Serializable
+data class CallDecisionAuto(
+    val caseId: String,
+    val decision: String,
+    val callOutcome: String = "",
+    val hospitalId: String? = null,
+    val hospitalName: String? = null,
+)
+
 /** 전화 연결 요청(2026-10-05 hub 중재) — request는 병원 쪽(관제)이 받아 응답할 때까지 "연결 중", 응답하면 hub가 call_started를 중계한다.
  *  operation: "request" | "cancel" | "no_answer" */
 @Serializable

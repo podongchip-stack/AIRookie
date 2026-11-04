@@ -682,7 +682,7 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
 - **상황실 배정 에이전트(2026-11-04, `experiment/control-map`)** — 발표 방향(상황실이 지정, 결정은 사람)에 맞춘 hub 로직. 상세는 hub/README.md "상황실 배정"
   - **충돌 감지**(`assignment_agent.py`, 규칙): 이송 확정 전 사건 2건 이상의 1순위 수용 병원이 같고 여력(응급실 가용 − 이송 중)이 사건 수보다
     적으면(미상은 2건 이상) 묶는다 — 보고서의 "10분 안 2명 초과" 대신 이 기준. 관제에 `assignment_conflicts`(묶음 + 배분 안 + 근거 + `openedAt`
-    + `stats` 제안 채택 수), 그 구급차에 `dispatcher_pending`, 대기 중 구급대원 이송 승인은 거부(`action_refused` reason `dispatcher_pending`).
+    + `stats` 제안 채택 수), 그 구급차에 `dispatcher_pending`, 대기 중 구급대원 이송 승인은 거부(`action_refused` reason `dispatcher_pending`) — 대량사고 [분배 확정]과 첫 통화 [이송확정](병원이 전화로 직접 받음)은 예외.
     배분 안 = 위급한 순으로 수용 병원 여력 배정(보고서처럼 경증이 다음 후보로), 수용 병원이 없으면 판단 대기 중 줄 최단을 **상황실 지정**으로 제안.
     근거 = 등급·응급의학과·필요 진료과 전문의·장비 운영·병상(+위험 등급)·이송 중·줄 길이 분해. 로그 `assignment_conflicts`/`assignment_proposal`/`assignment_decided`
   - **상황실 지정**: 관제(`actor: dispatcher`, monitor 소켓)는 수용 회신 전(pending) 병원도 지정 가능 — 그 병원 탭에 `dispatcher_designated`.
@@ -764,6 +764,12 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   지운다. **추가 통화(이송 중·재선택)는 이 흐름이 아니라 기존대로 바로 반영된다.** 판단 대기에는 시간 제한이 없다(앱이 판단을 보내야 요약이 나간다 — 시간 초과
   자동 전달은 정하지 않았다). 시연 콘솔·대시보드 통화 시연 경로는 `awaitDecision`을 안 보내 예전과 같다. 의사결정 로그 `first_call_awaiting_decision`·
   `first_call_decision`·`first_call_declined`·`first_call_confirmed`·`first_call_confirm_failed`. 검증 `python test_first_call_decision.py`
+  - **AI 자동 판단(2026-11-04)**: 판단 대기 중 요약에 voice 통화 결과 `summary.call_outcome`(feature/voice `43db195` 통화 결과판, AI)이 `수용`이면 hub가
+    [이송확정], `거절`이면 [이송불가]를 대신 고르고 그 구급차 앱에 `call_decision_auto`(`decision`·`callOutcome`·`hospitalName`, source ai)를 보낸다 — 앱은 버튼을
+    닫고 "AI 통화 판정 「수용」 — ○○(으)로 자동 이송확정" 안내를 띄운다. `보류`·값 없음(온디바이스 앱·예전 voice)·시연 일시정지 중이면 구급대원이 고르고,
+    구급대원이 먼저 고른 판단이 우선이다. 로그 `first_call_decision`에 `auto: true`·`callOutcome`. 끄기 `HUB_FIRST_CALL_AUTO_DECISION=0`. ⚠ 모델은 병원 응답이
+    텍스트에 없으면 `수용`으로 기운다(voice README) — 휴대폰 통화가 연출이라 병원 쪽 말이 마이크에 안 들어가면 거절이어도 자동 확정될 수 있다. 시연은 병원 대사를
+    휴대폰 마이크에 또렷하게 넣을 것. `call_outcome`이 develop에 오려면 feature/voice 머지가 필요하다(그 전엔 값이 없어 예전 동작)
 - **실제 양방향 통화(WebRTC, 2026-11-04)**: 시연 연출 통화(`call_connection`)와 별개로, 구급대 앱↔병원 앱이 WebRTC로 음성을 직접 주고받는 실제 통화.
   hub는 상태·연결 협상 중계·종료만 관리한다(음성은 hub를 안 거친다). 규칙은 `hub/call_sessions.py`(순수 로직 — `callId`·`sessionRevision`·`negotiationRevision`,
   `ringing → connecting → active → ended`, **병원이 받았다는 사실과 음성 연결 완료(`media_ready` 양쪽)를 구분**, 병원당 통화 1건·busy, 늦은/중복 메시지 무시,

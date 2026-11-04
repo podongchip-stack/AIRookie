@@ -51,6 +51,7 @@ import xyz.goldenlink.core.PatientInfo
 import xyz.goldenlink.core.PatientOverrideMessage
 import xyz.goldenlink.core.isoNow
 import xyz.goldenlink.core.CallConnectionMessage
+import xyz.goldenlink.core.CallDecisionAuto
 import xyz.goldenlink.core.CallDecisionMessage
 import xyz.goldenlink.core.CallError
 import xyz.goldenlink.core.CallHangupMessage
@@ -477,6 +478,18 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     dispatcherPending = if (p.pending) dispatcherPending + (p.caseId to (p.hospitalName ?: "1순위 병원"))
                         else dispatcherPending - p.caseId
                     if (p.pending) show("관제 판단 대기 — ${p.hospitalName ?: "1순위 병원"}에 여러 환자가 몰려 상황실이 병원을 지정합니다.")
+                }
+                // AI 통화 결과로 첫 통화 판단을 hub가 대신 골랐다(2026-11-04) — [이송확정]/[이송불가] 버튼을 닫는다
+                "call_decision_auto" -> {
+                    val d = hubJson.decodeFromString(CallDecisionAuto.serializer(), text)
+                    val c = call
+                    if (c != null && c.caseId == d.caseId && c.decision == null) {
+                        call = c.copy(decision = d.decision, decidedAt = System.currentTimeMillis())
+                        if (d.decision == "confirm") pendingConfirmId = c.hospitalId
+                    }
+                    val name = d.hospitalName ?: c?.hospitalName ?: "통화 병원"
+                    show(if (d.decision == "confirm") "AI 통화 판정 「${d.callOutcome}」 — ${name}(으)로 자동 이송확정합니다."
+                         else "AI 통화 판정 「${d.callOutcome}」 — 존 안 다른 후보 병원 전체에 전달합니다.")
                 }
                 "dispatcher_notice" -> {
                     val n = hubJson.decodeFromString(DispatcherNotice.serializer(), text)

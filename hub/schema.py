@@ -49,13 +49,20 @@ class VoiceSummary(BaseModel):
     # 주 사고가 외상 기전인지(교통사고·낙상 등 — 질병이 아님). spider 매칭 규칙의 중증외상 벽에 쓴다(2026-10-15).
     # 예전 6필드 voice·상태 복구 데이터엔 없어 None
     trauma: Optional[bool] = None
+    # 통화 결과(2026-11-04 voice 통화 결과판, AI): "수용" | "거절" | "보류". 첫 통화 자동 판단에 쓴다(app.FIRST_CALL_AUTO_DECISION).
+    # 온디바이스 앱·예전 voice엔 없어 None. 모르는 값이 와도 요약 전체를 버리지 않도록 str로 받는다
+    call_outcome: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
     def _from_v2(cls, data):
         if isinstance(data, dict) and "patients" in data:
-            return normalize_treatments(data)
-        return normalize_v2(data) if is_v2(data) else data
+            out = normalize_treatments(data)
+        elif is_v2(data):
+            out = normalize_v2(data)
+        else:
+            return data
+        return {**out, "call_outcome": data.get("call_outcome")}
 
 
 class VoiceTranscript(BaseModel):
