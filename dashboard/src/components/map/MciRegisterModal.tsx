@@ -61,7 +61,7 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
   return (
     <div role="dialog" aria-modal="true" aria-label="다수 사상자 신고" style={{ position: "absolute", inset: 0, zIndex: 320, background: "rgba(28,31,42,.32)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <button type="button" aria-label="닫기" onClick={onClose} style={{ position: "absolute", inset: 0, border: 0, background: "transparent", cursor: "default" }} />
-      <div style={{ position: "relative", width: 820, maxHeight: "calc(100% - 48px)", maxWidth: "calc(100% - 32px)", background: GLASS.solid, border: GLASS.border, borderRadius: GLASS.radius, boxShadow: "0 24px 60px rgba(91,75,138,.28)", fontFamily: GLASS.font, display: "flex", flexDirection: "column", overflow: "hidden", whiteSpace: "normal" }}>
+      <div style={{ position: "relative", width: 1200, maxHeight: "calc(100% - 48px)", maxWidth: "calc(100% - 32px)", background: GLASS.solid, border: GLASS.border, borderRadius: GLASS.radius, boxShadow: "0 24px 60px rgba(91,75,138,.28)", fontFamily: GLASS.font, display: "flex", flexDirection: "column", overflow: "hidden", whiteSpace: "normal" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 10, padding: "16px 22px", borderBottom: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>다수 사상자 신고</div>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: C.blue, background: GLASS.tint, borderRadius: 999, padding: "2px 10px" }}>AI 에이전트 · 규칙 기반 분배</span>
@@ -69,7 +69,7 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
           <button type="button" onClick={onClose} style={ghostBtn}>닫기 ✕</button>
         </div>
 
-        <div style={{ padding: "16px 22px", overflowY: "auto", display: "grid", gridTemplateColumns: "280px 1fr", gap: 18 }}>
+        <div style={{ padding: "16px 22px", overflowY: "auto", display: "grid", gridTemplateColumns: "300px minmax(0, 1fr)", gap: 18 }}>
           {/* 입력 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label style={lab}>사고 위치</label>

@@ -8,7 +8,7 @@ import type { MciAssessment } from "@/types/dashboard";
 // 사고 지점 · 분석 반경 · 추천 구급차 · 예상 분배 병원(인원) · 구급차가 모자라면 지원 요청 본부(대략 위치)와 연결선.
 
 const W = 520;
-const H = 300;
+const H = 340;
 const PAD = 34;
 
 export function MciSketch({ a, support }: { a: MciAssessment; support: (FireHq & { km: number })[] }) {
