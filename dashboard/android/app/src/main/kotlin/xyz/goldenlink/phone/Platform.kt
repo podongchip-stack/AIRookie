@@ -67,7 +67,7 @@ class Settings(context: Context) : KeyValueStore {
 
     /** true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(병원 앱이 받는다). false: 예전 시연 연출 통화. 실제 통화 중에는 STT·요약이 연결돼 있지 않다(3단계) */
     var realCall: Boolean
-        get() = p.getBoolean("realCall", false)
+        get() = p.getBoolean("realCall", true)
         set(v) = p.edit().putBoolean("realCall", v).apply()
 
     /** 이 설치본의 기기 식별자(진단용, 인증이 아니다) — 처음 쓸 때 만들어 보관한다 */

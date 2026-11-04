@@ -2,7 +2,7 @@ import Foundation
 
 // 실제 양방향 통화(WebRTC, 2026-11-04) — hub/call_sessions.py와 같은 모양(안드로이드 RealCallMessages.kt와 같다).
 // 식별자: caseId(사건) / callId(통화 시도 하나, 재전화 시 새로 만든다) / negotiationRevision(연결 협상 세대).
-// 구급대 앱(아이폰)이 걸고(call_invite → rtc_offer), 병원 앱(안드로이드 병원 모드)이 받는다. 음성은 hub를 거치지 않는다.
+// 구급대 코드 앱이 걸고(call_invite → rtc_offer), 병원 코드 앱이 받는다. 음성은 hub를 거치지 않는다.
 
 // MARK: - 앱 -> hub
 
@@ -22,6 +22,33 @@ public struct CallHangupMessage: Encodable {
     public let type = "call_hangup"
     public let callId: String
     public init(callId: String) { self.callId = callId }
+}
+
+public struct CallAcceptMessage: Encodable {
+    public let type = "call_accept"
+    public let callId: String
+    public let deviceId: String
+    public init(callId: String, deviceId: String) { self.callId = callId; self.deviceId = deviceId }
+}
+
+public struct CallRejectMessage: Encodable {
+    public let type = "call_reject"
+    public let callId: String
+    public init(callId: String) { self.callId = callId }
+}
+
+public struct CallStateSyncMessage: Encodable {
+    public let type = "call_state_sync"
+    public let callId: String?
+    public init(callId: String? = nil) { self.callId = callId }
+}
+
+public struct CallIncoming: Decodable {
+    public let callId: String
+    public let caseId: String
+    public let hospitalId: String
+    public let ambulanceName: String?
+    public let iceServers: [IceServerConfig]
 }
 
 /// type: "rtc_offer"(구급대 → 병원) | "rtc_answer"(병원 → 구급대)

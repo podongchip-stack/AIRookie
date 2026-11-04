@@ -922,7 +922,7 @@ struct SettingsView: View {
                         Spacer(minLength: 8)
                         Toggle("", isOn: $realCall).labelsHidden().tint(AD.blue)
                     }
-                    Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 앱(안드로이드 병원 모드)과 연결되는 실제 음성 통화가 됩니다. 이 통화 동안은 음성 인식·요약이 연결돼 있지 않습니다(다음 단계).")
+                    Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 코드로 접속한 앱과 연결되는 실제 음성 통화가 됩니다. 이 통화 동안은 음성 인식·요약이 연결돼 있지 않습니다(다음 단계).")
                         .font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 }
             }
@@ -965,7 +965,7 @@ func mmss(_ sec: TimeInterval) -> String {
 }
 
 
-/// 기기를 한 구급대에 연결한다. 웹 아이패드의 A-코드와 같은 hub identity를 확인한다.
+/// 접근 코드에 따라 구급대 발신 또는 병원 수신으로 입장한다.
 struct AccessCodeEntry: View {
     let onEnter: () -> Void
     @State private var code = ""
@@ -977,20 +977,20 @@ struct AccessCodeEntry: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("골든링크").font(.system(size: 28, weight: .black)).foregroundStyle(AD.navy)
-                Text("구급대 접근 코드").font(.title3.bold())
-                Text("소속 구급대 코드를 입력하면 해당 구급대의 사건과 이송 정보를 확인합니다.")
+                Text("접근 코드").font(.title3.bold())
+                Text("구급대 코드는 전화 걸기, 병원 코드는 전화 받기로 연결됩니다.")
                     .font(.subheadline).foregroundStyle(AD.sub)
-                TextField("예: P-SEL0111", text: $code)
+                TextField("P-구급차ID 또는 H-병원ID", text: $code)
                     .textInputAutocapitalization(.characters).autocorrectionDisabled()
                     .textFieldStyle(.roundedBorder).accessibilityLabel("접근 코드")
                     .onSubmit { Task { await enter() } }
                 if let error { Text(error).font(.footnote).foregroundStyle(AD.red) }
                 Button { Task { await enter() } } label: {
-                    Text(checking ? "구급대 확인 중…" : "입장")
+                    Text(checking ? "접근 코드 확인 중…" : "입장")
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
                         .foregroundStyle(.white).background(AD.blue, in: RoundedRectangle(cornerRadius: 12))
                 }.disabled(checking || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Text("시연: 역삼119안전센터 구급 1\n아이폰 P-SEL0111 · 아이패드 A-SEL0111")
+                Text("구급대: P-SEL0111 · 병원: H-병원ID\n등록된 코드는 관제 지도에서 확인할 수 있습니다.")
                     .font(.footnote).foregroundStyle(AD.sub)
                 DisclosureGroup("서버 연결 설정") {
                     TextField("hub 주소", text: $hub)
@@ -1003,8 +1003,8 @@ struct AccessCodeEntry: View {
 
     @MainActor private func enter() async {
         guard !checking else { return }
-        guard let id = Settings.ambulanceID(from: code) else {
-            error = "P-SEL0111 형식의 구급대 접근 코드를 입력하세요."
+        guard let access = AccessCode(code) else {
+            error = "P-구급차ID 또는 H-병원ID 형식으로 입력하세요."
             return
         }
         guard let base = URL(string: hub.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -1013,19 +1013,22 @@ struct AccessCodeEntry: View {
             error = "서버 주소를 확인하세요."; return
         }
         url.path = "/identity"
-        url.queryItems = [URLQueryItem(name: "role", value: "ambulance"), URLQueryItem(name: "id", value: id)]
+        let id = access.id
+        url.queryItems = [URLQueryItem(name: "role", value: access.role), URLQueryItem(name: "id", value: id)]
         guard let endpoint = url.url else { return }
         checking = true; error = nil
         defer { checking = false }
         do {
             var request = URLRequest(url: endpoint); request.timeoutInterval = 10
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "서버에서 구급대를 확인하지 못했습니다."; return }
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { error = "서버에서 접근 코드를 확인하지 못했습니다."; return }
             struct IdentityCheck: Decodable { let known: Bool; let id: String }
             let identity = try JSONDecoder().decode(IdentityCheck.self, from: data)
-            guard identity.known, identity.id == id else { error = "등록되지 않은 구급대 코드입니다."; return }
+            guard identity.known, identity.id == id else { error = "등록되지 않은 접근 코드입니다."; return }
             Settings.hubBase = hub.trimmingCharacters(in: .whitespacesAndNewlines)
-            Settings.apid = id; Settings.accessCode = "P-" + id
+            Settings.apid = access.role == "ambulance" ? id : ""
+            Settings.accessCode = access.normalized
+            Settings.realCall = true
             onEnter()
         } catch { self.error = "서버에 연결하지 못했습니다. 네트워크와 서버 주소를 확인한 뒤 다시 시도하세요." }
     }

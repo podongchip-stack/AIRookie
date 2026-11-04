@@ -35,7 +35,7 @@ import { useAutoDemo } from "@/lib/auto-demo";
 // 로컬 개발(3000)에선 NEXT_PUBLIC_SPIDER_URL(예: http://localhost:2700/spider/)로 덮어쓴다.
 // 거미줄 파일(spider/web)을 고치면 SPIDER_BUILD와 spider/web/index.html의 ?v=를 같이 올린다 — 공개 도메인이 .js를 4시간 캐시해서 주소가 바뀌어야 새 파일을 받는다.
 const SPIDER_BUILD = "20261101c";
-const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? "/spider/"}?mode=live&embed=1&v=${SPIDER_BUILD}`;
+const SPIDER_URL = `${process.env.NEXT_PUBLIC_SPIDER_URL ?? (process.env.NODE_ENV === "development" ? "/spider/index.html" : "/spider/")}?mode=live&embed=1&v=${SPIDER_BUILD}`;
 
 type MapView = "2d" | "3d";
 type Tab = "all" | St;

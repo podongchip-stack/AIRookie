@@ -1104,7 +1104,7 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
                     Text("실제 통화(WebRTC)", modifier = Modifier.weight(1f), color = AD.ink)
                     Switch(realCall, { realCall = it }, colors = SwitchDefaults.colors(checkedTrackColor = AD.blue))
                 }
-                Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 앱(안드로이드 병원 모드)과 연결되는 실제 음성 통화가 됩니다. " +
+                Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 코드로 접속한 앱과 연결되는 실제 음성 통화가 됩니다. " +
                     "이 통화 동안은 음성 인식·요약이 연결돼 있지 않습니다(다음 단계).", fontSize = 11.5.sp, color = AD.sub)
             }
             Card {

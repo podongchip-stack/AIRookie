@@ -1,4 +1,5 @@
 import Foundation
+import GoldenLinkCore
 
 /// 앱 설정(설정 화면에서 바꾼다). 기기에만 저장된다.
 enum Settings {
@@ -26,11 +27,13 @@ enum Settings {
 
     /// 아이폰/아이패드 접근 코드는 같은 구급대 ID로 연결한다.
     static func ambulanceID(from code: String) -> String? {
-        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard normalized.hasPrefix("P-") || normalized.hasPrefix("A-") else { return nil }
-        let id = String(normalized.dropFirst(2))
-        guard !id.isEmpty, id != "AUTO", id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
-        return id
+        guard let access = AccessCode(code), access.role == "ambulance" else { return nil }
+        return access.id
+    }
+
+    static var hospitalID: String? {
+        guard let access = AccessCode(accessCode), access.role == "hospital" else { return nil }
+        return access.id
     }
 
     /// 소속 구급차 ID(SEL0001~) — 첫 실행의 접근 코드 입력으로 정한다. 비어 있으면 아직 코드를 입력하지 않은 것
@@ -43,10 +46,10 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "apid") }
     }
 
-    /// true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(병원 앱=안드로이드 병원 모드가 받는다). false: 예전 시연 연출 통화.
+    /// true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(플랫폼과 무관하게 H-코드 병원 앱이 받는다).
     /// 실제 통화 중에는 STT·요약이 연결돼 있지 않다(다음 단계, 2026-11-04)
     static var realCall: Bool {
-        get { UserDefaults.standard.object(forKey: "realCall") as? Bool ?? false }
+        get { UserDefaults.standard.object(forKey: "realCall") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "realCall") }
     }
 

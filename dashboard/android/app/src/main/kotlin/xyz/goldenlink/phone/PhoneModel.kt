@@ -253,6 +253,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
             accessError = failure
             if (failure == null) {
                 settings.hubBase = base
+                settings.realCall = true
                 // 두 역할은 서로 배타적이다 — 구급대 코드를 넣으면 병원 모드가, 병원 코드를 넣으면 구급대 설정이 비워진다
                 settings.apid = if (role == "ambulance") id else ""
                 settings.hospitalId = if (role == "hospital") id else ""

@@ -7,9 +7,12 @@ import Foundation
 
 public struct IdentifyMessage: Encodable {
     public let type = "identify"
-    public let role: String  // "ambulance" | "monitor"
+    public let role: String  // "ambulance" | "hospital" | "monitor"
     public let id: String
-    public init(role: String, id: String) { self.role = role; self.id = id }
+    public let callCapable: Bool?
+    public init(role: String, id: String, callCapable: Bool? = nil) {
+        self.role = role; self.id = id; self.callCapable = callCapable
+    }
 }
 
 public struct CallSignalMessage: Encodable {

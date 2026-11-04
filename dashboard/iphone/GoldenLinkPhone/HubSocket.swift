@@ -9,15 +9,17 @@ final class HubSocket {
 
     private let role: String
     private let id: String
+    private let callCapable: Bool
     private let onMessage: (String, Data) -> Void
     private let onState: (State) -> Void
     private var task: URLSessionWebSocketTask?
     private var retryDelay: Double = 1
     private var closed = false
 
-    init(role: String, id: String, onMessage: @escaping (String, Data) -> Void, onState: @escaping (State) -> Void) {
+    init(role: String, id: String, callCapable: Bool = false, onMessage: @escaping (String, Data) -> Void, onState: @escaping (State) -> Void) {
         self.role = role
         self.id = id
+        self.callCapable = callCapable
         self.onMessage = onMessage
         self.onState = onState
         connect()
@@ -54,7 +56,7 @@ final class HubSocket {
         let task = URLSession.shared.webSocketTask(with: url)
         self.task = task
         task.resume()
-        _ = send(IdentifyMessage(role: role, id: id))  // 열리기 전에 보낸 것은 열린 뒤 순서대로 나간다
+        _ = send(IdentifyMessage(role: role, id: id, callCapable: callCapable ? true : nil))
         receive(task)
     }
 
