@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { C, GLASS } from "@/lib/control-map";
 import { searchPlaces } from "@/lib/geocode";
+import { supportCandidates } from "@/lib/fire-hq";
+import { MciSketch } from "@/components/map/MciSketch";
 import type { GeocodeResult, MciAssessment } from "@/types/dashboard";
 
 // 다수 사상자 등록(2026-11-04) — 개정법 이후 상황실이 직접 등록하고 에이전트가 단계별로 일하는 모습을 보인다.
@@ -130,6 +132,16 @@ export function MciRegisterModal({ assessment, onRegister, onDispatch, onClose, 
                 </ol>
                 {shown >= 4 && (
                   <>
+                    <MciSketch a={fresh} support={fresh.shortage > 0 ? supportCandidates(fresh.gps) : []} />
+                    {fresh.shortage > 0 && (
+                      <div style={{ padding: "8px 12px", borderRadius: GLASS.radiusSm, background: "#FDECEA", color: "#B3261E", fontSize: 12.5, lineHeight: 1.6 }}>
+                        <b>구급차 {fresh.shortage}대 부족 — 인근 지역 지원 요청 후보</b>
+                        {supportCandidates(fresh.gps).map((h, i) => (
+                          <div key={h.name}>{i + 1}. {h.name}({h.city}) · 직선 {Math.round(h.km)}km</div>
+                        ))}
+                        <div style={{ fontSize: 11, color: C.sub }}>가까운 시·도 소방본부 순(본부 위치는 대략) · 실제 요청은 관제가 판단합니다</div>
+                      </div>
+                    )}
                     <div style={{ fontSize: 12.5, color: C.sub }}>
                       반경 {fresh.radiusKm}km 병원 {fresh.hospitalsInRadius}곳 ·{" "}
                       {Object.entries(fresh.byLevel).map(([lv, v]) => `${lv.replace("응급의료", "")} ${v.count}곳(응급실 ${v.beds}석${v.unknown ? `·미상 ${v.unknown}` : ""})`).join(" · ")}

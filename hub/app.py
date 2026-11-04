@@ -1248,7 +1248,8 @@ def _plan_mci(gps: GpsPoint, counts: dict[str, int], radius_km: float = 15.0) ->
             best[1]["given"] += 1
             best[1]["bySev"][sev] = best[1]["bySev"].get(sev, 0) + 1
     plan = sorted(({"hospitalId": n["info"].hospitalId, "name": n["info"].name, "emergencyLevel": n["info"].emergencyLevel,
-                    "km": round(n["km"], 1), "beds": n["beds"], "count": n["given"], "bySeverity": n["bySev"]}
+                    "km": round(n["km"], 1), "beds": n["beds"], "count": n["given"], "bySeverity": n["bySev"],
+                    "lat": n["info"].gps.lat, "lng": n["info"].gps.lng}
                    for n in near if n["given"]), key=lambda r: -r["count"])
     return {"hospitalsInRadius": len(near), "radiusKm": radius_km, "byLevel": summary, "plan": plan, "unplaced": unplaced}
 
@@ -1279,7 +1280,8 @@ def _handle_mci_register(ws, payload: dict) -> None:
         "type": "mci_assessment", "incidentId": incident_id, "gps": gps.model_dump(), "label": payload.get("label"),
         "counts": counts, "total": total, "source": "rule",
         "neededAmbulances": needed, "shortage": shortage, "perAmbulance": MCI_PER_AMBULANCE,
-        "ambulances": [{"apid": a, "name": names.get(a), "km": round(haversine_km(gps.lat, gps.lng, p.lat, p.lng), 1)}
+        "ambulances": [{"apid": a, "name": names.get(a), "km": round(haversine_km(gps.lat, gps.lng, p.lat, p.lng), 1),
+                        "lat": p.lat, "lng": p.lng}
                        for a in apids if (p := _ambulance_pos(a)) is not None],
         **plan,
         "steps": [

@@ -555,11 +555,11 @@ export interface MciAssessment {
   // 필요 구급차(중증·중등증 1명당 1대, 경증 2명당 1대 — 초안)와 대기 구급차가 모자란 대수
   neededAmbulances: number;
   shortage: number;
-  ambulances: { apid: string; name: string | null; km: number }[];
+  ambulances: { apid: string; name: string | null; km: number; lat: number; lng: number }[];
   hospitalsInRadius: number;
   radiusKm: number;
   byLevel: Record<string, { count: number; beds: number; unknown: number }>;
-  plan: { hospitalId: string; name: string; emergencyLevel: string | null; km: number; beds: number | null; count: number; bySeverity: Record<string, number> }[];
+  plan: { hospitalId: string; name: string; emergencyLevel: string | null; km: number; beds: number | null; count: number; bySeverity: Record<string, number>; lat: number; lng: number }[];
   unplaced: number;
   steps: { stage: string; source: string; text: string }[];
 }
