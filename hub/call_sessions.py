@@ -84,6 +84,10 @@ class CallSession:
     detail: str | None = None
     device_ids: dict = field(default_factory=dict)       # 진단용 — 인증이 아니다
     disconnected: dict = field(default_factory=dict)     # "caller"/"callee" -> 신호 연결이 끊긴 시각
+    pipeline: str | None = None  # None=구버전 통화 전용, on_device/central=기존 의료정보 파이프라인
+    pipeline_started: bool = False
+    pipeline_finished: bool = False
+    pipeline_audio_closed: bool = False
 
     @property
     def live(self) -> bool:
@@ -114,6 +118,11 @@ class CallSessionManager:
         with self._lock:
             return self._sessions.get(call_id)
 
+    def audio_finishes_due(self) -> list[CallSession]:
+        with self._lock:
+            return [s for s in self._sessions.values() if s.pipeline == "central" and s.pipeline_finished
+                    and not s.pipeline_audio_closed and s.ended_at is not None and self._clock() - s.ended_at >= 10]
+
     def live_for_case(self, case_id: str) -> CallSession | None:
         with self._lock:
             return next((s for s in self._sessions.values() if s.live and s.case_id == case_id), None)
@@ -136,6 +145,8 @@ class CallSessionManager:
                "sessionRevision": s.revision, "reason": reason if reason is not None else s.end_reason, "detail": s.detail,
                "startedAt": _iso(s.started_at), "endedAt": _iso(s.ended_at),
                "mediaReady": {"caller": s.caller_ready, "callee": s.callee_ready}}
+        if s.pipeline:
+            msg["pipeline"] = s.pipeline
         if with_ice:
             msg["iceServers"] = self._ice(s.call_id)
         return msg
@@ -189,7 +200,8 @@ class CallSessionManager:
 
     # ── 발신 ─────────────────────────────────────────────────────────────────
     def invite(self, *, call_id: str, case_id: str, apid: str, hospital_id: str, caller_ws, hospital_online: bool,
-               caller_name: str | None = None, hospital_name: str | None = None, device_id: str | None = None) -> Outcome:
+               caller_name: str | None = None, hospital_name: str | None = None, device_id: str | None = None,
+               pipeline: str | None = None) -> Outcome:
         if not isinstance(call_id, str) or not call_id or len(call_id) > MAX_ID_LEN:
             return Outcome(False, "invalid_call_id")
         now = self._clock()
@@ -205,7 +217,7 @@ class CallSessionManager:
                 return Outcome(False, "case_busy")
             hospital_busy = self.live_for_hospital(hospital_id) is not None  # 새 세션을 넣기 전에 본다(자기 자신을 세지 않게)
             s = CallSession(call_id, case_id, apid, hospital_id, caller_name, hospital_name, created_at=now, state_at=now,
-                            caller_ws=caller_ws)
+                            caller_ws=caller_ws, pipeline=pipeline)
             if device_id:
                 s.device_ids["caller"] = device_id[:100]
             self._sessions[call_id] = s

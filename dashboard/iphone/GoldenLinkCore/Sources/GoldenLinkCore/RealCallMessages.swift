@@ -12,14 +12,22 @@ public struct CallInviteMessage: Encodable {
     public let caseId: String
     public let hospitalId: String
     public let deviceId: String?
+    public let pipeline: String?
     public let timestamp: String
-    public init(callId: String, caseId: String, hospitalId: String, deviceId: String? = nil, timestamp: String = isoNow()) {
+    public init(callId: String, caseId: String, hospitalId: String, deviceId: String? = nil, pipeline: String? = nil, timestamp: String = isoNow()) {
         self.callId = callId; self.caseId = caseId; self.hospitalId = hospitalId; self.deviceId = deviceId; self.timestamp = timestamp
+        self.pipeline = pipeline
     }
 }
 
 public struct CallHangupMessage: Encodable {
     public let type = "call_hangup"
+    public let callId: String
+    public init(callId: String) { self.callId = callId }
+}
+
+public struct CallPipelineFinishMessage: Encodable {
+    public let type = "call_pipeline_finish"
     public let callId: String
     public init(callId: String) { self.callId = callId }
 }
@@ -105,6 +113,7 @@ public struct CallState: Decodable {
     public let reason: String?
     public let detail: String?
     public let iceServers: [IceServerConfig]?
+    public let pipeline: String?
 }
 
 public struct RtcSdpIn: Decodable {
@@ -148,6 +157,7 @@ public enum CallLabels {
             case "case_busy": "이 사건은 이미 통화 중입니다"
             case "template_mode": "콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다."
             case "unknown_hospital": "알 수 없는 병원입니다"
+            case "voice_unavailable": "음성 인식 서버가 연결되지 않았습니다. 기기 모델 또는 중앙 voice를 준비해 주세요."
             case "not_owner": "이 사건의 구급대가 아니라 전화할 수 없습니다"
             default: "통화를 시작할 수 없습니다"
             }

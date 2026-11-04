@@ -50,7 +50,9 @@ class CallSession(
     silenceRms: Float,
     holdSec: Float,
     private val scope: CoroutineScope,
+    private val recordingId: String? = null,
 ) {
+    private val archiveId get() = if (recordingId != null) "$caseId/$recordingId" else caseId
     sealed interface Stage {
         data object Recording : Stage
         data object Finishing : Stage
@@ -73,6 +75,9 @@ class CallSession(
     private val allAudio = ByteArrayOutputStream()  // 원본 보존(통화 wav, 16비트) — 108초 통화 ≈ 3.5MB
     private var pollJob: Job? = null
     private var asrChain: Job? = null
+    private var externalAudio = false
+    @Volatile private var inputEnabled = true
+    private var finishing = false
     private val mic = MicCapture(
         onSamples = { samples ->
             if (sendPcm != null) sendPcm.invoke(pcm16(samples)) else synchronized(pending) { pending += samples }
@@ -80,10 +85,11 @@ class CallSession(
         onLevel = { v -> scope.launch(Dispatchers.Main) { level = v } },
     )
 
-    fun start() {
-        mic.start()
+    fun start(externalAudio: Boolean = false) {
+        this.externalAudio = externalAudio
+        inputEnabled = !externalAudio
+        if (!externalAudio) mic.start()
         CallService.start(context)
-        if (models == null) return
         pollJob = scope.launch(Dispatchers.Main) {
             while (isActive) {
                 delay(500)  // POLL_SEC
@@ -92,9 +98,15 @@ class CallSession(
         }
     }
 
+    fun appendExternal(samples: FloatArray) {
+        synchronized(pending) { if (inputEnabled) pending += samples }
+    }
+    fun activateExternalInput() { inputEnabled = true }
+
     /** [취소] — 마이크·인식을 멈추고 녹음을 버린다. 요약을 만들지도 보내지도 않는다 */
     fun cancel() {
-        mic.stop()
+        if (!externalAudio) mic.stop()
+        inputEnabled = false
         CallService.stop(context)
         pollJob?.cancel()
         asrChain?.cancel()
@@ -105,38 +117,48 @@ class CallSession(
 
     /** [전송] — 마이크를 끄고 남은 처리(인식·구조화)를 마쳐 요약을 보낸다 */
     suspend fun finish() {
-        mic.stop()
+        if (finishing || stage != Stage.Recording) return
+        finishing = true
+        if (!externalAudio) mic.stop()
+        inputEnabled = false
         CallService.stop(context)
         pollJob?.cancel()
-        if (models == null) { stage = Stage.Sent; return }  // 서버 STT: 요약은 중앙 voice가 보낸다
         stage = Stage.Finishing
         poll(final = true)
+        if (models == null) { stage = Stage.Sent; return }
         asrChain?.join()
+        if (stage == Stage.Cancelled) return
         val pcm = allAudio.toByteArray()
         val duration = pcm.size / 2.0 / SAMPLE_RATE
         val segments = lines.toList()
         val text = joinedTranscript(segments)
         if (text.isEmpty()) {  // voice와 같이 인식된 발화가 없으면 요약을 보내지 않는다
-            Archive.save(context, caseId, pcm, text, null)
+            Archive.save(context, archiveId, pcm, text, null)
             stage = Stage.NoSpeech
             return
         }
         stage = Stage.Structuring
         try {
             val summary = withContext(modelDispatcher) { models.extract(text) }
+            if (stage == Stage.Cancelled) return
             val message = buildCallSummary(caseId, segments, startedAt, duration, summary)
-            Archive.save(context, caseId, pcm, text, message)
+            Archive.save(context, archiveId, pcm, text, message)
             val error = sendSummary(message)
             stage = if (error != null) Stage.Failed(error) else Stage.Sent
         } catch (t: Throwable) {
-            Archive.save(context, caseId, pcm, text, null)
+            Archive.save(context, archiveId, pcm, text, null)
             stage = Stage.Failed("구조화 실패: ${t.message ?: t}")
         }
     }
 
     private fun poll(final: Boolean) {
         val samples = synchronized(pending) { val all = pending.toList(); pending.clear(); all }
+        if (models == null) {
+            samples.forEach { sendPcm?.invoke(pcm16(it)) }
+            return
+        }
         for (s in samples) {
+            if (s.isNotEmpty()) level = (kotlin.math.sqrt(s.sumOf { (it * it).toDouble() } / s.size) * 8).toFloat().coerceAtMost(1f)
             allAudio.write(pcm16(s))
             segmenter.append(s)
         }

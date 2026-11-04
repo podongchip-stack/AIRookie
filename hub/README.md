@@ -1153,6 +1153,18 @@ timestamp)으로 전송한다. hub는 ringing을 방송하고 이때는 voice·�
 
 ### 실제 양방향 통화(WebRTC, 2026-11-04)
 
+신규 앱은 `call_invite.pipeline = "on_device" | "central"`로 인식 경로를 고르고 hub가 `call_state.pipeline`으로 확인한다.
+서버는 양쪽 `media_ready` 뒤에 사건을 등록하고, 추가 통화는 기존 이송 보류를 시작한다. 통화가 실제 시작된 뒤 끝나면
+첫 통화는 **종료 응답을 앱에 보내기 전에** 기존 `_first_call_wait`를 만든다. 이후 기존 `voice_summary`와 `call_decision`으로
+이송확정(해당 병원만)/이송불가(존 전체 전달)를 처리한다. 받기 전 취소·거절은 요약 대기를 만들지 않는다.
+
+온디바이스 모드는 구급대 앱의 양방향 PCM→ASR→MF_BERT 요약만 받고 중앙 voice를 호출하지 않는다.
+중앙 모드는 등록된 중앙 voice가 있을 때만 초대를 받으며, 구급대 소켓의 혼합 PCM만 기존 스트림 중계로 넘긴다.
+종료 뒤 마지막 PCM을 보낸 구급대 앱의 `call_pipeline_finish {callId}`를 받아 voice를 닫는다(해당 소켓만, 멱등).
+마지막 확인이 유실되면 종료 10초 뒤 닫으며, 사건 폐기는 즉시 취소한다. 병원 앱은 수신·음성 통화만 하므로 이중 요약이 발생하지 않는다.
+`pipeline`이 없는 기존 앱은 통화만 유지한다. 새 앱은 서버가 경로를 확인하지 않으면 인식을 시작하지 않으므로 함께 업데이트한다.
+추가 검사: `python -m unittest test_call_pipeline`, 기존 `test_call_sessions.py`, `test_first_call_decision.py`.
+
 위 "전화 연결 대기와 수용 판단 분리"(`call_connection`)는 **시연 연출**(병원이 받으면 구급차 마이크 녹음을 시작)이다. 이쪽은 구급대 앱↔병원 앱이
 WebRTC로 음성을 직접 주고받는 **실제 통화**이고, hub는 상태·연결 협상 중계·종료만 관리한다(음성은 hub를 거치지 않는다).
 규칙은 `call_sessions.py`(소켓을 모르는 순수 로직), 소켓·권한·기존 통화 상태 연동은 `app.py`(`_handle_call_session_message`).
@@ -1189,7 +1201,7 @@ WebRTC로 음성을 직접 주고받는 **실제 통화**이고, hub는 상태·
   (`username = 만료시각:callId`, `credential = base64(HMAC-SHA1)`, TTL `HUB_TURN_TTL_SEC` 기본 3600)을 `iceServers`에 싣는다.
   coturn 실행·설정은 [`turn/README.md`](../turn/README.md) 참고. `turn/.env`가 구성돼 있으면 `start-all.sh`가 TURN도 함께 실행/종료한다
   (`--turn`은 필수 실행, `--no-turn`은 STUN만). 공인 IP·포트 전달 또는 별도 공인 서버가 필요하며 Cloudflare HTTP 터널로 TURN을 대신할 수 없다.
-- **한계**: 이 통화엔 STT·요약·이송 판단이 연결돼 있지 않다(개발계획서 5단계). WebSocket 인증은 여전히 없다(접근 코드 `identify`만). 병원당 수신 기기 1대를 기준으로 하며
+- **한계**: WebSocket 인증은 여전히 없다(접근 코드 `identify`만). 병원당 수신 기기 1대를 기준으로 하며
   여러 기기 동시 수신은 `answered_elsewhere` 정리까지만 있다.
 - 검증: `python test_call_sessions.py`(상태 기계 + app 연결, 가짜 소켓). 실기기 검증은 안드로이드 병원 모드↔aiortc 시험 발신기, 안드로이드 구급대 모드↔aiortc 시험 수신기로 했다 —
   앱 쪽 메모는 CLAUDE.md의 "feature/hub 실제 양방향 통화" 참고.

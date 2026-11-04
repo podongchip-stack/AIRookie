@@ -6,9 +6,20 @@ import GoldenLinkCore
 actor ModelStore {
     private var asr: OnDeviceASR?
     private var mfBert: MFBertRunner?
+    private var loading: Task<String?, Never>?
 
     /// 앱 시작 때 미리 부른다. 실패하면 이유를 돌려준다(화면에 표시 → 서버 STT 모드로 쓸 수 있음)
     func load() async -> String? {
+        if ready { return nil }
+        if let loading { return await loading.value }
+        let task = Task { await self.loadModels() }
+        loading = task
+        let result = await task.value
+        loading = nil
+        return result
+    }
+
+    private func loadModels() async -> String? {
         do {
             if mfBert == nil { mfBert = try MFBertRunner() }
             if asr == nil { asr = try await OnDeviceASR.load() }

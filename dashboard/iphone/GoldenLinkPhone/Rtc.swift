@@ -21,6 +21,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable
     private var pc: RTCPeerConnection?
     private var source: RTCAudioSource?
     private var track: RTCAudioTrack?
+    private var audioDevice: CallAudioDevice?
 
     private let lock = NSLock()
     private var closed = false
@@ -31,6 +32,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable
     private var readyAnnounced = false
 
     init(iceServers: [IceServerConfig],
+         onSamples: (@Sendable ([Float]) -> Void)? = nil,
          onLocalIce: @escaping @Sendable (IceCandidatePayload) -> Void,
          onMediaReady: @escaping @Sendable () -> Void,
          onFailed: @escaping @Sendable (String) -> Void) throws {
@@ -46,7 +48,11 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable
         audioConfig.categoryOptions = [.allowBluetooth]
         RTCAudioSessionConfiguration.setWebRTC(audioConfig)
 
-        let factory = RTCPeerConnectionFactory()
+        // 병원 수신 기기는 기본 ADM, 구급대 인식 기기는 양방향 PCM을 제공하는 단일 ADM을 쓴다.
+        let device = onSamples.map { CallAudioDevice(onSamples: $0, onFailure: onFailed) }
+        audioDevice = device
+        let factory = device.map { RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil, audioDevice: $0) }
+            ?? RTCPeerConnectionFactory()
         self.factory = factory
         let config = RTCConfiguration()
         config.iceServers = iceServers.filter { !$0.urls.isEmpty }.map {
@@ -119,7 +125,7 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable
         pendingIce.removeAll()
     }
 
-    func setMicMuted(_ muted: Bool) { track?.isEnabled = !muted }
+    func setMicMuted(_ muted: Bool) { track?.isEnabled = !muted; audioDevice?.micMuted = muted }
 
     /// 마이크·연결·오디오를 모두 정리한다. 여러 번 불러도 한 번만 처리한다. 가장 먼저 마이크 트랙을 끈다
     func close() {
@@ -130,6 +136,8 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable
         track?.isEnabled = false
         pc?.close()
         pc = nil; track = nil; source = nil; factory = nil
+        _ = audioDevice?.terminateDevice()
+        audioDevice?.finishCapture(); audioDevice = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 

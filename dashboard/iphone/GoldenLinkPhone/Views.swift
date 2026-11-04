@@ -124,7 +124,8 @@ struct ContentView: View {
             AD.bg.ignoresSafeArea()
             VStack(spacing: 10) {
                 Group {
-                    if inCallFlow || m.tab == .call { content }
+                    if m.preparingRealCall { ProgressView("음성 모델을 준비하고 있습니다…").frame(maxWidth: .infinity, maxHeight: .infinity) }
+                    else if inCallFlow || m.tab == .call { content }
                     else if m.tab == .patient { PatientTab() }
                     else if m.tab == .transport { TransportTab() }
                     else { RecordsTab() }
@@ -494,12 +495,12 @@ struct InCallView: View {
                     HStack {
                         Text(call.webrtc ? "실제 통화" : "실시간 자막").font(.system(size: 15, weight: .bold)).foregroundStyle(AD.navy)
                         Spacer()
-                        if !call.webrtc { Pill(text: "AI · Qwen3-ASR", fg: AD.blue, bg: AD.blueSoft) }
+                        Pill(text: "AI · Qwen3-ASR", fg: AD.blue, bg: AD.blueSoft)
                     }
-                    if call.webrtc {
-                        // 실제 통화(WebRTC, 2026-11-04): 음성은 병원 앱과 직접 주고받고, 이 통화 동안은 음성 인식·요약이 연결돼 있지 않다(다음 단계)
+                    if call.webrtc && connecting {
+                        // 실제 통화(WebRTC, 2026-11-04): 연결 대기 중에는 인식하지 않고 active 이후 양방향 PCM을 기존 인식기로 보낸다
                         Text(connecting ? "병원 앱이 받으면 음성 연결을 확인한 뒤 통화가 시작됩니다."
-                             : "병원 담당자와 통화 중입니다. 이 통화는 음성 인식·요약에 연결돼 있지 않습니다.")
+                             : "병원 담당자와 통화 중입니다. 양쪽 통화 음성을 인식합니다.")
                             .font(.system(size: 13)).foregroundStyle(AD.muted)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
@@ -545,7 +546,7 @@ struct InCallView: View {
                     .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(AD.red, lineWidth: 2))
                 }
                 .buttonStyle(.plain)
-                // 실제 통화는 종료 버튼 하나다(요약·이송 판단이 없다) — 병원 앱이 받기 전엔 [취소], 통화 중엔 [통화 종료]
+                // 실제 통화는 종료 버튼 하나로 후처리까지 시작한다 — 병원 앱이 받기 전엔 [취소], 통화 중엔 [통화 종료]
                 if !call.webrtc {
                 Button { m.sendCall() } label: {
                     HStack(spacing: 10) {
@@ -561,7 +562,7 @@ struct InCallView: View {
                 .disabled(connecting)
                 }
             }
-            Text(call.webrtc ? "실제 통화입니다 · 종료하면 통화만 끝나고 요약·이송 판단은 만들어지지 않습니다"
+            Text(call.webrtc ? "통화를 끝내면 환자 정보를 정리합니다 · 첫 통화는 이송확정·이송불가를 선택한 뒤 전달합니다"
                  : m.call?.followup == true
                  ? "취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다"
                  : "취소하면 아무것도 전달되지 않습니다 · 통화를 끝낸 뒤 이송확정·이송불가를 고릅니다 (그때까지 요약은 병원에 가지 않습니다)")
@@ -922,7 +923,7 @@ struct SettingsView: View {
                         Spacer(minLength: 8)
                         Toggle("", isOn: $realCall).labelsHidden().tint(AD.blue)
                     }
-                    Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 코드로 접속한 앱과 연결되는 실제 음성 통화가 됩니다. 이 통화 동안은 음성 인식·요약이 연결돼 있지 않습니다(다음 단계).")
+                    Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 코드로 접속한 앱과 연결되는 실제 음성 통화가 됩니다. 양쪽 통화 음성을 인식하고 종료 뒤 환자 정보를 정리합니다.")
                         .font(.system(size: 11.5)).foregroundStyle(AD.sub)
                 }
             }

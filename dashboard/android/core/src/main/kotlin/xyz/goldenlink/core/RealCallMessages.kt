@@ -17,6 +17,7 @@ data class CallInviteMessage(
     val deviceId: String? = null,
     val timestamp: String = isoNow(),
     val type: String = "call_invite",
+    val pipeline: String? = null,
 )
 
 @Serializable
@@ -27,6 +28,9 @@ data class CallRejectMessage(val callId: String, val type: String = "call_reject
 
 @Serializable
 data class CallHangupMessage(val callId: String, val type: String = "call_hangup")
+
+@Serializable
+data class CallPipelineFinishMessage(val callId: String, val type: String = "call_pipeline_finish")
 
 /** type: "rtc_offer"(구급대 → 병원) | "rtc_answer"(병원 → 구급대) */
 @Serializable
@@ -70,6 +74,7 @@ data class CallState(
     val startedAt: String? = null,
     val endedAt: String? = null,
     val iceServers: List<IceServerConfig>? = null,
+    val pipeline: String? = null,
 )
 
 /** 병원 앱이 받는 수신 전화 */
@@ -115,6 +120,7 @@ object CallLabels {
             "case_busy" -> "이 사건은 이미 통화 중입니다"
             "template_mode" -> "콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다."
             "unknown_hospital" -> "알 수 없는 병원입니다"
+            "voice_unavailable" -> "음성 인식 서버가 연결되지 않았습니다. 기기 모델 또는 중앙 voice를 준비해 주세요."
             "not_owner" -> "이 사건의 구급대가 아니라 전화할 수 없습니다"
             else -> "통화를 시작할 수 없습니다"
         }
