@@ -1,8 +1,9 @@
 """통화 음성 -> STT(Qwen3-ASR) -> 구조화(MF_BERT) -> feature/hub 전달용 JSON. 파이프라인 본체이자 배치 CLI.
 
-    ASR      Qwen3-ASR-0.6B + LoRA (asr.py)                음성 -> 발화 구간 텍스트   (AI 처리)
-    MF_BERT  KLUE RoBERTa-large 다중과제 (MF_BERT/)        텍스트 -> 필드별 점수      (AI 처리)
-             + 점수 해석·숫자 파싱 (MF_BERT/decode.py)     -> summary(v2 17필드)       (규칙 기반)
+    ASR       Qwen3-ASR-0.6B + LoRA (asr.py)                  음성 -> 발화 구간 텍스트          (AI 처리)
+    MF_BERT   KLUE RoBERTa-large + 결정 디코더 (MF_BERT/)     텍스트 -> 환자 수·환자별 14개 항목 (AI 처리)
+              + 활력징후 구간 숫자 읽기 (MF_BERT/vitals.py)                                      (규칙 기반)
+    Pre-KTAS  주증상·의식·활력징후 -> 추정 단계 (pre_ktas.py) -> summary.patients[].pre_ktas     (규칙 기반)
 
 app.py·call_capture.py는 통화 중에 발화 단위로 미리 인식해(live_transcriber.py) 구간 목록을 넘기고,
 이 파일의 CLI는 이미 녹음된 파일을 통째로 인식한다. 이후 과정(emit_call_summary)은 같다.
@@ -20,6 +21,7 @@ import requests
 
 import asr
 import MF_BERT
+import pre_ktas
 from asr import AsrModel, Segment
 from MF_BERT import MfBertExtractor
 from schema import CallSummaryMessage, ModelUsed, Summary, Transcript, TranscriptTurn
@@ -45,11 +47,12 @@ SUMMARY_TEXT_DIR = DATA_VOICE_DIR / "summary_text"
 
 
 def load_models(device: str) -> tuple[AsrModel, MfBertExtractor]:
-    """두 모델을 한 번 올린다(합쳐서 약 20초). 통화마다 올리면 그만큼 늦어지므로 프로세스 시작 시 1회만 부른다."""
-    print(f"모델 로딩 중... (ASR {asr.MODEL_NAME} + 구조화 {MF_BERT.MODEL_NAME}, device={device})")
+    """두 모델을 한 번 올린다. 통화마다 올리면 그만큼 늦어지므로 프로세스 시작 시 1회만 부른다.
+    device는 ASR에만 쓴다 — MF_BERT는 ONNX라 항상 CPU(onnxruntime)로 돈다."""
+    print(f"모델 로딩 중... (ASR {asr.MODEL_NAME} device={device} + 구조화 {MF_BERT.MODEL_NAME} CPU)")
     started = time.perf_counter()
     asr_model = AsrModel(device)
-    extractor = MfBertExtractor(device)
+    extractor = MfBertExtractor()
     print(f"모델 로딩 완료 ({time.perf_counter() - started:.1f}초, ASR device={asr_model.device})")
     return asr_model, extractor
 
@@ -87,7 +90,8 @@ def build_call_summary_message(
     summary: dict,
     case_id: str | None = None,
 ) -> CallSummaryMessage:
-    """발화 구간 + summary(v2 17필드) -> hub로 보낼 CallSummaryMessage (pydantic 검증 포함). 저장·전송은 하지 않는다.
+    """발화 구간 + summary(MF_BERT 출력) -> hub로 보낼 CallSummaryMessage (pydantic 검증 포함). 저장·전송은 하지 않는다.
+    환자마다 Pre-KTAS 추정 단계(pre_ktas, 규칙 기반)를 여기서 붙인다.
 
     실제 통화 시작 시각 메타데이터가 없으므로, 처리 시점에서 오디오 길이만큼 거슬러
     올라간 시각을 통화 시작 시각으로 근사한다.
@@ -114,7 +118,7 @@ def build_call_summary_message(
                 for segment in segments
             ],
         ),
-        summary=Summary(**summary),
+        summary=Summary(**pre_ktas.annotate(summary)),
         model_used=ModelUsed(stt=asr.MODEL_NAME, llm=MF_BERT.MODEL_NAME),
     )
 
@@ -129,8 +133,8 @@ def emit_call_summary(
 ) -> None:
     """발화 구간 -> STT 원문 저장 -> MF_BERT 구조화 -> JSON 조립·저장 -> hub 전송.
 
-    발화는 줄바꿈으로 이어 붙인다. MF_BERT는 "줄바꿈 = 화자 전환"인 통화 텍스트로 학습했는데, 여기 줄바꿈은
-    발화(무음) 경계라 완전히 같은 형태는 아니다 — 화자 분리가 붙으면 그 경계로 바꿀 자리다.
+    발화는 줄바꿈으로 이어 붙인다(원문 보존용 발화 경계). MF_BERT는 줄바꿈 없는 통화 텍스트로 학습했지만,
+    토크나이저가 줄바꿈을 공백과 똑같이 다뤄 입력 토큰은 같다.
 
     오인식 교정 단계는 없다. filtered_text(=구조화에 실제로 들어간 입력)는 raw_text와 같다 — 필드는
     hub·dashboard와의 계약이라 남긴다. 원본 보존 원칙대로 raw_text/turns에 인식 결과 전체가 남는다.

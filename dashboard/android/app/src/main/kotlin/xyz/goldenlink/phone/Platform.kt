@@ -65,7 +65,7 @@ class Settings(context: Context) : KeyValueStore {
         get() = p.getString("hospitalId", "")!!
         set(v) = p.edit().putString("hospitalId", v).apply()
 
-    /** true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(병원 앱이 받는다). false: 예전 시연 연출 통화. 실제 통화 중에는 STT·요약이 연결돼 있지 않다(3단계) */
+    /** true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(병원 앱이 받는다). false: 예전 시연 연출 통화. 실제 통화 PCM은 기존 STT·요약·이송 판단 세션에 연결한다 */
     var realCall: Boolean
         get() = p.getBoolean("realCall", true)
         set(v) = p.edit().putBoolean("realCall", v).apply()

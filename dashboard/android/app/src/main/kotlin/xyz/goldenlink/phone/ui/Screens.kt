@@ -311,6 +311,10 @@ private fun PhoneMain(m: PhoneModel) {
                             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                             .padding(horizontal = 16.dp).padding(top = headerBottom + 10.dp)) { ScreenLayer(m, key) }
                     }
+                    if (m.preparingRealCall) Box(Modifier.fillMaxSize().background(AD.bg)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}, contentAlignment = Alignment.Center) {
+                        Text("음성 모델을 준비하고 있습니다…", color = AD.navy)
+                    }
                 }
                 if (!inCallFlow) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp)) { TabBar(m) }
             }
@@ -722,16 +726,16 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(if (call.webrtc) "실제 통화" else "실시간 자막", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AD.navy)
                 Spacer(Modifier.weight(1f))
-                if (!call.webrtc) Pill("AI · Qwen3-ASR", AD.blue, AD.blueSoft)
+                Pill("AI · Qwen3-ASR", AD.blue, AD.blueSoft)
             }
             Spacer(Modifier.height(8.dp))
             val lines = m.transcriptLines
             val state = rememberLazyListState()
             LaunchedEffect(lines.size) { if (lines.isNotEmpty()) state.animateScrollToItem(lines.size - 1) }
-            if (call.webrtc) {
-                // 실제 통화(WebRTC, 2026-11-04): 음성은 병원 앱과 직접 주고받고, 이 통화 동안은 음성 인식·요약이 연결돼 있지 않다(다음 단계)
+            if (call.webrtc && connecting) {
+                // 실제 통화(WebRTC, 2026-11-04): 연결 대기 중에는 인식하지 않고 active 이후 양방향 PCM을 기존 인식기로 보낸다
                 Text(if (connecting) "병원 앱이 받으면 음성 연결을 확인한 뒤 통화가 시작됩니다."
-                    else "병원 담당자와 통화 중입니다. 이 통화는 음성 인식·요약에 연결돼 있지 않습니다.", fontSize = 13.sp, color = AD.muted)
+                    else "병원 담당자와 통화 중입니다. 양쪽 통화 음성을 인식합니다.", fontSize = 13.sp, color = AD.muted)
             } else if (lines.isEmpty()) {
                 Text(if (connecting) "병원 응답 대기 중입니다. 연결 후 녹음이 시작됩니다." else "말이 끊길 때마다 인식된 문장이 여기에 뜹니다.", fontSize = 13.sp, color = AD.muted)
             }
@@ -752,7 +756,7 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
                 Spacer(Modifier.width(10.dp))
                 Text(if (call.webrtc && !connecting) "통화 종료" else "취소", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = AD.red)
             }
-            // 실제 통화는 종료 버튼 하나다(요약·이송 판단이 없다) — 병원 앱이 받기 전엔 [취소], 통화 중엔 [통화 종료]
+            // 실제 통화는 종료 버튼 하나로 후처리까지 시작한다 — 병원 앱이 받기 전엔 [취소], 통화 중엔 [통화 종료]
             if (!call.webrtc) Row(Modifier.weight(1f).height(72.dp).clip(cardShape).background(if (connecting) AD.control else AD.blue)
                 .clickable(enabled = !connecting) { m.sendCall() }, horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically) {
@@ -762,7 +766,7 @@ private fun InCallView(m: PhoneModel, call: PhoneModel.LocalCall) {
                 Text(if (call.followup) "전송" else "통화 종료", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
-        Text(if (call.webrtc) "실제 통화입니다 · 종료하면 통화만 끝나고 요약·이송 판단은 만들어지지 않습니다"
+        Text(if (call.webrtc) "통화를 끝내면 환자 정보를 정리합니다 · 첫 통화는 이송확정·이송불가를 선택한 뒤 전달합니다"
             else if (call.followup) "취소하면 아무것도 전달되지 않습니다 · 전송을 눌러야 기기에서 음성을 인식·구조화해 병원에 보냅니다"
             else "취소하면 아무것도 전달되지 않습니다 · 통화를 끝낸 뒤 이송확정·이송불가를 고릅니다 (그때까지 요약은 병원에 가지 않습니다)",
             fontSize = 10.5.sp, color = AD.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
@@ -1107,7 +1111,7 @@ private fun SettingsDialog(m: PhoneModel, onClose: () -> Unit) {
                     Switch(realCall, { realCall = it }, colors = SwitchDefaults.colors(checkedTrackColor = AD.blue))
                 }
                 Text("켜면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 코드로 접속한 앱과 연결되는 실제 음성 통화가 됩니다. " +
-                    "이 통화 동안은 음성 인식·요약이 연결돼 있지 않습니다(다음 단계).", fontSize = 11.5.sp, color = AD.sub)
+                    "양쪽 통화 음성을 인식하고 종료 뒤 환자 정보를 정리합니다.", fontSize = 11.5.sp, color = AD.sub)
             }
             Card {
                 Row(verticalAlignment = Alignment.CenterVertically) {

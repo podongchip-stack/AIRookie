@@ -1970,7 +1970,7 @@ _call_manager = CallSessionManager()
 #: 실제 통화 수신이 가능한 병원 앱 소켓(identify의 callCapable) — 같은 병원 코드의 웹 대시보드는 수신 기기가 아니다
 _call_capable: set = set()
 CALL_SESSION_TYPES = ("call_invite", "call_accept", "call_reject", "call_hangup", "rtc_offer", "rtc_answer", "rtc_ice",
-                      "media_ready", "call_state_sync")
+                      "media_ready", "call_state_sync", "call_pipeline_finish")
 
 
 def _call_targets(recipient: str, session, ws) -> list:
@@ -1992,11 +1992,63 @@ def _call_targets(recipient: str, session, ws) -> list:
 
 
 def _deliver_call(outcome: Outcome, ws=None) -> None:
+    # 종료 응답을 받은 앱이 요약/이송 판단을 보내기 전에 첫 통화 게이트를 먼저 만든다.
+    if outcome.changed and outcome.session is not None:
+        _advance_call_pipeline(outcome.session)
     for recipient, message in outcome.sends:
         for target in _call_targets(recipient, outcome.session, ws):
             _send_to_socket(target, message, "실제 통화")
     if outcome.changed and outcome.session is not None:
         _after_call_change(outcome.session)
+
+
+def _advance_call_pipeline(session) -> None:
+    """규칙 기반 통화 수명주기. STT·구조화는 발신 기기 또는 중앙 voice 하나만 실행한다."""
+    if session.pipeline not in ("on_device", "central"):
+        return  # 기존 클라이언트는 통화만 지원하므로 동작을 바꾸지 않는다.
+    if session.started_at is not None and not session.pipeline_started:
+        session.pipeline_started = True
+        engine.register_case(session.case_id, session.apid)
+        if engine.get_case_result(session.case_id) is not None:
+            _start_call_hold(session.case_id, session.apid)
+        else:
+            recommended = _case_recommended.get(session.case_id)
+            decision_log.log_decision("first_call_selected", {"caseId": session.case_id, "apid": session.apid,
+                "hospitalId": session.hospital_id, "recommendedHospitalId": recommended,
+                "followedRecommendation": recommended == session.hospital_id, "device": "phone", "source": "rule"})
+        decision_log.log_decision("call_pipeline_started", {"callId": session.call_id, "caseId": session.case_id,
+            "hospitalId": session.hospital_id, "mode": session.pipeline, "source": "rule"})
+        if session.pipeline == "central":
+            central = _central_voice_url()
+            if central:
+                _relay_to_central_voice(CallSignal(signal="call_started", caseId=session.case_id, apid=session.apid,
+                    hospitalId=session.hospital_id, timestamp=datetime.now(timezone.utc).isoformat(), device="phone"), session.caller_ws, central)
+    if session.state == "ended" and session.pipeline_started and not session.pipeline_finished:
+        session.pipeline_finished = True
+        cancelled = session.end_reason == "case_closed"
+        signal = CallSignal(signal="call_ended", caseId=session.case_id, apid=session.apid,
+            hospitalId=session.hospital_id, timestamp=datetime.now(timezone.utc).isoformat(), device="phone", cancelled=cancelled)
+        if not cancelled and engine.get_case_result(session.case_id) is None:
+            _register_first_call_wait(signal)
+        if cancelled:
+            _release_call_hold(session.case_id, "cancelled")
+        else:
+            with _call_holds_lock:
+                if session.case_id in _call_holds:
+                    _call_holds[session.case_id]["deadline"] = time.time() + CALL_HOLD_AFTER_END_SEC
+        if session.pipeline == "central" and cancelled:
+            _finish_call_audio(session, cancelled=True)
+
+
+def _finish_call_audio(session, cancelled=False) -> None:
+    if session.pipeline_audio_closed or session.pipeline != "central":
+        return
+    session.pipeline_audio_closed = True
+    central = _central_voice_url()
+    if central:
+        _relay_to_central_voice(CallSignal(signal="call_ended", caseId=session.case_id, apid=session.apid,
+            hospitalId=session.hospital_id, timestamp=datetime.now(timezone.utc).isoformat(), device="phone", cancelled=cancelled),
+            session.caller_ws, central)
 
 
 def _after_call_change(session) -> None:
@@ -2054,12 +2106,25 @@ def _call_invite(ws, role, actor, payload: dict) -> None:
     if _scene_input_mode.get(case_id) == "template" and engine.get_case_result(case_id) is None:
         _refuse_call_invite(ws, call_id, case_id, "template_mode")
         return
+    pipeline = payload.get("pipeline")
+    if pipeline not in (None, "on_device", "central"):
+        _refuse_call_invite(ws, call_id, case_id, "invalid_pipeline")
+        return
+    if pipeline == "central" and _central_voice_url() is None:
+        _refuse_call_invite(ws, call_id, case_id, "voice_unavailable")
+        return
+    if pipeline:
+        with _first_call_wait_lock:
+            pending_decision = case_id in _first_call_wait
+        if pending_decision:
+            _refuse_call_invite(ws, call_id, case_id, "case_busy")
+            return
     with _sockets_lock:
         online = any(_socket_identity.get(s) == ("hospital", hospital_id) for s in _call_capable)
     ambulance = engine.get_ambulance(apid)
     outcome = _call_manager.invite(call_id=call_id, case_id=case_id, apid=apid, hospital_id=hospital_id, caller_ws=ws,
                                    hospital_online=online, caller_name=ambulance.name if ambulance else None,
-                                   hospital_name=hospital.name, device_id=payload.get("deviceId"))
+                                   hospital_name=hospital.name, device_id=payload.get("deviceId"), pipeline=pipeline)
     if not outcome.ok:
         _refuse_call_invite(ws, call_id, case_id, outcome.reason or "invalid")
         return
@@ -2082,9 +2147,21 @@ def _handle_call_session_message(ws, payload: dict) -> None:
         _call_invite(ws, role, actor, payload)
         return
     if kind == "call_state_sync":
-        _deliver_call(_call_manager.sync(role, actor, ws, call_id if isinstance(call_id, str) and call_id else None), ws)
+        outcome = _call_manager.sync(role, actor, ws, call_id if isinstance(call_id, str) and call_id else None)
+        session = outcome.session
+        if session and session.pipeline == "central" and not session.pipeline_audio_closed \
+                and role == "ambulance" and actor == session.apid and session.pipeline_started:
+            with _sockets_lock:
+                _socket_call[ws] = session.case_id
+        _deliver_call(outcome, ws)
         return
     if not isinstance(call_id, str) or not call_id:
+        return
+    if kind == "call_pipeline_finish":
+        session = _call_manager.get(call_id)
+        if session and role == "ambulance" and actor == session.apid and ws is session.caller_ws \
+                and session.pipeline_finished:
+            _finish_call_audio(session)
         return
     revision = payload.get("negotiationRevision")
     revision = revision if isinstance(revision, int) and not isinstance(revision, bool) else 1
@@ -2122,6 +2199,8 @@ def _call_tick_loop() -> None:
         try:
             for outcome in _call_manager.tick():
                 _deliver_call(outcome)
+            for session in _call_manager.audio_finishes_due():
+                _finish_call_audio(session)
         except Exception as e:  # noqa: BLE001
             print(f"  [통화] 점검 오류(계속 진행): {e!r}")
 

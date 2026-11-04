@@ -47,7 +47,7 @@ enum Settings {
     }
 
     /// true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(플랫폼과 무관하게 H-코드 병원 앱이 받는다).
-    /// 실제 통화 중에는 STT·요약이 연결돼 있지 않다(다음 단계, 2026-11-04)
+    /// 실제 통화 PCM은 기존 STT·요약·이송 판단 세션에 연결한다(2026-11-04)
     static var realCall: Bool {
         get { UserDefaults.standard.object(forKey: "realCall") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "realCall") }

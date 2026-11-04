@@ -60,6 +60,7 @@ final class PhoneModel {
     var error: String?
     var notice: String?  // 화면 위에 잠깐 뜨는 안내(일시정지 등)
     var wantsExtraCall = false  // 현장에서 전달 뒤 [추가 통화]를 눌러 병원 목록을 다시 연 상태
+    var preparingRealCall = false
     var tick = 0  // 화면 갱신용(통화 시간·레벨)
 
     var kakaoCamera: CameraPosition?
@@ -111,7 +112,7 @@ final class PhoneModel {
         /// 현장 첫 통화를 끝낸 뒤 구급대원의 판단(2026-11-04): nil = 아직 고르지 않음, "confirm" = 통화 병원으로 이송 확정, "reject" = 이송불가(존 전체 전달)
         var decision: String?
         var decidedAt: Date?
-        /// 실제 통화(WebRTC, 2026-11-04) — 병원 앱과 음성을 직접 주고받는다. 이 통화엔 STT·요약·이송 판단이 없다. callId는 hub 통화 식별자
+        /// 실제 통화(WebRTC, 2026-11-04) — 병원 앱과 음성을 직접 주고받는다. 통화 종료 뒤 기존 STT·요약·이송 판단으로 이어진다. callId는 hub 통화 식별자
         var webrtc = false
         var callId: String?
         enum Phase { case connecting, inCall, ended }
@@ -146,6 +147,11 @@ final class PhoneModel {
     }
 
     func stop() {
+        if let c = call, c.webrtc {
+            if let id = c.callId { _ = ambulance?.send(CallHangupMessage(callId: id)) }
+            if !c.followup, c.decision == nil { _ = ambulance?.send(CallDecisionMessage(caseId: c.caseId, decision: "cancel")) }
+            session?.cancel(); session = nil; call = nil
+        }
         releaseRealCall()  // 실제 통화 중이던 마이크·연결을 먼저 정리한다
         recordSyncTask?.cancel(); recordSyncTask = nil; recordRequest = nil
         mapSocket?.close(); mapSocket = nil
@@ -437,11 +443,12 @@ final class PhoneModel {
     // MARK: - 실제 통화(WebRTC, 2026-11-04)
     // 설정의 [실제 통화]가 켜져 있으면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 코드로 접속한 앱과의 실제 음성 통화가 된다.
     // 흐름: call_invite → (병원이 받으면) hub가 connecting → 이쪽이 offer를 만들어 보냄 → answer·ICE 교환 → 양쪽 media_ready → active.
-    // 이 통화엔 STT·요약·이송 판단이 없다(다음 단계). 모든 hub 메시지는 지금 통화의 callId와 같을 때만 따른다.
-    // 안드로이드 PhoneModel.kt의 같은 이름 함수들과 같은 규칙이다(그쪽이 실기기·hub 연동 검증됨). 이쪽은 Mac에서 빌드 확인이 필요하다.
+    // 구급대의 단일 오디오 경로에서 양쪽 PCM을 인식하고 기존 요약·이송 판단으로 이어진다. 모든 hub 메시지는 지금 통화의 callId와 같을 때만 따른다.
+    // 안드로이드 PhoneModel.kt의 같은 이름 함수들과 같은 규칙이다(그쪽이 실기기·hub 연동 검증됨). iOS 빌드 확인, 양방향 PCM과 인식 품질은 실기기로 확인한다.
 
     private var rtc: RtcSession?
     private var rtcNegotiation = 1
+    private var realCallOnDevice = true
 
     private func startRealCall(caseId: String, hospitalId: String, name: String) {
         let callId = UUID().uuidString
@@ -449,7 +456,9 @@ final class PhoneModel {
         c.webrtc = true
         c.callId = callId
         call = c
-        if ambulance?.send(CallInviteMessage(callId: callId, caseId: caseId, hospitalId: hospitalId, deviceId: Settings.deviceID)) != true {
+        session = nil
+        if ambulance?.send(CallInviteMessage(callId: callId, caseId: caseId, hospitalId: hospitalId, deviceId: Settings.deviceID,
+                                            pipeline: realCallOnDevice ? "on_device" : "central")) != true {
             call = nil
             error = "hub 연결이 끊겨 전화를 걸지 못했습니다."
         }
@@ -460,10 +469,25 @@ final class PhoneModel {
         switch s.state {
         case "connecting":
             guard rtc == nil else { return }  // 같은 상태가 다시 오면(재접속 동기화) 연결을 새로 만들지 않는다
+            guard s.pipeline == (realCallOnDevice ? "on_device" : "central") else {
+                _ = ambulance?.send(CallHangupMessage(callId: s.callId))
+                endRealCall("서버를 최신 코드로 재시작한 뒤 다시 전화해 주세요")
+                return
+            }
             let callId = s.callId
             do {
+                guard let apid else { return }
+                let socket = ambulance
+                let transcription = CallSession(caseId: c.caseId, apid: apid, models: realCallOnDevice ? models : nil,
+                    sendPCM: realCallOnDevice ? nil : { socket?.sendBinary($0) },
+                    recordingId: callId,
+                    sendSummary: { [weak self] payload in await self?.sendSummary(payload) ?? "hub 연결 없음" })
+                transcription.onChange = { [weak self] in self?.tick &+= 1 }
+                try transcription.start(externalAudio: true)
+                session = transcription
                 let session = try RtcSession(
                     iceServers: s.iceServers ?? [],
+                    onSamples: { [weak transcription] samples in transcription?.appendExternal(samples) },
                     onLocalIce: { [weak self] candidate in Task { @MainActor in self?.sendRealIce(callId, candidate) } },
                     onMediaReady: { [weak self] in Task { @MainActor in self?.sendMediaReady(callId) } },
                     onFailed: { [weak self] _ in Task { @MainActor in self?.failRealCall(callId) } })
@@ -474,10 +498,16 @@ final class PhoneModel {
                 endRealCall("통화 연결을 준비하지 못했습니다")
             }
         case "active":
+            guard call?.phase != .inCall else { return }
             call?.phase = .inCall
             call?.startedAt = Date()
+            session?.activateExternalInput()
         case "ended":
-            endRealCall(CallLabels.endText(s.reason, detail: s.detail))
+            if s.reason == "case_closed" {
+                session?.cancel(); session = nil
+                releaseRealCall(); call = nil
+                show(CallLabels.endText(s.reason))
+            } else { endRealCall(CallLabels.endText(s.reason, detail: s.detail)) }
         default:
             break
         }
@@ -514,7 +544,22 @@ final class PhoneModel {
     /// 실제 통화의 자원을 정리하고 병원 목록으로 돌아간다. 여러 번 불러도 안전하다
     private func endRealCall(_ message: String) {
         releaseRealCall()
-        if call?.webrtc == true { call = nil }
+        guard let c = call, c.webrtc else { return }
+        if c.phase == .ended { return }
+        if c.phase == .inCall {
+            call?.phase = .ended; call?.endedAt = Date()
+            call?.matchVersionAtSend = matchVersion[c.caseId] ?? 0
+            call?.callRoundAtSend = results[c.caseId]?.patientInfo?.callRound ?? (results[c.caseId] == nil ? 0 : 1)
+            wantsExtraCall = false
+            let transcription = session
+            let central = !realCallOnDevice
+            Task { [weak self] in
+                await transcription?.finish()
+                if central, let id = c.callId { _ = self?.ambulance?.send(CallPipelineFinishMessage(callId: id)) }
+            }
+        } else {
+            session?.cancel(); session = nil; call = nil
+        }
         show(message)
     }
 
@@ -541,7 +586,18 @@ final class PhoneModel {
             return
         }
         guard await MicCapture.requestPermission() else { error = "마이크 권한이 꺼져 있습니다. 설정 앱에서 켜 주세요."; return }
-        if Settings.realCall { startRealCall(caseId: caseId, hospitalId: hospitalId, name: name); return }
+        if Settings.realCall {
+            guard !preparingRealCall else { return }
+            preparingRealCall = true
+            defer { preparingRealCall = false }
+            if Settings.onDevice {
+                if let reason = await models.load() { error = "음성 모델 준비 실패: \(reason)"; return }
+            }
+            guard call == nil, self.caseId == caseId else { return }
+            realCallOnDevice = Settings.onDevice
+            startRealCall(caseId: caseId, hospitalId: hospitalId, name: name)
+            return
+        }
         let followup = sent
         call = LocalCall(caseId: caseId, hospitalId: hospitalId, hospitalName: name, followup: followup, phase: .connecting, startedAt: Date())
         callRequestId = UUID().uuidString

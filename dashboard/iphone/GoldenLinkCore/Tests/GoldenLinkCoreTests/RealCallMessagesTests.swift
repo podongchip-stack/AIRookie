@@ -19,6 +19,9 @@ final class RealCallMessagesTests: XCTestCase {
         XCTAssertEqual(offer["negotiationRevision"] as? Int, 1)
         XCTAssertEqual(try object(CallHangupMessage(callId: "c"))["type"] as? String, "call_hangup")
         XCTAssertEqual(try object(MediaReadyMessage(callId: "c"))["type"] as? String, "media_ready")
+        let pipeline = try object(CallInviteMessage(callId: "c", caseId: "case", hospitalId: "H", pipeline: "on_device"))
+        XCTAssertEqual(pipeline["pipeline"] as? String, "on_device")
+        XCTAssertEqual(try object(CallPipelineFinishMessage(callId: "c"))["type"] as? String, "call_pipeline_finish")
     }
 
     func testIceCandidateIsSentAsObject() throws {

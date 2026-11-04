@@ -28,23 +28,29 @@ final class CallSession {
     private let models: ModelStore?
     private let sendPCM: ((Data) -> Void)?
     private let sendSummary: (JSONValue) async -> String?
+    private let archiveId: String
     private let segmenter = UtteranceSegmenter(silenceRMS: Settings.silenceRMS, holdSec: Settings.holdSec)
     private let pending = PendingAudio()
     private var allAudio: [Float] = []  // 원본 보존(통화 wav) — 108초 통화 ≈ 7MB
     private var pollTask: Task<Void, Never>?
     private var asrChain: Task<Void, Never>?
+    private var externalAudio = false
+    private var finishing = false
 
     /// models != nil 이면 온디바이스, sendPCM != nil 이면 서버 STT. sendSummary는 요약을 hub로 보내고 실패 사유를 돌려준다
-    init(caseId: String, apid: String, models: ModelStore?, sendPCM: ((Data) -> Void)?,
+    init(caseId: String, apid: String, models: ModelStore?, sendPCM: ((Data) -> Void)?, recordingId: String? = nil,
          sendSummary: @escaping (JSONValue) async -> String?) {
         self.caseId = caseId
         self.apid = apid
         self.models = models
         self.sendPCM = sendPCM
         self.sendSummary = sendSummary
+        self.archiveId = recordingId.map { caseId + "/" + $0 } ?? caseId
     }
 
-    func start() throws {
+    func start(externalAudio: Bool = false) throws {
+        self.externalAudio = externalAudio
+        if externalAudio { pending.setEnabled(false) }
         let pending = pending, sendPCM = sendPCM
         mic.onSamples = { samples in
             if let sendPCM {
@@ -55,8 +61,7 @@ final class CallSession {
             }
         }
         mic.onLevel = { [weak self] level in Task { @MainActor in self?.level = level; self?.onChange?() } }
-        try mic.start()
-        guard models != nil else { return }
+        if !externalAudio { try mic.start() }
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(500))  // POLL_SEC
@@ -65,9 +70,14 @@ final class CallSession {
         }
     }
 
+    /// WebRTC ADM 콜백. 다른 마이크 녹음기를 시작하지 않는다.
+    nonisolated func appendExternal(_ samples: [Float]) { pending.append(samples) }
+    func activateExternalInput() { pending.setEnabled(true) }
+
     /// [취소] — 마이크·인식을 멈추고 녹음을 버린다. 요약을 만들지도 보내지도 않는다(서버 STT면 hub에 cancelled로 알린다)
     func cancel() {
-        mic.stop()
+        if !externalAudio { mic.stop() }
+        pending.setEnabled(false)
         pollTask?.cancel()
         asrChain?.cancel()
         _ = pending.drain()
@@ -77,35 +87,48 @@ final class CallSession {
 
     /// [전송] — 마이크를 끄고 남은 처리(인식·구조화)를 마쳐 요약을 보낸다
     func finish() async {
-        mic.stop()
+        guard !finishing, stage == .recording else { return }
+        finishing = true
+        if !externalAudio { mic.stop() }
+        pending.setEnabled(false)
         pollTask?.cancel()
-        guard let models else { stage = .sent; return }  // 서버 STT: 요약은 중앙 voice가 보낸다
         stage = .finishing
         poll(final: true)
+        guard let models else { stage = .sent; return }
         await asrChain?.value
+        guard stage != .cancelled else { return }
         let duration = Double(allAudio.count) / Double(GoldenLinkCore.sampleRate)
         let text = joinedTranscript(lines)
         guard !text.isEmpty else {  // voice와 같이 인식된 발화가 없으면 요약을 보내지 않는다
-            Archive.save(caseId: caseId, audio: allAudio, transcript: text, summary: nil)
+            Archive.save(caseId: archiveId, audio: allAudio, transcript: text, summary: nil)
             stage = .noSpeech
             return
         }
         stage = .structuring
         do {
             let summary = try await models.extract(text)
+            guard stage != .cancelled else { return }
             let message = buildCallSummary(caseId: caseId, segments: lines, callStart: startedAt,
                                            durationSec: duration, summary: summary)
-            Archive.save(caseId: caseId, audio: allAudio, transcript: text, summary: message)
+            Archive.save(caseId: archiveId, audio: allAudio, transcript: text, summary: message)
             if let error = await sendSummary(message) { stage = .failed(error) } else { stage = .sent }
         } catch {
-            Archive.save(caseId: caseId, audio: allAudio, transcript: text, summary: nil)
+            Archive.save(caseId: archiveId, audio: allAudio, transcript: text, summary: nil)
             stage = .failed("구조화 실패: \(error.localizedDescription)")
         }
     }
 
     private func poll(final: Bool) {
         let samples = pending.drain()
+        if models == nil {
+            if !samples.isEmpty { sendPCM?(pcm16(samples)) }
+            return
+        }
         allAudio += samples
+        if !samples.isEmpty {
+            level = min(1, (samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count)).squareRoot() * 8)
+            onChange?()
+        }
         segmenter.append(samples)
         for utterance in segmenter.poll(final: final) { enqueue(utterance) }
     }
@@ -130,7 +153,9 @@ final class CallSession {
 final class PendingAudio: @unchecked Sendable {
     private var buffer: [Float] = []
     private let lock = NSLock()
-    func append(_ s: [Float]) { lock.lock(); buffer += s; lock.unlock() }
+    private var enabled = true
+    func setEnabled(_ value: Bool) { lock.lock(); enabled = value; lock.unlock() }
+    func append(_ s: [Float]) { lock.lock(); if enabled { buffer += s }; lock.unlock() }
     func drain() -> [Float] { lock.lock(); defer { buffer.removeAll(keepingCapacity: true); lock.unlock() }; return buffer }
 }
 
