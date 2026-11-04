@@ -779,7 +779,40 @@ class HubEngine:
                 inFlightCount=self._prune_and_count_overlay(hospital_id, now),
                 egenUpdatedAt=info.updatedAt,
                 hiraCollectedAt=hira.collectedAt if hira else None,
+                bedReliability=self._bed_reliability_view(info, now),
+                assessmentGroups=({g: {"tier": v.tier, "score": v.score, "confidence": v.confidence, "basis": v.basis}
+                                   for g, v in info.assessment.groups.items()} if info.assessment else None),
+                capability=self._capability_view(info, now),
+                recentRefusals=[{"caseId": r.case_id, "reasonCode": r.reason, "axis": r.axis, "group": r.group,
+                                 "at": r.at.isoformat(timespec="seconds"), "until": r.until.isoformat(timespec="seconds")}
+                                for r in self._refusals.active(now) if r.hospital_id == hospital_id],
+                erPhone=info.erPhone,
+                gps=info.gps,
             )
+
+    def _bed_reliability_view(self, info: HospitalInfo, now: datetime) -> dict | None:
+        """병원 상세용 응급실 병상 정보 신뢰도(AI) — 지금 시점(도착 시간 0) 유효 확률과 위험 등급·최종 확인 시각."""
+        if info.bedReliability is None:
+            return None
+        confirmed = self._info_confirmations.get(info.hospitalId)
+        match = _with_risk(bed_reliability.evaluate(info.bedReliability, 0.0, now=now, horizon_sec=0.0, confirmed_at=confirmed),
+                           info, confirmed)
+        if match is None:
+            return None
+        born = _parse_iso(info.bedReliability.bornAt) if info.bedReliability.bornAt else None
+        return {"authority": round(match.authority, 3), "riskLevel": match.riskLevel, "checkedAt": match.checkedAt,
+                "bornAt": info.bedReliability.bornAt, "ageMin": round((now - born).total_seconds() / 60, 1) if born else None,
+                "predictedSurvivalMin": round(info.bedReliability.predictedSurvivalSec / 60, 1),
+                "confirmedAt": confirmed.isoformat(timespec="seconds") if confirmed else None,
+                "modelTag": info.bedReliability.modelTag, "source": "ai"}
+
+    def _capability_view(self, info: HospitalInfo, now: datetime) -> dict:
+        hour = spider_rule.local_hour(now)
+        g, z, parts = spider_rule.hospital_z(info, hour)
+        general = spider_rule.ktas_suitability(3, "general", info, hour)
+        return {"grade": g, "effectiveCapacity": round(z, 2), "parts": parts, "hospitalKtas": general["hospitalKtas"],
+                "supportedKtas": general["supportedKtas"], "nightPenalty": hour >= 22 or hour < 6, "source": "rule",
+                "clinicallyValidated": False}
 
     def case_group(self, case_id: str) -> str | None:
         """사건의 15개 중증질환군(예상 병명 → 키워드 규칙, disease_group.py). 매칭 전이거나 해당 없으면 None."""

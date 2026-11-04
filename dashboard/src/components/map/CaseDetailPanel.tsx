@@ -68,7 +68,7 @@ function agentSteps(inc: Incident, mc: MonitorCase | undefined, group: Assignmen
   return steps;
 }
 
-export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneExpand, onDesignate }: {
+export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneExpand, onDesignate, onOpenHospital }: {
   inc: Incident;
   mc: MonitorCase | undefined;
   group: AssignmentGroup | undefined;
@@ -76,6 +76,7 @@ export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneE
   onConfirmRequest: (caseId: string) => void;
   onZoneExpand: (caseId: string) => void;
   onDesignate: (caseId: string, hospitalId: string) => void;
+  onOpenHospital?: (hospitalId: string) => void;
 }) {
   const confirmed = inc.hospitals.some((h) => h.st === "t");
   const waiting = inc.hospitals.filter((h) => h.st === "w").length;
@@ -150,7 +151,10 @@ export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneE
             return (
               <div key={h.hospitalId} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "5px 8px", borderRadius: GLASS.radiusSm, background: "rgba(255,255,255,.62)", border: `1px solid ${C.line2}` }}>
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 700, color: C.navy }} title={h.name}>{shortHospital(h.name)}</span>
+                  <button type="button" onClick={() => onOpenHospital?.(h.hospitalId)} title={`${h.name} — 눌러서 병원 상세`}
+                    style={{ fontFamily: "inherit", fontSize: 12, fontWeight: 700, color: C.navy, background: "none", border: 0, padding: 0, cursor: "pointer", textDecoration: "underline", textDecorationColor: C.line, textUnderlineOffset: 3 }}>
+                    {shortHospital(h.name)}
+                  </button>
                   <span style={{ color: C.sub }}> · {h.km.toFixed(1)}km</span>
                   {risk && <span style={{ color: risk === "high" ? "#D9434B" : risk === "medium" ? "#B7791F" : "#1E9E6A" }}> · 병상 변동 {risk === "high" ? "높음" : risk === "medium" ? "보통" : "낮음"}</span>}
                   {h.reason && <div style={{ fontSize: 11, color: "#D9434B" }}>사유 · {h.reason}</div>}

@@ -256,6 +256,17 @@ class HospitalBackupView(BaseModel):
     egenUpdatedAt: Optional[str] = None
     hiraCollectedAt: Optional[str] = None
     source: Literal["rule"] = "rule"
+    # ── 관제 병원 상세(2026-11-04) — 병원을 누르면 한 화면에 다 보이게 더한 칸들(모두 Optional, 열람용) ──
+    # 응급실 병상 정보 신뢰도(AI, 정보 생존 모델) — 지금 유효 확률·위험 등급·값이 생긴 시각·예측 수명·최종 확인
+    bedReliability: Optional[dict] = None
+    # 15개 중증질환군 수용 신고 판정(info hospital_score, 규칙) — 질환군 → {tier, score, confidence, basis}
+    assessmentGroups: Optional[dict] = None
+    # 거미줄 역량(규칙) — 등급·응급의학과 전문의·야간 감점을 반영한 유효 역량과 대표 KTAS(표시용)
+    capability: Optional[dict] = None
+    # 최근 수용 곤란 되먹임(refusal_memory, 규칙) — 지금 다른 사건에 반영 중인 것
+    recentRefusals: list[dict] = Field(default_factory=list)
+    erPhone: Optional[str] = None
+    gps: Optional[GpsPoint] = None
 
 
 class HospitalInfo(BaseModel):

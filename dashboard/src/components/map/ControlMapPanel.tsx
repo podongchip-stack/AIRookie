@@ -70,6 +70,7 @@ export function ControlMapPanel({
   onHoverHospital,
   onHoverAmb,
   onSelectCase,
+  onSelectHospital,
   children,
 }: {
   overview: MapOverview | null;
@@ -88,6 +89,8 @@ export function ControlMapPanel({
   onHoverHospital: (id: string) => void;
   onHoverAmb: (apid: string) => void;
   onSelectCase: (caseId: string) => void;
+  // 병원 점을 누르면(2026-11-04) — 관제 병원 상세를 연다
+  onSelectHospital?: (hospitalId: string) => void;
   children?: React.ReactNode;
 }) {
   const { ready, error } = useKakaoMapScript();
@@ -107,10 +110,10 @@ export function ControlMapPanel({
   const originRef = useRef<{ overlay: kakao.maps.CustomOverlay; timer: number } | null>(null);
   const ringRef = useRef<{ outer: kakao.maps.Circle; inner: kakao.maps.Circle | null; label: kakao.maps.CustomOverlay; key: string } | null>(null);
   // 카카오·DOM 이벤트 핸들러는 한 번 걸어 두고 최신 콜백은 ref로 읽는다
-  const cbRef = useRef({ onHoverHospital, onHoverAmb, onSelectCase });
+  const cbRef = useRef({ onHoverHospital, onHoverAmb, onSelectCase, onSelectHospital });
   useEffect(() => {
-    cbRef.current = { onHoverHospital, onHoverAmb, onSelectCase };
-  }, [onHoverHospital, onHoverAmb, onSelectCase]);
+    cbRef.current = { onHoverHospital, onHoverAmb, onSelectCase, onSelectHospital };
+  }, [onHoverHospital, onHoverAmb, onSelectCase, onSelectHospital]);
 
   // 상단 경보 띠가 나타나거나 창 크기가 바뀌어 지도 칸 크기가 달라지면 카카오 지도를 다시 맞춘다(안 하면 회색 빈틈이 생김)
   useEffect(() => {
@@ -155,6 +158,7 @@ export function ControlMapPanel({
       dot.title = `${h.name} · H-${h.hospitalId}${h.emergencyLevel ? ` · ${h.emergencyLevel}` : ""}`;
       dot.addEventListener("mouseenter", () => cbRef.current.onHoverHospital(h.hospitalId));
       dot.addEventListener("mouseleave", () => cbRef.current.onHoverHospital(""));
+      dot.addEventListener("click", () => cbRef.current.onSelectHospital?.(h.hospitalId));
       const pill = document.createElement("div");
       root.append(dot, pill);
       const overlay = new kakao.maps.CustomOverlay({
@@ -187,7 +191,7 @@ export function ControlMapPanel({
       layer.key = key;
       const base =
         "position:absolute;box-sizing:border-box;border-radius:50%;border:2px solid #fff;" +
-        "box-shadow:0 1px 3px rgba(20,30,50,.35);transition:transform .15s,opacity .2s;cursor:default;";
+        "box-shadow:0 1px 3px rgba(20,30,50,.35);transition:transform .15s,opacity .2s;cursor:pointer;";
       if (!req) {
         const color = (h.emergencyLevel && LEVEL_DOT[h.emergencyLevel]) || LEVEL_DEFAULT;
         // 사건을 보는 중이면 무관한 병원은 더 작고 옅게 — 요청 선과 응답 표시가 먼저 보이게

@@ -313,6 +313,19 @@ export interface HospitalBackupView {
   egenUpdatedAt?: string | null;
   hiraCollectedAt?: string | null;
   source: "rule";
+  // 관제 병원 상세(hub 2026-11-04~, 열람용)
+  bedReliability?: {
+    authority: number; riskLevel: "low" | "medium" | "high" | null; checkedAt: string | null; bornAt: string | null;
+    ageMin: number | null; predictedSurvivalMin: number; confirmedAt: string | null; modelTag: string; source: "ai";
+  } | null;
+  assessmentGroups?: Record<string, { tier: string; score: number; confidence: string; basis: string[] }> | null;
+  capability?: {
+    grade: number; effectiveCapacity: number; parts: string; hospitalKtas: number | null; supportedKtas: number[];
+    nightPenalty: boolean; source: "rule"; clinicallyValidated: boolean;
+  } | null;
+  recentRefusals?: { caseId: string; reasonCode: string; axis: string | null; group: string | null; at: string; until: string }[];
+  erPhone?: string | null;
+  gps?: { lat: number; lng: number } | null;
 }
 
 export interface AcceptanceMessage {

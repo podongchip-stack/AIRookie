@@ -17,6 +17,7 @@ import { RejectionStatsModal } from "@/components/map/RejectionStatsModal";
 import { AssignmentModal } from "@/components/map/AssignmentModal";
 import { CaseDetailPanel } from "@/components/map/CaseDetailPanel";
 import { MciRegisterModal } from "@/components/map/MciRegisterModal";
+import { HospitalDetailModal } from "@/components/map/HospitalDetailModal";
 import { AlertStack, topAlertOf, useAlertTabTitle } from "@/components/map/ControlAlerts";
 import { ARCHIVE_MOCK, daysAgo, type ArchiveResult } from "@/lib/case-archive";
 import { DemoVideoOverlay } from "@/components/ui/DemoVideoOverlay";
@@ -49,6 +50,8 @@ export default function MonitorMapPage() {
   const { state, connectionMode, sendAction, sendConfirmRequest, sendRaw, sendZoneExpand } = useDashboardSocket({ role: "monitor", id: "map" });
   const [leftTab, setLeftTab] = useState<"case" | "amb">("case");
   const [showMci, setShowMci] = useState(false);
+  // 병원 상세(2026-11-04) — 오른쪽 병원 목록·사건 상세의 병원 줄·지도 병원 점을 누르면 연다
+  const [detailHospital, setDetailHospital] = useState<string | null>(null);
   // 상황실 배정 요청(2026-11-04) — hub가 1순위 수용 병원 겹침 + 여력 부족을 묶어 보낸다. 새 묶음이 생기면 모달을 자동으로 연다.
   const assignmentGroups = state.assignmentGroups;
   const assignmentCount = assignmentGroups.reduce((n, g) => n + g.caseIds.length, 0);
@@ -509,6 +512,7 @@ export default function MonitorMapPage() {
                       onConfirmRequest={(caseId) => sendConfirmRequest(caseId)}
                       onZoneExpand={(caseId) => sendZoneExpand(caseId)}
                       onDesignate={dispatchTo}
+                      onOpenHospital={setDetailHospital}
                     />
                   ) : (
                     <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 12.5, color: C.muted, whiteSpace: "normal" }}>
@@ -588,7 +592,7 @@ export default function MonitorMapPage() {
               </div>
               <div className="ctl-scroll" tabIndex={0} aria-label="병원 목록" style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, paddingRight: 4 }}>
                 {(overview?.hospitals ?? []).map((h) => (
-                  <article key={h.hospitalId} onMouseEnter={() => setHoverHospital(h.hospitalId)} onMouseLeave={() => setHoverHospital("")} style={{ flex: "none", border: `1px solid ${hoverHospital === h.hospitalId ? C.blue : C.line}`, borderRadius: GLASS.radiusSm, padding: 12, background: "rgba(255,255,255,.66)", whiteSpace: "normal" }}>
+                  <article key={h.hospitalId} onClick={() => setDetailHospital(h.hospitalId)} title="눌러서 병원 상세 보기" onMouseEnter={() => setHoverHospital(h.hospitalId)} onMouseLeave={() => setHoverHospital("")} style={{ cursor: "pointer", flex: "none", border: `1px solid ${hoverHospital === h.hospitalId ? C.blue : C.line}`, borderRadius: GLASS.radiusSm, padding: 12, background: "rgba(255,255,255,.66)", whiteSpace: "normal" }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{h.name}</div>
                     <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12, color: C.ink2 }}>
                       <span>가용 병상 <b>{h.bedCountUnknown !== false || h.availableBedCount == null ? "미상" : `${h.availableBedCount}개`}</b></span>
@@ -630,7 +634,8 @@ export default function MonitorMapPage() {
             alertCaseIds={alertCaseIds}
             onHoverHospital={setHoverHospital}
             onHoverAmb={setHoverAmb}
-            onSelectCase={selectCase}
+            onSelectHospital={setDetailHospital}
+                onSelectCase={selectCase}
           >
           </ControlMapPanel>
           </div>
@@ -638,6 +643,13 @@ export default function MonitorMapPage() {
       </div>
 
       {showReject && <RejectionStatsModal onClose={() => setShowReject(false)} />}
+      {detailHospital && (
+        <HospitalDetailModal
+          hospitalId={detailHospital}
+          overview={overview?.hospitals.find((h) => h.hospitalId === detailHospital)}
+          onClose={() => setDetailHospital(null)}
+        />
+      )}
       {showMci && (
         <MciRegisterModal
           assessment={state.mciAssessment}

@@ -1101,6 +1101,11 @@ def _demo_case(apid: str, ktas: int, complaint: str) -> str:
     import uuid
     case_id = f"demo-{uuid.uuid4().hex[:8]}"
     engine.register_case(case_id, apid)
+    # 출동 시뮬레이션이 켜져 있으면 구급차를 그 사건 현장에 도착한 상태로 둔다 — 확정되면 병원으로 출발해 사건이 끝까지 간다
+    if sim is not None:
+        pos = _ambulance_pos(apid)
+        if pos is not None and sim.place_on_scene(apid, case_id, pos):
+            _broadcast_sim_state(apid)
     voice = VoiceCallSummaryMessage.model_validate({
         "caseId": case_id, "source": "ai",
         "transcript": {"raw_text": f"[시연] {complaint}", "filtered_text": f"[시연] {complaint}"},

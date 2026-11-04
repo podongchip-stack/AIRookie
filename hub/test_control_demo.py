@@ -68,6 +68,13 @@ def main() -> None:
     assert groups and groups[0]["hospitalId"] == "C1" and len(groups[0]["caseIds"]) == 2, groups
     assert all(c.startswith("demo-") for c in groups[0]["caseIds"])
     print(f"  [확인] {groups[0]['hospitalName']} 여력 {groups[0]['capacity']} · 사건 2건 → 관제 배정 요청")
+    case_a = groups[0]["caseIds"][0]
+    apid_a = app.engine.get_case_apid(case_a)
+    assert app.sim.phase_of(apid_a) == "on_scene", "시연 사건 구급차는 현장 도착 상태 — 확정되면 출발한다"
+    app._handle_dashboard_action({"caseId": case_a, "action": "final_approval", "hospital_id": "C1", "actor": "dispatcher",
+                                  "timestamp": "2026-11-04T00:00:00Z"}, ws=monitor)
+    assert app.sim.phase_of(apid_a) == "transporting", "관제 지정 → 병원으로 이송 시작(사건이 끝까지 진행)"
+    print("  [확인] 시연 사건 구급차 현장 도착 → 관제 지정 시 이송 출발")
 
     print("=== ② 수용 곤란 상황(학습 반영) ===")
     app._run_demo_scenario("refusal", monitor)

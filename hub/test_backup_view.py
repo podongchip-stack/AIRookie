@@ -68,6 +68,8 @@ def main() -> None:
     assert all("available" not in row for row in body["equipment"]), "장비엔 지금 남은 대수 칸이 없다(공개 정보 없음)"
     assert [s["department"] for s in body["specialties"]] == ["심장혈관흉부외과", "응급의학과"], "전문의 0명인 과는 뺀다"
     assert body["nursingGrade"] == "1" and body["hiraCollectedAt"] and body["source"] == "rule"
+    assert body["capability"]["grade"] == 3 and body["capability"]["source"] == "rule", "관제 병원 상세: 거미줄 유효 역량"
+    assert body["recentRefusals"] == [] and body["gps"], "관제 병원 상세: 최근 수용 곤란·위치"
     print("  [확인] 병상 보유·정원·가용, 장비 보유·운영, 혈관조영 설명, 전문의·간호등급")
 
     print("=== 이송 확정 차감 반영 ===")

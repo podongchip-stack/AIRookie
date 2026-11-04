@@ -327,6 +327,17 @@ class DispatchSim:
             unit = self._units.get(apid)
             return unit.case_id if unit else None
 
+    def place_on_scene(self, apid: str, case_id: str, at: GpsPoint) -> bool:
+        """시연 상황 부여(2026-11-04): 대기 중인 구급차를 그 사건의 현장에 도착한 상태로 바로 놓는다(출동 이동 생략).
+        이게 없으면 시연 사건의 구급차가 기지 대기로 남아, 이송이 확정돼도 출발·도착·수용 완료가 일어나지 않아 사건이 끝나지 않았다."""
+        with self._lock:
+            unit = self._units.get(apid)
+            if unit is None or unit.phase not in ("idle", "returning"):
+                return False
+            unit.phase, unit.case_id, unit.incident, unit.gps, unit.trip = "on_scene", case_id, at, at, None
+            unit.hospital_id = unit.hospital_gps = unit.dwell_until = None
+        return True
+
     def dispatch(self, apid: str, case_id: str, target: GpsPoint | None = None) -> tuple[bool, str]:
         """[이동]: 대기 또는 복귀 중일 때만. 그 순간 위치에서 현장으로 간다. target(주소 검색·지도 클릭으로
         고른 위치, 2026-10-01)이 있으면 그곳으로, 없으면 기지 근처 후보 중 무작위."""
