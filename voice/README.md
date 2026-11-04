@@ -44,15 +44,15 @@ pip install -r requirements.txt
 | Hub 저장소 · 경로 | 내용 | 로컬 폴더로 대신 쓰려면 |
 | --- | --- | --- |
 | [`Playedwell03/qwen3-asr-0.6b-119ko-tiny`](https://huggingface.co/Playedwell03/qwen3-asr-0.6b-119ko-tiny) | Qwen3-ASR-0.6B LoRA 어댑터 (`adapter_config.json`, `adapter_model.safetensors`) | `ASR_ADAPTER_DIR` |
-| [`podongchip/MF_BERT`](https://huggingface.co/podongchip/MF_BERT) | MF_BERT 처치판 4비트 ONNX hqq (`encoder.onnx`, `decoder.onnx`+`.data`, `catalog.json`, `tokenizer/`, 약 680MB) | `MF_BERT_DIR` |
+| [`podongchip/MF_BERT`](https://huggingface.co/podongchip/MF_BERT) | MF_BERT 통화 결과판 4비트 ONNX hqq (`encoder.onnx`, `decoder.onnx`+`.data`, `outcome_decoder.onnx`, `catalog.json`, `tokenizer/`, 약 690MB) | `MF_BERT_DIR` |
 
 환경변수를 주면 Hub에서 받지 않고 그 폴더를 쓴다(재학습한 가중치를 올리기 전에 시험할 때 등, `weights.py`).
-MF_BERT는 **2026-10-29 처치판의 Hub 커밋 해시 `5dd20eb8b75723f98d69e39f83a58989989577b5`로 고정**해서 받는다
-(`weights.py`의 `MF_BERT_REVISION` 기본값, 2026-10-29). 태그 `v4-2026-10-29-hqq`와 같은 커밋이다.
+MF_BERT는 **2026-11-04 통화 결과판의 Hub 커밋 해시 `41bbb84f939fa75ce7767ad66b6c343a24a1ae5b`로 고정**해서 받는다
+(`weights.py`의 `MF_BERT_REVISION` 기본값, 2026-11-04). 태그 `v5-2026-11-04-outcome`과 같은 커밋이다.
 `main`이나 태그 대신 해시를 쓰는 이유는, Hub에 구조가 바뀐 가중치가 올라오면 `MF_BERT/` 코드와 안 맞아 서버가 아예
 뜨지 않기 때문이다(2026-10-03 실제로 겪음). 새 가중치를 들여올 때는 `MF_BERT/` 코드를 먼저 맞춘 뒤 이 해시를 바꾼다.
-이전 모델(`v3-2026-10-20-rtn` 이하)은 처치 출력이 없어 지금 코드로 읽지 못한다 — `MfBertExtractor`가 `catalog.json`의
-처치 범주 목록을 대조해 서버가 뜰 때 바로 멈춘다.
+이전 모델은 지금 코드로 읽지 못한다 — `v4-2026-10-29-hqq`는 통화 결과 디코더(`outcome_decoder.onnx`)가 없고,
+`v3-2026-10-20-rtn` 이하는 처치 출력도 없다. `MfBertExtractor`가 파일과 `catalog.json`의 목록을 대조해 서버가 뜰 때 바로 멈춘다.
 
 MF_BERT는 HF 캐시(`hub/`) 대신 **`$HF_HOME/local/MF_BERT-<해시 앞 12자>/`에 실제 파일로** 받는다. HF 캐시의 스냅샷
 파일은 서로 다른 blob을 가리키는 심볼릭 링크라, onnxruntime이 `decoder.onnx`의 외부 데이터(`decoder.onnx.data`)를
@@ -72,7 +72,7 @@ Ctrl+C를 누르면(통화 종료) 남은 발화를 인식한 뒤 구조화 → 
 
 ## 이 브랜치가 하는 일
 
-통화 음성을 텍스트로 바꾸고 → 환자 수·환자별 14개 항목으로 구조화하고 Pre-KTAS 단계를 규칙으로 추정해 → `feature/hub`로 보낸다.
+통화 음성을 텍스트로 바꾸고 → 통화 결과(수용·거절·보류)·환자 수·환자별 14개 항목으로 구조화하고 Pre-KTAS 단계를 규칙으로 추정해 → `feature/hub`로 보낸다.
 dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 
 ```
@@ -104,6 +104,10 @@ dashboard로는 직접 보내지 않고 `feature/hub`를 거쳐 전달된다.
 > **2026-10-29 MF_BERT를 2026-10-29 처치판(4비트 ONNX hqq)으로 교체.** 환자마다 `treat_categories`(처치 범주 28개 중 고른 키
 > 목록)가 더해졌고 나머지 13개 항목은 형식이 같다. 모델은 처치를 말한 원문 구절(범주의 근거)도 내지만 `"오"`·`"이"`처럼 조각나
 > 나오는 일이 잦아 보내지 않는다. 처치 범주 디코딩은 `MF_BERT/treatments.py`. hub는 아직 이 필드를 읽지 않는다.
+>
+> **2026-11-04 MF_BERT를 2026-11-04 통화 결과판으로 교체.** `summary.call_outcome`(통화 하나에 하나, `수용`·`거절`·`보류`)이
+> 더해졌다. 처치판의 인코더·디코더를 고정한 채 두 번째 디코더(`outcome_decoder.onnx`)만 따로 학습한 것이라 환자 항목은 처치판과
+> 똑같다. 병원 응답이 텍스트에 없으면 `수용`으로 기우는 약점이 있다([알려진 제약사항](#알려진-제약사항--todo)). hub는 아직 이 필드를 읽지 않는다.
 
 **진입점은 3개**다. 셋 다 같은 모델·같은 후처리(`transcribe.emit_call_summary()`)를 쓰고
 출력 JSON 스키마도 같다.
@@ -341,8 +345,8 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 
 ### 구조화 — MF_BERT (`MF_BERT/`)
 
-**2026-10-29 처치판**(원본 학습 폴더 `MF_BERT_treat_cat/runs/2026-10-29_155117/last`, ONNX 변환·양자화
-`small-MF_BERT_treat_cat/2026-10-29_155117/last/hqq`). 통화 텍스트에 질문을 던져 답을 고르는 방식이다. **생성형 모델이 아니라**
+**2026-11-04 통화 결과판** = 2026-10-29 처치판(원본 학습 폴더 `MF_BERT_treat_cat/runs/2026-10-29_155117/last`, ONNX 변환·양자화
+`small-MF_BERT_treat_cat/2026-10-29_155117/last/hqq`) + 통화 결과 디코더(학습 폴더 `ML/MF BERT/outputs/default`). 통화 텍스트에 질문을 던져 답을 고르는 방식이다. **생성형 모델이 아니라**
 출력 형식이 깨질 일이 없고, 같은 입력에는 항상 같은 결과가 나온다. **KTAS 등급은 예측하지 않는다** — 아래 Pre-KTAS 참고.
 
 ```
@@ -354,8 +358,13 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
  ├ 활력징후: 통화 토큰 위에서 수치가 적힌 구간의 시작·끝 → 글자를 숫자로 읽음   vitals.py · ko_number.py (규칙)
  ├ 처치 범주: 28개 범주마다 있음 점수 → 0보다 큰(확률 0.5 초과) 범주의 키 목록   treatments.py
  └ 처치 구절: 토큰마다 B·I·O 태그 (묻기만 하고 내보내지 않음 — 아래)
+같은 통화 토큰을 통화 결과 디코더(outcome_decoder.onnx)도 읽음 → 수용·거절·보류 중 점수가 가장 높은 것
 ```
 
+- **통화 결과**(`call_outcome`): 통화가 끝난 시점의 병원 응답 — `수용`(받겠다), `거절`(못 받는다, 다른 병원 안내 포함),
+  `보류`(다시 연락·확인 중·끊김·정보만 전달처럼 통화 안에서 결론이 안 남). 학습된 질의 벡터 하나가 통화 토큰을 읽는 2층 디코더로,
+  인코더·기존 디코더를 고정한 채 통화 1,376건으로 따로 학습했다. 같은 출처의 검증 344건에서 정확도 0.994·macro-F1 0.993이지만
+  **실제 통화 테스트셋에는 통화 결과 정답이 없어 재지 못했다.** 학습·검증 통화가 모두 391토큰 이하라 512토큰을 넘는 긴 통화도 검증 전이다
 - **추론은 두 단계**: 환자 수 질문(0번)으로 환자 수 n을 정하고, 환자 1..n의 질문 15개씩을 한 번에 넣는다
 - **선택 항목**: 성별 3, 나이대 11, 주증상 대분류 17 + 판단 보류, 소분류 169 + 판단 보류(고른 대분류에 속한 것만), AVPU 6
   (`A`·`V`·`P`·`U`·`기타`·`언급 없음`). 대분류가 판단 보류면 소분류도 판단 보류다
@@ -468,7 +477,7 @@ RTX 5080 · CUDA · bf16 · 108.6초 통화(`1.m4a`) 기준.
 | 구분 | 모델 | 처리 방식 |
 | --- | --- | --- |
 | STT | Qwen3-ASR-0.6B + LoRA (`Playedwell03/qwen3-asr-0.6b-119ko-tiny`) | AI 처리 |
-| 정보 구조화 — 항목 판정 | KLUE RoBERTa-large + 결정 디코더 MF_BERT (팀 학습, `podongchip/MF_BERT` 2026-10-29 처치판 4비트 ONNX hqq, [모델 구조](#구조화--mf_bert-mf_bert)) | AI 처리 (선택·구간·범주, 생성형 아님) |
+| 정보 구조화 — 항목 판정 | KLUE RoBERTa-large + 결정 디코더 MF_BERT (팀 학습, `podongchip/MF_BERT` 2026-11-04 통화 결과판 4비트 ONNX hqq, [모델 구조](#구조화--mf_bert-mf_bert)) | AI 처리 (선택·구간·범주, 생성형 아님) |
 | 정보 구조화 — 활력징후 숫자 읽기 | *(모델 없음, `MF_BERT/vitals.py`·`MF_BERT/ko_number.py`)* | 규칙 기반 |
 | Pre-KTAS 추정 | *(모델 없음, `pre_ktas.py` — OTAS·Pre-KTAS·Pre-CTAS 기준)* | 규칙 기반 |
 
@@ -484,7 +493,7 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. MF_BERT는 onnxruntime CP
 **출력**: `feature/hub`로 전달되는 JSON. dashboard로는 직접 보내지 않는다.
 `feature/dashboard`의 `CallSummaryMessage` 타입과 1:1 대응하며(`schema.py`),
 **`summary`는 2026-10-21에 v2 스키마(17필드 + `meta`)에서 `{patient_count, patients[]}`(환자별 13개 항목 + `pre_ktas`)로 바뀌었고,
-2026-10-29에 환자마다 `treat_categories`가 더해졌다. hub·dashboard 쪽 수정은 담당자가 따로 진행한다.**
+2026-10-29에 환자마다 `treat_categories`가, 2026-11-04에 통화 단위 `call_outcome`이 더해졌다. hub·dashboard 쪽 수정은 담당자가 따로 진행한다.**
 
 ```json
 {
@@ -504,6 +513,7 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. MF_BERT는 onnxruntime CP
     ]
   },
   "summary": {
+    "call_outcome": "수용",
     "patient_count": 1,
     "patients": [
       {
@@ -535,12 +545,13 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. MF_BERT는 onnxruntime CP
   "source": "ai",
   "model_used": {
     "stt": "qwen3-asr-0.6b-119ko-tiny",
-    "llm": "mf-bert-treat-cat-klue-roberta-large-int4-hqq"
+    "llm": "mf-bert-treat-cat-outcome-klue-roberta-large-int4-hqq"
   }
 }
 ```
 
-(위 `summary`는 이 통화 텍스트를 지금 모델에 실제로 넣어 나온 값이다. "심전도 시행"은 처치 범주 28개에 없어 `treat_categories`에 들어가지 않는다.)
+(위 `summary`는 이 통화 텍스트를 지금 모델에 실제로 넣어 나온 값이다. "심전도 시행"은 처치 범주 28개에 없어 `treat_categories`에 들어가지 않는다.
+`call_outcome`이 `수용`인 것은 오답이다 — 이 텍스트엔 병원 응답이 없어 기준대로면 `보류`인데, 모델은 응답이 없으면 `수용`으로 기운다.)
 
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
@@ -551,6 +562,7 @@ Qwen3-ASR이 transformers 5.13 이상을 요구한다. MF_BERT는 onnxruntime CP
 | `transcript.timestamp` | string (ISO 8601) | 통화 시작 시각 (처리 시점에서 통화 길이만큼 거슬러 올라간 근사값) |
 | `transcript.duration_sec` | number | 통화 길이(초) |
 | `transcript.turns` | array | 발화별 원본 로그 (`speaker`는 화자 분리가 없어 `"미분리"` 고정, `excludedFromSummary`는 채우는 곳이 없어 항상 빠짐) |
+| `summary.call_outcome` | string | 통화 결과(통화 하나에 하나): `수용` / `거절` / `보류`(통화 안에서 결론이 안 남). 병원 응답이 텍스트에 없으면 `수용`으로 잘못 나올 수 있다 |
 | `summary.patient_count` | int | 이송할 환자 수(1 이상). `patients` 길이와 같다 |
 | `summary.patients[].gender` | string | `남성` / `여성` / `판단 보류` |
 | `summary.patients[].age_group` | string | `10대 미만` ~ `90대이상` / `판단 보류` |
@@ -653,6 +665,9 @@ MF_BERT.MfBertExtractor schema + pre_ktas  send_to_hub()
 - MF_BERT는 주증상이 약하다(실제 통화 테스트셋 대분류 0.68, 소분류 0.56 — [BENCHMARK.md](BENCHMARK.md)). Pre-KTAS 추정은 KTAS 정답으로 검증하지 않았다(소아·65세 이상 미반영)
 - 처치 범주는 재현율이 0.705라 말한 처치의 약 30%를 놓친다. 28개 범주 중 17개는 테스트셋에 나오지 않아 범주별 성능을 확인하지 못했다. Pre-KTAS 추정은 처치 범주를 쓰지 않는다(예: 가슴압박 중이면 1단계 — 근거 기준을 정한 뒤에 넣는다)
 - 활력징후 수치 범위 검사가 없어, 인식 오류로 터무니없는 수치가 나와도 그대로 나간다
+- **통화 결과(`call_outcome`)는 병원 응답이 텍스트에 없으면 `보류` 대신 `수용`으로 기운다.** 구급대원 브리핑만 있는 텍스트·"여보세요?"로
+  끊긴 통화·"네." 한 마디가 `수용`(확률 0.81~1.00)으로 나왔다(직접 만든 예문, 2026-11-04). 휴대폰 전화 앱은 병원과 실제 음성이 연결되지
+  않는 연출이라 STT 입력에 병원 쪽 말이 없을 수 있다 — 이 필드를 hub가 판단에 쓰기 전에 실제 통화로 확인해야 한다
 - Mac(MPS)·CPU의 ASR 실행은 검증하지 않았다. ASR은 CPU에서 느리다. MF_BERT는 Linux CPU에서만 확인했다
 - 마이크 권한 설정 필수 (macOS: 시스템 설정 > 개인정보 보호 > 마이크)
 - `data/voice_data/` 하위 전 폴더는 `.gitignore`에 포함되어 있어 오디오 원본과 변환 결과물은 저장소에 올라가지 않음

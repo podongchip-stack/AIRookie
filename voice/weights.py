@@ -16,10 +16,11 @@ ASR_ADAPTER_REPO_ID = "Playedwell03/qwen3-asr-0.6b-119ko-tiny"
 MF_BERT_REPO_ID = "podongchip/MF_BERT"
 # 받을 MF_BERT 버전(태그·브랜치·커밋). "main"을 받으면 Hub에 구조가 바뀐 가중치가 올라올 때 MF_BERT/ 코드와
 # 안 맞아 서버가 아예 뜨지 않는다(2026-10-03 10-02 가중치로 실제로 겪음). 그래서 MF_BERT/ 코드와 대조를 마친 커밋
-# 해시로 고정한다 — 2026-10-29 처치판 4비트 ONNX(HQQ, 태그 v4-2026-10-29-hqq와 같은 커밋).
-# 새 가중치를 들여올 때는 MF_BERT/ 코드를 맞춘 뒤 이 값(또는 MF_BERT_REVISION 환경변수)을 바꾼다. 이전 모델
-# (v3-2026-10-20-rtn 이하)은 처치 출력이 없어 이 코드로 읽지 못한다(MfBertExtractor가 catalog를 대조해 멈춘다).
-MF_BERT_REVISION = os.environ.get("MF_BERT_REVISION", "5dd20eb8b75723f98d69e39f83a58989989577b5")
+# 해시로 고정한다 — 2026-11-04 통화 결과판 4비트 ONNX(HQQ, 태그 v5-2026-11-04-outcome과 같은 커밋).
+# 새 가중치를 들여올 때는 MF_BERT/ 코드를 맞춘 뒤 이 값(또는 MF_BERT_REVISION 환경변수)을 바꾼다. 이전 모델은 이 코드로
+# 읽지 못한다 — v4-2026-10-29-hqq는 outcome_decoder.onnx가 없고, v3-2026-10-20-rtn 이하는 처치 출력도 없다
+# (MfBertExtractor가 파일과 catalog를 대조해 멈춘다).
+MF_BERT_REVISION = os.environ.get("MF_BERT_REVISION", "41bbb84f939fa75ce7767ad66b6c343a24a1ae5b")
 
 
 def resolve_asr_adapter_dir() -> Path:
@@ -31,7 +32,7 @@ def resolve_asr_adapter_dir() -> Path:
 
 
 def resolve_mf_bert_dir() -> Path:
-    """MF_BERT_DIR 환경변수가 있으면 그 폴더, 없으면 Hub의 MF_BERT 저장소 전체(ONNX 두 개 + catalog.json + tokenizer/)를 받아 그 경로를 돌려준다.
+    """MF_BERT_DIR 환경변수가 있으면 그 폴더, 없으면 Hub의 MF_BERT 저장소 전체(ONNX 세 개 + catalog.json + tokenizer/)를 받아 그 경로를 돌려준다.
 
     HF 캐시의 스냅샷 파일은 서로 다른 blob을 가리키는 심볼릭 링크라, onnxruntime이 decoder.onnx의 외부 데이터
     (decoder.onnx.data)를 찾을 때 링크를 따라가 "모델 폴더 밖 경로"로 거부한다. 그래서 MF_BERT만 링크 없이 실제

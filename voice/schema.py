@@ -28,8 +28,9 @@ class Transcript(BaseModel):
 
 
 class Summary(BaseModel):
-    """MF_BERT 처치판(2026-10-29) 출력 + 환자별 Pre-KTAS 추정.
+    """MF_BERT 통화 결과판(2026-11-04) 출력 + 환자별 Pre-KTAS 추정.
 
+    call_outcome: 통화가 끝난 시점의 병원 응답 (AI, "수용" | "거절" | "보류" — 보류는 통화 안에서 결론이 안 난 경우).
     patients[]의 항목: gender · age_group · cc_major · cc_minor · avpu (AI, 선택지) / sbp · dbp · hr · rr · spo2 ·
     temp · glucose · gcs (AI 구간 → 규칙 숫자 읽기, 말하지 않았으면 null) / treat_categories (AI, 처치 범주 28개 중
     고른 키 목록, 없으면 [] — MF_BERT/treatments.py의 CATEGORIES) / pre_ktas (규칙, pre_ktas.py —
@@ -37,6 +38,7 @@ class Summary(BaseModel):
     환자 항목은 모델 출력을 그대로 두고 여기서는 검증하지 않는다 — hub 담당자가 필요한 필드부터 타입을 좁힌다.
     """
 
+    call_outcome: Literal["수용", "거절", "보류"]
     patient_count: int
     patients: list[dict]
 
