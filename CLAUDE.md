@@ -22,7 +22,7 @@
 - AI는 의료진의 판단을 대체하지 않는다. 환자 정보 구조화 및 의사결정 기록 자동화 역할만 수행한다.
 - 병원 매칭은 거리·병상·존(Zone) 로직은 **규칙 기반 적합도 엔진**으로 구현하되, 예상 병명 ↔ 진료과 매칭만 경량 임베딩 모델로 보조한다 (생성형 LLM은 쓰지 않으며, 결과에 유사도 점수를 노출해 설명 가능한 추천 구조를 유지한다).
 - AI가 생성한 모든 환자 프로필은 구급대원이 확인·수정할 수 있다(Override). ~~최종 승인된 정보만 병원으로 전송된다~~ → **2026-10-13 동작을
-  문구에 맞췄다**: 순차 전화를 없애는 목적상 AI 요약은 통화가 끝나자마자 병원에 가되 "AI 요약 · 구급대원 확인 전"으로 표시되고, 구급대원이
+  문구에 맞췄다**: 순차 전화를 없애는 목적상 AI 요약은 통화가 끝나자마자 병원에 가되(**2026-11-04부터 현장 첫 통화는 구급대원이 [이송불가]를 고를 때 존 전체에 간다** — hub 참고사항 "첫 통화 판단") "AI 요약 · 구급대원 확인 전"으로 표시되고, 구급대원이
   확인·수정하면 갱신본(순위 칸이면 재매칭)이 다시 나가 "구급대원 확인"으로 바뀐다. 고친 칸은 AI 값 → 구급대원 값으로 병원 화면과 의사결정
   로그에 남는다(아래 4번 포맷). 예전엔 대시보드의 [수정]이 화면 안에서만 바뀌고 병원으로 나가지 않았다.
 - On-Premise 운영을 지향한다. 외부 상용 API로 환자 데이터가 나가지 않도록 한다.
@@ -754,6 +754,27 @@ dashboard 접근 코드로 쓰던 값은 재발급이 필요하다.
   수용 판단 대기·이송 확정(6분)인 병원이다. 한 사건의 추천이 바뀌면 통화 전인 다른 구급차 목록을 바로 다시 계산해 보낸다(연쇄는 한 번).
   경증 센터 보존은 중증도를 알아야 해서 통화 전 목록엔 없다(통화 뒤 순위에만). 응답은 `callAttempts`·`firstCallExhausted`·병원별 `firstCallReason`.
   휴대폰 앱은 병원 리스트를 hub 순서 그대로 보이고 Pre-KTAS 줄이 없다. 숫자는 전문의 검토 전 초안. 검증 `test_first_call.py`·`test_coordination.py`
+- **첫 통화 판단 — 이송확정·이송불가(2026-11-04)**: 안드로이드·아이폰 전화 앱에서 현장 첫 통화를 끝내면(`call_ended` + `awaitDecision: true`) 요약을
+  병원에 바로 보내지 않고 hub가 붙잡아 둔다(`_first_call_wait`, 통화 원문이 들어 있어 상태 파일엔 저장하지 않는다). 앱에 [이송확정]/[이송불가]가 뜨고 WS
+  `call_decision`(`confirm`/`reject`/`cancel`, `schema.CallDecision`)이 온다 — 요약 정리와 판단은 어느 쪽이 먼저 와도 늦게 온 쪽이 처리한다.
+  **[이송확정]**: 통화한 병원을 이 사건에서 승인으로 두고 요청 목록을 그 병원 하나로 좁혀(`HubEngine._case_only`) 요약을 그 병원에만 전달하고, 이어서 구급대원의
+  이송 승인(`final_approval`)과 같은 경로로 확정·출발시킨다. 확정이 받아들여지지 않으면(일시정지·이미 도착) 좁힌 목록을 풀고 존 전체에 요청하고 앱에
+  `action_refused`(`confirm_failed`). 도착 후 수용 불가·이송 중 철회로 존을 넓힐 때(`force_expand_zone`)도 좁힌 목록이 풀린다. **[이송불가]**: 통화한 병원을
+  거절(`rejected`, 사유 "사유 없음")로 적고(거절 비율·거절 로그 `stage: "first_call"`에 센다) 요약을 존 전체에 동시 전달 — 기존 흐름 그대로. `cancel`·통화 취소는 대기를
+  지운다. **추가 통화(이송 중·재선택)는 이 흐름이 아니라 기존대로 바로 반영된다.** 판단 대기에는 시간 제한이 없다(앱이 판단을 보내야 요약이 나간다 — 시간 초과
+  자동 전달은 정하지 않았다). 시연 콘솔·대시보드 통화 시연 경로는 `awaitDecision`을 안 보내 예전과 같다. 의사결정 로그 `first_call_awaiting_decision`·
+  `first_call_decision`·`first_call_declined`·`first_call_confirmed`·`first_call_confirm_failed`. 검증 `python test_first_call_decision.py`
+- **실제 양방향 통화(WebRTC, 2026-11-04)**: 시연 연출 통화(`call_connection`)와 별개로, 구급대 앱↔병원 앱이 WebRTC로 음성을 직접 주고받는 실제 통화.
+  hub는 상태·연결 협상 중계·종료만 관리한다(음성은 hub를 안 거친다). 규칙은 `hub/call_sessions.py`(순수 로직 — `callId`·`sessionRevision`·`negotiationRevision`,
+  `ringing → connecting → active → ended`, **병원이 받았다는 사실과 음성 연결 완료(`media_ready` 양쪽)를 구분**, 병원당 통화 1건·busy, 늦은/중복 메시지 무시,
+  신호 끊김 유예 10초 + `call_state_sync` 재접속), 소켓·권한 연동은 `app.py`(`_handle_call_session_message`). 병원 앱은 `identify`의 `callCapable`로 구분하고 같은
+  병원 코드의 웹 대시보드는 통화에 끼어들 수 없다. ICE는 기본 공개 STUN, `HUB_TURN_URLS`+`HUB_TURN_SECRET`이 있으면 만료형 TURN 자격 증명(coturn REST) — **TURN 서버는 아직 없다**.
+  **STT·요약·이송 판단은 이 통화에 연결돼 있지 않다**(개발계획서 5단계, 앱 설정 [실제 통화]로 켠다 — 기본 꺼짐이라 기존 시연 흐름은 그대로). 메시지·사유·한계는
+  hub/README.md "실제 양방향 통화(WebRTC)". 검증 `python test_call_sessions.py`. **안드로이드**: 접근 코드 `H-<hpid>`로 들어가면 구급대 화면 대신 병원 모드(수신 대기·벨소리·받기/거절·
+  통화 중·종료, `HospitalModel.kt`·`ui/HospitalScreens.kt`), 구급대 모드는 설정 [실제 통화]를 켜면 병원 [전화]가 실제 통화로 걸린다(`PhoneModel.kt`, `Rtc.kt` — SDK
+  `io.getstream:stream-webrtc-android:1.3.10`). 실기기(갤럭시)에서 aiortc 시험 발신기·수신기와 양방향 연동을 확인했다: 정상 통화·병원 종료·거절·무응답 30초·구급대 종료, LTE 폰↔PC
+  WebRTC 연결 성립, 폰 마이크 음성 프레임 수신. **아이폰**: 구급대 모드 발신 경로만(`Rtc.swift`, `stasel/WebRTC 156.0.0`, 설정 [실제 통화]) — **Windows에서 작성해
+  컴파일·실기기 검증을 못 했다(Mac 빌드 확인 필요).** 아직 없는 것: TURN 서버·relay 강제 시험, 잠금·백그라운드·푸시 수신(FCM/APNs·CallKit), 양쪽 음성 STT 연동, 두 대의 실제 기기(아이폰↔안드로이드) 통화, 수신 쪽 음성 재생 품질 측정
 - **현장 후보에 첫 연락 추천(2026-10-03)**: `scene_candidates`의 후보마다 `bedReliability`(AI, 매칭 결과와 같은 `BedReliabilityMatch` 형태·거리 기반 horizon)를 얹고, 빈 병상이 확인된 곳(미상·확인된 만실·1일 넘은 값 제외) 중 rArrive 최고 한 곳에 `firstCallRecommended: true`를 표시한다(`hub_engine.build_zone_candidates`). 신뢰도를 finalScore·순위에 안 쓴다는 원칙은 그대로 — 첫 통화 상대 제안은 틀려도 존 전체 동시 전달이 뒤를 받치는 비용 낮은 결정이라 여기만 확률을 직접 쓴다. 추천은 의사결정 로그 `first_call_recommended`로 남아 적중률(추천 병원이 실제 수용했는가)을 나중에 셀 수 있다. 검증은 `test_app_background.py`
 - **이송 중 부하 페널티(2026-10-03)**: 같은 병원으로 확정돼 이송 중(TTL 오버레이)인 건수만큼 이동시간에 분을 더한다 — `10분 × 이송 중/(이송 중+실질 가용)`(`scoring.load_penalty_min`). 예전엔 차감 병상이 표시·만실 판정에만 쓰여 병상 20개 병원에 19명을 확정해도 20번째에 1순위로 떴다(만실 절벽 강등뿐). 평시(이송 중 0건)는 페널티 0이라 동작 불변이고, 대량사고처럼 확정이 쌓일 때만 만실 전에 연속 분산한다. `HospitalMatch.inFlightCount·loadPenaltyMin·loadReason`, 관제 지도 `map_overview` 병원에도 `inFlightCount`(확정·도착 결과마다 재전송). 검증 `run_match.py test_load_penalty()`. 대량사고 시뮬레이션(`sim/`, feature/sim)의 goldenlink 팔과 로직 일치
 - **경증 역가산(2026-10-03) — ⚠ 값은 이제 통화 후 순위에서 spider λ 사다리로 대체됐다**: 통화 후 순위(spider_rule, 2026-10-15)에서 경증(KTAS 4·5)의

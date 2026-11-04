@@ -231,6 +231,9 @@ export interface HospitalCandidate {
   bedDataStale?: boolean;
   // 이 사건에서 제외된 병원(2026-10-05, 도착 후 수용 불가·이송 중 수용 철회) — 같은 사건엔 다시 승인·이송 승인 불가
   excluded?: boolean;
+  // 관제가 직접 지시한 이송(2026-11-03) — 병원이 승인한 게 아니라 관제가 이 병원을 요청 목록에 넣고 이송을 확정했다. 수용 승낙이 아니라
+  // 수용 여부는 도착 후 병원이 기록한다(병원 화면이 그렇게 표시한다)
+  directed?: boolean;
   // 수용 승인은 했지만 이송은 다른 병원으로 확정된 병원(hub 2026-10-22). 수용 승낙은 처치 공간 확보·기존 진료
   // 조정 같은 자원 선배정이라, 선택되지 않았음을 알려 그 준비를 풀 수 있게 해야 한다(임상 자문 요구).
   // status는 approved 그대로다 — 승인 자체는 유효하고 이동 중 재선택 대상으로 남는다.
@@ -606,6 +609,25 @@ export interface DispatcherPending {
   hospitalName: string | null;
 }
 
+// hub → 조작한 관제 탭: 대체 병원 제안(2026-11-03) — 병원 문제로 막힌 사건에서 이미 요청한 병원을 빼고 새로 요청할 만한 곳(규칙 기반, 제안일 뿐)
+export interface CaseAlternative {
+  hospitalId: string;
+  name: string;
+  distanceKm: number;
+  roadDistanceKm: number | null;
+  etaMin: number | null;
+  availableBedCount: number | null;
+  bedCountUnknown: boolean | null;
+  emergencyLevel: string | null;
+  reason: string | null;
+}
+export interface CaseAlternatives {
+  type: "case_alternatives";
+  caseId: string;
+  hospitals: CaseAlternative[];
+  source: "rule";
+}
+
 // hub → 조작한 관제 탭: 개입(존 확장·이송 확정 대행)의 결과(2026-11-01)
 export interface ActionResult {
   type: "action_result";
@@ -720,6 +742,10 @@ export interface DashboardState {
   actionRefused: { at: number; reason: string; caseId: string | null } | null;
   // 관제 개입(존 확장·이송 확정 대행)의 결과 — hub가 누른 소켓에만 보낸다(2026-11-01)
   actionResult: { at: number; caseId: string | null; action: string; ok: boolean; reason: string | null } | null;
+  // 시연 콘솔이 보낸 관제 지도 조작(2026-11-03) — seq는 받을 때마다 올라가 같은 요청이 또 와도 다시 적용된다
+  mapCommand: { seq: number; view: MapViewMode | null; fullscreen: "enter" | "exit" | null; panel: "past" | "reject" | "close" | null; standby: "on" | "off" | null } | null;
+  // 관제 [대체 병원 제안 확인]의 결과(2026-11-03) — 사건별 마지막 제안. at은 받은 시각
+  alternatives: Record<string, { at: number; hospitals: CaseAlternative[] }>;
   // 미선택 통보(2026-10-22) — 병원 화면이 안내를 띄우는 데 쓴다. at은 받은 시각(같은 사건이 또 와도 다시 띄우게).
   selectionReleased: { at: number; caseId: string; confirmedHospitalName: string } | null;
   // 마지막 대량사고 분배 확정 결과(시연 콘솔)
@@ -753,6 +779,16 @@ export interface SceneInputModeMessage {
 // 시연 영상 모드(2026-10-06) — hub가 연결된 모든 화면에 같은 값을 알린다. video면 화면마다 정해진 영상을 덮어 띄운다
 // (components/ui/DemoVideoOverlay가 자기 연결로 받는다)
 export type DemoMode = "live" | "video";
+
+// 관제 지도 보기(2026-11-03) — 시연 콘솔이 hub를 거쳐 관제 지도의 2D/3D·전체 화면을 바꾼다
+export type MapViewMode = "2d" | "3d";
+export interface MapViewMessage {
+  type: "map_view";
+  view?: MapViewMode;
+  fullscreen?: "enter" | "exit";
+  panel?: "past" | "reject" | "close";   // 지난 사건·거절 사유 통계 창 열기, 닫기
+  standby?: "on" | "off";                // 지도에 기지 대기 구급차 전부 표시
+}
 
 export interface DemoModeMessage {
   type: "demo_mode";
@@ -1090,7 +1126,7 @@ export interface AmbulanceSimState {
 
 // dashboard → hub: [이동] · [현장 종료] · [정지] · [상황 재개](2026-10-03)
 export interface DispatchCommand {
-  // sim_reset(2026-10-04): [시연 초기화] — 모든 사건 종료 + 전 구급차 기지 복귀(apid는 "*")
+  // sim_reset(2026-10-04): [시연 초기화] — 모든 사건 종료 + 전 구급차 기지 복귀(apid는 "*"). apid가 구급차 번호면 그 한 대만(2026-11-03)
   // sim_fast_forward(2026-10-04): [빨리감기] — 병원으로 이송 중이면 남은 이동을 3초 안에 마친다
   type: "dispatch" | "scene_end" | "sim_pause" | "sim_resume" | "sim_reset" | "sim_fast_forward";
   apid: string;
@@ -1143,6 +1179,8 @@ export type InboundMessage =
   | CaseHistory
   | ActionRefused
   | ActionResult
+  | MapViewMessage
+  | CaseAlternatives
   | SelectionReleased
   | MciAllocated
   | MciPlan

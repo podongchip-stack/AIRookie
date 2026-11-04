@@ -43,6 +43,21 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "apid") }
     }
 
+    /// true: 병원 선택 → [전화]를 실제 WebRTC 통화로 건다(병원 앱=안드로이드 병원 모드가 받는다). false: 예전 시연 연출 통화.
+    /// 실제 통화 중에는 STT·요약이 연결돼 있지 않다(다음 단계, 2026-11-04)
+    static var realCall: Bool {
+        get { UserDefaults.standard.object(forKey: "realCall") as? Bool ?? false }
+        set { UserDefaults.standard.set(newValue, forKey: "realCall") }
+    }
+
+    /// 이 설치본의 기기 식별자(진단용, 인증이 아니다) — 처음 쓸 때 만들어 보관한다
+    static var deviceID: String {
+        if let value = UserDefaults.standard.string(forKey: "deviceID") { return value }
+        let value = UUID().uuidString
+        UserDefaults.standard.set(value, forKey: "deviceID")
+        return value
+    }
+
     /// true: 기기 안에서 STT·MF_BERT(온디바이스). false: 웹과 같이 음성을 hub로 보내 중앙 voice가 처리
     static var onDevice: Bool {
         get { UserDefaults.standard.object(forKey: "onDevice") as? Bool ?? true }

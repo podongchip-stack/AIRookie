@@ -258,7 +258,7 @@ export function RequestCard({
                 <span style={{ width: 5, height: 5, borderRadius: "50%", background: HD.blue }} />
                 임베딩 매칭
               </span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: m.ink, background: m.bg, borderRadius: 999, padding: "3px 8px" }}>{m.label}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: m.ink, background: m.bg, borderRadius: 999, padding: "3px 8px" }}>{kind === "transit" && hospital.directed ? "관제 지시 이송 · 수용 확인 전" : m.label}</span>
             </div>
             <button
               type="button"

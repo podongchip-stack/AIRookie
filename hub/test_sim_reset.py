@@ -111,6 +111,23 @@ def main() -> None:
     sync = [m for m in amb.sent if m.get("type") == "case_sync"]
     assert not sync or sync[-1]["caseIds"] == [], sync
     print("  [확인] 따라잡기 사건 0건")
+
+    print("=== [이 구급대 초기화] A2만 → A2 사건만 닫히고 A1은 그대로 ===")
+    dispatch("A1", "c-u1")
+    dispatch("A2", "c-u2")
+    clock.t += 10
+    app._sim_tick()
+    match("c-u1")
+    match("c-u2")
+    app._pre_alerts["c-u2-pre"] = {"type": "pre_alert", "caseId": "c-u2-pre", "apid": "A2"}
+    monitor.sent.clear()
+    app._handle_sim_command({"type": "sim_reset", "apid": "A2", "timestamp": "t"})
+    closed = {m["caseId"] for m in monitor.sent if m.get("type") == "case_closed"}
+    assert {"c-u2", "c-u2-pre"} <= closed and "c-u1" not in closed, closed
+    assert app.sim.phase_of("A2") == "idle" and app.sim.phase_of("A1") == "on_scene"
+    assert "c-u1" in app.engine.list_open_case_ids() and "c-u2" not in app.engine.list_open_case_ids()
+    assert "c-u2-pre" not in app._pre_alerts
+    print(f"  [확인] 닫힌 사건 {sorted(closed)}, A1 사건 유지")
     print("\n모든 검사 통과")
 
 

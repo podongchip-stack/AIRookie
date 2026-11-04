@@ -657,6 +657,11 @@ class HubEngine:
         self._case_arrival: dict[str, ArrivalResult] = {}
         # (caseId, hospitalId) — 이 사건에서 제외된 병원(도착 후 수용 불가·이송 중 수용 철회, 2026-10-05)
         self._case_excluded: set[tuple[str, str]] = set()
+        # 관제가 직접 지시한 이송(2026-11-03): 사건 -> 병원 집합. 존 밖 병원도 이 사건의 요청 목록에 넣는다
+        self._case_directed: dict[str, set[str]] = {}
+        # 첫 통화 병원 이송 확정(2026-11-04): 사건 -> 요청 목록을 이 병원들로만 좁힌다(요약을 통화한 병원에만 전달).
+        # 도착 후 수용 불가·이송 중 철회로 존을 넓혀 다시 요청할 때(force_expand_zone) 풀린다.
+        self._case_only: dict[str, set[str]] = {}
         # caseId -> 앞선 통화 요약들(2026-10-05, 덧붙이기) — 새 통화 요약이 오면 직전 patientInfo를 여기 쌓는다
         self._case_prev_calls: dict[str, list[PatientUpdate]] = {}
         # caseId -> 구급대원 확인 상태(2026-10-13, Override): {"confirmedAt": iso, "records": {field: OverrideRecord}}.
@@ -710,12 +715,22 @@ class HubEngine:
                 self._dirty = True
             return removed, kept
 
-    def clear_bed_overlay(self) -> None:
-        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감을 비운다.
-        실운영 경로에서는 부르지 않는다(차감은 BED_HOLD_* 규칙으로만 풀리는 게 원칙)."""
+    def clear_bed_overlay(self, case_ids: set[str] | None = None) -> None:
+        """[시연 초기화] 전용(2026-10-04) — 이송 중 병상 차감을 비운다. case_ids를 주면(구급차 한 대만 초기화, 2026-11-03)
+        그 사건들이 얹은 차감만 푼다. 실운영 경로에서는 부르지 않는다(차감은 BED_HOLD_* 규칙으로만 풀리는 게 원칙)."""
         with self._lock:
-            self._bed_overlay.clear()
-            self._case_overlay.clear()
+            if case_ids is None:
+                self._bed_overlay.clear()
+                self._case_overlay.clear()
+            else:
+                for hid in list(self._bed_overlay):
+                    kept = [h for h in self._bed_overlay[hid] if h.case_id not in case_ids]
+                    if kept:
+                        self._bed_overlay[hid] = kept
+                    else:
+                        del self._bed_overlay[hid]
+                for key in [k for k in self._case_overlay if k[0] in case_ids]:
+                    del self._case_overlay[key]
             self._dirty = True
 
     def get_hospital(self, hospital_id: str) -> HospitalInfo | None:
@@ -1052,6 +1067,8 @@ class HubEngine:
         self._case_override.pop(case_id, None)
         self._case_extra_notes.pop(case_id, None)
         self._case_excluded = {k for k in self._case_excluded if k[0] != case_id}
+        self._case_directed.pop(case_id, None)
+        self._case_only.pop(case_id, None)
         for key in [k for k in self._reject_reason if k[0] == case_id]:
             del self._reject_reason[key]
         for key in [k for k in self._case_overlay if k[0] == case_id]:
@@ -1532,6 +1549,22 @@ class HubEngine:
         밖에서 하고, 승인 상태·병상을 읽어 조립하는 부분만 락 안에서 한다."""
         expected_diagnosis = voice.summary.mechanism
         candidates = self._candidates_in_zone(ambulance_gps, max_zone)
+        # 관제가 직접 지시한 병원은 존 밖이어도 이 사건의 요청 목록에 넣는다(2026-11-03)
+        with self._lock:
+            present = {info.hospitalId for info, _ in candidates}
+            for hid in self._case_directed.get(voice.caseId, set()) - present:
+                forced = self._hospitals.get(hid)
+                if forced is not None:
+                    candidates.append((forced, haversine_km(ambulance_gps.lat, ambulance_gps.lng, forced.gps.lat, forced.gps.lng)))
+            # 첫 통화 병원으로 확정된 사건은 그 병원만 요청 목록에 남긴다(존 밖이어도 넣는다)
+            only = self._case_only.get(voice.caseId)
+            if only is not None:
+                candidates = [(info, d) for info, d in candidates if info.hospitalId in only]
+                kept = {info.hospitalId for info, _ in candidates}
+                for hid in only - kept:
+                    forced = self._hospitals.get(hid)
+                    if forced is not None:
+                        candidates.append((forced, haversine_km(ambulance_gps.lat, ambulance_gps.lng, forced.gps.lat, forced.gps.lng)))
 
         # 진료과 매칭(임베딩) + info-v2 15개 질환군 중 이번 사건에 해당하는 것 하나(키워드 규칙, 없으면 None —
         # disease_group.py). 질환군은 사건 전체에 하나뿐이고 finalScore에 안 들어가며 설명·declared_no 판정에만
@@ -1678,6 +1711,7 @@ class HubEngine:
                         unavailableReason=_unavailable_reason(status, demote),
                         bedDataStale=stale,
                         excluded=(voice.caseId, info.hospitalId) in self._case_excluded,
+                        directed=info.hospitalId in self._case_directed.get(voice.caseId, ()),
                     )
                 )
 
@@ -2135,6 +2169,8 @@ class HubEngine:
             current = self._case_max_zone.get(case_id, 1)
             voice = self._case_voice.get(case_id)
             gps_fallback = self._case_gps_fallback.get(case_id, False)
+            # 첫 통화 병원 한 곳으로 좁혀 둔 사건이 갈 곳을 잃었다 — 이제부터는 존 전체에 다시 요청한다
+            self._case_only.pop(case_id, None)
         if voice is None:
             return None
         new_max = to_zone if to_zone is not None else self._expand_until_nonempty(ambulance_gps, current + 1)
@@ -2157,6 +2193,75 @@ class HubEngine:
     def get_case_status(self, case_id: str, hospital_id: str) -> str:
         with self._lock:
             return self._approval_status.get((case_id, hospital_id), "pending")
+
+    def direct_transport(self, case_id: str, hospital_id: str, ambulance_gps: GpsPoint) -> tuple[bool, str | None]:
+        """관제가 이 사건을 이 병원으로 직접 보낸다(2026-11-03) — 병원이 승인하지 않아도 관제가 판단해 지시할 수 있다.
+        병원을 이 사건의 요청 목록에 넣고(존 밖이어도) 승인 상태로 표시한 뒤 결과를 다시 만든다. 실제 이송 확정은 호출자가 기존
+        이송 확정(final_approval, 관제 대행) 경로로 이어서 한다 — 병상 차감·구급차 출발·구급대원 공지가 모두 같다.
+        병원의 수용 승낙이 아니므로 결과의 `directed`로 표시되고, 수용 여부는 도착 후 병원이 기록한다.
+        (ok, 거부 사유)를 돌려준다."""
+        with self._lock:
+            voice = self._case_voice.get(case_id)
+            result = self._case_results.get(case_id)
+            if voice is None or result is None:
+                return False, "no_case_result"
+            if self._hospitals.get(hospital_id) is None:
+                return False, "unknown_hospital"
+            if (case_id, hospital_id) in self._case_excluded:
+                return False, "excluded"
+            if any(h.status == "confirmed" for h in result.hospitals):
+                return False, "already_confirmed"
+            if self._is_confirmed_full(hospital_id):
+                return False, "beds_full"
+            max_zone = self._case_max_zone.get(case_id, 1)
+            gps_fallback = self._case_gps_fallback.get(case_id, False)
+            self._case_directed.setdefault(case_id, set()).add(hospital_id)
+            self._approval_status[(case_id, hospital_id)] = "approved"
+            self._dirty = True
+        decision_log.log_decision("dispatcher_directed_transport", {"caseId": case_id, "hospitalId": hospital_id, "source": "rule"})
+        self.process_voice_summary(voice, ambulance_gps, max_zone=max_zone, gps_fallback=gps_fallback)
+        return True, None
+
+    def mark_first_call_declined(self, case_id: str, hospital_id: str) -> None:
+        """구급대원이 첫 통화 병원을 [이송불가]로 판단했다(2026-11-04) — 그 병원을 이 사건에서 거절(rejected)로 적는다.
+        병원 대시보드의 [불가]와 같은 상태·사유 어휘("사유 없음")를 쓰므로 거절 비율(존 확장)에도 센다.
+        요약을 존 전체에 보내는 매칭은 호출자가 이어서 한다."""
+        with self._lock:
+            self._approval_status[(case_id, hospital_id)] = "rejected"
+            self._reject_reason[(case_id, hospital_id)] = "UNSPECIFIED"
+            self._dirty = True
+
+    def begin_first_call_confirm(self, case_id: str, hospital_id: str) -> bool:
+        """구급대원이 첫 통화 병원으로 [이송확정]했다(2026-11-04) — 그 병원이 통화에서 수용을 말했으므로 이 사건에서
+        승인(approved)으로 두고, 요청 목록을 그 병원 하나로 좁힌다(요약을 다른 병원에는 보내지 않는다). 실제 이송 확정
+        (병상 차감·구급차 출발)은 호출자가 기존 이송 승인(final_approval) 경로로 이어서 한다.
+        알 수 없는 병원이면 False."""
+        with self._lock:
+            if self._hospitals.get(hospital_id) is None:
+                return False
+            self._case_only[case_id] = {hospital_id}
+            self._approval_status[(case_id, hospital_id)] = "approved"
+            self._reject_reason.pop((case_id, hospital_id), None)
+            self._dirty = True
+            return True
+
+    def abort_first_call_confirm(self, case_id: str, hospital_id: str) -> None:
+        """이송확정이 받아들여지지 않았을 때(begin_first_call_confirm 되돌리기) — 좁힌 목록과 승인 표시를 푼다."""
+        with self._lock:
+            self._case_only.pop(case_id, None)
+            if self._approval_status.get((case_id, hospital_id)) == "approved":
+                del self._approval_status[(case_id, hospital_id)]
+            self._dirty = True
+
+    def rematch_case(self, case_id: str, ambulance_gps: GpsPoint) -> HubMatchResult | None:
+        """저장된 통화 요약 그대로 요청 목록을 다시 만든다(통화 한 번을 두 번 세지 않는다). 요약이 없으면 None."""
+        with self._lock:
+            voice = self._case_voice.get(case_id)
+            max_zone = self._case_max_zone.get(case_id, 1)
+            gps_fallback = self._case_gps_fallback.get(case_id, False)
+        if voice is None:
+            return None
+        return self.process_voice_summary(voice, ambulance_gps, max_zone=max_zone, gps_fallback=gps_fallback)
 
     def has_other_approved(self, case_id: str, except_hospital: str) -> bool:
         with self._lock:

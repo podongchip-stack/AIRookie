@@ -68,7 +68,7 @@ function agentSteps(inc: Incident, mc: MonitorCase | undefined, group: Assignmen
   return steps;
 }
 
-export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneExpand, onDesignate, onOpenHospital }: {
+export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneExpand, onDesignate, onOpenHospital, handling }: {
   inc: Incident;
   mc: MonitorCase | undefined;
   group: AssignmentGroup | undefined;
@@ -77,6 +77,8 @@ export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneE
   onZoneExpand: (caseId: string) => void;
   onDesignate: (caseId: string, hospitalId: string) => void;
   onOpenHospital?: (hospitalId: string) => void;
+  // 병원 문제로 막힌 사건의 [처리 조치](대체 병원 제안·직접 이송·전화 확인 — HandlingActions, 2026-11-03 develop)
+  handling?: React.ReactNode;
 }) {
   const confirmed = inc.hospitals.some((h) => h.st === "t");
   const waiting = inc.hospitals.filter((h) => h.st === "w").length;
@@ -110,6 +112,7 @@ export function CaseDetailPanel({ inc, mc, group, now, onConfirmRequest, onZoneE
 
       {/* 지금 진행 상황 */}
       <CaseStatusSummary inc={inc} now={now} />
+      {handling}
 
       {/* AI 에이전트 활동 */}
       <section style={secStyle}>

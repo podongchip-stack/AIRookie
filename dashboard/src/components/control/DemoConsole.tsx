@@ -597,14 +597,16 @@ type MciCasualty = { no: number; caseId: string; apid: string; templateKey: stri
 type DemoConsoleProps = {
   embedded?: boolean;
   singleUnit?: boolean;
+  /** 한 구급대에 고정한 칸(동시 화면 /control/dual의 한쪽 칸) — 탭·다른 구급대 패널 없이 그 구급대만 조작한다 */
+  fixedApid?: string;
   activeApid?: string | null;
   onAmbulanceChange?: (apid: string | null) => void;
 };
 
 /** 기존 콘솔과 관제 지도에서 같은 시연 동작을 사용한다. */
-export function DemoConsole({ embedded = false, singleUnit = true, activeApid, onAmbulanceChange }: DemoConsoleProps) {
-  const { state, connectionMode, sendRaw, sendCallConnection, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode } =
-    useDashboardSocket({ role: "monitor", id: embedded ? "map-control" : "control" });
+export function DemoConsole({ embedded = false, singleUnit = true, fixedApid, activeApid, onAmbulanceChange }: DemoConsoleProps) {
+  const { state, connectionMode, sendRaw, sendCallConnection, sendAction, sendCallSignal, sendSimCommand, sendTransportVitals, sendZoneExpand, sendMciAllocate, sendMciPreview, sendDemoMode, sendSceneInputMode, sendMapView } =
+    useDashboardSocket({ role: "monitor", id: fixedApid ? `control-${fixedApid}` : embedded ? "map-control" : "control" });
   const simOn = state.identity.simDispatch === true;
   const ambulances = state.mapOverview?.ambulances ?? [];
   const hospitalInfo = new Map<string, MapHospital>((state.mapOverview?.hospitals ?? []).map((h) => [h.hospitalId, h]));
@@ -615,7 +617,7 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
   };
   const requestedApid = activeApid !== undefined ? activeApid : selectedApid;
   // 고정 시연(singleUnit)은 구급대 탭으로 DEMO_UNITS 중 하나를 고른다 — 상태는 구급차(apid)별 hub 상태에서 나온다
-  const [unitApid, setUnitApid] = useState<string>(DEMO_UNITS[0].apid);
+  const [unitApid, setUnitApid] = useState<string>(fixedApid ?? DEMO_UNITS[0].apid);
   const demoUnit = DEMO_UNITS.find((u) => u.apid === unitApid) ?? DEMO_UNITS[0];
   const apid = singleUnit ? demoUnit.apid : ambulances.find((a) => a.apid === requestedApid)?.apid ?? ambulances[0]?.apid ?? null;
   const sim = apid ? state.ambulanceSim[apid] ?? null : null;
@@ -629,7 +631,7 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
   const confirmedHospital = myCase?.hospitals.find((h) => h.status === "confirmed") ?? null;
   const confirmedId = confirmedHospital?.hospitalId ?? null;
   // 고정 시연의 다른 구급대 사건 중 병원 응답을 기다리는 것(이송 확정 전) — 탭을 바꾸지 않고 여기서 바로 응답한다
-  const otherUnitCases = singleUnit
+  const otherUnitCases = singleUnit && !fixedApid
     ? DEMO_UNITS.filter((u) => u.apid !== demoUnit.apid).flatMap((u) => {
         const unitSim = state.ambulanceSim[u.apid];
         const unitCase = unitSim?.caseId ? state.monitorCases[unitSim.caseId] : null;
@@ -640,7 +642,7 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
 
   // 발생 지점은 항상 명시한다(기본 첫 프리셋) — 출동 구급대는 운영자가 고르지 않고
   // 지점에서 가장 가까운 대기 구급대가 자동 결정되므로, 지점 없는 '무작위'는 뺐다(2026-10-04).
-  const initialScenario = singleUnit ? UNIT_SCENARIOS.find((sc) => sc.key === DEMO_UNITS[0].defaultScenario) ?? null : null;
+  const initialScenario = singleUnit ? UNIT_SCENARIOS.find((sc) => sc.key === (DEMO_UNITS.find((u) => u.apid === fixedApid) ?? DEMO_UNITS[0]).defaultScenario) ?? null : null;
   const [spot, setSpot] = useState<Spot>(initialScenario?.spot ?? PRESET_LOCATIONS[0]);
   // 신고 접수 때 고른 1차 증상(2026-10-04) — 실무에선 상황실이 신고 전화에서 증상 개요를
   // 먼저 안다. 출동과 함께 예비 고지에 실리고, ②(현장 확인)에서 기본 선택으로 이어진다.
@@ -804,6 +806,16 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
     }
     note(`동시 출동 — ${results.join(" · ")}`);
   }
+
+  // 동시 화면(/control/dual)의 [동시 출동] 신호 — 출동 전(①) 화면인 칸이 각자 고른(기본) 상황으로 출동한다
+  const handleOccurRef = useRef<() => void>(() => {});
+  handleOccurRef.current = () => handleOccur();
+  useEffect(() => {
+    if (!fixedApid) return;
+    const onDispatch = () => { if (screen === "occur") handleOccurRef.current(); };
+    window.addEventListener("demo-dispatch", onDispatch);
+    return () => window.removeEventListener("demo-dispatch", onDispatch);
+  }, [fixedApid, screen]);
 
   function handleOccur() {
     // 출동대는 수동 선택과 무관하게 **항상 자동**(최근접 대기 구급대)
@@ -1121,6 +1133,41 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
     if (sendSimCommand("sim_reset", "*", "")) note("시연 초기화 — 모든 사건 종료, 전 구급대 기지 복귀");
   }
 
+  // [이 구급대 초기화](2026-11-03) — 구급차 한 대만 기지로 돌리고 그 구급차의 사건만 닫는다. 두 대를 동시에 시연하다
+  // 한 대만 처음부터 다시 하려는 용도라 다른 구급대의 사건·통화·병상 차감·콘솔 상태는 그대로 둔다. hub는 sim_reset에
+  // apid를 실어 받는다(콘솔 전체 초기화는 "*").
+  function handleUnitReset(targetApid: string) {
+    const unit = DEMO_UNITS.find((u) => u.apid === targetApid);
+    if (!window.confirm(`${unit?.name ?? "이 구급대"}만 사건을 종료하고 기지로 되돌릴까요? (다른 구급대는 그대로)`)) return;
+    const caseIds = new Set<string>();
+    const simCase = state.ambulanceSim[targetApid]?.caseId;
+    if (simCase) caseIds.add(simCase);
+    if (localCaseIds[targetApid]) caseIds.add(localCaseIds[targetApid]);
+    caseIds.forEach((id) => {
+      if (timersRef.current[id]) clearInterval(timersRef.current[id]);
+      delete timersRef.current[id];
+    });
+    const without = <T,>(prev: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => !caseIds.has(key) && key !== targetApid));
+    setPlaying(without);
+    setLocalCaseIds(without);
+    setReported(without);
+    setDispatchInfos(without);
+    setTemplateCases(without);
+    setFollowupSent(without);
+    setTripStart(without);
+    setCaseHospital(without);
+    delete pendingDispatchRef.current[targetApid];
+    delete unitPicks.current[targetApid];
+    if (targetApid === apid) {
+      setVerifyKey(null);
+      setSending(false);
+      setManualArrival(false);
+      setRejectTarget(null);
+    }
+    if (sendSimCommand("sim_reset", targetApid, "")) note(`${unit?.name ?? targetApid} 시연 초기화 — 사건 종료, 기지 복귀`);
+  }
+
   function stopScenario(targetCaseId: string) {
     const timer = timersRef.current[targetCaseId];
     if (timer) clearInterval(timer);
@@ -1362,6 +1409,11 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
             )}
             {/* 시연 초기화(2026-10-04) — 일시정지와 달리 **모든 것을 지우는 리셋**: 사건 전부 종료
                 (모든 대시보드에서 사라짐) + 전 구급대 기지 복귀 + 이송 중 병상 차감 해제 */}
+            {simOn && singleUnit && apid && (
+              <button type="button" style={headerButton} title="이 구급대의 사건만 종료하고 기지로 되돌립니다 — 다른 구급대는 그대로" onClick={() => handleUnitReset(apid)}>
+                {demoUnit.name} 초기화
+              </button>
+            )}
             {simOn && (
               <button type="button" style={headerButton} onClick={handleSimReset}>
                 시연 초기화
@@ -1384,6 +1436,31 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
               <option value="">상황 부여 ▾</option>
               {DEMO_SCENARIOS.map((d) => <option key={d.kind} value={d.kind}>{d.label}</option>)}
             </select>
+            {/* 관제 지도 원격 조작(2026-11-03) — 관제 지도 화면의 2D/3D·전체 화면을 hub를 거쳐 바꾼다. 전체 화면은 브라우저 제약상
+                관제 화면에서 한 번 눌러야 켜질 수 있다(안내가 뜬다) */}
+            {(
+              [
+                ["2D 지도", { view: "2d" }],
+                ["3D 거미줄", { view: "3d" }],
+                ["지도 전체화면", { fullscreen: "enter" }],
+                ["전체화면 종료", { fullscreen: "exit" }],
+                ["지난 사건", { panel: "past" }],
+                ["거절 사유 통계", { panel: "reject" }],
+                ["창 닫기", { panel: "close" }],
+                ["대기 구급차 표시", { standby: "on" }],
+                ["대기 구급차 숨김", { standby: "off" }],
+              ] as [string, Parameters<typeof sendMapView>[0]][]
+            ).map(([label, command]) => (
+              <button
+                key={label}
+                type="button"
+                style={headerButton}
+                title="관제 화면에 바로 적용됩니다(관제 지도가 열려 있어야 합니다)"
+                onClick={() => sendMapView(command) ? note(`관제 화면 — ${label}`) : note("hub와 연결이 끊겨 관제 지도를 바꾸지 못했습니다")}
+              >
+                {label}
+              </button>
+            ))}
             {/* 시연 영상 모드(2026-10-06) — 연결된 모든 화면(관제 지도·병원·콘솔·구급차)이 각자 영상으로. 영상 위 [시연 모드]로 돌아온다 */}
             <button type="button" style={headerButton} onClick={() => sendDemoMode("video") || note("hub와 연결이 끊겨 영상 모드로 바꾸지 못했습니다")}>
               영상 모드
@@ -1397,6 +1474,7 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
             >
               {devMode ? "개발 모드 켜짐" : "개발 모드"}
             </button>
+            {!embedded && <Link href="/control/dual" style={{ fontSize: 14, fontWeight: 700, color: C.blue, textDecoration: "none", padding: "0 4px" }}>동시 화면 →</Link>}
             {!embedded && <Link href="/map" style={{ fontSize: 14, fontWeight: 700, color: C.blue, textDecoration: "none", padding: "0 4px" }}>관제 지도 →</Link>}
             <ConnectionDot mode={connectionMode} />
           </div>
@@ -1416,7 +1494,14 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
           </section>
         )}
 
-        {singleUnit && (
+        {singleUnit && fixedApid && (
+          <section style={{ ...panel, padding: "10px 16px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px" }}>
+            <strong style={{ fontSize: 14 }}>{demoUnit.name} · {PHASE_SHORT[phase]}</strong>
+            <span style={{ fontSize: 12 }}>휴대폰 <b>{demoUnit.phoneCode}</b> · 아이패드 <b>{demoUnit.tabletCode}</b></span>
+            {!fixedUnit && <span role="alert" style={{ color: C.red }}>{demoUnit.name}가 hub에 등록되어 있지 않습니다.</span>}
+          </section>
+        )}
+        {singleUnit && !fixedApid && (
           <section style={{ ...panel, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
             <div role="tablist" aria-label="시연 구급대" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "stretch" }}>
               {DEMO_UNITS.map((unit) => {
@@ -1441,7 +1526,7 @@ export function DemoConsole({ embedded = false, singleUnit = true, activeApid, o
           </section>
         )}
 
-        {singleUnit && otherUnitCases.length > 0 && (
+        {singleUnit && !fixedApid && otherUnitCases.length > 0 && (
           <section style={{ ...panel, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
             <strong style={{ fontSize: 14 }}>다른 구급대 병원 응답</strong>
             {otherUnitCases.map(({ unit, c }) => {

@@ -572,6 +572,9 @@ class HospitalMatch(BaseModel):
     bedDataStale: bool = False
     # 이 사건에서 제외된 병원(2026-10-05) — 도착 후 수용 불가·이송 중 수용 철회. 같은 사건엔 다시 승인할 수 없다
     excluded: bool = False
+    # 관제가 직접 지시한 이송(2026-11-03) — 병원이 승인한 게 아니라 관제가 이 병원을 요청 목록에 넣고 이송을 확정했다.
+    # 병원 화면은 "수용 여부는 도착 후 확인"으로 알려야 한다(수용 승낙이 아니다)
+    directed: bool = False
     # 수용 승인은 했지만 이송은 다른 병원으로 확정된 병원(2026-10-22). 임상 자문 요구 — 수용 승낙은 빈 병상 확인이
     # 아니라 처치 공간 확보·기존 진료 조정·신규 수용 제한 같은 **자원 선배정**이므로, 선택되지 않았음을 즉시 알려
     # 그 준비를 풀 수 있게 해야 한다(poc/CLINICAL_CONVERGENCE.md §4). status는 approved 그대로이고 — 승인 자체는
@@ -740,6 +743,19 @@ class CallSignal(BaseModel):
     device: Optional[Literal["phone", "tablet"]] = None
     # 통화 취소(2026-10-05): call_ended와 함께 true면 이 통화 음성은 처리하지 않고 버린다(요약·전달 없음).
     cancelled: Optional[bool] = None
+    # 첫 통화 판단 대기(2026-11-04): call_ended와 함께 true면 요약을 병원에 보내지 않고 hub가 붙잡아 두었다가
+    # 구급대원의 이송확정·이송불가(CallDecision)에 따라 처리한다. 현장 첫 통화에만 쓴다(추가 통화는 기존대로 바로 반영).
+    awaitDecision: Optional[bool] = None
+
+
+class CallDecision(BaseModel):
+    """첫 통화를 마친 구급대원의 판단(2026-11-04) — 구급차 소켓이 보낸다.
+    confirm: 통화한 병원으로 바로 이송 확정(요약은 그 병원에만) / reject: 통화한 병원은 불가로 기록하고 존 전체에 동시 전달 /
+    cancel: 판단 없이 닫는다(인식된 말이 없어 요약이 없는 경우 등)."""
+    type: Literal["call_decision"] = "call_decision"
+    caseId: str
+    decision: Literal["confirm", "reject", "cancel"]
+    timestamp: str
 
 
 # ── feature/dashboard → feature/hub (입력, 소켓 연결 시 자기소개) ───────────
@@ -763,6 +779,9 @@ class DashboardIdentify(BaseModel):
     role: DashboardRole
     # role="hospital"이면 hpid, role="ambulance"면 apid.
     id: str
+    # 실제 통화(WebRTC) 수신이 가능한 병원 앱(안드로이드 병원 모드, 2026-11-04)이면 true — hub가 이 기기에만 수신 전화를 울린다.
+    # 같은 병원 코드로 열린 웹 대시보드는 보내지 않는다(수신 기기로 세지 않는다).
+    callCapable: Optional[bool] = None
 
 
 # ── feature/dashboard(병원) → feature/hub (입력, 현재 정보 확인) ─────────────

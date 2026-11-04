@@ -49,7 +49,18 @@ import xyz.goldenlink.core.PatientInfo
 import xyz.goldenlink.core.PatientOverrideMessage
 import xyz.goldenlink.core.isoNow
 import xyz.goldenlink.core.CallConnectionMessage
+import xyz.goldenlink.core.CallDecisionMessage
+import xyz.goldenlink.core.CallError
+import xyz.goldenlink.core.CallHangupMessage
+import xyz.goldenlink.core.CallInviteMessage
+import xyz.goldenlink.core.CallLabels
 import xyz.goldenlink.core.CallSignalMessage
+import xyz.goldenlink.core.CallState
+import xyz.goldenlink.core.MediaReadyMessage
+import xyz.goldenlink.core.RtcIceIn
+import xyz.goldenlink.core.RtcIceMessage
+import xyz.goldenlink.core.RtcSdpIn
+import xyz.goldenlink.core.RtcSdpMessage
 import xyz.goldenlink.core.FirstCallRequest
 import xyz.goldenlink.core.CallStatus
 import xyz.goldenlink.core.CallTranscriptLine
@@ -70,8 +81,9 @@ import java.util.UUID
 /**
  * 웹 전화 앱(dashboard/src/app/phone/page.tsx + PhoneCallView.tsx)·아이폰 PhoneModel.swift의 상태와 규칙.
  * 휴대폰은 통화 + 환자 정보·이송 승인(아이패드 구급차 앱과 같은 화면, 2026-10-29)을 한다 — 출동·현장 종료는 태블릿/PC 대시보드에서 한다. 사건(caseId)도 만들지 않고
- * hub 출동 상태(ambulance_phase.caseId)를 그대로 쓴다. 통화는 [취소]와 [전송]으로 끝난다 — [전송]을 눌러야만 음성을
- * 처리해 병원에 보낸다. 현장 첫 통화 뒤에도 환자 상태가 바뀌면 추가 통화를 할 수 있고, 새 요약은 환자 정보에 덧붙는다.
+ * hub 출동 상태(ambulance_phase.caseId)를 그대로 쓴다. 통화는 [취소]와 [통화 종료]([전송])로 끝난다 — 눌러야만 음성을
+ * 처리한다. 현장 첫 통화는 끝낸 뒤 [이송확정](통화 병원으로 출발, 요약은 그 병원에만)/[이송불가](요약을 존 전체에 동시 전달)를 고른다(2026-11-04).
+ * 현장 첫 통화 뒤에도 환자 상태가 바뀌면 추가 통화를 할 수 있고, 새 요약은 환자 정보에 덧붙는다(바로 반영).
  */
 class PhoneModel(app: Application) : AndroidViewModel(app) {
     val settings = Settings(app)
@@ -80,7 +92,9 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     var connection by mutableStateOf(HubSocket.State.CONNECTING)
     var apid by mutableStateOf<String?>(null)  // 접근 코드로 정한 소속 구급차
     /** 접근 코드를 아직 입력하지 않았다 — 앱은 코드 입력 화면만 보인다(아이폰과 같음) */
-    var accessRequired by mutableStateOf(settings.apid.isBlank())
+    var accessRequired by mutableStateOf(settings.apid.isBlank() && settings.hospitalId.isBlank())
+    /** 병원 접근 코드(H-…)로 들어온 병원 모드 — 비어 있지 않으면 구급대 화면 대신 수신 전화 화면(HospitalModel)을 쓴다 */
+    var hospitalId by mutableStateOf(settings.hospitalId)
     var accessChecking by mutableStateOf(false)
     var accessError by mutableStateOf<String?>(null)
     var identity by mutableStateOf<IdentityInfo?>(null)
@@ -144,6 +158,12 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         val endedAt: Long? = null,
         val matchVersionAtSend: Int = 0,
         val callRoundAtSend: Int = 0,
+        /** 현장 첫 통화를 끝낸 뒤 구급대원의 판단(2026-11-04): null = 아직 고르지 않음, "confirm" = 통화 병원으로 이송 확정, "reject" = 이송불가(존 전체 전달) */
+        val decision: String? = null,
+        val decidedAt: Long? = null,
+        /** 실제 통화(WebRTC, 2026-11-04) — 병원 앱과 음성을 직접 주고받는다. 이 통화엔 STT·요약·이송 판단이 없다. callId는 hub 통화 식별자 */
+        val webrtc: Boolean = false,
+        val callId: String? = null,
     ) {
         enum class Phase { CONNECTING, IN_CALL, ENDED }
     }
@@ -163,6 +183,11 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     private var noticeJob: Job? = null
     private var tickJob: Job? = null
     private var callRequestId: String? = null  // 지금 보낸 전화 연결 요청 — hub의 call_status가 내 요청에 대한 것인지 가린다
+
+    // 실제 통화(WebRTC, 2026-11-04)의 연결·오디오 — init { start() }가 stop()을 부르므로 init보다 먼저 선언해야 한다(Kotlin은 선언 순서대로 초기화)
+    private var rtc: RtcSession? = null
+    private val callAudio = CallAudio(app)
+    private var rtcNegotiation = 1
 
     init { start() }
 
@@ -187,6 +212,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stop() {
+        releaseRealCall()  // 실제 통화 중이던 마이크·연결을 먼저 정리한다
         tickJob?.cancel(); tickJob = null; recordRequest = null
         mapSocket?.close(); mapSocket = null
         ambulance?.close(); ambulance = null
@@ -199,8 +225,11 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     /** 접근 코드를 hub `/identity`로 확인하고 맞으면 이 구급대에 연결한다 — 아이폰 AccessCodeEntry와 같은 규칙 */
     fun submitAccess(code: String, hub: String) {
         if (accessChecking) return
-        val id = AccessCode.ambulanceId(code)
-        if (id == null) { accessError = "P-SEL0111 형식의 구급대 접근 코드를 입력하세요."; return }
+        // 구급대 코드(P-/A-)는 구급대 화면, 병원 코드(H-)는 수신 전화를 받는 병원 모드(2026-11-04)
+        val hospitalCode = AccessCode.hospitalId(code)
+        val id = hospitalCode ?: AccessCode.ambulanceId(code)
+        val role = if (hospitalCode != null) "hospital" else "ambulance"
+        if (id == null) { accessError = "P-SEL0111(구급대) 또는 H-A1100017(병원) 형식의 접근 코드를 입력하세요."; return }
         val base = hub.trim().trimEnd('/')
         if (!(base.startsWith("http://") || base.startsWith("https://")) || base.substringAfter("://").isBlank()) {
             accessError = "서버 주소를 확인하세요."; return
@@ -209,19 +238,28 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val failure = withContext(Dispatchers.IO) {
                 runCatching {
-                    HubSocket.client.newCall(Request.Builder().url("$base/identity?role=ambulance&id=$id").build()).execute().use { r ->
-                        if (!r.isSuccessful) "서버에서 구급대를 확인하지 못했습니다."
+                    HubSocket.client.newCall(Request.Builder().url("$base/identity?role=$role&id=$id").build()).execute().use { r ->
+                        val what = if (role == "hospital") "병원" else "구급대"
+                        if (!r.isSuccessful) "서버에서 ${what}을 확인하지 못했습니다."
                         else {
                             val o = hubJson.parseToJsonElement(r.body!!.string()).jsonObject
                             val known = (o["known"] as? JsonPrimitive)?.booleanOrNull == true
-                            if (known && (o["id"] as? JsonPrimitive)?.contentOrNull == id) null else "등록되지 않은 구급대 코드입니다."
+                            if (known && (o["id"] as? JsonPrimitive)?.contentOrNull == id) null else "등록되지 않은 $what 코드입니다."
                         }
                     }
                 }.getOrElse { "서버에 연결하지 못했습니다. 네트워크와 서버 주소를 확인한 뒤 다시 시도하세요." }
             }
             accessChecking = false
             accessError = failure
-            if (failure == null) { settings.hubBase = base; settings.apid = id; accessRequired = false; start() }
+            if (failure == null) {
+                settings.hubBase = base
+                // 두 역할은 서로 배타적이다 — 구급대 코드를 넣으면 병원 모드가, 병원 코드를 넣으면 구급대 설정이 비워진다
+                settings.apid = if (role == "ambulance") id else ""
+                settings.hospitalId = if (role == "hospital") id else ""
+                hospitalId = settings.hospitalId
+                accessRequired = false
+                start()  // 병원 모드면 소속 구급대가 없어 구급대 연결은 만들지 않는다(HospitalModel이 따로 접속한다)
+            }
         }
     }
 
@@ -229,6 +267,8 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     fun resetAccess() {
         stop()
         settings.apid = ""
+        settings.hospitalId = ""
+        hospitalId = ""
         accessError = null
         accessRequired = true
     }
@@ -344,6 +384,17 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     if (sim.apid == apid && sim.phaseEnum != AmbulancePhase.on_scene) wantsExtraCall = false
                     if (sim.apid == apid) trackPhase(sim)
                 }
+                // 실제 통화(WebRTC) — 지금 통화(callId)에 대한 메시지만 따른다
+                "call_state" -> onRealCallState(hubJson.decodeFromString(CallState.serializer(), text))
+                "rtc_answer" -> hubJson.decodeFromString(RtcSdpIn.serializer(), text).let { a ->
+                    if (call?.webrtc == true && call?.callId == a.callId) rtc?.applyAnswer(a.sdp)
+                }
+                "rtc_ice" -> hubJson.decodeFromString(RtcIceIn.serializer(), text).let { ice ->
+                    if (call?.webrtc == true && call?.callId == ice.callId) rtc?.addRemoteIce(ice.candidate)
+                }
+                "call_error" -> hubJson.decodeFromString(CallError.serializer(), text).let { e ->
+                    if (call?.webrtc == true && call?.callId == e.callId) endRealCall("통화를 처리하지 못했습니다")
+                }
                 "call_connection_error" -> if (call?.phase == LocalCall.Phase.CONNECTING) { call = null; callRequestId = null; show("현재 단계에서는 전화할 수 없습니다") }
                 "first_call_error" -> show("첫 통화 추천 요청을 처리하지 못했습니다. 현재 사건을 확인해 주세요.")
                 "scene_candidates" -> hubJson.decodeFromString(SceneCandidates.serializer(), text).let {
@@ -390,7 +441,12 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                     snapshotCase(m.caseId)
                     // 이번 통화의 새 요약이 반영되면 성공 확인 화면을 거치지 않고 환자 정보로.
                     // 병원 응답·주기 갱신만으로는 callRound가 늘지 않으므로 통화 처리를 닫지 않는다.
-                    if (call?.caseId == m.caseId && delivered) { dismissEnded(); startDeliveryShow(m.caseId) }
+                    if (call?.caseId == m.caseId && delivered) {
+                        // 이송확정이면 요약이 통화 병원 한 곳에만 갔고 구급차가 바로 출발한다 — 존 전체 전달 연출 없이 통화 지도(이송)로
+                        val confirmed = call?.decision == "confirm"
+                        dismissEnded()
+                        if (confirmed) tab = Tab.CALL else startDeliveryShow(m.caseId)
+                    }
                 }
                 "action_refused" -> {
                     val r = hubJson.decodeFromString(ActionRefused.serializer(), text)
@@ -399,9 +455,12 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
                         "paused" -> "현재 시연 일시정지 중입니다."
                         "template_mode" -> "콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다."
                         "already_arrived" -> "이미 병원에 도착해 이송 병원을 바꿀 수 없습니다. 현재 병원의 수용 불가 처리 후 다시 선택해 주세요."
+                        "confirm_failed" -> "이송 확정을 처리하지 못해 존 안 병원 전체에 전달했습니다. 구급차 대시보드를 확인해 주세요."
+                        "no_pending_decision" -> "이 통화는 이미 처리됐습니다."
                         else -> "지금은 통화를 시작할 수 없습니다."
                     })
-                    if (call?.phase == LocalCall.Phase.CONNECTING) call = null
+                    if (call?.phase == LocalCall.Phase.CONNECTING && call?.webrtc != true) call = null  // 실제 통화는 call_state(ended)로 정리한다
+                    if (r.reason == "no_pending_decision" && call?.phase == LocalCall.Phase.ENDED) { call = null; session = null }
                 }
                 "case_closed" -> forget(hubJson.decodeFromString(CaseClosed.serializer(), text).caseId)
                 "case_sync" -> {
@@ -453,6 +512,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     /** 연결 중에 병원이 전화를 받지 않을 때 — hub가 이 병원을 미응답으로 적고 다음 추천 병원을 보낸다 */
     fun noAnswerNext() {
         if (call?.phase != LocalCall.Phase.CONNECTING) return
+        if (call?.webrtc == true) { hangupRealCall(); return }  // 실제 통화는 시연 연출의 "미응답 다음 병원" 규칙이 없다 — 발신을 취소한다
         if (!connectionAction("no_answer")) show("hub 연결을 확인해 주세요")
     }
 
@@ -469,12 +529,98 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
             needsMicPermission += 1
             return
         }
+        if (settings.realCall) { startRealCall(caseId, hospitalId, name); return }
         call = LocalCall(caseId, hospitalId, name, sent, LocalCall.Phase.CONNECTING, System.currentTimeMillis())
         callRequestId = UUID.randomUUID().toString()
         if (!connectionAction("request")) {
             call = null; callRequestId = null
             error = "hub 연결이 끊겨 전화 요청을 보내지 못했습니다."
         }
+    }
+
+    // ── 실제 통화(WebRTC, 2026-11-04) ──
+    // 설정의 [실제 통화]가 켜져 있으면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 앱(병원 모드)과의 실제 음성 통화가 된다.
+    // 흐름: call_invite → (병원이 받으면) hub가 connecting → 이쪽이 offer를 만들어 보냄 → answer·ICE 교환 → 양쪽 media_ready → active.
+    // 이 통화엔 STT·요약·이송 판단이 없다(다음 단계). 모든 hub 메시지는 지금 통화의 callId와 같을 때만 따른다.
+
+    private fun startRealCall(caseId: String, hospitalId: String, name: String) {
+        val callId = UUID.randomUUID().toString()
+        call = LocalCall(caseId, hospitalId, name, sent, LocalCall.Phase.CONNECTING, System.currentTimeMillis(), webrtc = true, callId = callId)
+        if (!sendToHub(hubJson.encodeToJsonElement(CallInviteMessage.serializer(),
+                CallInviteMessage(callId, caseId, hospitalId, settings.deviceId)))) {
+            call = null
+            error = "hub 연결이 끊겨 전화를 걸지 못했습니다."
+        }
+    }
+
+    private fun onRealCallState(s: CallState) {
+        val c = call ?: return
+        if (!c.webrtc || c.callId != s.callId) return
+        when (s.state) {
+            "connecting" -> {
+                if (rtc != null) return  // 같은 상태가 다시 오면(재접속 동기화) 연결을 새로 만들지 않는다
+                callAudio.start()
+                val session = runCatching { RtcSession(getApplication(), s.iceServers ?: emptyList(), realCallListener(s.callId)) }.getOrElse {
+                    Log.w("GoldenLink", "WebRTC 연결 준비 실패", it)
+                    sendToHub(hubJson.encodeToJsonElement(CallHangupMessage.serializer(), CallHangupMessage(s.callId)))
+                    endRealCall("통화 연결을 준비하지 못했습니다")
+                    return
+                }
+                rtc = session
+                session.createOffer { sdp ->
+                    viewModelScope.launch {
+                        if (call?.callId == s.callId) sendToHub(hubJson.encodeToJsonElement(RtcSdpMessage.serializer(),
+                            RtcSdpMessage("rtc_offer", s.callId, sdp, rtcNegotiation)))
+                    }
+                }
+            }
+            "active" -> call = c.copy(phase = LocalCall.Phase.IN_CALL, startedAt = System.currentTimeMillis())
+            "ended" -> endRealCall(CallLabels.endText(s.reason, s.detail))
+        }
+    }
+
+    /** WebRTC 스레드의 콜백을 메인으로 옮기고, 지금 통화(callId)에 대한 것만 따른다 */
+    private fun realCallListener(callId: String) = object : RtcSession.Listener {
+        override fun onLocalIce(candidate: kotlinx.serialization.json.JsonObject) {
+            viewModelScope.launch {
+                if (call?.callId == callId) sendToHub(hubJson.encodeToJsonElement(RtcIceMessage.serializer(), RtcIceMessage(callId, candidate, rtcNegotiation)))
+            }
+        }
+
+        override fun onMediaReady() {
+            viewModelScope.launch {
+                if (call?.callId == callId) sendToHub(hubJson.encodeToJsonElement(MediaReadyMessage.serializer(), MediaReadyMessage(callId)))
+            }
+        }
+
+        override fun onFailed(reason: String) {
+            viewModelScope.launch {
+                if (call?.callId != callId) return@launch
+                sendToHub(hubJson.encodeToJsonElement(CallHangupMessage.serializer(), CallHangupMessage(callId)))
+                endRealCall("통화 연결에 실패했습니다")
+            }
+        }
+    }
+
+    /** [취소]/[통화 종료] — 마이크·연결을 바로 끄고 hub에 알린다. hub 응답이 늦어도 마이크는 이미 꺼져 있다 */
+    fun hangupRealCall() {
+        val c = call ?: return
+        val id = c.callId ?: return
+        if (!c.webrtc) return
+        sendToHub(hubJson.encodeToJsonElement(CallHangupMessage.serializer(), CallHangupMessage(id)))
+        endRealCall(if (c.phase == LocalCall.Phase.CONNECTING) "발신을 취소했습니다" else "통화를 종료했습니다")
+    }
+
+    /** 실제 통화의 자원을 정리하고 병원 목록으로 돌아간다. 여러 번 불러도 안전하다 */
+    private fun endRealCall(message: String) {
+        releaseRealCall()
+        if (call?.webrtc == true) { call = null; reopenList = true }
+        show(message)
+    }
+
+    private fun releaseRealCall() {
+        rtc?.close(); rtc = null
+        callAudio.stop()
     }
 
     /** 관제가 전화를 받았다 — hub가 call_started를 중계했으니 마이크 녹음과 발화 인식을 시작한다 */
@@ -505,6 +651,7 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
     /** [취소] — 아무것도 전송하지 않는다. 녹음·인식을 버리고 hub에는 취소로 알려 "통화 중" 표시만 지운다 */
     fun cancelCall() {
         val c = call ?: return
+        if (c.webrtc) { hangupRealCall(); return }  // 실제 통화: 받기 전엔 발신 취소, 통화 중엔 종료 — 같은 hangup이다
         val apid = apid
         if (c.phase == LocalCall.Phase.CONNECTING) {
             // 받지 않는 병원을 취소하는 것이라 미응답으로 알린다 — hub가 이 병원을 시도한 것으로 적고 다음 추천을 다시 보낸다
@@ -526,15 +673,17 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         show("통화를 취소했습니다 — 전달하지 않았습니다")
     }
 
-    /** [전송] — 통화를 끝내고 이때만 음성을 처리(인식·구조화)해 병원에 보낸다 */
+    /** [통화 종료](현장 첫 통화) / [전송](추가 통화) — 통화를 끝내고 이때만 음성을 처리(인식·구조화)한다.
+     *  추가 통화는 바로 병원에 반영되고, 현장 첫 통화는 요약을 hub가 붙잡아 두었다가 구급대원이 [이송확정]/[이송불가]를 고르면 처리한다(2026-11-04) */
     fun sendCall() {
         val c = call ?: return
+        if (c.webrtc) { hangupRealCall(); return }
         val apid = apid ?: return
         if (c.phase != LocalCall.Phase.IN_CALL) return
         if (paused) { show("현재 시연 일시정지 중입니다."); return }
         // 종료 신호가 hub에 못 가면 통화를 끝내지 않는다 — 그대로 두면 병원 화면엔 "통화 중"이 남고 요약만 따로 실패한다
         if (!sendToHub(hubJson.encodeToJsonElement(CallSignalMessage.serializer(),
-                CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId)))) {
+                CallSignalMessage("call_ended", apid, c.caseId, c.hospitalId, awaitDecision = if (c.followup) null else true)))) {
             show("hub 연결을 확인해 주세요. 통화를 종료하지 못했습니다."); return
         }
         val before = results[c.caseId]
@@ -568,8 +717,26 @@ class PhoneModel(app: Application) : AndroidViewModel(app) {
         tab = Tab.PATIENT
     }
 
-    /** 종료 화면의 [확인] — 다음 화면(전달됨 · 추가 통화)으로 */
+    /** 통화를 끝낸 구급대원의 판단(2026-11-04) — [이송확정]: 통화한 병원으로 바로 출발(요약은 그 병원에만),
+     *  [이송불가]: 요약을 존 안 다른 후보 병원 전체에 동시에 전달. 요약 정리가 끝나기 전에 눌러도 hub가 순서를 맞춘다 */
+    fun decideTransport(confirm: Boolean) {
+        val c = call ?: return
+        if (c.phase != LocalCall.Phase.ENDED || c.followup || c.decision != null) return
+        if (paused) { show("현재 시연 일시정지 중입니다."); return }
+        val decision = if (confirm) "confirm" else "reject"
+        if (!sendToHub(hubJson.encodeToJsonElement(CallDecisionMessage.serializer(), CallDecisionMessage(c.caseId, decision)))) {
+            show("hub 연결을 확인해 주세요. 선택을 전하지 못했습니다."); return
+        }
+        call = c.copy(decision = decision, decidedAt = System.currentTimeMillis())
+        if (confirm) pendingConfirmId = c.hospitalId  // 이송 탭도 "확정 요청 중"으로 보인다 — hub가 확정을 돌려주면 풀린다
+    }
+
+    /** 종료 화면의 [확인] — 다음 화면(전달됨 · 추가 통화)으로. 판단 없이 닫는 첫 통화(인식된 말이 없는 경우)는 hub의 판단 대기도 닫는다 */
     fun dismissEnded() {
+        val c = call
+        if (c != null && c.phase == LocalCall.Phase.ENDED && !c.followup && c.decision == null) {
+            sendToHub(hubJson.encodeToJsonElement(CallDecisionMessage.serializer(), CallDecisionMessage(c.caseId, "cancel")))
+        }
         call = null
         session = null
     }

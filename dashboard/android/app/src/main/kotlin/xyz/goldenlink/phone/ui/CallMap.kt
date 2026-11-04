@@ -246,7 +246,7 @@ fun CallMap(
         if (zoneKm == null) return@LaunchedEffect
         val purple = 0xFF7B4DFF.toInt()
         layer.addPolygon(PolygonOptions.from(DotPoints.fromCircle(ll(center), (zoneKm * 1000).toFloat()),
-            PolygonStyles.from(PolygonStyle.from(0x147B4DFF, 3f * dens, purple))))
+            PolygonStyles.from(PolygonStyle.from(0x147B4DFF, 1f * dens, purple))))   // 바깥 테두리는 얇게
         // 은은한 파동 — 차분한 파랑 링 두 개가 7초 주기로 천천히 퍼지며, 나타날 때와 사라질 때 서서히 투명해진다
         var phase = 0f
         while (true) {

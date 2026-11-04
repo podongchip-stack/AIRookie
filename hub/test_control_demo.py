@@ -75,6 +75,15 @@ def main() -> None:
                                   "timestamp": "2026-11-04T00:00:00Z"}, ws=monitor)
     assert app.sim.phase_of(apid_a) == "transporting", "관제 지정 → 병원으로 이송 시작(사건이 끝까지 진행)"
     print("  [확인] 시연 사건 구급차 현장 도착 → 관제 지정 시 이송 출발")
+    for _ in range(3):  # 이송을 끝까지 — 시연 시뮬레이션 시계를 몇 번 크게 넘긴다
+        app.sim._clock = (lambda base=app.sim._clock(): (lambda: base + 3600))()
+        app._sim_tick()
+    assert app.sim.phase_of(apid_a) == "at_hospital", app.sim.phase_of(apid_a)
+    app._demo_arrived_at.clear()  # _sim_tick이 실제 시각으로 이미 적어 둔 도착 시각을 지우고 시험 시각으로
+    app._demo_auto_accept(now=0.0)
+    app._demo_auto_accept(now=10.0)
+    assert app.engine.get_case_result(case_a).arrival.result == "accepted", "병원 도착 5초 뒤 시연 사건은 자동 수용 완료"
+    print("  [확인] 시연 사건: 병원 도착 → 5초 뒤 자동 수용 완료(사건 종료)")
 
     print("=== ② 수용 곤란 상황(학습 반영) ===")
     app._run_demo_scenario("refusal", monitor)

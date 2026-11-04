@@ -114,6 +114,19 @@ export function isConfirmDelayed(inc: Incident, now: number): boolean {
   return w != null && w >= ALERT_RULES.confirmDelayMin * 60_000;
 }
 
+/**
+ * 병원 문제로 이송이 막힌 사건 — 이송 확정 전인데 수용할 병원이 없다(전부 수용 불가 / 요청 후 noApprovalMin분 넘게 승인 없음 / 재선택 대기).
+ * 알림과 달리 확인(ack)해도 사라지지 않는 사건 상태라, 관제 '처리 조치' 패널을 띄우는 기준으로 쓴다(사건 상세 안, 2026-11-04).
+ */
+export function isTransportStalled(inc: Incident, now: number): boolean {
+  if (!inc.matched || inc.hospitals.some((h) => h.st === "t")) return false;
+  if (inc.phase === "rerouting") return true;
+  if (inc.hospitals.some((h) => h.st === "a")) return false;
+  if (inc.hospitals.length > 0 && inc.hospitals.every((h) => h.st === "r")) return true;
+  const requestedAt = Date.parse(inc.events.find((e) => e.kind === "s")?.t ?? "") || inc.startedAt;
+  return (now - requestedAt) / 60_000 >= ALERT_RULES.noApprovalMin;
+}
+
 export const HUB_DOWN_ALERT: ControlAlert = {
   key: "system:hub",
   level: "system",

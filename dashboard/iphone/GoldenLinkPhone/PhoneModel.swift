@@ -9,8 +9,9 @@ import SwiftUI
 /// 휴대폰은 전화만 한다 — 출동·현장 종료·이송 승인은 태블릿/PC 대시보드에서 한다. 사건(caseId)도 만들지 않고
 /// hub 출동 상태(ambulance_phase.caseId)를 그대로 쓴다.
 ///
-/// 2026-10-05: 통화는 [취소]와 [전송]으로 끝난다 — [전송]을 눌러야만 음성을 처리해 병원에 보낸다. 현장 첫 통화 뒤에도
-/// 환자 상태가 바뀌면 추가 통화를 할 수 있고(현장: 다른 병원 / 이송 중: 목적지 병원), 새 요약은 환자 정보에 덧붙는다.
+/// 통화는 [취소]와 [통화 종료]([전송])로 끝난다 — 눌러야만 음성을 처리한다. 현장 첫 통화는 끝낸 뒤 [이송확정](통화 병원으로 출발,
+/// 요약은 그 병원에만)/[이송불가](요약을 존 전체에 동시 전달)를 고른다(2026-11-04). 현장 첫 통화 뒤에도
+/// 환자 상태가 바뀌면 추가 통화를 할 수 있고(현장: 다른 병원 / 이송 중: 목적지 병원), 새 요약은 환자 정보에 덧붙는다(바로 반영).
 @MainActor
 @Observable
 final class PhoneModel {
@@ -105,6 +106,12 @@ final class PhoneModel {
         var endedAt: Date?
         var matchVersionAtSend = 0
         var callRoundAtSend = 0
+        /// 현장 첫 통화를 끝낸 뒤 구급대원의 판단(2026-11-04): nil = 아직 고르지 않음, "confirm" = 통화 병원으로 이송 확정, "reject" = 이송불가(존 전체 전달)
+        var decision: String?
+        var decidedAt: Date?
+        /// 실제 통화(WebRTC, 2026-11-04) — 병원 앱과 음성을 직접 주고받는다. 이 통화엔 STT·요약·이송 판단이 없다. callId는 hub 통화 식별자
+        var webrtc = false
+        var callId: String?
         enum Phase { case connecting, inCall, ended }
     }
 
@@ -137,6 +144,7 @@ final class PhoneModel {
     }
 
     func stop() {
+        releaseRealCall()  // 실제 통화 중이던 마이크·연결을 먼저 정리한다
         recordSyncTask?.cancel(); recordSyncTask = nil; recordRequest = nil
         mapSocket?.close(); mapSocket = nil
         ambulance?.close(); ambulance = nil
@@ -218,6 +226,15 @@ final class PhoneModel {
         switch type {
         case "live_case_state", "live_case_error":
             caseEdits.accept(data)
+        // 실제 통화(WebRTC) — 지금 통화(callId)에 대한 메시지만 따른다
+        case "call_state":
+            if let s = try? dec.decode(CallState.self, from: data) { onRealCallState(s) }
+        case "rtc_answer":
+            if let a = try? dec.decode(RtcSdpIn.self, from: data), call?.webrtc == true, call?.callId == a.callId { rtc?.applyAnswer(a.sdp) }
+        case "rtc_ice":
+            if let i = try? dec.decode(RtcIceIn.self, from: data), call?.webrtc == true, call?.callId == i.callId { rtc?.addRemoteIce(i.candidate) }
+        case "call_error":
+            if let e = try? dec.decode(CallError.self, from: data), call?.webrtc == true, call?.callId == e.callId { endRealCall("통화를 처리하지 못했습니다") }
         case "call_connection_error":
             if call?.phase == .connecting { call = nil; callRequestId = nil; show("현재 단계에서는 전화할 수 없습니다") }
         case "first_call_error":
@@ -282,8 +299,10 @@ final class PhoneModel {
                 // 이번 통화의 새 요약이 반영되면 성공 확인 화면을 거치지 않고 환자 정보로.
                 // 병원 응답·주기 갱신만으로는 callRound가 늘지 않으므로 통화 처리를 닫지 않는다.
                 if call?.caseId == m.caseId, delivered {
+                    // 이송확정이면 요약이 통화 병원 한 곳에만 갔고 구급차가 바로 출발한다 — 존 전체 전달 연출 없이 통화 지도(이송)로
+                    let confirmedByCall = call?.decision == "confirm"
                     dismissEnded()
-                    startDeliveryShow(m.caseId)
+                    if confirmedByCall { tab = .call } else { startDeliveryShow(m.caseId) }
                 }
             }
         case "action_refused":
@@ -292,8 +311,11 @@ final class PhoneModel {
                 show(r.reason == "paused" ? "현재 시연 일시정지 중입니다."
                      : r.reason == "template_mode" ? "콘솔이 정해진 상황 선택 중이라 전화할 수 없습니다."
                      : r.reason == "already_arrived" ? "이미 병원에 도착해 이송 병원을 바꿀 수 없습니다. 현재 병원의 수용 불가 처리 후 다시 선택해 주세요."
+                     : r.reason == "confirm_failed" ? "이송 확정을 처리하지 못해 존 안 병원 전체에 전달했습니다. 구급차 대시보드를 확인해 주세요."
+                     : r.reason == "no_pending_decision" ? "이 통화는 이미 처리됐습니다."
                      : "지금은 통화를 시작할 수 없습니다.")
-                if call?.phase == .connecting { call = nil }
+                if call?.phase == .connecting, call?.webrtc != true { call = nil }  // 실제 통화는 call_state(ended)로 정리한다
+                if r.reason == "no_pending_decision", call?.phase == .ended { call = nil; session = nil }
             }
         case "case_closed":
             if let c = try? dec.decode(CaseClosed.self, from: data) { forget(c.caseId) }
@@ -373,7 +395,97 @@ final class PhoneModel {
 
     func noAnswerNext() {
         guard call?.phase == .connecting else { return }
+        if call?.webrtc == true { hangupRealCall(); return }  // 실제 통화는 시연 연출의 "미응답 다음 병원" 규칙이 없다 — 발신을 취소한다
         if !connectionAction("no_answer") { show("hub 연결을 확인해 주세요") }
+    }
+
+    // MARK: - 실제 통화(WebRTC, 2026-11-04)
+    // 설정의 [실제 통화]가 켜져 있으면 병원을 눌러 거는 전화가 시연 연출이 아니라 병원 앱(안드로이드 병원 모드)과의 실제 음성 통화가 된다.
+    // 흐름: call_invite → (병원이 받으면) hub가 connecting → 이쪽이 offer를 만들어 보냄 → answer·ICE 교환 → 양쪽 media_ready → active.
+    // 이 통화엔 STT·요약·이송 판단이 없다(다음 단계). 모든 hub 메시지는 지금 통화의 callId와 같을 때만 따른다.
+    // 안드로이드 PhoneModel.kt의 같은 이름 함수들과 같은 규칙이다(그쪽이 실기기·hub 연동 검증됨). 이쪽은 Mac에서 빌드 확인이 필요하다.
+
+    private var rtc: RtcSession?
+    private var rtcNegotiation = 1
+
+    private func startRealCall(caseId: String, hospitalId: String, name: String) {
+        let callId = UUID().uuidString
+        var c = LocalCall(caseId: caseId, hospitalId: hospitalId, hospitalName: name, followup: sent, phase: .connecting, startedAt: Date())
+        c.webrtc = true
+        c.callId = callId
+        call = c
+        if ambulance?.send(CallInviteMessage(callId: callId, caseId: caseId, hospitalId: hospitalId, deviceId: Settings.deviceID)) != true {
+            call = nil
+            error = "hub 연결이 끊겨 전화를 걸지 못했습니다."
+        }
+    }
+
+    private func onRealCallState(_ s: CallState) {
+        guard let c = call, c.webrtc, c.callId == s.callId else { return }
+        switch s.state {
+        case "connecting":
+            guard rtc == nil else { return }  // 같은 상태가 다시 오면(재접속 동기화) 연결을 새로 만들지 않는다
+            let callId = s.callId
+            do {
+                let session = try RtcSession(
+                    iceServers: s.iceServers ?? [],
+                    onLocalIce: { [weak self] candidate in Task { @MainActor in self?.sendRealIce(callId, candidate) } },
+                    onMediaReady: { [weak self] in Task { @MainActor in self?.sendMediaReady(callId) } },
+                    onFailed: { [weak self] _ in Task { @MainActor in self?.failRealCall(callId) } })
+                rtc = session
+                session.createOffer { [weak self] sdp in Task { @MainActor in self?.sendOffer(callId, sdp) } }
+            } catch {
+                _ = ambulance?.send(CallHangupMessage(callId: callId))
+                endRealCall("통화 연결을 준비하지 못했습니다")
+            }
+        case "active":
+            call?.phase = .inCall
+            call?.startedAt = Date()
+        case "ended":
+            endRealCall(CallLabels.endText(s.reason, detail: s.detail))
+        default:
+            break
+        }
+    }
+
+    private func sendOffer(_ callId: String, _ sdp: String) {
+        guard call?.callId == callId else { return }
+        _ = ambulance?.send(RtcSdpMessage(type: "rtc_offer", callId: callId, sdp: sdp, negotiationRevision: rtcNegotiation))
+    }
+
+    private func sendRealIce(_ callId: String, _ candidate: IceCandidatePayload) {
+        guard call?.callId == callId else { return }
+        _ = ambulance?.send(RtcIceMessage(callId: callId, candidate: candidate, negotiationRevision: rtcNegotiation))
+    }
+
+    private func sendMediaReady(_ callId: String) {
+        guard call?.callId == callId else { return }
+        _ = ambulance?.send(MediaReadyMessage(callId: callId))
+    }
+
+    private func failRealCall(_ callId: String) {
+        guard call?.callId == callId else { return }
+        _ = ambulance?.send(CallHangupMessage(callId: callId))
+        endRealCall("통화 연결에 실패했습니다")
+    }
+
+    /// [취소]/[통화 종료] — 마이크·연결을 바로 끄고 hub에 알린다. hub 응답이 늦어도 마이크는 이미 꺼져 있다
+    func hangupRealCall() {
+        guard let c = call, c.webrtc, let id = c.callId else { return }
+        _ = ambulance?.send(CallHangupMessage(callId: id))
+        endRealCall(c.phase == .connecting ? "발신을 취소했습니다" : "통화를 종료했습니다")
+    }
+
+    /// 실제 통화의 자원을 정리하고 병원 목록으로 돌아간다. 여러 번 불러도 안전하다
+    private func endRealCall(_ message: String) {
+        releaseRealCall()
+        if call?.webrtc == true { call = nil }
+        show(message)
+    }
+
+    private func releaseRealCall() {
+        rtc?.close()
+        rtc = nil
     }
 
     /// 현장 병원 목록에서 고른 병원과 통화
@@ -394,6 +506,7 @@ final class PhoneModel {
             return
         }
         guard await MicCapture.requestPermission() else { error = "마이크 권한이 꺼져 있습니다. 설정 앱에서 켜 주세요."; return }
+        if Settings.realCall { startRealCall(caseId: caseId, hospitalId: hospitalId, name: name); return }
         let followup = sent
         call = LocalCall(caseId: caseId, hospitalId: hospitalId, hospitalName: name, followup: followup, phase: .connecting, startedAt: Date())
         callRequestId = UUID().uuidString
@@ -433,6 +546,7 @@ final class PhoneModel {
     /// [취소] — 아무것도 전송하지 않는다. 녹음·인식을 버리고 hub에는 취소로 알려 "통화 중" 표시만 지운다
     func cancelCall() {
         guard let c = call else { return }
+        if c.webrtc { hangupRealCall(); return }  // 실제 통화: 받기 전엔 발신 취소, 통화 중엔 종료 — 같은 hangup이다
         if c.phase == .connecting {
             if !connectionAction("cancel") { show("hub 연결을 확인해 주세요"); return }
         }
@@ -445,14 +559,17 @@ final class PhoneModel {
         show("통화를 취소했습니다 — 전달하지 않았습니다")
     }
 
-    /// [전송] — 통화를 끝내고 이때만 음성을 처리(인식·구조화)해 병원에 보낸다
+    /// [통화 종료](현장 첫 통화) / [전송](추가 통화) — 통화를 끝내고 이때만 음성을 처리(인식·구조화)한다.
+    /// 추가 통화는 바로 병원에 반영되고, 현장 첫 통화는 요약을 hub가 붙잡아 두었다가 구급대원이 [이송확정]/[이송불가]를 고르면 처리한다(2026-11-04)
     func sendCall() {
+        if call?.webrtc == true { hangupRealCall(); return }
         guard let c = call, c.phase == .inCall, let apid else { return }
         if paused {
             show("현재 시연 일시정지 중입니다.")
             return
         }
-        _ = ambulance?.send(CallSignalMessage(signal: "call_ended", apid: apid, caseId: c.caseId, hospitalId: c.hospitalId))
+        _ = ambulance?.send(CallSignalMessage(signal: "call_ended", apid: apid, caseId: c.caseId, hospitalId: c.hospitalId,
+                                              awaitDecision: c.followup ? nil : true))
         call?.phase = .ended
         call?.endedAt = Date()
         call?.matchVersionAtSend = matchVersion[c.caseId] ?? 0
@@ -462,8 +579,30 @@ final class PhoneModel {
         Task { await s?.finish() }
     }
 
+    /// 통화를 끝낸 구급대원의 판단(2026-11-04) — [이송확정]: 통화한 병원으로 바로 출발(요약은 그 병원에만),
+    /// [이송불가]: 요약을 존 안 다른 후보 병원 전체에 동시에 전달. 요약 정리가 끝나기 전에 눌러도 hub가 순서를 맞춘다
+    func decideTransport(confirm: Bool) {
+        guard let c = call, c.phase == .ended, !c.followup, c.decision == nil else { return }
+        if paused {
+            show("현재 시연 일시정지 중입니다.")
+            return
+        }
+        let decision = confirm ? "confirm" : "reject"
+        guard ambulance?.send(CallDecisionMessage(caseId: c.caseId, decision: decision)) == true else {
+            show("hub 연결을 확인해 주세요. 선택을 전하지 못했습니다.")
+            return
+        }
+        call?.decision = decision
+        call?.decidedAt = Date()
+        if confirm { pendingConfirmId = c.hospitalId }  // 이송 탭도 "확정 요청 중"으로 보인다 — hub가 확정을 돌려주면 풀린다
+    }
+
     /// 완료한 통화의 화면 상태를 정리한다. 실패 시 다시 통화할 때도 쓴다.
+    /// 판단 없이 닫는 첫 통화(인식된 말이 없는 경우)는 hub의 판단 대기도 닫는다
     func dismissEnded() {
+        if let c = call, c.phase == .ended, !c.followup, c.decision == nil {
+            _ = ambulance?.send(CallDecisionMessage(caseId: c.caseId, decision: "cancel"))
+        }
         call = nil
         session = nil
     }

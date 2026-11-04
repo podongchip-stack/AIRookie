@@ -1172,3 +1172,43 @@ timestamp)으로 전송한다. hub는 ringing을 방송하고 이때는 voice·�
 실제 관제 시연은 여러 구급대를 30초 안에 출동시킨다. 추천 이유의
 진행 부하와 병원 선택을 비교하고, 이송 확정 뒤 후속 사건의 추천 변화를 확인한다.
 현재 위치/ETA는 시뮬레이터 입력을 사용하며 실제 GPS 어댑터는 별도다.
+
+### 실제 양방향 통화(WebRTC, 2026-11-04)
+
+위 "전화 연결 대기와 수용 판단 분리"(`call_connection`)는 **시연 연출**(병원이 받으면 구급차 마이크 녹음을 시작)이다. 이쪽은 구급대 앱↔병원 앱이
+WebRTC로 음성을 직접 주고받는 **실제 통화**이고, hub는 상태·연결 협상 중계·종료만 관리한다(음성은 hub를 거치지 않는다).
+규칙은 `call_sessions.py`(소켓을 모르는 순수 로직), 소켓·권한·기존 통화 상태 연동은 `app.py`(`_handle_call_session_message`).
+
+- **식별자**: `caseId`(사건) / `callId`(통화 시도 하나 — 재전화는 새로 만든다) / `sessionRevision`(상태가 바뀔 때마다 +1) / `negotiationRevision`(연결 협상 세대 —
+  지난 세대의 ICE·answer는 버린다). 시연 연출의 `requestId`는 그대로 따로 쓴다.
+- **상태**: `ringing → connecting → active → ended`. 병원이 받으면(`call_accept`) `connecting`이고, **양쪽이 `media_ready`를 보고해야 `active`**(통화 시간 시작) —
+  받았다는 사실과 음성 연결 완료를 구분한다. 상대가 조용하다는 이유로 시작을 미루지 않는다(실제 음성 크기는 조건이 아니다).
+- **종료 사유**(그 쪽 입장으로 보낸다): `rejected` `busy` `unavailable`(수신 가능한 병원 앱 없음) `no_answer`(30초) `connection_failed`(협상 15초) `caller_cancelled`
+  `local_hangup` `remote_hangup` `network_timeout`(신호 끊김 유예 10초) `answered_elsewhere` `case_closed` `refused`(hub 규칙 거부, `detail`에 이유 —
+  `not_owner` `unknown_hospital` `paused` `phase` `case_busy` `template_mode`). 시간값은 개발계획서의 초기 제안값이며 실기기 측정 전이다.
+
+| 방향 | 메시지 | 비고 |
+|---|---|---|
+| 구급차 → hub | `call_invite {callId, caseId, hospitalId, deviceId?}` | 그 사건의 구급차 소켓만. 병원당 통화 1건(busy), 사건당 1건 |
+| hub → 병원 앱 | `call_incoming {callId, caseId, ambulanceName, hospitalId, ringingSec, iceServers}` | `callCapable`로 접속한 병원 앱에만 |
+| 병원 앱 → hub | `call_accept {callId, deviceId?}` / `call_reject {callId}` | 늦은 받기는 `call_error not_ringing` |
+| 구급차 → hub → 병원 | `rtc_offer {callId, negotiationRevision, sdp}` | 연결 협상(발신 쪽이 offer) |
+| 병원 → hub → 구급차 | `rtc_answer` | |
+| 양쪽 | `rtc_ice {callId, negotiationRevision, candidate}` | 후보는 상대에게 그대로 중계, 끝난 통화·지난 세대는 버림 |
+| 양쪽 → hub | `media_ready {callId}` | 연결+오디오 경로 준비 확인 |
+| 양쪽 → hub | `call_hangup {callId}` | 어느 쪽이든, 중복·늦은 종료는 한 번만 처리(멱등). 수신 대기 중 병원의 거부는 `call_reject` |
+| hub → 양쪽 | `call_state {callId, state, sessionRevision, reason?, detail?, startedAt?, iceServers?}` | |
+| 양쪽 → hub | `call_state_sync {callId?}` | (재)접속 때 현재 통화를 묻는다 — 살아 있으면 그 자리에 소켓을 다시 묶고, 끝났으면 종료를 알려 화면을 정리 |
+
+- **병원 앱 식별**: `identify`에 `callCapable: true`(안드로이드 병원 모드, 접근 코드 `H-<hpid>`). 같은 병원 코드의 웹 대시보드는 수신 기기가 아니고 통화 메시지를
+  보낼 수 없다. 협상·준비 메시지는 그 통화의 자리에 묶인 소켓에서만 받는다(`call_accept`/`call_state_sync`가 묶는다).
+- **신호 끊김**: WebSocket이 끊겨도 음성은 살아 있을 수 있어 곧바로 끝내지 않는다. 유예(10초) 안에 `call_state_sync`로 돌아오면 이어지고, 넘으면 `network_timeout`.
+- **기존 화면 연동**: 통화가 `active`가 되면 `call_status`(state `calling`, `webrtc: true`)를 내보내 병원 대시보드·관제 지도의 "통화 중" 표시가 그대로 뜨고,
+  끝나면 `ended`. `ringing`은 내보내지 않는다(시연 연출의 "전화 받기" 버튼이 이 통화를 가로채지 않게). 실제 통화 중인 사건엔 시연 연출 통화를 걸 수 없고
+  그 반대도 막는다. 사건이 닫히면(`sim_reset` 등) 통화도 `case_closed`로 끝난다. 의사결정 로그 `call_session_invited`·`call_session_ended`(통화 시간만, 음성·내용 없음).
+- **ICE 서버**: 기본 공개 STUN(`HUB_STUN_URLS`). `HUB_TURN_URLS`+`HUB_TURN_SECRET`이 있으면 coturn REST 방식(use-auth-secret)의 만료형 자격 증명
+  (`username = 만료시각:callId`, `credential = base64(HMAC-SHA1)`, TTL `HUB_TURN_TTL_SEC` 기본 3600)을 `iceServers`에 싣는다. **TURN 서버 자체는 아직 없다**(1차는 공개 STUN만).
+- **한계**: 이 통화엔 STT·요약·이송 판단이 연결돼 있지 않다(개발계획서 5단계). WebSocket 인증은 여전히 없다(접근 코드 `identify`만). 병원당 수신 기기 1대를 기준으로 하며
+  여러 기기 동시 수신은 `answered_elsewhere` 정리까지만 있다.
+- 검증: `python test_call_sessions.py`(상태 기계 + app 연결, 가짜 소켓). 실기기 검증은 안드로이드 병원 모드↔aiortc 시험 발신기, 안드로이드 구급대 모드↔aiortc 시험 수신기로 했다 —
+  앱 쪽 메모는 CLAUDE.md의 "feature/hub 실제 양방향 통화" 참고.
