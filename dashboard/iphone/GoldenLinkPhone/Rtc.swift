@@ -3,7 +3,7 @@ import Foundation
 import GoldenLinkCore
 import WebRTC
 
-/// 실제 양방향 통화(WebRTC, 2026-11-04)의 한 통화 연결 — 구급대 앱(아이폰)은 offer를 만드는 쪽이다.
+/// 실제 양방향 통화(WebRTC, 2026-11-04)의 한 통화 연결 — 구급대는 offer를 만들고 병원은 answer를 만든다.
 /// 마이크 음성만 주고받는다(영상 없음). 연결 협상 메시지는 hub가 중계하고(call_sessions.py), 음성은 직접 또는 TURN으로 간다.
 /// 안드로이드 `Rtc.kt`(RtcSession)와 같은 규칙이다 — 그쪽이 실제 기기에서 hub와 연동 검증됐다.
 ///
@@ -11,7 +11,7 @@ import WebRTC
 /// "준비 완료(onMediaReady)"는 연결(connected)과 상대 오디오 수신을 둘 다 확인했을 때 한 번만 알린다 — 병원이 받았다는
 /// 사실만으로, 또는 상대가 조용하다는 이유로 통화 시작을 정하지 않는다(개발계획서 §5·§10).
 ///
-/// ⚠ 이 파일은 Windows에서 작성돼 컴파일·실기기 검증을 못 했다(Xcode 필요) — Mac에서 빌드해 확인해야 한다.
+/// iOS 대상 Xcode 빌드 확인. 실제 기기 사이의 음성 송수신은 별도 검증이 필요하다.
 final class RtcSession: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     private let onLocalIce: @Sendable (IceCandidatePayload) -> Void
     private let onMediaReady: @Sendable () -> Void
@@ -84,6 +84,23 @@ final class RtcSession: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable
         pc?.setRemoteDescription(RTCSessionDescription(type: .answer, sdp: sdp)) { [weak self] error in
             if let error { self?.fail("answer 적용 실패: \(error.localizedDescription)"); return }
             self?.remoteDescriptionApplied()
+        }
+    }
+
+    /// 병원 모드: 구급대 offer를 적용하고 answer를 만든다.
+    func acceptOffer(_ sdp: String, completion: @escaping @Sendable (String) -> Void) {
+        guard let connection = pc else { return }
+        connection.setRemoteDescription(RTCSessionDescription(type: .offer, sdp: sdp)) { [weak self] error in
+            guard let self else { return }
+            if let error { self.fail("offer 적용 실패: \(error.localizedDescription)"); return }
+            self.remoteDescriptionApplied()
+            connection.answer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { [weak self] answer, error in
+                guard let answer, error == nil else { self?.fail("answer 생성 실패"); return }
+                connection.setLocalDescription(answer) { [weak self] error in
+                    if let error { self?.fail("answer 적용 실패: \(error.localizedDescription)"); return }
+                    completion(answer.sdp)
+                }
+            }
         }
     }
 

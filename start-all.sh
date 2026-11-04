@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 골든링크 전체 실행 — hub + info + dashboard + Cloudflare 터널을 한 번에 띄운다 (lidar3d는 --lidar로만).
+# 골든링크 전체 실행 — hub + info + dashboard + Cloudflare 터널 + TURN(설정 시)을 띄운다 (lidar3d는 --lidar로만).
 #
 # 도메인 하나(rookie-goldenlink.xyz)를 Cloudflare named 터널 하나로 나눠 쓴다:
 #
@@ -18,6 +18,7 @@
 # 실행:
 #   ./start-all.sh                    공개 모드 (도메인 주소로 접속)
 #   ./start-all.sh --local            터널 없이 로컬 주소로만 (같은 Wi-Fi 시연·개발용)
+#   ./start-all.sh --hotspot          아이폰 핫스팟의 Mac + 별도 모바일 데이터의 Android: 공개 터널 + STUN 직접 통화
 #   ./start-all.sh --skip-build       dashboard 빌드 생략 (직전과 같은 모드로 띄울 때만!)
 #   ./start-all.sh --no-info          info(병원 정보 주기 전송)·E-Gen 스냅샷 동기화·거절 로그 수신구 생략
 #   ./start-all.sh --no-snapshot      E-Gen 스냅샷 동기화(클라우드 수집분 내려받기)만 생략
@@ -30,6 +31,8 @@
 #                                     (기본은 끔: 3D는 당분간 시연에서 뺀다. 끄면 버튼도 자동으로 숨겨진다)
 #   ./start-all.sh --no-spider        spider 거미줄 3D 서버 생략 — 기본은 spider/ 폴더가 있으면 켬(/spider/ 로 열린다,
 #                                     아이패드 앱이 이 주소를 WebView로 띄운다). 계산은 서버가 하고 화면은 그리기만 한다
+#   ./start-all.sh --turn             TURN 설정 필수로 실행 (turn/.env, coturn 필요). 설정이 있으면 기본 실행
+#   ./start-all.sh --no-turn          TURN 생략 (STUN만, 다른 모바일 데이터망 통화 보장 안 됨)
 #
 # voice는 여기서 띄우지 않는다 — 따로 ./voice/start-voice.sh(인자 없이 = 중앙 voice 1대, 휴대폰·대시보드 브라우저 음성을
 # hub 경유로 받음. 구급차 번호를 주면 그 장비 마이크 전용). HUB_BASE_URL로 이 hub를 가리킨다.
@@ -114,10 +117,12 @@ SPIDER_PORT="${SPIDER_PORT:-2700}"   # 2700: spider 전용 — 2700 spider · 30
 LOG_DIR="${LOG_DIR:-/tmp/goldenlink-logs}"
 
 MODE=public; BUILD=1; RUN_INFO=1; RUN_SNAPSHOT=1; RUN_LIDAR=0; SIM_DISPATCH=1; DASHBOARD_CALL=0
+RUN_TURN=auto
 RUN_SPIDER=0; [ -f spider/serve.py ] && RUN_SPIDER=1   # spider/ 가 없는 체크아웃(옛 develop·다른 브랜치)에서는 조용히 건너뛴다
 for a in "$@"; do
   case "$a" in
     --local)      MODE=local ;;
+    --hotspot)    MODE=public; RUN_TURN=0 ;;
     --skip-build) BUILD=0 ;;
     --no-info)    RUN_INFO=0 ;;
     --no-snapshot) RUN_SNAPSHOT=0 ;;
@@ -128,12 +133,14 @@ for a in "$@"; do
     --no-lidar)   RUN_LIDAR=0 ;;  # 예전 옵션 — 이제 기본값이라 없어도 된다
     --spider)     RUN_SPIDER=1 ;;
     --no-spider)  RUN_SPIDER=0 ;;
+    --turn)       RUN_TURN=1 ;;
+    --no-turn)    RUN_TURN=0 ;;
     --setup-dns)
       [ -n "$CF_BIN" ] || { echo "❌ cloudflared가 없습니다: $CF_INSTALL"; exit 1; }
       echo "터널 '$TUNNEL_NAME'에 $APP_HOST 를 연결합니다 (Cloudflare DNS에 CNAME 생성)..."
       cf tunnel route dns "$TUNNEL_NAME" "$APP_HOST"
       exit $? ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -uo pipefail/{ /^set -uo pipefail/d; p; }' "$0"; exit 0 ;;
     *) echo "❌ 알 수 없는 옵션: $a (도움말: --help)"; exit 1 ;;
   esac
 done
@@ -152,11 +159,51 @@ cleanup(){
     kill "$p" 2>/dev/null
   done
   wait 2>/dev/null
+  [ -z "${TURN_CONF:-}" ] || rm -f -- "$TURN_CONF"
   echo "모두 종료했습니다."
 }
 trap cleanup EXIT INT TERM
 
 need(){ [ -x "$1" ] || { echo "❌ $2 파이썬이 없습니다: $1 (환경변수 $3 로 경로 지정 가능, 감지된 OS: $OS)"; exit 1; }; }
+
+# TURN은 HTTP Cloudflare 터널을 통과하지 않는다. 이 장비의 포트 전달 또는 별도 공인 서버 필요.
+# 환경 파일은 로컬 신뢰 설정이며 비밀값을 포함한다(.gitignore의 .env 규칙으로 제외).
+TURN_ENV_FILE="${TURN_ENV_FILE:-$ROOT/turn/.env}"
+if [ "$RUN_TURN" != 0 ] && [ -f "$TURN_ENV_FILE" ]; then
+  set -a
+  source "$TURN_ENV_FILE" || exit 1
+  set +a
+fi
+if [ "$RUN_TURN" = auto ]; then
+  RUN_TURN=0
+  [ -n "${TURN_HOST:-}${HUB_TURN_URLS:-}" ] && RUN_TURN=1
+fi
+if [ -z "${TURN_MODE:-}" ]; then
+  TURN_MODE=local
+  [ -n "${HUB_TURN_URLS:-}" ] && [ -z "${TURN_HOST:-}" ] && TURN_MODE=external
+fi
+if [ "$RUN_TURN" = 1 ]; then
+  need "$HUB_PY" hub HUB_PY
+  case "$TURN_MODE" in
+    local)
+      TURN_BIN="${TURN_BIN:-$(command -v turnserver 2>/dev/null || true)}"
+      [ -x "$TURN_BIN" ] || { echo '❌ coturn 필요: macOS는 brew install coturn, Ubuntu는 sudo apt install coturn (또는 TURN_MODE=external)'; exit 1; }
+      export TURN_BIN
+      # mktemp로 실행별 설정을 분리하며 비밀값은 인자나 로그에 출력하지 않는다.
+      TURN_CONF=$(mktemp "$LOG_DIR/turn.XXXXXX") || exit 1
+      HUB_TURN_URLS=$("$HUB_PY" "$ROOT/turn/configure.py" "$TURN_CONF") || exit 1
+      ;;
+    external)
+      [ -n "${HUB_TURN_URLS:-}" ] && [ -n "${HUB_TURN_SECRET:-}" ] \
+        || { echo '❌ 외부 TURN: HUB_TURN_URLS와 HUB_TURN_SECRET을 지정하세요'; exit 1; }
+      ;;
+    *) echo '❌ TURN_MODE는 local 또는 external이어야 합니다'; exit 1 ;;
+  esac
+  export HUB_TURN_URLS HUB_TURN_SECRET
+else
+  unset HUB_TURN_URLS HUB_TURN_SECRET
+  echo '⚠️  TURN 꺼짐: 서로 다른 모바일 데이터망 통화는 아직 보장되지 않습니다 (turn/.env 설정 후 --turn).'
+fi
 
 # 띄우기 전에 포트가 비어 있는지 먼저 본다. 다른 프로그램이 이미 그 포트를 쓰고 있으면 우리
 # 서버는 바로 죽는데, 아래 wait_http는 그 다른 프로그램의 응답을 "준비 완료"로 착각한다
@@ -190,6 +237,7 @@ port_free hub "$HUB_PORT" ""
 port_free dashboard "$DASH_PORT" DASH_PORT
 [ "$RUN_LIDAR" = 1 ] && port_free lidar3d "$LIDAR_PORT" LIDAR_PORT
 [ "$RUN_SPIDER" = 1 ] && port_free spider "$SPIDER_PORT" SPIDER_PORT
+[ "$RUN_TURN" = 1 ] && [ "$TURN_MODE" = local ] && port_free TURN "${TURN_PORT:-3478}" TURN_PORT
 
 # 포트가 응답할 때까지 기다린다. 먼저 뜬 서버 없이 다음 단계로 가면 연결 실패(502 등)가 난다.
 wait_http(){  # 이름, URL, pid, 로그, 최대초
@@ -236,6 +284,29 @@ else
 fi
 VIEWER_URL=""
 [ "$RUN_LIDAR" = 1 ] && VIEWER_URL="$VIEWER_BASE/viewer/?token=$LIDAR_TOKEN"
+
+# ── 0. TURN (음성 릴레이, hub는 통화 신호만 중계) ──
+if [ "$RUN_TURN" = 1 ]; then
+  if [ "$TURN_MODE" = local ]; then
+    echo "TURN 시작 (UDP/TCP ${TURN_PORT:-3478}, 릴레이 UDP ${TURN_MIN_PORT:-49160}~${TURN_MAX_PORT:-49259})..."
+    bash "$ROOT/turn/start-turn.sh" "$TURN_CONF" > "$LOG_DIR/turn.log" 2>&1 &
+    TURN_PID=$!; PIDS+=("$TURN_PID")
+    # 단순 생존만으로 성공 처리하지 않고 coturn 리스너가 열린 뒤 hub를 시작한다.
+    "$HUB_PY" -c 'import socket, sys, time
+for _ in range(50):
+    try:
+        with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=.2):
+            sys.exit(0)
+    except OSError:
+        time.sleep(.1)
+sys.exit(1)' "${TURN_PORT:-3478}" \
+      || { echo "❌ TURN 리스너 준비 실패. $LOG_DIR/turn.log 확인"; exit 1; }
+    kill -0 "$TURN_PID" 2>/dev/null || { echo "❌ TURN 프로세스 종료. $LOG_DIR/turn.log 확인"; exit 1; }
+    echo '  ✅ TURN 로컬 리스너 준비 완료 (외부망 중계 검증은 별도)'
+  else
+    echo '외부 TURN 사용 (원격 서버는 여기서 시작/종료하지 않습니다).'
+  fi
+fi
 
 # ── 1. hub ──
 # 포트를 이 스크립트가 정하려고 app.py의 __main__ 대신 직접 띄운다. debug는 끈다 — 디버그 모드가
@@ -405,7 +476,7 @@ fi
 cat <<BANNER
 
   voice(구급차 노트북)는 HUB_BASE_URL=http://<이 장비의 LAN IP>:$HUB_PORT 로 따로 실행하세요.
-  로그: $LOG_DIR/{hub,info,snapshot,rejection,lidar3d,spider,dashboard,cloudflared}.log
+  로그: $LOG_DIR/{turn,hub,info,snapshot,rejection,lidar3d,spider,dashboard,cloudflared}.log
   Ctrl-C 로 전부 종료합니다.
 ==============================================================
 

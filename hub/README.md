@@ -1200,14 +1200,17 @@ WebRTC로 음성을 직접 주고받는 **실제 통화**이고, hub는 상태·
 | hub → 양쪽 | `call_state {callId, state, sessionRevision, reason?, detail?, startedAt?, iceServers?}` | |
 | 양쪽 → hub | `call_state_sync {callId?}` | (재)접속 때 현재 통화를 묻는다 — 살아 있으면 그 자리에 소켓을 다시 묶고, 끝났으면 종료를 알려 화면을 정리 |
 
-- **병원 앱 식별**: `identify`에 `callCapable: true`(안드로이드 병원 모드, 접근 코드 `H-<hpid>`). 같은 병원 코드의 웹 대시보드는 수신 기기가 아니고 통화 메시지를
+- **병원 앱 식별**: `identify`에 `callCapable: true`(iPhone/Android 병원 모드, 접근 코드 `H-<hpid>`). 같은 병원 코드의 웹 대시보드는 수신 기기가 아니고 통화 메시지를
   보낼 수 없다. 협상·준비 메시지는 그 통화의 자리에 묶인 소켓에서만 받는다(`call_accept`/`call_state_sync`가 묶는다).
+  iPhone도 접근 코드에 따라 구급대 발신/병원 수신을 선택한다. iOS 빌드와 Swift 메시지 계약 테스트는 확인했으며 실제 휴대폰 간 음성 송수신은 별도 검증 대상이다.
 - **신호 끊김**: WebSocket이 끊겨도 음성은 살아 있을 수 있어 곧바로 끝내지 않는다. 유예(10초) 안에 `call_state_sync`로 돌아오면 이어지고, 넘으면 `network_timeout`.
 - **기존 화면 연동**: 통화가 `active`가 되면 `call_status`(state `calling`, `webrtc: true`)를 내보내 병원 대시보드·관제 지도의 "통화 중" 표시가 그대로 뜨고,
   끝나면 `ended`. `ringing`은 내보내지 않는다(시연 연출의 "전화 받기" 버튼이 이 통화를 가로채지 않게). 실제 통화 중인 사건엔 시연 연출 통화를 걸 수 없고
   그 반대도 막는다. 사건이 닫히면(`sim_reset` 등) 통화도 `case_closed`로 끝난다. 의사결정 로그 `call_session_invited`·`call_session_ended`(통화 시간만, 음성·내용 없음).
 - **ICE 서버**: 기본 공개 STUN(`HUB_STUN_URLS`). `HUB_TURN_URLS`+`HUB_TURN_SECRET`이 있으면 coturn REST 방식(use-auth-secret)의 만료형 자격 증명
-  (`username = 만료시각:callId`, `credential = base64(HMAC-SHA1)`, TTL `HUB_TURN_TTL_SEC` 기본 3600)을 `iceServers`에 싣는다. **TURN 서버 자체는 아직 없다**(1차는 공개 STUN만).
+  (`username = 만료시각:callId`, `credential = base64(HMAC-SHA1)`, TTL `HUB_TURN_TTL_SEC` 기본 3600)을 `iceServers`에 싣는다.
+  coturn 실행·설정은 [`turn/README.md`](../turn/README.md) 참고. `turn/.env`가 구성돼 있으면 `start-all.sh`가 TURN도 함께 실행/종료한다
+  (`--turn`은 필수 실행, `--no-turn`은 STUN만). 공인 IP·포트 전달 또는 별도 공인 서버가 필요하며 Cloudflare HTTP 터널로 TURN을 대신할 수 없다.
 - **한계**: 이 통화엔 STT·요약·이송 판단이 연결돼 있지 않다(개발계획서 5단계). WebSocket 인증은 여전히 없다(접근 코드 `identify`만). 병원당 수신 기기 1대를 기준으로 하며
   여러 기기 동시 수신은 `answered_elsewhere` 정리까지만 있다.
 - 검증: `python test_call_sessions.py`(상태 기계 + app 연결, 가짜 소켓). 실기기 검증은 안드로이드 병원 모드↔aiortc 시험 발신기, 안드로이드 구급대 모드↔aiortc 시험 수신기로 했다 —
